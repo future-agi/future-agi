@@ -28,12 +28,17 @@ def _inline_refs(schema, _defs=None, _depth=0):
     ref = schema.get("$ref", "")
     if isinstance(ref, str) and ref.startswith("#/$defs/") and ref[8:] in pool:
         inlined = _inline_refs(copy.deepcopy(pool[ref[8:]]), pool, _depth + 1)
-        siblings = {k: _inline_refs(v, pool, _depth + 1)
-                    for k, v in schema.items() if k not in ("$ref", "$defs")}
+        siblings = {
+            k: _inline_refs(v, pool, _depth + 1)
+            for k, v in schema.items()
+            if k not in ("$ref", "$defs")
+        }
         if isinstance(inlined, dict) and siblings:
             return {**inlined, **siblings}  # siblings win on overlap (2020-12)
         return inlined
-    return {k: _inline_refs(v, pool, _depth + 1) for k, v in schema.items() if k != "$defs"}
+    return {
+        k: _inline_refs(v, pool, _depth + 1) for k, v in schema.items() if k != "$defs"
+    }
 
 
 class EmptyStreamError(RuntimeError):
@@ -135,24 +140,47 @@ class FalconLLMClient:
                 yield chunk
 
     async def _stream_managed(self, messages, tools=None):
-        from ee.licensing.managed_ai import chat_completion, response_content
+        from ee.licensing.managed_ai import stream_chat_completion
 
         payload = {
             "model": self.model,
             "messages": messages,
-            "tools": tools or [],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "stream": False,
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
+        if tools:
+            # Flatten $defs/$ref — Vertex/Gemini (a managed gateway target)
+            # rejects JSON-Schema refs, mirroring _stream_openai. Without this
+            # the gateway returns 400 on tool-carrying managed calls.
+            try:
+                payload["tools"] = _inline_refs(tools)
+            except Exception:
+                logger.warning(
+                    "tool_schema_flatten_failed_fallback_to_raw", exc_info=True
+                )
+                payload["tools"] = tools
+        else:
+            payload["tools"] = []
         if self.response_format:
-            payload["response_format"] = self.response_format
+            try:
+                payload["response_format"] = _inline_refs(self.response_format)
+            except Exception:
+                logger.warning(
+                    "response_format_flatten_failed_fallback_to_raw", exc_info=True
+                )
+                payload["response_format"] = self.response_format
 
-        response = await asyncio.to_thread(chat_completion, payload)
-        content = response_content(response)
-        if content:
-            yield {"choices": [{"delta": {"content": content}, "finish_reason": None}]}
-        yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+        async for chunk in stream_chat_completion(payload):
+            metadata = chunk.get("agentcc_metadata")
+            if metadata:
+                self._gateway_cost += metadata.get("cost", 0)
+
+            for choice in chunk.get("choices") or []:
+                if choice.get("finish_reason") == "length":
+                    choice["finish_reason"] = "max_tokens"
+            yield chunk
 
     async def _stream_bedrock(self, messages, tools=None):
         """Stream from AWS Bedrock using boto3, yielding OpenAI-compatible chunks."""
@@ -596,14 +624,18 @@ class FalconLLMClient:
             try:
                 payload["tools"] = _inline_refs(tools)
             except Exception:
-                logger.warning("tool_schema_flatten_failed_fallback_to_raw", exc_info=True)
+                logger.warning(
+                    "tool_schema_flatten_failed_fallback_to_raw", exc_info=True
+                )
                 payload["tools"] = tools
             payload["tool_choice"] = "auto"
         if self.response_format:
             try:
                 payload["response_format"] = _inline_refs(self.response_format)
             except Exception:
-                logger.warning("response_format_flatten_failed_fallback_to_raw", exc_info=True)
+                logger.warning(
+                    "response_format_flatten_failed_fallback_to_raw", exc_info=True
+                )
                 payload["response_format"] = self.response_format
 
         headers = {
@@ -660,9 +692,12 @@ class FalconLLMClient:
                                 ),
                                 "total_tokens": usage.get("total_tokens")
                                 or (
-                                    usage.get("prompt_tokens", usage.get("input_tokens", 0))
+                                    usage.get(
+                                        "prompt_tokens", usage.get("input_tokens", 0)
+                                    )
                                     + usage.get(
-                                        "completion_tokens", usage.get("output_tokens", 0)
+                                        "completion_tokens",
+                                        usage.get("output_tokens", 0),
                                     )
                                 ),
                             }

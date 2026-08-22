@@ -11,6 +11,17 @@ import type {
   AIEvalWriterResponseApi,
   AIFilterRequestApi,
   AIFilterResponseApi,
+  ALKSimulateBatchCreateRequestApi,
+  ALKSimulateBatchCreateResponseApi,
+  ALKSimulateProvisionResponseApi,
+  ALKSimulateProvisionRunTestRequestApi,
+  ALKSimulateRecordingUploadResponseApi,
+  ALKSimulateResultApi,
+  ALKSimulateResultResponseApi,
+  ALKSimulateStartTestExecutionRequestApi,
+  ALKSimulateStartTestExecutionResponseApi,
+  ALKSimulateStatusUpdateApi,
+  ALKSimulateStatusUpdateResponseApi,
   APICallCountResponseApi,
   APICallTypeListResponseApi,
   APIKeyBulkResponseApi,
@@ -924,6 +935,7 @@ import type {
   RunTestExecutionResponseApi,
   RunTestExecutionsResponseApi,
   RunTestKPIsResponseApi,
+  RunTestListPaginatedResponseApi,
   RunTestMessageResponseApi,
   RunTestNameResponseApi,
   RunTestResponseApi,
@@ -1012,6 +1024,7 @@ import type {
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
+  SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
   SimulateApiCallExecutionsListParams,
   SimulateApiLivekitWebhookCreateBody,
   SimulateApiPersonasFieldOptions200,
@@ -52385,6 +52398,388 @@ export const simulateApiAgentPromptOptimiserTrialTrialScenarios = async (id: str
 
 
 
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse200 = {
+  data: ALKSimulateRecordingUploadResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseSuccess = (simulateApiAlkSimulateCallExecutionsRecordingUploadResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseError = (simulateApiAlkSimulateCallExecutionsRecordingUploadResponse400 | simulateApiAlkSimulateCallExecutionsRecordingUploadResponse404 | simulateApiAlkSimulateCallExecutionsRecordingUploadResponse500 | simulateApiAlkSimulateCallExecutionsRecordingUploadResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse = (simulateApiAlkSimulateCallExecutionsRecordingUploadResponseSuccess | simulateApiAlkSimulateCallExecutionsRecordingUploadResponseError)
+
+export const getSimulateApiAlkSimulateCallExecutionsRecordingUploadUrl = (callExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/call-executions/${callExecutionId}/recording/`
+}
+
+/**
+ * Accept a multipart audio upload and hand it to the shared voice
+storage helper (``upload_audio_to_s3``). Matches the pattern the
+LiveKit and Vapi voice services already use for their recordings.
+ */
+export const simulateApiAlkSimulateCallExecutionsRecordingUpload = async (callExecutionId: string,
+    simulateApiAlkSimulateCallExecutionsRecordingUploadBody?: SimulateApiAlkSimulateCallExecutionsRecordingUploadBody, options?: RequestInit): Promise<simulateApiAlkSimulateCallExecutionsRecordingUploadResponse> => {
+    const formData = new FormData();
+if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.file !== undefined) {
+ formData.append(`file`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.file);
+ }
+if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.filename !== undefined) {
+ formData.append(`filename`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.filename);
+ }
+
+  return apiMutator<simulateApiAlkSimulateCallExecutionsRecordingUploadResponse>(getSimulateApiAlkSimulateCallExecutionsRecordingUploadUrl(callExecutionId),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body:
+      formData,
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse200 = {
+  data: ALKSimulateResultResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponseSuccess = (simulateApiAlkSimulateCallExecutionsResultResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateCallExecutionsResultResponseError = (simulateApiAlkSimulateCallExecutionsResultResponse400 | simulateApiAlkSimulateCallExecutionsResultResponse404 | simulateApiAlkSimulateCallExecutionsResultResponse500 | simulateApiAlkSimulateCallExecutionsResultResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse = (simulateApiAlkSimulateCallExecutionsResultResponseSuccess | simulateApiAlkSimulateCallExecutionsResultResponseError)
+
+export const getSimulateApiAlkSimulateCallExecutionsResultUrl = (callExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/call-executions/${callExecutionId}/result/`
+}
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const simulateApiAlkSimulateCallExecutionsResult = async (callExecutionId: string,
+    aLKSimulateResultApi: ALKSimulateResultApi, options?: RequestInit): Promise<simulateApiAlkSimulateCallExecutionsResultResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateCallExecutionsResultResponse>(getSimulateApiAlkSimulateCallExecutionsResultUrl(callExecutionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateResultApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse200 = {
+  data: ALKSimulateStatusUpdateResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponseSuccess = (simulateApiAlkSimulateCallExecutionsStatusResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateCallExecutionsStatusResponseError = (simulateApiAlkSimulateCallExecutionsStatusResponse400 | simulateApiAlkSimulateCallExecutionsStatusResponse404 | simulateApiAlkSimulateCallExecutionsStatusResponse500 | simulateApiAlkSimulateCallExecutionsStatusResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse = (simulateApiAlkSimulateCallExecutionsStatusResponseSuccess | simulateApiAlkSimulateCallExecutionsStatusResponseError)
+
+export const getSimulateApiAlkSimulateCallExecutionsStatusUrl = (callExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/call-executions/${callExecutionId}/status/`
+}
+
+/**
+ * Non-terminal per-call status ping (currently only ``ongoing``): the
+SDK marks a pre-created PENDING row ONGOING the moment its call starts,
+so the UI shows progress instead of PENDING → terminal. PENDING-gated in
+the service, so a late ping never clobbers a result that already landed.
+ */
+export const simulateApiAlkSimulateCallExecutionsStatus = async (callExecutionId: string,
+    aLKSimulateStatusUpdateApi: ALKSimulateStatusUpdateApi, options?: RequestInit): Promise<simulateApiAlkSimulateCallExecutionsStatusResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateCallExecutionsStatusResponse>(getSimulateApiAlkSimulateCallExecutionsStatusUrl(callExecutionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateStatusUpdateApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse200 = {
+  data: ALKSimulateProvisionResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseSuccess = (simulateApiAlkSimulateRunTestsProvisionRunTestResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseError = (simulateApiAlkSimulateRunTestsProvisionRunTestResponse400 | simulateApiAlkSimulateRunTestsProvisionRunTestResponse404 | simulateApiAlkSimulateRunTestsProvisionRunTestResponse500 | simulateApiAlkSimulateRunTestsProvisionRunTestResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse = (simulateApiAlkSimulateRunTestsProvisionRunTestResponseSuccess | simulateApiAlkSimulateRunTestsProvisionRunTestResponseError)
+
+export const getSimulateApiAlkSimulateRunTestsProvisionRunTestUrl = () => {
+
+
+
+
+  return `/simulate/api/alk-simulate/run-tests/provision/`
+}
+
+/**
+ * Stand up a chat RunTest + scenario-of-record from SDK personas so an
+SDK-first run has somewhere to post — without the native UI's async
+scenario generation. See ``provision_alk_sim_run_test``.
+ */
+export const simulateApiAlkSimulateRunTestsProvisionRunTest = async (aLKSimulateProvisionRunTestRequestApi: ALKSimulateProvisionRunTestRequestApi, options?: RequestInit): Promise<simulateApiAlkSimulateRunTestsProvisionRunTestResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateRunTestsProvisionRunTestResponse>(getSimulateApiAlkSimulateRunTestsProvisionRunTestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateProvisionRunTestRequestApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse200 = {
+  data: ALKSimulateStartTestExecutionResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseSuccess = (simulateApiAlkSimulateRunTestsStartTestExecutionResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseError = (simulateApiAlkSimulateRunTestsStartTestExecutionResponse400 | simulateApiAlkSimulateRunTestsStartTestExecutionResponse404 | simulateApiAlkSimulateRunTestsStartTestExecutionResponse500 | simulateApiAlkSimulateRunTestsStartTestExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse = (simulateApiAlkSimulateRunTestsStartTestExecutionResponseSuccess | simulateApiAlkSimulateRunTestsStartTestExecutionResponseError)
+
+export const getSimulateApiAlkSimulateRunTestsStartTestExecutionUrl = (runTestId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/run-tests/${runTestId}/test-executions/`
+}
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const simulateApiAlkSimulateRunTestsStartTestExecution = async (runTestId: string,
+    aLKSimulateStartTestExecutionRequestApi: ALKSimulateStartTestExecutionRequestApi, options?: RequestInit): Promise<simulateApiAlkSimulateRunTestsStartTestExecutionResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateRunTestsStartTestExecutionResponse>(getSimulateApiAlkSimulateRunTestsStartTestExecutionUrl(runTestId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateStartTestExecutionRequestApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse200 = {
+  data: ALKSimulateBatchCreateResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponseSuccess = (simulateApiAlkSimulateTestExecutionsBatchResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateTestExecutionsBatchResponseError = (simulateApiAlkSimulateTestExecutionsBatchResponse400 | simulateApiAlkSimulateTestExecutionsBatchResponse404 | simulateApiAlkSimulateTestExecutionsBatchResponse500 | simulateApiAlkSimulateTestExecutionsBatchResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse = (simulateApiAlkSimulateTestExecutionsBatchResponseSuccess | simulateApiAlkSimulateTestExecutionsBatchResponseError)
+
+export const getSimulateApiAlkSimulateTestExecutionsBatchUrl = (testExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/test-executions/${testExecutionId}/batch/`
+}
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const simulateApiAlkSimulateTestExecutionsBatch = async (testExecutionId: string,
+    aLKSimulateBatchCreateRequestApi: ALKSimulateBatchCreateRequestApi, options?: RequestInit): Promise<simulateApiAlkSimulateTestExecutionsBatchResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateTestExecutionsBatchResponse>(getSimulateApiAlkSimulateTestExecutionsBatchUrl(testExecutionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateBatchCreateRequestApi,)
+  }
+);}
+
+
+
 export type simulateApiCallExecutionsListResponse200 = {
   data: CallExecutionApi[]
   status: 200
@@ -54703,7 +55098,7 @@ export const simulatePromptTemplatesSimulationsExecuteCreate = async (promptTemp
 
 
 export type simulateRunTestsListResponse200 = {
-  data: RunTestResponseApi[]
+  data: RunTestListPaginatedResponseApi
   status: 200
 }
 

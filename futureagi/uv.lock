@@ -1147,6 +1147,7 @@ dependencies = [
     { name = "clickhouse-connect" },
     { name = "clickhouse-driver" },
     { name = "datasets" },
+    { name = "disposable-email-domains" },
     { name = "django" },
     { name = "django-anymail" },
     { name = "django-celery-beat" },
@@ -1314,6 +1315,7 @@ requires-dist = [
     { name = "clickhouse-connect" },
     { name = "clickhouse-driver" },
     { name = "datasets" },
+    { name = "disposable-email-domains", specifier = "==0.0.239" },
     { name = "django", specifier = "==5.1.8" },
     { name = "django-anymail" },
     { name = "django-celery-beat" },
@@ -1838,6 +1840,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/12/80/630b4b88364e9a8c8c5797f4602d0f76ef820909ee32f0bacb9f90654042/dill-0.4.0.tar.gz", hash = "sha256:0633f1d2df477324f53a895b02c901fb961bdbf65a17122586ea7019292cbcf0", size = 186976, upload-time = "2025-04-16T00:41:48.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl", hash = "sha256:44f54bf6412c2c8464c14e8243eb163690a9800dbe2c367330883b19c7561049", size = 119668, upload-time = "2025-04-16T00:41:47.671Z" },
+]
+
+[[package]]
+name = "disposable-email-domains"
+version = "0.0.239"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/96/d9cbcb9f6a7228c961fbdfcf1e537a240d3135fb2fcd73fefcbc25678019/disposable_email_domains-0.0.239.tar.gz", hash = "sha256:b32dcfc839a0851d8cdba7117aec0e72c569344de186deb4462c69cfbec5f16f", size = 101343, upload-time = "2026-08-19T01:47:29.608Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/43/b2a2af68bd2b06bd8e01a6a52d97529df54ac4ceff435a7abaf8a5f4143f/disposable_email_domains-0.0.239-py3-none-any.whl", hash = "sha256:8b33f253eb3c1fcb260cc036000c755acbbc0115541f38b8a6a149712fc0a601", size = 52073, upload-time = "2026-08-19T01:47:28.196Z" },
 ]
 
 [[package]]

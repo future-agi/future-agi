@@ -19,6 +19,18 @@ const RUN_CONFIG_KEYS = [
   "params",
 ];
 
+// A cleared auto-mapped field reaches us as "" — the eval runner treats a
+// present-but-empty path as a required attribute it can never resolve and
+// fails every row, while an absent key falls through to context injection.
+export function sanitizeEvalMapping(mapping) {
+  return Object.fromEntries(
+    Object.entries(mapping || {}).filter(
+      ([, path]) =>
+        path != null && !(typeof path === "string" && path.trim() === ""),
+    ),
+  );
+}
+
 export function serializeEvalConfig(evalConfig) {
   const runConfig = {};
   for (const k of RUN_CONFIG_KEYS) {
@@ -31,7 +43,7 @@ export function serializeEvalConfig(evalConfig) {
     template_id: evalConfig.templateId,
     name: evalConfig.name,
     model: evalConfig.model,
-    mapping: evalConfig.mapping || {},
+    mapping: sanitizeEvalMapping(evalConfig.mapping),
     config: {
       ...(evalConfig.config || {}),
       // BE looks up function-param values at `config.params` (normalize_eval_runtime_config).

@@ -176,11 +176,14 @@ def _purge_pg_project(project_id) -> None:
 def _raw_insert_session_score(
     *, score_id, trace_session_id, label_id, annotator_id, organization_id, value
 ):
-    """Insert a trace_session Score via RAW SQL, writing ONLY the columns that
-    exist on pg-test's (older) ``model_hub_score`` snapshot — the baked ORM
-    model declares newer columns (e.g. ``value_history``) absent there, so an
-    ORM ``.create()`` 500s. ``project_id`` is deliberately left NULL (the
-    production tracer-side write shape). ``value`` is JSONB."""
+    """Insert a trace_session Score via RAW SQL rather than the ORM, so
+    ``project_id`` can be left NULL — the production tracer-side write shape,
+    and the whole point of the assertions below. ``value`` is JSONB.
+
+    Every NOT NULL column must be listed explicitly: Django field defaults
+    (``value_history``'s ``default=list``) are applied in Python by the ORM and
+    do NOT exist as DB-level defaults, so a raw INSERT that omits one hits a
+    not-null violation."""
     import json
 
     from django.db import connection
@@ -191,10 +194,10 @@ def _raw_insert_session_score(
         cur.execute(
             "INSERT INTO model_hub_score "
             "(id, created_at, updated_at, deleted, source_type, value, "
-            " score_source, label_id, annotator_id, organization_id, "
-            " trace_session_id, project_id) "
-            "VALUES (%s, %s, %s, false, 'trace_session', %s, 'human', "
-            " %s, %s, %s, %s, NULL)",
+            " value_history, score_source, label_id, annotator_id, "
+            " organization_id, trace_session_id, project_id) "
+            "VALUES (%s, %s, %s, false, 'trace_session', %s, '[]'::jsonb, "
+            " 'human', %s, %s, %s, %s, NULL)",
             [
                 str(score_id),
                 now,

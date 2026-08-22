@@ -262,25 +262,35 @@ def _output_name(column: str) -> str:
     return column.rsplit(" AS ", 1)[-1].strip() if " AS " in column else column.strip()
 
 
-def _named_select(include_heavy: bool) -> str:
+def _named_select(include_heavy: bool, read: tuple[str, ...] = _READ_COLUMNS) -> str:
     """``_SELECT_SQL`` / ``_LEAN_SELECT_SQL`` with the stubs named, so an
     enclosing query can project them (``'' AS span_events``, not a bare ``''``)."""
     return ", ".join(
         f"'' AS {_output_name(col)}"
         if not include_heavy and col in _HEAVY_COLUMNS
         else col
-        for col in _READ_COLUMNS
+        for col in read
     )
 
 
-def _dedup_sql(where: str, order_by: str, *, include_heavy: bool) -> str:
+def _dedup_sql(
+    where: str,
+    order_by: str,
+    *,
+    include_heavy: bool,
+    read: tuple[str, ...] = _READ_COLUMNS,
+) -> str:
     """ReplacingMergeTree resolved without ``FINAL``. Same column shape/order as
     the FINAL read, so ``_row_to_chspan`` decodes it unchanged.
 
     ``is_deleted = 0`` MUST stay on the outer query: filtered inside the dedup,
     a row whose newest version is deleted resurrects as its older live version.
+
+    ``read`` narrows only the OUTER projection: the dedup key spans columns no
+    caller asks for (``service_name``, ``observation_type``), so the subquery
+    keeps reading the full set.
     """
-    projection = ", ".join(_output_name(col) for col in _READ_COLUMNS)
+    projection = ", ".join(_output_name(col) for col in read)
     aliases = ", ".join(
         f"{col} AS {alias}" for col, alias in _DEDUP_KEY_ALIASES.items()
     )
@@ -344,6 +354,28 @@ _DATA_KEYS: tuple[str, ...] = (
     "is_deleted",
     "trace_name",
 )
+
+# Allowlist for the ``columns`` projection arg: logical name (the CHSpan field)
+# → the ``_READ_COLUMNS`` entry that produces it. Caller strings are resolved
+# through this map, never interpolated. ``strict`` pins the two tuples together —
+# a column added to one and not the other shifts the positional decode.
+_PROJECTION_SQL: dict[str, str] = dict(zip(_DATA_KEYS, _READ_COLUMNS, strict=True))
+
+
+def _projection_columns(columns: list[str]) -> tuple[str, ...]:
+    """The ``_READ_COLUMNS`` entries a caller's ``columns`` list selects.
+
+    The ``_str`` aliases are kept as-is: decoding is positional, and re-aliasing
+    an expression to its bare column name would shadow the key column and defeat
+    primary-key pruning (see ``_READ_COLUMNS``).
+    """
+    if not columns:
+        raise ValueError("columns must name at least one span column")
+    unknown = [c for c in columns if c not in _PROJECTION_SQL]
+    if unknown:
+        raise ValueError(f"unknown span column(s): {', '.join(unknown)}")
+    return tuple(_PROJECTION_SQL[c] for c in columns)
+
 
 _EXPORT_COLUMN_SQL: dict[str, str] = {
     "project_id": "toString(project_id)",
@@ -427,22 +459,32 @@ def _export_columns_for_fields(field_names: set[str]) -> set[str]:
     return {column for column in columns if column in _EXPORT_COLUMN_SQL}
 
 
+# CH returns the toString() forms with literal 'NULL' for missing UUIDs in some
+# 25.x patch versions; normalize either case to None.
+_NULLABLE_ID_KEYS: tuple[str, ...] = (
+    "org_id",
+    "project_version_id",
+    "end_user_id",
+    "trace_session_id",
+    "prompt_version_id",
+    "prompt_label_id",
+    "custom_eval_config_id",
+)
+
+
+def _row_to_dict(keys: tuple[str, ...] | list[str], row: tuple) -> dict[str, Any]:
+    d = dict(zip(keys, row, strict=False))
+    for k in _NULLABLE_ID_KEYS:
+        if k in d:
+            v = d[k]
+            d[k] = (
+                None if v in (None, "", "00000000-0000-0000-0000-000000000000") else v
+            )
+    return d
+
+
 def _row_to_chspan(row: tuple) -> CHSpan:
-    d = dict(zip(_DATA_KEYS, row, strict=False))
-    # CH returns the toString() forms with literal 'NULL' for missing UUIDs in
-    # some 25.x patch versions; normalize either case to None.
-    for k in (
-        "org_id",
-        "project_version_id",
-        "end_user_id",
-        "trace_session_id",
-        "prompt_version_id",
-        "prompt_label_id",
-        "custom_eval_config_id",
-    ):
-        v = d.get(k)
-        d[k] = None if v in (None, "", "00000000-0000-0000-0000-000000000000") else v
-    return CHSpan(**d)
+    return CHSpan(**_row_to_dict(_DATA_KEYS, row))
 
 
 class CHSpanReader:
@@ -854,7 +896,8 @@ class CHSpanReader:
         project_id: str | None = None,
         org_id: str | None = None,
         dedup_via_limit_by: bool = False,
-    ) -> list[CHSpan]:
+        columns: list[str] | None = None,
+    ) -> list[CHSpan] | list[dict]:
         """Equivalent to ObservationSpan.objects.filter(id__in=span_ids).
 
         Result order is NOT preserved relative to the input list (CH orders
@@ -864,10 +907,22 @@ class CHSpanReader:
         With ``include_heavy=False`` the fat JSON columns (attributes_extra /
         span_events / resource_attrs) come back as '' — opt out when only
         id/scalar columns are needed.
+
+        ``columns`` (CHSpan field names) switches the result to plain dicts
+        holding exactly those keys, instead of ``CHSpan``. It controls only the
+        SELECT projection — that is where a FINAL read's memory goes; the
+        WHERE/ORDER BY columns are read by CH regardless, so a caller never has
+        to request a column just to filter or sort on it. ``include_heavy``
+        still stubs the three fat columns.
         """
         if not span_ids:
             return []
-        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        read = _projection_columns(columns) if columns is not None else None
+        select = (
+            _named_select(include_heavy, read)
+            if read
+            else (_SELECT_SQL if include_heavy else _LEAN_SELECT_SQL)
+        )
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
         # the ``idx_id`` bloom (off under FINAL without the setting); a fat
         # (voice) span in the batch otherwise OOMs the full in-order merge.
@@ -881,7 +936,10 @@ class CHSpanReader:
             params["oid"] = str(org_id)
         if dedup_via_limit_by:
             sql = _dedup_sql(
-                " AND ".join(where), "ORDER BY id", include_heavy=include_heavy
+                " AND ".join(where),
+                "ORDER BY id",
+                include_heavy=include_heavy,
+                read=read or _READ_COLUMNS,
             )
             settings: dict[str, Any] = {}
         else:
@@ -891,6 +949,8 @@ class CHSpanReader:
             )
             settings = _FINAL_SKIP_INDEX_SETTINGS
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
+        if columns is not None:
+            return [_row_to_dict(columns, r) for r in rows]
         return [_row_to_chspan(r) for r in rows]
 
     def export_fields_by_ids(
@@ -2341,7 +2401,8 @@ class CHSpanReader:
         include_heavy: bool = True,
         observation_type: str | None = None,
         project_id: str | None = None,
-    ) -> dict[str, CHSpan]:
+        columns: list[str] | None = None,
+    ) -> dict[str, CHSpan] | dict[str, dict]:
         """For each trace_id, return the root span (parent_span_id = '').
         Picks the earliest by (start_time, id) on ties. Returns a dict so
         callers can do O(1) trace_id → root_span lookups without zipping
@@ -2356,12 +2417,27 @@ class CHSpanReader:
         span_events / resource_attrs) come back as '' — opt out when only
         id/scalar columns are needed. Pass ``project_id`` to prune the scan to
         one project (avoids a full-table scan across every project's spans).
+
+        ``columns`` (CHSpan field names, ``trace_id`` among them since it keys
+        the result) switches the values to plain dicts holding exactly those
+        keys, instead of ``CHSpan``. It controls only the SELECT projection —
+        that is where this FINAL read's memory goes; the WHERE/ORDER BY columns
+        are read by CH regardless, so a caller never has to request a column
+        just to filter or sort on it. ``include_heavy`` still stubs the three
+        fat columns.
         """
         if not trace_ids:
             return {}
-        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        if columns is not None and "trace_id" not in columns:
+            raise ValueError("columns must include 'trace_id' — it keys the result")
+        read = _projection_columns(columns) if columns is not None else None
+        select = (
+            _named_select(include_heavy, read)
+            if read
+            else (_SELECT_SQL if include_heavy else _LEAN_SELECT_SQL)
+        )
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = [
-            "is_deleted = 0",
             "trace_id IN %(tids)s",
             "parent_span_id = ''",
         ]
@@ -2381,7 +2457,11 @@ class CHSpanReader:
             "ORDER BY trace_id, start_time, id "
             "LIMIT 1 BY trace_id",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
+        if columns is not None:
+            projected = (_row_to_dict(columns, r) for r in rows)
+            return {row["trace_id"]: row for row in projected}
         return {span.trace_id: span for span in map(_row_to_chspan, rows)}
 
     def aggregate_by_session_ids(

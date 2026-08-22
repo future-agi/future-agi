@@ -15,6 +15,11 @@
  *     onApply={setFilters}
  *     aiPlaceholder="e.g. 'show traces with errors'"
  *   />
+ *
+ * Pass `basicOnly` to reduce the popover to just the filter rows — no tab
+ * strip, no AI query box, no section caption.
+ * A field may carry `choiceLabels: {value: label}` when its `choices` are
+ * opaque keys (enum values, UUIDs) that should never be shown to the user.
  */
 import {
   Autocomplete,
@@ -149,15 +154,29 @@ function parseNaturalLanguage(query, filterFields, fieldMap) {
 // ---------------------------------------------------------------------------
 // EnumValuePicker — checkbox multi-select popover (matches trace filter design)
 // ---------------------------------------------------------------------------
-function EnumValuePicker({ choices, value = [], onChange, single = false }) {
+function EnumValuePicker({
+  choices,
+  value = [],
+  onChange,
+  single = false,
+  choiceLabels,
+}) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
+
+  // `choices` holds the values sent to the API. When a field supplies
+  // `choiceLabels`, those raw values are opaque to the user (enum keys, UUIDs)
+  // and only the mapped label is ever shown or searched.
+  const labelOf = useCallback(
+    (choice) => choiceLabels?.[choice] ?? choice,
+    [choiceLabels],
+  );
 
   const filtered = useMemo(() => {
     if (!search) return choices;
     const q = search.toLowerCase();
-    return choices.filter((c) => c.toLowerCase().includes(q));
-  }, [choices, search]);
+    return choices.filter((c) => labelOf(c).toLowerCase().includes(q));
+  }, [choices, search, labelOf]);
 
   const toggle = useCallback(
     (val) => {
@@ -205,7 +224,7 @@ function EnumValuePicker({ choices, value = [], onChange, single = false }) {
             {value.slice(0, 2).map((v) => (
               <Chip
                 key={v}
-                label={v}
+                label={labelOf(v)}
                 size="small"
                 onDelete={(e) => {
                   e.stopPropagation();
@@ -323,8 +342,9 @@ function EnumValuePicker({ choices, value = [], onChange, single = false }) {
             </Box>
           )}
 
-          {/* Specify custom value */}
-          {search && !choices.includes(search) && (
+          {/* Specify custom value. Suppressed for label-mapped fields: there the
+              choices are opaque keys, so a typed string is never a valid value. */}
+          {search && !choiceLabels && !choices.includes(search) && (
             <Box
               onClick={() => {
                 if (!value.includes(search)) {
@@ -417,7 +437,7 @@ function EnumValuePicker({ choices, value = [], onChange, single = false }) {
                     fontWeight: isSelected ? 600 : 400,
                   }}
                 >
-                  {opt}
+                  {labelOf(opt)}
                 </Typography>
               </Box>
             );
@@ -467,6 +487,7 @@ function FilterRow({
   fieldMap,
   onChange,
   onRemove,
+  takenSingleFields,
 }) {
   const fieldDef = fieldMap[filter.field] || filterFields[0];
   const operators = getOperators(fieldDef);
@@ -487,7 +508,14 @@ function FilterRow({
         sx={{ minWidth: 100, fontSize: 13, height: 30 }}
       >
         {filterFields.map((f) => (
-          <MenuItem key={f.value} value={f.value} sx={{ fontSize: 13 }}>
+          <MenuItem
+            key={f.value}
+            value={f.value}
+            disabled={
+              f.value !== filter.field && takenSingleFields?.has(f.value)
+            }
+            sx={{ fontSize: 13 }}
+          >
             {f.label}
           </MenuItem>
         ))}
@@ -511,6 +539,7 @@ function FilterRow({
       {fieldDef.type === "enum" ? (
         <EnumValuePicker
           choices={fieldDef.choices || []}
+          choiceLabels={fieldDef.choiceLabels}
           single={fieldDef.single}
           value={
             Array.isArray(filter.value)
@@ -1282,6 +1311,38 @@ QueryInput.propTypes = {
   getOperators: PropTypes.func,
 };
 
+// Collapse rows into the `{field: [values]}` shape callers receive. Rows with
+// no value drop out; an all-empty set applies as null rather than `{}`.
+const buildFilterResult = (rows) => {
+  const result = {};
+  for (const row of rows) {
+    const val = row.value;
+    const isEmpty = !val || (Array.isArray(val) && val.length === 0);
+    if (isEmpty) continue;
+    const values = Array.isArray(val) ? val : [val];
+    const isNeg = row.operator === "is_not" || row.operator === "not_equals";
+    const key = isNeg ? `${row.field}_not` : row.field;
+    if (!result[key]) result[key] = [];
+    // Rows sharing a key merge, so a value picked in two of them would
+    // otherwise go out twice.
+    for (const v of values) {
+      if (!result[key].includes(v)) result[key].push(v);
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+};
+
+// Key order follows row order, which the user can change without changing the
+// filter, so sort before comparing.
+const serializeFilters = (result) =>
+  result
+    ? JSON.stringify(
+        Object.keys(result)
+          .sort()
+          .map((k) => [k, result[k]]),
+      )
+    : "null";
+
 // ---------------------------------------------------------------------------
 // FilterPanel — main component
 // ---------------------------------------------------------------------------
@@ -1300,7 +1361,14 @@ const FilterPanel = ({
   // a `projectId` the panel falls back to the legacy build_filters path.
   projectId,
   source = "traces",
+  // Render the filter rows alone — no tabs, no AI box, no caption. The Query
+  // tab and AI parsing are power-user surfaces that not every list needs.
+  basicOnly = false,
+  // "bottom-start" grows the popover rightwards from the trigger; use
+  // "bottom-end" when the trigger sits near the right edge of the viewport.
+  placement = "bottom-start",
 }) => {
+  const popoverEdge = placement === "bottom-end" ? "right" : "left";
   const fieldMap = useMemo(
     () => Object.fromEntries(filterFields.map((f) => [f.value, f])),
     [filterFields],
@@ -1347,9 +1415,11 @@ const FilterPanel = ({
 
   const [rows, setRows] = useState([{ ...defaultRow }]);
   const applyTimerRef = useRef(null);
+  const lastAppliedRef = useRef(undefined);
 
   useEffect(() => {
     if (!open) return;
+    let initialRows;
     if (
       currentFilters &&
       typeof currentFilters === "object" &&
@@ -1360,13 +1430,24 @@ const FilterPanel = ({
       for (const [key, val] of Object.entries(currentFilters)) {
         const isNeg = key.endsWith("_not");
         const field = isNeg ? key.slice(0, -4) : key;
+        const fieldDef = fieldMap[field];
         if (Array.isArray(val)) {
           const op = isNeg
             ? "is_not"
-            : fieldMap[field]?.type === "enum"
+            : fieldDef?.type === "enum"
               ? "is"
               : "contains";
-          val.forEach((v) => initial.push({ field, operator: op, value: v }));
+          if (fieldDef?.type === "enum") {
+            // An enum row holds the whole set and shows it as chips, so keep
+            // the values together — one row per value would come back as a
+            // pile of identical rows the user never created.
+            const values = fieldDef.single ? val.slice(0, 1) : val;
+            if (values.length > 0)
+              initial.push({ field, operator: op, value: values });
+          } else {
+            // A text row is a single input, so each value needs its own.
+            val.forEach((v) => initial.push({ field, operator: op, value: v }));
+          }
         } else if (val) {
           initial.push({
             field,
@@ -1375,13 +1456,16 @@ const FilterPanel = ({
           });
         }
       }
-      if (initial.length > 0) setRows(initial);
-      else setRows([{ ...defaultRow }]);
+      initialRows = initial.length > 0 ? initial : [{ ...defaultRow }];
     } else if (Array.isArray(currentFilters) && currentFilters.length > 0) {
-      setRows([...currentFilters]);
+      initialRows = [...currentFilters];
     } else {
-      setRows([{ ...defaultRow }]);
+      initialRows = [{ ...defaultRow }];
     }
+    setRows(initialRows);
+    // Seed the guard with what these rows would apply to, so merely opening
+    // the panel doesn't re-emit filters the caller already holds.
+    lastAppliedRef.current = serializeFilters(buildFilterResult(initialRows));
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-apply on row changes (debounced)
@@ -1389,28 +1473,48 @@ const FilterPanel = ({
     if (!open) return;
     if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     applyTimerRef.current = setTimeout(() => {
-      const result = {};
-      for (const row of rows) {
-        const val = row.value;
-        const isEmpty = !val || (Array.isArray(val) && val.length === 0);
-        if (isEmpty) continue;
-        const values = Array.isArray(val) ? val : [val];
-        const isNeg =
-          row.operator === "is_not" || row.operator === "not_equals";
-        const key = isNeg ? `${row.field}_not` : row.field;
-        if (!result[key]) result[key] = [];
-        result[key].push(...values);
-      }
-      onApply(Object.keys(result).length > 0 ? result : null);
+      const result = buildFilterResult(rows);
+      // `result` is rebuilt on every run, so callers keying off its identity
+      // (an AG Grid datasource, a memo) would refetch even when nothing
+      // changed. Compare by value and stay quiet when it hasn't.
+      const serialized = serializeFilters(result);
+      if (serialized === lastAppliedRef.current) return;
+      lastAppliedRef.current = serialized;
+      onApply(result);
     }, 400);
     return () => {
       if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     };
   }, [rows, open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A `single` field holds exactly one value, so a second row targeting it can
+  // never be honoured — apply merges the rows and the caller keeps one value
+  // while the UI goes on showing both as active.
+  const takenSingleFields = useMemo(
+    () =>
+      new Set(
+        rows.filter((r) => fieldMap[r.field]?.single).map((r) => r.field),
+      ),
+    [rows, fieldMap],
+  );
+
+  const nextAvailableField = useMemo(
+    () =>
+      filterFields.find((f) => !(f.single && takenSingleFields.has(f.value))),
+    [filterFields, takenSingleFields],
+  );
+
   const handleAddRow = useCallback(() => {
-    setRows((prev) => [...prev, { ...defaultRow }]);
-  }, [defaultRow]);
+    if (!nextAvailableField) return;
+    setRows((prev) => [
+      ...prev,
+      {
+        field: nextAvailableField.value,
+        operator: nextAvailableField.type === "enum" ? "is" : "contains",
+        value: nextAvailableField.type === "enum" ? [] : "",
+      },
+    ]);
+  }, [nextAvailableField]);
 
   const handleUpdateRow = useCallback((index, newRow) => {
     setRows((prev) => prev.map((r, i) => (i === index ? newRow : r)));
@@ -1442,6 +1546,7 @@ const FilterPanel = ({
 
   const handleClear = useCallback(() => {
     setRows([{ ...defaultRow }]);
+    lastAppliedRef.current = serializeFilters(null);
     onApply(null);
     onClose();
   }, [defaultRow, onApply, onClose]);
@@ -1464,8 +1569,8 @@ const FilterPanel = ({
       open={open}
       anchorEl={anchorEl}
       onClose={onClose}
-      anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-      transformOrigin={{ vertical: "top", horizontal: "left" }}
+      anchorOrigin={{ vertical: "bottom", horizontal: popoverEdge }}
+      transformOrigin={{ vertical: "top", horizontal: popoverEdge }}
       slotProps={{
         paper: {
           sx: {
@@ -1479,53 +1584,55 @@ const FilterPanel = ({
     >
       <Stack spacing={1}>
         {/* AI filter input */}
-        <TextField
-          size="small"
-          placeholder={aiLoading ? "Parsing with AI..." : aiPlaceholder}
-          value={aiQuery}
-          onChange={(e) => setAiQuery(e.target.value)}
-          disabled={aiLoading}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleAiFilter();
-          }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify
-                  icon={aiLoading ? "mdi:loading" : "mdi:creation"}
-                  width={16}
-                  sx={{
-                    color: "primary.main",
-                    ...(aiLoading
-                      ? {
-                          animation: "spin 1s linear infinite",
-                          "@keyframes spin": {
-                            from: { transform: "rotate(0deg)" },
-                            to: { transform: "rotate(360deg)" },
-                          },
-                        }
-                      : {}),
-                  }}
-                />
-              </InputAdornment>
-            ),
-            endAdornment:
-              aiQuery.trim() && !aiLoading ? (
-                <InputAdornment position="end">
-                  <IconButton
-                    size="small"
-                    onClick={handleAiFilter}
-                    sx={{ p: 0.25 }}
-                  >
-                    <Iconify icon="mdi:arrow-right" width={16} />
-                  </IconButton>
+        {!basicOnly && (
+          <TextField
+            size="small"
+            placeholder={aiLoading ? "Parsing with AI..." : aiPlaceholder}
+            value={aiQuery}
+            onChange={(e) => setAiQuery(e.target.value)}
+            disabled={aiLoading}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAiFilter();
+            }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify
+                    icon={aiLoading ? "mdi:loading" : "mdi:creation"}
+                    width={16}
+                    sx={{
+                      color: "primary.main",
+                      ...(aiLoading
+                        ? {
+                            animation: "spin 1s linear infinite",
+                            "@keyframes spin": {
+                              from: { transform: "rotate(0deg)" },
+                              to: { transform: "rotate(360deg)" },
+                            },
+                          }
+                        : {}),
+                    }}
+                  />
                 </InputAdornment>
-              ) : null,
-            sx: { fontSize: 13, height: 32 },
-          }}
-          fullWidth
-        />
-        {aiError && (
+              ),
+              endAdornment:
+                aiQuery.trim() && !aiLoading ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      onClick={handleAiFilter}
+                      sx={{ p: 0.25 }}
+                    >
+                      <Iconify icon="mdi:arrow-right" width={16} />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              sx: { fontSize: 13, height: 32 },
+            }}
+            fullWidth
+          />
+        )}
+        {!basicOnly && aiError && (
           <Typography
             variant="caption"
             sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
@@ -1535,42 +1642,46 @@ const FilterPanel = ({
         )}
 
         {/* Tabs */}
-        <Tabs
-          value={activeTab}
-          onChange={(_, v) => setActiveTab(v)}
-          sx={{
-            minHeight: 28,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            "& .MuiTab-root": {
+        {!basicOnly && (
+          <Tabs
+            value={activeTab}
+            onChange={(_, v) => setActiveTab(v)}
+            sx={{
               minHeight: 28,
-              py: 0.5,
-              px: 1,
-              textTransform: "none",
-              fontSize: 13,
-              fontWeight: 500,
-              minWidth: 0,
-            },
-          }}
-        >
-          <Tab value="basic" label="Basic" />
-          <Tab value="query" label="Query" />
-        </Tabs>
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              "& .MuiTab-root": {
+                minHeight: 28,
+                py: 0.5,
+                px: 1,
+                textTransform: "none",
+                fontSize: 13,
+                fontWeight: 500,
+                minWidth: 0,
+              },
+            }}
+          >
+            <Tab value="basic" label="Basic" />
+            <Tab value="query" label="Query" />
+          </Tabs>
+        )}
 
         {activeTab === "basic" ? (
           <>
-            <Typography
-              variant="caption"
-              sx={{
-                color: "text.secondary",
-                fontSize: 11,
-                textTransform: "uppercase",
-                letterSpacing: "0.5px",
-                px: 0.5,
-              }}
-            >
-              Basic Filter
-            </Typography>
+            {!basicOnly && (
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "text.secondary",
+                  fontSize: 11,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                  px: 0.5,
+                }}
+              >
+                Basic Filter
+              </Typography>
+            )}
             <Stack spacing={0.75}>
               {rows.map((row, i) => (
                 <FilterRow
@@ -1581,6 +1692,7 @@ const FilterPanel = ({
                   fieldMap={fieldMap}
                   onChange={handleUpdateRow}
                   onRemove={handleRemoveRow}
+                  takenSingleFields={takenSingleFields}
                 />
               ))}
             </Stack>
@@ -1593,6 +1705,7 @@ const FilterPanel = ({
                 size="small"
                 startIcon={<Iconify icon="mingcute:add-line" width={14} />}
                 onClick={handleAddRow}
+                disabled={!nextAvailableField}
                 sx={{ textTransform: "none", fontSize: 12, fontWeight: 500 }}
               >
                 Add filter
@@ -1659,6 +1772,8 @@ FilterPanel.propTypes = {
       label: PropTypes.string.isRequired,
       type: PropTypes.oneOf(["string", "enum"]).isRequired,
       choices: PropTypes.arrayOf(PropTypes.string),
+      // {choiceValue: humanLabel} — when set, the UI shows only the label.
+      choiceLabels: PropTypes.object,
     }),
   ).isRequired,
   currentFilters: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
@@ -1667,6 +1782,8 @@ FilterPanel.propTypes = {
   width: PropTypes.number,
   projectId: PropTypes.string,
   source: PropTypes.string,
+  basicOnly: PropTypes.bool,
+  placement: PropTypes.oneOf(["bottom-start", "bottom-end"]),
 };
 
 export { QueryInput };

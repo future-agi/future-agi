@@ -5,6 +5,7 @@ import string
 
 import requests
 import structlog
+from disposable_email_domains import blocklist as DISPOSABLE_EMAIL_DOMAINS
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
@@ -154,6 +155,31 @@ def generate_password(
     return "".join(password)
 
 
+WORK_EMAIL_REQUIRED_MESSAGE = "Please sign up with your work email address."
+
+
+class WorkEmailRequired(Exception):
+    """Raised when a managed-cloud signup uses a free email provider."""
+
+    def __init__(self, message=WORK_EMAIL_REQUIRED_MESSAGE):
+        super().__init__(message)
+
+
+def is_disposable_email_domain(domain):
+    """True if the domain, or any parent of it, is a known throwaway provider.
+
+    Walks the suffixes so a single blocklist entry also covers a provider's
+    subdomains -- Mailinator hands out `anything.mailinator.com`, and an exact
+    match on `mailinator.com` would miss every one of them. The bare TLD is
+    never tested, so a stray entry there can't take out a whole namespace.
+    """
+    domain_parts = domain.split(".")
+    for i in range(len(domain_parts) - 1):
+        if ".".join(domain_parts[i:]) in DISPOSABLE_EMAIL_DOMAINS:
+            return True
+    return False
+
+
 def is_work_email(email):
     """
     Returns True if the email appears to be a work email,
@@ -175,6 +201,24 @@ def is_work_email(email):
         "live.com",
         "msn.com",
         "yahoo.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "protonmail.com",
+        "proton.me",
+        "zoho.com",
+        "yandex.com",
+        "mail.com",
+        "gmx.com",
+        "rediffmail.com",
+        "qq.com",
+        "foxmail.com",
+        "rocketmail.com",
+        "yandex.ru",
+        "mailinator.com",
+        "yopmail.com",
+        "web-library.net",
+        "example.com",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
@@ -193,8 +237,10 @@ def is_work_email(email):
     # Extract the domain part from the email
     domain = email.split("@")[-1]
 
-    # Return False if the domain is in the free domains list
-    return domain not in free_domains
+    if domain in free_domains:
+        return False
+
+    return not is_disposable_email_domain(domain)
 
 
 def first_signup(data, mode=None):
@@ -222,13 +268,15 @@ def first_signup(data, mode=None):
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    from tfc.ee_gating import is_oss
-
+    # Only managed cloud requires a work address. A self-hosted install — EE
+    # licensed or not — is run by people signing up on whatever address they
+    # have, and the operator already controls who can reach the instance.
+    is_cloud = settings.CLOUD_DEPLOYMENT in ("US", "EU", "DEV")
     allow_any_email = (
-        os.getenv("ALLOW_ANY_EMAIL", "true" if is_oss() else "false").lower() == "true"
+        os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
     )
     if not allow_any_email and not is_work_email(data.get("email")):
-        raise Exception("Provided Email is not work email")
+        raise WorkEmailRequired()
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():

@@ -68,6 +68,24 @@ services:
     <<: *dev-worker
     profiles: !reset []
 
+  # SDK-bearing image (can't reuse *dev-worker); built from the local wheel via
+  # Dockerfile.simulation-runner.dev FROM futureagi/future-agi:dev (backend first).
+  worker-simulation-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulation-runner.dev
+      args:
+        BACKEND_IMAGE: futureagi/future-agi:dev
+    image: futureagi/future-agi-simulation-runner:dev
+    pull_policy: never
+    working_dir: /app/backend
+    volumes:
+      - ./futureagi:/app/backend
+    environment:
+      FAST_STARTUP: "true"
+      PYTHONUNBUFFERED: "1"
+    profiles: !reset []
+
   postgres:
     ports: !override
       - "${PG_PORT:-5432}:5432"

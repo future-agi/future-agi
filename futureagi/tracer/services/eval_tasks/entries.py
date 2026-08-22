@@ -243,24 +243,22 @@ def _resolve_entry_fks(
     for start in range(0, len(ids), _FK_CHUNK):
         chunk = ids[start : start + _FK_CHUNK]
         if row_type == RowType.TRACES:
-            # Only root.id is used below, so skip the fat JSON columns.
             roots = reader.list_root_spans_by_trace_ids(
-                chunk, include_heavy=False, project_id=project_id
+                chunk, project_id=project_id, columns=["id", "trace_id"]
             )
             fks.update(
                 {
-                    trace_id: {"observation_span_id": root.id, "trace_id": trace_id}
+                    trace_id: {"observation_span_id": root["id"], "trace_id": trace_id}
                     for trace_id, root in roots.items()
                 }
             )
         else:
-            # SPANS / VOICE_CALLS: only id + trace_id are used.
             spans = reader.list_by_ids(
-                chunk, include_heavy=False, project_id=project_id
+                chunk, project_id=project_id, columns=["id", "trace_id"]
             )
             fks.update(
                 {
-                    s.id: {"observation_span_id": s.id, "trace_id": s.trace_id}
+                    s["id"]: {"observation_span_id": s["id"], "trace_id": s["trace_id"]}
                     for s in spans
                 }
             )

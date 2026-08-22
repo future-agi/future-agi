@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from ee.licensing.activation_client import ManagedServiceError
-from ee.licensing.managed_ai import chat_completion
+from ee.licensing.managed_ai import chat_completion, stream_chat_completion
 
 
 def _ok_response(payload=None):
@@ -46,8 +46,10 @@ class TestCloudTransport:
             )
 
         assert result["choices"][0]["message"]["content"] == "ok"
-        url = mock_post.call_args.args[0] if mock_post.call_args.args else (
-            mock_post.call_args.kwargs["url"]
+        url = (
+            mock_post.call_args.args[0]
+            if mock_post.call_args.args
+            else (mock_post.call_args.kwargs["url"])
         )
         assert url == "http://agentcc-gateway:8080/v1/chat/completions"
         headers = mock_post.call_args.kwargs["headers"]
@@ -94,9 +96,7 @@ class TestCloudTransport:
             (500, "SERVICE_ERROR"),
         ],
     )
-    def test_cloud_maps_gateway_status_to_typed_error(
-        self, status_code, expected_code
-    ):
+    def test_cloud_maps_gateway_status_to_typed_error(self, status_code, expected_code):
         response = MagicMock(status_code=status_code)
         with (
             patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
@@ -158,6 +158,71 @@ class TestCloudTransport:
         assert exc.value.code == expected_code
 
 
+class TestCloudStreamTransport:
+    @pytest.mark.asyncio
+    async def test_cloud_stream_uses_internal_key_without_activation(self):
+        chunks = [{"choices": [{"delta": {"content": "falcon"}}]}]
+
+        async def dispatch(**kwargs):
+            assert kwargs["url"] == ("http://agentcc-gateway:8080/v1/chat/completions")
+            assert kwargs["api_key"] == "internal-key"
+            for chunk in chunks:
+                yield chunk
+
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch(
+                "ee.usage.services.gateway_llm_client._get_setting",
+                side_effect=_internal_setting,
+            ),
+            patch(
+                "ee.licensing.managed_ai.dispatch_managed_stream",
+                new=dispatch,
+            ),
+            patch(
+                "ee.licensing.managed_ai.stream_managed_service"
+            ) as activation_stream,
+        ):
+            result = [
+                chunk
+                async for chunk in stream_chat_completion(
+                    {"model": "falcon_ai", "messages": [], "stream": True}
+                )
+            ]
+
+        assert result == chunks
+        activation_stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_self_hosted_stream_uses_activation_transport(self):
+        chunks = [{"choices": [{"delta": {"content": "ee"}}]}]
+
+        async def activation_stream(*, json_body):
+            assert json_body["model"] == "falcon_ai"
+            for chunk in chunks:
+                yield chunk
+
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch(
+                "ee.licensing.managed_ai.stream_managed_service",
+                new=activation_stream,
+            ),
+            patch(
+                "ee.usage.services.gateway_llm_client._get_setting"
+            ) as internal_setting,
+        ):
+            result = [
+                chunk
+                async for chunk in stream_chat_completion(
+                    {"model": "falcon_ai", "messages": [], "stream": True}
+                )
+            ]
+
+        assert result == chunks
+        internal_setting.assert_not_called()
+
+
 class TestSelfHostedTransport:
     def test_ee_uses_activation_flow(self):
         expected = {"choices": [{"message": {"content": "ee"}}]}
@@ -197,7 +262,13 @@ _INTERNAL = {
 
 # Every managed-model shape is_managed_model() recognises. If someone adds a
 # new managed prefix, add it here so the cloud guard covers it too.
-_MANAGED_MODELS = ["falcon_ai", "turing_small", "turing_large", "protect", "protect_flash"]
+_MANAGED_MODELS = [
+    "falcon_ai",
+    "turing_small",
+    "turing_large",
+    "protect",
+    "protect_flash",
+]
 
 
 def _internal_setting(name, default=""):
@@ -226,15 +297,17 @@ class TestCloudActivationGuard:
                 side_effect=_internal_setting,
             ),
             patch("httpx.post", return_value=_ok_response()) as mock_post,
-            patch(
-                "ee.licensing.activation_client.get_service_token"
-            ) as mock_get_token,
+            patch("ee.licensing.activation_client.get_service_token") as mock_get_token,
             patch("ee.licensing.activation_client._activate") as mock_activate,
         ):
-            chat_completion({"model": model, "messages": [{"role": "user", "content": "x"}]})
+            chat_completion(
+                {"model": model, "messages": [{"role": "user", "content": "x"}]}
+            )
 
         # Routed to the internal gateway with the internal key…
-        assert _posted_url(mock_post) == "http://agentcc-gateway:8080/v1/chat/completions"
+        assert (
+            _posted_url(mock_post) == "http://agentcc-gateway:8080/v1/chat/completions"
+        )
         assert _posted_auth(mock_post) == "Bearer internal-key"
         # …and the activation exchange was never touched.
         mock_get_token.assert_not_called()
@@ -252,9 +325,7 @@ class TestEeActivationGuard:
                 "ee.licensing.managed_ai.call_managed_service",
                 return_value={"choices": [{"message": {"content": "ee"}}]},
             ) as mock_activation,
-            patch(
-                "ee.usage.services.gateway_llm_client._get_setting"
-            ) as mock_setting,
+            patch("ee.usage.services.gateway_llm_client._get_setting") as mock_setting,
             patch("httpx.post") as mock_post,
         ):
             chat_completion({"model": model, "messages": []})
@@ -293,6 +364,20 @@ class TestManagedClientsCloudEndToEnd:
     async def test_falcon_client_on_cloud_uses_internal_gateway(self):
         from ee.falcon_ai.llm_client import FalconLLMClient
 
+        dispatch_calls = []
+
+        async def dispatch(**kwargs):
+            dispatch_calls.append(kwargs)
+            yield {
+                "choices": [
+                    {
+                        "delta": {"content": "falcon"},
+                        "finish_reason": None,
+                    }
+                ]
+            }
+            yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
         with (
             patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
             patch(
@@ -300,14 +385,10 @@ class TestManagedClientsCloudEndToEnd:
                 side_effect=_internal_setting,
             ),
             patch(
-                "httpx.post",
-                return_value=_ok_response(
-                    {"choices": [{"message": {"content": "falcon"}}], "usage": {}}
-                ),
-            ) as mock_post,
-            patch(
-                "ee.licensing.activation_client.get_service_token"
-            ) as mock_get_token,
+                "ee.licensing.managed_ai.dispatch_managed_stream",
+                new=dispatch,
+            ),
+            patch("ee.licensing.activation_client.get_service_token") as mock_get_token,
         ):
             client = FalconLLMClient()
             assert client.use_managed_gateway is True
@@ -318,11 +399,11 @@ class TestManagedClientsCloudEndToEnd:
                 )
             ]
 
-        assert any(
-            c["choices"][0]["delta"].get("content") == "falcon" for c in chunks
+        assert any(c["choices"][0]["delta"].get("content") == "falcon" for c in chunks)
+        assert dispatch_calls[0]["url"] == (
+            "http://agentcc-gateway:8080/v1/chat/completions"
         )
-        assert _posted_url(mock_post) == "http://agentcc-gateway:8080/v1/chat/completions"
-        assert _posted_auth(mock_post) == "Bearer internal-key"
+        assert dispatch_calls[0]["api_key"] == "internal-key"
         mock_get_token.assert_not_called()
 
     def test_turing_client_on_cloud_uses_internal_gateway(self):
@@ -339,13 +420,15 @@ class TestManagedClientsCloudEndToEnd:
                 return_value=_ok_response(
                     {
                         "choices": [{"message": {"content": "turing"}}],
-                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                        "usage": {
+                            "prompt_tokens": 1,
+                            "completion_tokens": 1,
+                            "total_tokens": 2,
+                        },
                     }
                 ),
             ) as mock_post,
-            patch(
-                "ee.licensing.activation_client.get_service_token"
-            ) as mock_get_token,
+            patch("ee.licensing.activation_client.get_service_token") as mock_get_token,
         ):
             result = TuringClient().chat_completion(
                 model="turing_small",
@@ -353,6 +436,8 @@ class TestManagedClientsCloudEndToEnd:
             )
 
         assert result == "turing"
-        assert _posted_url(mock_post) == "http://agentcc-gateway:8080/v1/chat/completions"
+        assert (
+            _posted_url(mock_post) == "http://agentcc-gateway:8080/v1/chat/completions"
+        )
         assert _posted_auth(mock_post) == "Bearer internal-key"
         mock_get_token.assert_not_called()

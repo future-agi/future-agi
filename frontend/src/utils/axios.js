@@ -1505,6 +1505,9 @@ export const endpoints = {
   runTests: {
     list: apiPath("/simulate/run-tests/"),
     create: apiPath("/simulate/run-tests/create/"),
+    validateLiveKitCredentials: apiPath(
+      "/simulate/api/livekit/validate-credentials/",
+    ),
     detail: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/", { run_test_id: id }),
     detailExecutions: (id) =>

@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -757,9 +758,30 @@ type AuditSinkConfig struct {
 type OTelConfig struct {
 	Enabled     bool              `yaml:"enabled" json:"enabled"`
 	ServiceName string            `yaml:"service_name" json:"service_name"`
-	Exporter    string            `yaml:"exporter" json:"exporter"` // "stdout"
+	Exporter    string            `yaml:"exporter" json:"exporter"` // "stdout" | "otlp"
 	SampleRate  float64           `yaml:"sample_rate" json:"sample_rate"`
 	Attributes  map[string]string `yaml:"attributes" json:"attributes"`
+
+	// Endpoint is the OTLP collector base URL, e.g. "http://otel-collector:4318".
+	// Required when Exporter is "otlp". "/v1/traces" is appended when the URL
+	// carries no path of its own.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+
+	// Protocol selects the OTLP transport. Only "http/protobuf" is supported;
+	// empty means "http/protobuf".
+	Protocol string `yaml:"protocol" json:"protocol"`
+
+	// Headers are sent on every OTLP request. Hosted collectors authenticate
+	// this way, so write credentials as ${VAR} and keep them in the
+	// environment rather than in this file.
+	Headers map[string]string `yaml:"headers" json:"-"`
+
+	// IncludeBodies attaches the prompt and completion to each span. Off by
+	// default: it sends user content to the collector, and it is a separate
+	// decision from logging.request_logging.include_bodies because the two
+	// go to different places and are signed off separately. Content is
+	// redacted with the org's privacy config exactly as the request log is.
+	IncludeBodies bool `yaml:"include_bodies" json:"include_bodies"`
 }
 
 // PrometheusConfig controls the Prometheus metrics endpoint.
@@ -1096,7 +1118,52 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
 	}
 
+	if err := c.validateOTel(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateOTel checks the OTLP exporter settings. Misconfiguration here is
+// caught at startup rather than silently degrading to stdout, because a
+// collector that never receives spans looks identical to a quiet gateway.
+func (c *Config) validateOTel() error {
+	if !c.OTel.Enabled {
+		return nil
+	}
+	if strings.ToLower(c.OTel.Exporter) != "otlp" {
+		return nil
+	}
+	if c.OTel.Endpoint == "" {
+		return fmt.Errorf("otel.endpoint is required when otel.exporter is %q", "otlp")
+	}
+	u, err := url.Parse(c.OTel.Endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("otel.endpoint must be an absolute http(s) URL, got %q", c.OTel.Endpoint)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("otel.endpoint scheme must be http or https, got %q", u.Scheme)
+	}
+	// An empty header value is almost always an unset ${VAR}. Sending it
+	// blindly means the collector 401s and every span is silently discarded,
+	// which is indistinguishable from a gateway with no traffic.
+	for k, v := range c.OTel.Headers {
+		if k == "" {
+			return fmt.Errorf("otel.headers has an entry with an empty name")
+		}
+		if v == "" {
+			return fmt.Errorf("otel.headers[%q] is empty; if it references an environment variable, that variable is not set", k)
+		}
+	}
+	switch strings.ToLower(c.OTel.Protocol) {
+	case "", "http/protobuf":
+		return nil
+	case "grpc", "http/json":
+		return fmt.Errorf("otel.protocol %q is not supported; use \"http/protobuf\"", c.OTel.Protocol)
+	default:
+		return fmt.Errorf("otel.protocol must be \"http/protobuf\", got %q", c.OTel.Protocol)
+	}
 }
 
 func (c *Config) validateLicenseAuth() error {

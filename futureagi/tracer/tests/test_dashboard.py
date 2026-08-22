@@ -1603,6 +1603,85 @@ class TestDashboardQueryBuilder:
         assert "lower(e.eval_output_str) IN ('passed', 'pass', 'true', '1')" in sql
         assert "sum(e.eval_score)" not in sql
 
+    def test_eval_metric_avg_keeps_structured_score_rows(self):
+        """A structured output is not numeric text, so the numeric-detection
+        branch must accept the nested score or every such row is NULLed out.
+        """
+        config = {
+            "project_ids": ["proj1"],
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "e2",
+                    "name": "conversation_hallucination",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "aggregation": "avg",
+                }
+            ],
+        }
+        builder = DashboardQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        assert (
+            "JSONType(e.eval_output_str, 'score') IN ('Double', 'Int64', 'UInt64')"
+            in sql
+        )
+
+    def test_pass_fail_paths_render_one_shared_predicate(self):
+        """The time-series predicate is unchanged to the byte, and the breakdown
+        label and the eval filter now render it instead of a 'Passed' literal.
+        """
+        eval_id = str(uuid.uuid4())
+        metric = {
+            "id": "e_pf",
+            "name": "pass_fail_eval",
+            "type": "eval_metric",
+            "config_id": eval_id,
+            "output_type": "PASS_FAIL",
+            "aggregation": "pass_rate",
+        }
+        builder = DashboardQueryBuilder(
+            {
+                "project_ids": ["proj1"],
+                "organization_id": str(uuid.uuid4()),
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [metric],
+                "breakdowns": [metric],
+            }
+        )
+
+        sql, _, _ = builder.build_all_queries()[0]
+        breakdown_expr = builder._resolve_all_breakdowns({})[0]["expr"]
+        filter_clauses, _ = builder._build_subquery_filters(
+            [
+                {
+                    "metric_type": "eval_metric",
+                    "metric_name": eval_id,
+                    "output_type": "PASS_FAIL",
+                    "operator": "equal_to",
+                    "value": 1.0,
+                }
+            ],
+            {},
+            "f_",
+        )
+
+        assert (
+            "(e.eval_score >= 1.0 OR lower(e.eval_output_str) IN "
+            "('passed', 'pass', 'true', '1'))" in sql
+        ), "the time-series pass predicate must render exactly as it did before"
+        assert (
+            "(ev0.eval_score >= 1.0 OR lower(ev0.eval_output_str) IN "
+            "('passed', 'pass', 'true', '1'))" in breakdown_expr
+        ), "the PASS_FAIL breakdown label must not read a structured row as Fail"
+        assert (
+            "(eval_score >= 1.0 OR lower(eval_output_str) IN "
+            "('passed', 'pass', 'true', '1'))" in filter_clauses[0]
+        ), "the PASS_FAIL eval filter must select what the widget labels Pass"
+
     def test_eval_metric_combines_project_and_dataset_breakdowns(self):
         config = {
             "project_ids": ["proj1"],

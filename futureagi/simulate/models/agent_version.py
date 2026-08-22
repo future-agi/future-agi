@@ -178,19 +178,24 @@ class AgentVersion(BaseModel):
         livekit_max_concurrency = settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
         try:
             creds = self.credentials
-            if creds and creds.provider_type == "livekit":
-                livekit_url = creds.server_url or ""
-                livekit_agent_name = creds.agent_name or ""
-                livekit_config_json = creds.config_json
+            if creds:
+                # Concurrency applies to every provider (livekit / vapi /
+                # retell), so the snapshot mirrors the live credential column
+                # regardless of provider — the runner reads it generically.
                 livekit_max_concurrency = (
                     creds.max_concurrency
                     or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
+                if creds.provider_type == "livekit":
+                    livekit_url = creds.server_url or ""
+                    livekit_agent_name = creds.agent_name or ""
+                    livekit_config_json = creds.config_json
         except AgentVersion.credentials.RelatedObjectDoesNotExist:
             pass
 
         schema = AgentConfigurationSnapshot(
             inbound=agent.inbound,
+            target_speaks_first=agent.target_speaks_first,
             language=agent.language,
             languages=agent.languages or [],
             provider=agent.provider,

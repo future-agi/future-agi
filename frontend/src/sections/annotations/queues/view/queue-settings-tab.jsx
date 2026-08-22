@@ -23,8 +23,11 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { LoadingButton } from "@mui/lab";
 import { Controller, useForm, FormProvider } from "react-hook-form";
+import Iconify from "src/components/iconify";
 import {
+  useArchiveAnnotationQueue,
   useHardDeleteAnnotationQueue,
   useUpdateAnnotationQueue,
   useUpdateAnnotationQueueStatus,
@@ -78,11 +81,20 @@ const RESERVATION_TIMEOUT_OPTIONS = [
 ];
 
 export default function QueueSettingsTab({ queue, queueId, creatorId }) {
+  const navigate = useNavigate();
   const { mutate: updateQueue, isPending: isUpdating } =
     useUpdateAnnotationQueue();
   const { mutate: updateStatus, isPending: isStatusUpdating } =
     useUpdateAnnotationQueueStatus();
+  const { mutate: archiveQueue, isPending: isArchiving } =
+    useArchiveAnnotationQueue();
   const isPending = isUpdating || isStatusUpdating;
+
+
+  const handleArchive = () => {
+    navigate("/dashboard/annotations/queues");
+    archiveQueue(queueId);
+  };
 
   const methods = useForm({
     defaultValues: {
@@ -494,7 +506,24 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
           </Card>
 
           {/* Save */}
-          <Box sx={{ display: "flex", justifyContent: "flex-end", pb: 3 }}>
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 2,
+              pb: 3,
+            }}
+          >
+            <LoadingButton
+              type="button"
+              variant="outlined"
+              color="error"
+              loading={isArchiving}
+              startIcon={<Iconify icon="solar:archive-down-bold" />}
+              onClick={handleArchive}
+            >
+              Archive Queue
+            </LoadingButton>
             <Button
               type="submit"
               variant="contained"

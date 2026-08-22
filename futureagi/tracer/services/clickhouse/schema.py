@@ -34,6 +34,11 @@ from __future__ import annotations
 import os
 import re
 
+from tracer.services.clickhouse.eval_expressions import (
+    EVAL_STRUCTURED_SCORE_KEY,
+    eval_has_structured_score,
+)
+
 # Resolve the configured CH database name for use in DDL templates.
 # Falls back to "futureagi" which is the production default.
 _CH_DATABASE = os.getenv("CH_DATABASE", "futureagi")
@@ -1726,6 +1731,17 @@ WHERE c._peerdb_is_deleted = 0;
 #   simulation, SDK, playground) writes here with source_id = eval_template_id.
 # ---------------------------------------------------------------------------
 
+# Comma-joined JSON arguments, not a path: spliced into JSONExtract*(...) calls.
+EVAL_OUTPUT_JSON_ARGS = "JSONExtractString(config), 'output', 'output'"
+
+CH_EVAL_SCORE_EXPR = (
+    f"if({eval_has_structured_score(EVAL_OUTPUT_JSON_ARGS)}, "
+    f"JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS}, '{EVAL_STRUCTURED_SCORE_KEY}'), "
+    f"JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS}))"
+)
+
+CH_EVAL_OUTPUT_STR_EXPR = f"JSONExtractString({EVAL_OUTPUT_JSON_ARGS})"
+
 CDC_USAGE_APICALLLOG = """
 CREATE TABLE IF NOT EXISTS usage_apicalllog (
     id Int64,
@@ -1749,8 +1765,9 @@ CREATE TABLE IF NOT EXISTS usage_apicalllog (
 
     -- Materialized columns: pre-extracted from config JSON at insert time.
     -- Config is double-encoded (JSONB string), so JSONExtractString unwraps first.
-    eval_score Float64 MATERIALIZED JSONExtractFloat(JSONExtractString(config), 'output', 'output'),
-    eval_output_str String MATERIALIZED JSONExtractString(JSONExtractString(config), 'output', 'output'),
+    -- The two placeholders below are substituted from the CH_EVAL_* constants.
+    eval_score Float64 MATERIALIZED __CH_EVAL_SCORE_EXPR__,
+    eval_output_str String MATERIALIZED __CH_EVAL_OUTPUT_STR_EXPR__,
     eval_trace_id String MATERIALIZED JSONExtractString(JSONExtractString(config), 'trace_id'),
     eval_dataset_id String MATERIALIZED JSONExtractString(JSONExtractString(config), 'dataset_id'),
 
@@ -1785,7 +1802,9 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/usage_apicalll
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (organization_id, source_id, created_at, id)
 SETTINGS index_granularity = 8192;
-"""
+""".replace("__CH_EVAL_SCORE_EXPR__", CH_EVAL_SCORE_EXPR).replace(
+    "__CH_EVAL_OUTPUT_STR_EXPR__", CH_EVAL_OUTPUT_STR_EXPR
+)
 
 # ============================================================================
 # Ordered list of all DDL statements
@@ -1896,11 +1915,16 @@ SCHEMA_DDL_STATEMENTS: list[tuple[str, str]] = [
 # that PeerDB may recreate without them during RESYNC operations.
 POST_DDL_ALTERS: list[str] = [
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_score Float64 MATERIALIZED "
-    "JSONExtractFloat(JSONExtractString(config), 'output', 'output')",
+    f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
+    # ADD COLUMN IF NOT EXISTS no-ops once the column exists, so a deployed
+    # table keeps its old expression until MODIFYed.
+    "ALTER TABLE usage_apicalllog MODIFY COLUMN "
+    f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
+    # Restores idx_eval_score if a backfill run died between its DROP and ADD.
+    "ALTER TABLE usage_apicalllog ADD INDEX IF NOT EXISTS "
+    "idx_eval_score eval_score TYPE minmax GRANULARITY 1",
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_output_str String MATERIALIZED "
-    "JSONExtractString(JSONExtractString(config), 'output', 'output')",
+    f"eval_output_str String MATERIALIZED {CH_EVAL_OUTPUT_STR_EXPR}",
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
     "eval_trace_id String MATERIALIZED "
     "JSONExtractString(JSONExtractString(config), 'trace_id')",

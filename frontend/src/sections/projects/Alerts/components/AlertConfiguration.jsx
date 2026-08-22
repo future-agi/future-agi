@@ -162,14 +162,20 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
               },
             ];
 
-        chartConfig = getSimpleLineChartConfig(fetchedData?.data, {
-          seriesName: _.startCase(_.toLower(alertType)),
-          thresholds,
-        });
+        chartConfig = getSimpleLineChartConfig(
+          fetchedData?.data,
+          {
+            seriesName: _.startCase(_.toLower(alertType)),
+            thresholds,
+          },
+          { isDark },
+        );
       } else if (selectedThresHoldType === "percentage_change") {
-        chartConfig = getCompareChartConfig(fetchedData?.data, {
-          seriesName: _.startCase(_.toLower(alertType)),
-        });
+        chartConfig = getCompareChartConfig(
+          fetchedData?.data,
+          { seriesName: _.startCase(_.toLower(alertType)) },
+          { isDark },
+        );
       }
 
       if (chartConfig) {
@@ -199,6 +205,7 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
     thresholdOperator,
     warningValue,
     criticalValue,
+    isDark,
   ]);
 
   // Render chart with proper loading states

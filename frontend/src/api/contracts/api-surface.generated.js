@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 978,
+  "endpointCount": 984,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -2249,6 +2249,24 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/api/agent-prompt-optimiser/{id}/trial/{trial_id}/scenarios/": [
         "get"
+      ],
+      "/simulate/api/alk-simulate/call-executions/{call_execution_id}/recording/": [
+        "post"
+      ],
+      "/simulate/api/alk-simulate/call-executions/{call_execution_id}/result/": [
+        "patch"
+      ],
+      "/simulate/api/alk-simulate/call-executions/{call_execution_id}/status/": [
+        "patch"
+      ],
+      "/simulate/api/alk-simulate/run-tests/provision/": [
+        "post"
+      ],
+      "/simulate/api/alk-simulate/run-tests/{run_test_id}/test-executions/": [
+        "post"
+      ],
+      "/simulate/api/alk-simulate/test-executions/{test_execution_id}/batch/": [
+        "post"
       ],
       "/simulate/api/call-executions/": [
         "get"
@@ -5541,6 +5559,24 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/agent-prompt-optimiser/{id}/trial/{trial_id}/scenarios/": [
     "get"
+  ],
+  "/simulate/api/alk-simulate/call-executions/{call_execution_id}/recording/": [
+    "post"
+  ],
+  "/simulate/api/alk-simulate/call-executions/{call_execution_id}/result/": [
+    "patch"
+  ],
+  "/simulate/api/alk-simulate/call-executions/{call_execution_id}/status/": [
+    "patch"
+  ],
+  "/simulate/api/alk-simulate/run-tests/provision/": [
+    "post"
+  ],
+  "/simulate/api/alk-simulate/run-tests/{run_test_id}/test-executions/": [
+    "post"
+  ],
+  "/simulate/api/alk-simulate/test-executions/{test_execution_id}/batch/": [
+    "post"
   ],
   "/simulate/api/call-executions/": [
     "get"

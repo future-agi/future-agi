@@ -72,6 +72,87 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "otlp exporter without endpoint",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "otlp exporter with endpoint",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "http://otel-collector:4318"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "otlp exporter with explicit http/protobuf",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "http://otel-collector:4318", Protocol: "http/protobuf"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "otlp headers accepted",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "http://otel-collector:4318",
+					Headers: map[string]string{"X-Api-Key": "k"}}
+			},
+			wantErr: false,
+		},
+		{
+			// An unset ${VAR} expands to empty; sending it means a 401 and every
+			// span silently discarded, which looks exactly like an idle gateway.
+			name: "otlp header with an empty value is rejected",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "http://otel-collector:4318",
+					Headers: map[string]string{"X-Api-Key": ""}}
+			},
+			wantErr: true,
+		},
+		{
+			name: "otlp exporter rejects grpc protocol",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "http://otel-collector:4318", Protocol: "grpc"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "otlp exporter rejects http/json protocol",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "http://otel-collector:4318", Protocol: "http/json"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "otlp endpoint must carry a scheme",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "otel-collector:4318"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "otlp endpoint rejects non-http scheme",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "grpc://otel-collector:4317"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "stdout exporter needs no endpoint",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: true, Exporter: "stdout"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "disabled otel is not validated",
+			modify: func(c *Config) {
+				c.OTel = OTelConfig{Enabled: false, Exporter: "otlp", Protocol: "grpc"}
+			},
+			wantErr: false,
+		},
+		{
 			name: "license auth requires key",
 			modify: func(c *Config) {
 				c.LicenseAuth.Enabled = true
@@ -180,6 +261,58 @@ providers:
 		if p.APIKey != "sk-test" {
 			t.Errorf("api_key = %q", p.APIKey)
 		}
+	}
+}
+
+// TestLoadOTelFromFile pins the YAML key names the shipped starter config uses.
+// A silent rename here means a customer's collector never receives a span.
+func TestLoadOTelFromFile(t *testing.T) {
+	content := `
+otel:
+  enabled: true
+  service_name: "agentcc-gateway-stage"
+  exporter: "otlp"
+  endpoint: "${TEST_OTLP_ENDPOINT}"
+  protocol: "http/protobuf"
+  sample_rate: 1.0
+  attributes:
+    deployment.environment: "stage"
+`
+	t.Setenv("TEST_OTLP_ENDPOINT", "http://otel-collector:4318")
+
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if !cfg.OTel.Enabled {
+		t.Error("otel.enabled = false, want true")
+	}
+	if cfg.OTel.Exporter != "otlp" {
+		t.Errorf("otel.exporter = %q, want otlp", cfg.OTel.Exporter)
+	}
+	// Endpoints hold secrets in some deployments, so ${VAR} must expand here
+	// exactly as it does for provider credentials.
+	if cfg.OTel.Endpoint != "http://otel-collector:4318" {
+		t.Errorf("otel.endpoint = %q, want the expanded value", cfg.OTel.Endpoint)
+	}
+	if cfg.OTel.Protocol != "http/protobuf" {
+		t.Errorf("otel.protocol = %q", cfg.OTel.Protocol)
+	}
+	if cfg.OTel.ServiceName != "agentcc-gateway-stage" {
+		t.Errorf("otel.service_name = %q", cfg.OTel.ServiceName)
+	}
+	if cfg.OTel.SampleRate != 1.0 {
+		t.Errorf("otel.sample_rate = %v, want 1.0", cfg.OTel.SampleRate)
+	}
+	if cfg.OTel.Attributes["deployment.environment"] != "stage" {
+		t.Errorf("otel.attributes = %v", cfg.OTel.Attributes)
 	}
 }
 

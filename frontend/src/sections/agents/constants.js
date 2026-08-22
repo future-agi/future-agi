@@ -32,6 +32,15 @@ export const isLiveKitProvider = (provider) =>
   provider === "livekit_bridge" || provider === "livekit";
 
 /**
+ * Providers whose simulations run cases concurrently (bounded by the target's
+ * max_concurrency). LiveKit, Vapi and Retell all run over web transports that
+ * support parallel cases; only telephony (SIP) stays serial, and that's clamped
+ * server-side. Used to surface the "Max Concurrent Sessions" field.
+ */
+export const supportsConcurrency = (provider) =>
+  isLiveKitProvider(provider) || provider === "vapi" || provider === "retell";
+
+/**
  * Canonical copy for the Inbound/Outbound call toggle. Same semantic for
  * every provider — picking the right string based on provider left the
  * three forms drifting. All three forms (vapi, retell, livekit) read
@@ -49,6 +58,50 @@ export const INBOUND_OUTBOUND_COPY = {
     tooltip: "This agent will call the simulated customers",
   },
 };
+
+/**
+ * Copy for the "does your agent speak first?" question, read by both the create
+ * and edit forms so they cannot drift apart. Drives the hosted simulator's
+ * conversation direction: on -> the simulator waits for the agent's greeting;
+ * off -> the simulator opens the conversation.
+ */
+export const TARGET_SPEAKS_FIRST_COPY = {
+  title: "Agent speaks first",
+  description:
+    "Turn on if your agent greets first. The simulator waits for it before replying.",
+  tooltip:
+    "When on, the simulator waits for your agent's greeting. When off, the simulator opens the conversation.",
+};
+
+/** How a voice test call reaches the agent. */
+export const VOICE_TRANSPORT = {
+  WEBRTC: "webrtc",
+  TELEPHONY: "telephony",
+};
+
+/**
+ * Canonical copy for the WebRTC/Telephony toggle, read by both the create and
+ * edit forms so the two cannot drift apart.
+ */
+export const VOICE_TRANSPORT_COPY = {
+  [VOICE_TRANSPORT.WEBRTC]: {
+    label: "Web",
+    title: "Web simulation (WebRTC)",
+    description: "No phone call is placed and no telephony provider is needed.",
+  },
+  [VOICE_TRANSPORT.TELEPHONY]: {
+    label: "Phone",
+    title: "Telephony simulation (PSTN)",
+    description:
+      "A real phone call is placed over PSTN — requires a configured telephony provider.",
+  },
+};
+
+/** The transport a saved agent was using, inferred from its stored number. */
+export const transportFromContactNumber = (contactNumber) =>
+  String(contactNumber ?? "").trim()
+    ? VOICE_TRANSPORT.TELEPHONY
+    : VOICE_TRANSPORT.WEBRTC;
 
 export const callStatusCellStyle = {
   "in-progress": {
@@ -97,8 +150,7 @@ export const VOICE_CHAT_PROVIDERS = [
   { label: "Vapi", value: "vapi" },
   { label: "Retell", value: "retell" },
   { label: "Bland.ai", value: "bland" },
-  // Hidden until LiveKit server stability is restored.
-  // { label: "LiveKit", value: "livekit_bridge" },
+  { label: "LiveKit", value: "livekit_bridge" },
   // { label: "ElevenLabs", value: "elevenlabs" },
   { label: "Others", value: "others" },
 ];
