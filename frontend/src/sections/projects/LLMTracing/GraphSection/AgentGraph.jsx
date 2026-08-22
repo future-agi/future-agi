@@ -28,11 +28,11 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import Dagre from "@dagrejs/dagre";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { error as errorPalette, success } from "src/theme/palette";
 import FullscreenGraphDialog from "./FullscreenGraphDialog";
+import { layoutGraph } from "./agentGraphLayout";
 
 // ---------------------------------------------------------------------------
 // Diff-overlay status (set by buildGraphDiff for the error-feed split view)
@@ -552,36 +552,6 @@ const AgentNode = ({ data }) => {
 AgentNode.propTypes = { data: PropTypes.object };
 
 const nodeTypes = { agentNode: AgentNode };
-
-// ---------------------------------------------------------------------------
-// Dagre layout — direction-aware (LR for trace list, TB for trace detail)
-// ---------------------------------------------------------------------------
-const layoutGraph = (nodes, edges, direction = "LR") => {
-  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-  g.setGraph({
-    rankdir: direction,
-    ranksep: direction === "LR" ? 80 : 50,
-    nodesep: 25,
-  });
-
-  nodes.forEach((node) => {
-    const isSentinel = node.data?.type === "start" || node.data?.type === "end";
-    g.setNode(node.id, {
-      width: isSentinel ? 50 : 140,
-      height: isSentinel ? 32 : 44,
-    });
-  });
-  edges.forEach((edge) => {
-    g.setEdge(edge.source, edge.target);
-  });
-
-  Dagre.layout(g);
-
-  return nodes.map((node) => {
-    const pos = g.node(node.id);
-    return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
-  });
-};
 
 // ---------------------------------------------------------------------------
 // Build React Flow nodes + edges from API data
