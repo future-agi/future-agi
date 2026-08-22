@@ -377,14 +377,14 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             " AND start_time < %(end_date)s + INTERVAL 1 DAY"
         )
 
-    def translate(self, filters):  # type: ignore[override]
+    def translate(self, filters, filter_combinator="and"):  # type: ignore[override]
         # `translate` returns a WHERE fragment that gets stitched into a larger
         # SELECT statement by callers. Do NOT append SETTINGS here — that
         # happens at the full-SELECT boundary in the per-builder `build()`
         # methods (SpanListQueryBuilderV2.build, TraceListQueryBuilderV2.build,
         # etc.). Otherwise we'd end up with `WHERE ... SETTINGS ... AND ...`
         # which is a syntax error.
-        sql, params = super().translate(filters)
+        sql, params = super().translate(filters, filter_combinator=filter_combinator)
         return rewrite_v1_sql_to_v2(sql), params
 
     def translate_sort(self, sort_params, *args, **kwargs):  # type: ignore[override]

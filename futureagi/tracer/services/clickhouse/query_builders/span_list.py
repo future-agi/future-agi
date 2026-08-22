@@ -74,12 +74,14 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         annotation_label_ids: list[str] | None = None,
         end_user_id: str | None = None,
         project_version_id: str | None = None,
+        filter_combinator: str = "and",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
+        self.filter_combinator = filter_combinator
         self.sort_params = sort_params or []
         self.eval_config_ids = eval_config_ids or []
         self.annotation_label_ids = annotation_label_ids or []
@@ -115,7 +117,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         self.params.update(extra_params)
 
         order_clause = fb.translate_sort(
@@ -323,7 +327,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         self.params.update(extra_params)
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
@@ -393,7 +399,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         params = dict(self.params)
         params.update(extra_params)
 

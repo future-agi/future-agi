@@ -10,6 +10,7 @@ from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.serializers.filters import (
     StrictInputSerializer,
+    filter_combinator_field,
     filter_list_query_param_field,
 )
 
@@ -234,6 +235,7 @@ class SpanObserveListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = filter_list_query_param_field(required=False, default=list)
+    filter_combinator = filter_combinator_field()
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500

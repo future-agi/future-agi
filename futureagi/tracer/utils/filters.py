@@ -689,7 +689,9 @@ class FilterEngine:
         return sort_conditions
 
     @staticmethod
-    def get_filter_conditions_for_system_metrics(filters, field_map=None):
+    def get_filter_conditions_for_system_metrics(
+        filters, field_map=None, filter_combinator="and"
+    ):
         """
         Convert filter conditions into Django Q objects for filtering aggregated fields.
 
@@ -890,15 +892,16 @@ class FilterEngine:
                 filter_param = {f"{field_name}__{django_operator}": filter_value}
                 q_objects.append(Q(**filter_param))
 
-        # Combine all Q objects with AND operation
+        # Combine all Q objects with the configured combinator (AND by default).
         if q_objects:
-            return reduce(operator.and_, q_objects)
+            op = operator.or_ if filter_combinator == "or" else operator.and_
+            return reduce(op, q_objects)
 
         return Q()
 
     @staticmethod
     def get_filter_conditions_for_voice_system_metrics(
-        filters, span_attrs_field="span_attributes"
+        filters, span_attrs_field="span_attributes", filter_combinator="and"
     ):
         """Build Q objects and annotations for voice system metric filters.
 
@@ -1022,11 +1025,14 @@ class FilterEngine:
             else:
                 q_objects.append(Q(**{f"{field_name}__{django_op}": filter_value}))
 
-        combined_q = reduce(operator.and_, q_objects) if q_objects else Q()
+        op = operator.or_ if filter_combinator == "or" else operator.and_
+        combined_q = reduce(op, q_objects) if q_objects else Q()
         return combined_q, annotations
 
     @staticmethod
-    def get_sql_filter_conditions_for_system_metrics(filters, query):
+    def get_sql_filter_conditions_for_system_metrics(
+        filters, query, filter_combinator="and"
+    ):
         """
         Converts filter conditions into SQL WHERE conditions for evaluation metrics.
 
@@ -1115,12 +1121,17 @@ class FilterEngine:
                 conditions.append(f"{sql_column} {sql_operator} '%{filter_value}%'")
 
         if conditions:
-            query += " AND " + " AND ".join(conditions)
+            if filter_combinator == "or":
+                query += " AND (" + " OR ".join(conditions) + ")"
+            else:
+                query += " AND " + " AND ".join(conditions)
 
         return query
 
     @staticmethod
-    def get_sql_filter_conditions_for_cte_system_metrics(filters):
+    def get_sql_filter_conditions_for_cte_system_metrics(
+        filters, filter_combinator="and"
+    ):
         """
         Converts filter conditions into SQL WHERE/HAVING conditions for CTE-based queries.
         Returns WHERE conditions that can be applied to the base CTE.
@@ -1230,11 +1241,15 @@ class FilterEngine:
 
         # Return HAVING clause conditions with parameters
         if having_conditions:
+            if filter_combinator == "or":
+                return " HAVING (" + " OR ".join(having_conditions) + ")", params
             return " HAVING " + " AND ".join(having_conditions), params
         return None, []
 
     @staticmethod
-    def get_sql_filter_conditions_for_cte_eval_metrics(filters):
+    def get_sql_filter_conditions_for_cte_eval_metrics(
+        filters, filter_combinator="and"
+    ):
         """
         Converts filter conditions into SQL HAVING conditions for eval metrics in final SELECT.
         Returns conditions that can be applied after LEFT JOINs in the final SELECT.
@@ -1379,11 +1394,15 @@ class FilterEngine:
 
         # Return WHERE clause conditions for final SELECT with parameters
         if conditions:
+            if filter_combinator == "or":
+                return " WHERE (" + " OR ".join(conditions) + ")", params
             return " WHERE " + " AND ".join(conditions), params
         return None, []
 
     @staticmethod
-    def get_sql_filter_conditions_for_eval_metrics(filters, query):
+    def get_sql_filter_conditions_for_eval_metrics(
+        filters, query, filter_combinator="and"
+    ):
         conditions = []
         having = None
 
@@ -1497,7 +1516,10 @@ class FilterEngine:
                 conditions.append(f"str_list_values::text ILIKE '%{filter_value}%'")
 
         if conditions:
-            query += " AND " + " AND ".join(conditions)
+            if filter_combinator == "or":
+                query += " AND (" + " OR ".join(conditions) + ")"
+            else:
+                query += " AND " + " AND ".join(conditions)
 
         return query, having
 

@@ -534,6 +534,18 @@ def filter_list_query_param_field(**kwargs):
     return FilterListQueryParamField(**kwargs)
 
 
+def filter_combinator_field(**kwargs):
+    """One operator for the whole filter list: ``and`` (default) or ``or``.
+
+    Sits alongside ``filters`` in the request contract. Absent means ``and``,
+    which keeps every existing caller byte-for-byte unchanged.
+    """
+    kwargs.setdefault("choices", ["and", "or"])
+    kwargs.setdefault("default", "and")
+    kwargs.setdefault("required", False)
+    return serializers.ChoiceField(**kwargs)
+
+
 def eval_task_filters_field(**kwargs):
     return EvalTaskFiltersField(**kwargs)
 

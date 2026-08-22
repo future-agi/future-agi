@@ -403,28 +403,28 @@ const ObserveToolbar = ({
                   ? "users"
                   : "traces"
             }
-            onApply={(newFilters) => {
+            onApply={(newFilters, combinator) => {
               setPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
                 if (filterTarget === "compare") {
                   if (onClearCompareExtraFilters) {
                     onClearCompareExtraFilters();
                   } else {
-                    onApplyCompareExtraFilters?.([]);
+                    onApplyCompareExtraFilters?.([], "and");
                   }
                 } else if (onClearExtraFilters) {
                   onClearExtraFilters();
                 } else {
-                  onApplyExtraFilters?.([]);
+                  onApplyExtraFilters?.([], "and");
                 }
                 return;
               }
               const apiFilters = newFilters.map(buildApiFilterFromPanelRow);
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
-                onApplyCompareExtraFilters(apiFilters);
+                onApplyCompareExtraFilters(apiFilters, combinator);
               } else {
-                onApplyExtraFilters?.(apiFilters);
+                onApplyExtraFilters?.(apiFilters, combinator);
               }
             }}
           />

@@ -56,6 +56,7 @@ const TraceGrid = React.forwardRef(
       cellHeight,
       hasEvalFilter,
       metricFilters,
+      filterCombinator = "and",
       pendingCustomColumnsRef,
       canonicalOrderRef,
       enabled = true,
@@ -108,6 +109,7 @@ const TraceGrid = React.forwardRef(
           filters,
           extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
           metricFilters: metricFilters || [],
+          filterCombinator,
           hasEvalFilter,
           dateInterval,
           projectId,
@@ -117,6 +119,7 @@ const TraceGrid = React.forwardRef(
         filters,
         extraFilters,
         metricFilters,
+        filterCombinator,
         hasEvalFilter,
         dateInterval,
         projectId,
@@ -234,6 +237,7 @@ const TraceGrid = React.forwardRef(
                     ...(metricFilters || []),
                   ]),
                 ),
+                filter_combinator: filterCombinator,
                 ...(dateInterval && { interval: dateInterval }),
               });
 

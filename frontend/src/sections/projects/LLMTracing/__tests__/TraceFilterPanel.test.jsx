@@ -112,16 +112,19 @@ describe("TraceFilterPanel AI apply (#577)", () => {
     });
     // The AI path now applies computeValidFilters(converted) like every other
     // path, so the operator is normalized to the canonical string op ("in").
-    expect(onApply).toHaveBeenCalledWith([
-      {
-        field: "status",
-        fieldCategory: "system",
-        fieldType: "string",
-        apiColType: undefined,
-        operator: "in",
-        value: ["ERROR"],
-      },
-    ]);
+    expect(onApply).toHaveBeenCalledWith(
+      [
+        {
+          field: "status",
+          fieldCategory: "system",
+          fieldType: "string",
+          apiColType: undefined,
+          operator: "in",
+          value: ["ERROR"],
+        },
+      ],
+      "and",
+    );
     expect(onClose).toHaveBeenCalled();
 
     document.body.removeChild(anchorEl);

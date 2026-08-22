@@ -689,6 +689,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const [extraFilters, setExtraFiltersRaw] = useState([]);
   const [compareExtraFilters, setCompareExtraFiltersRaw] = useState([]);
+  const [filterCombinator, setFilterCombinator] = useState("and");
+  const [compareFilterCombinator, setCompareFilterCombinator] = useState("and");
   const [filterChipsSaved, setFilterChipsSaved] = useState(false);
   // Track which graph the filter panel targets in compare mode: "primary" | "compare"
   const [filterTarget, setFilterTarget] = useState("primary");
@@ -698,6 +700,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   }, []);
   const setCompareExtraFilters = useCallback((val) => {
     setCompareExtraFiltersRaw(val);
+    setFilterChipsSaved(false);
+  }, []);
+  // Observe query builder also emits an AND/OR combinator that travels with
+  // the filter set. It defaults to "and" (absent on the wire keeps today's
+  // behaviour for every caller that doesn't pass it).
+  const applyExtraFilters = useCallback((val, combinator) => {
+    setExtraFiltersRaw(val);
+    setFilterCombinator(combinator === "or" ? "or" : "and");
+    setFilterChipsSaved(false);
+  }, []);
+  const applyCompareExtraFilters = useCallback((val, combinator) => {
+    setCompareExtraFiltersRaw(val);
+    setCompareFilterCombinator(combinator === "or" ? "or" : "and");
     setFilterChipsSaved(false);
   }, []);
   const metricFilters = useMemo(() => {
@@ -2242,10 +2257,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // `filtersStorageKey` restores any non-empty extraFilters it finds.
   const clearPrimaryExtraFilters = useCallback(() => {
     setExtraFilters([]);
+    setFilterCombinator("and");
     localStorage.removeItem(filtersStorageKey);
   }, [setExtraFilters, filtersStorageKey]);
   const clearCompareExtraFilters = useCallback(() => {
     setCompareExtraFilters([]);
+    setCompareFilterCombinator("and");
     localStorage.removeItem(filtersStorageKey);
   }, [setCompareExtraFilters, filtersStorageKey]);
 
@@ -3665,7 +3682,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExternalFilterAnchor(null);
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
-              onApplyExtraFilters={setExtraFilters}
+              onApplyExtraFilters={applyExtraFilters}
               onClearExtraFilters={clearPrimaryExtraFilters}
               graphFilters={selectPanelGraphFilters(
                 filterTarget,
@@ -3675,7 +3692,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               isFilterOpen={isPrimaryFilterOpen}
               externalFilterAnchor={externalFilterAnchor}
               filterTarget={filterTarget}
-              onApplyCompareExtraFilters={setCompareExtraFilters}
+              onApplyCompareExtraFilters={applyCompareExtraFilters}
               onClearCompareExtraFilters={clearCompareExtraFilters}
               filters={
                 selectedTab === "trace"
@@ -4587,6 +4604,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     filters={primaryTraceValidatedFilters}
                     extraFilters={extraFilters}
+                    filterCombinator={filterCombinator}
                     ref={primaryTraceGridRef}
                     setFilters={setPrimaryTraceFilters}
                     setExtraFilters={setExtraFilters}
@@ -4627,6 +4645,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     filters={compareTraceValidatedFilters}
                     extraFilters={compareExtraFilters}
+                    filterCombinator={compareFilterCombinator}
                     ref={compareTraceGridRef}
                     setFilters={setCompareTraceFilters}
                     setExtraFilters={setCompareExtraFilters}
@@ -4694,6 +4713,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     filters={primarySpanValidatedFilters}
                     extraFilters={extraFilters}
+                    filterCombinator={filterCombinator}
                     ref={primarySpanGridRef}
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
@@ -4737,6 +4757,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     canonicalOrderRef={canonicalSpanOrderRef}
                     filters={compareSpansValidatedFilters}
                     extraFilters={compareExtraFilters}
+                    filterCombinator={compareFilterCombinator}
                     ref={compareSpanGridRef}
                     setFilters={setCompareSpansFilters}
                     setExtraFilters={setCompareExtraFilters}
