@@ -580,30 +580,79 @@ def scenario_tools(
     @tool(
         "generate_suite",
         "Write a whole suite at once by splitting it across the agent's use cases, one writer "
-        "per use case, several running at the same time. Use this when somebody asks for a "
-        "suite rather than a particular scenario: writing twenty or fifty one at a time runs "
-        "out of turns long before it finishes. Everything it produces has cleared the same "
-        "three gates. Saved when it completes.",
-        schema({"count": int, "at_once": int}, ["count"]),
+        "per slice, several running at the same time, then reviewing what came back and "
+        "filling what it missed. Use this whenever somebody asks for a number of scenarios "
+        "rather than one in particular: writing twenty or fifty one at a time runs out of "
+        "turns long before it finishes.\n\n"
+        "Pass `slices` when you know how the suite should be divided, which you do once you "
+        "have looked at the world: give each use case a share in proportion to how much can "
+        "genuinely go wrong in it, and name the angle each slice should take. Without it the "
+        "work is divided evenly, which pads the thin use cases and under-covers the rich ones. "
+        "Everything produced clears the same three gates, and the suite is saved.",
+        schema(
+            {
+                "count": int,
+                "at_once": int,
+                "slices": {
+                    "type": ["array", "null"],
+                    "description": "How to divide the suite. One entry per writer.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "use_case": {
+                                "type": "string",
+                                "description": "One of the agent's use cases, worded as the "
+                                "contract words it.",
+                            },
+                            "angle": {
+                                "type": "string",
+                                "description": "What this slice should look for: the ordinary "
+                                "path, the branch that cannot be completed, the rule under "
+                                "pressure, state that has to carry.",
+                            },
+                            "count": {
+                                "type": "integer",
+                                "description": "How many scenarios this slice is worth, in "
+                                "proportion to how much can genuinely go wrong in it.",
+                            },
+                            "why": {
+                                "type": "string",
+                                "description": "Why it earns that share.",
+                            },
+                        },
+                        "required": ["use_case", "count"],
+                    },
+                },
+            },
+            ["count"],
+        ),
     )
     async def generate_suite(args: dict[str, Any]) -> dict[str, Any]:
-        from .scenarios import write_in_parallel
+        from .scenarios import MOST_AT_ONCE, MOST_IN_ONE_GO, write_in_parallel
 
-        count = int(args.get("count") or 0)
-        if count < 1:
+        asked = int(args.get("count") or 0)
+        if asked < 1:
             return _err("say how many scenarios the suite should have")
-        at_once = int(args.get("at_once") or 0) or 4
         cases = [one for one in contract.real_use_cases if one.strip()]
-        if not cases:
+        given = args.get("slices") or None
+        if not cases and not given:
             return _err(
                 "this contract names no use cases, so there is nothing to split the work "
                 "across. Write them one at a time with submit_scenario, or fix the contract."
             )
+
+        # A large ask is served a batch at a time. Spinning up a writer per scenario would put
+        # hundreds of model sessions on one machine, and the person waiting would see nothing
+        # for an hour. A batch they can read, and an offer of the rest, is the better trade.
+        count = min(asked, MOST_IN_ONE_GO)
+        at_once = max(1, min(int(args.get("at_once") or 0) or 4, MOST_AT_ONCE))
+
         produced = await write_in_parallel(
             contract,
             out=destination,
             wanted=count,
             use_cases=cases,
+            slices=given,
             at_once=at_once,
         )
         # The suite is already on disk. The open session's own list has to be brought level with
@@ -611,16 +660,25 @@ def scenario_tools(
         # folder the fan-out just produced.
         kept[:] = produced
         target["count"] = len(produced)
+
         by_case: dict[str, int] = {}
         for one in produced:
-            by_case[one.use_case or "unassigned"] = by_case.get(one.use_case or "unassigned", 0) + 1
-        lines = "\n".join(
-            f"  {count_} x {case[:70]}" for case, count_ in sorted(by_case.items())
-        )
-        return _ok(
+            name = one.use_case or "unassigned"
+            by_case[name] = by_case.get(name, 0) + 1
+        lines = "\n".join(f"  {n} x {case[:70]}" for case, n in sorted(by_case.items()))
+        said = (
             f"{len(produced)} scenarios across {len(by_case)} use cases, {at_once} writers at a "
             f"time. Each cleared all three gates and the suite is saved.\n{lines}"
         )
+        if asked > count:
+            said += (
+                f"\n\n{asked - count} of the {asked} asked for are still to write. "
+                f"{MOST_IN_ONE_GO} is as many as one pass does, so that the suite can be looked "
+                "at before more is spent on it. Show what came back, then ask whether to carry "
+                "on with the rest, change direction first, or stop here. Call generate_suite "
+                "again for the next batch once they have said."
+            )
+        return _ok(said)
 
     @tool(
         "save_scenarios",

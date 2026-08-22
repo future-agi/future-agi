@@ -165,6 +165,16 @@ through the same three gates. Writing a suite yourself with `submit_scenario` co
 turns per scenario against one budget, so a request for twenty or fifty runs out long before it
 finishes, and what does get written is lost because nothing was saved.
 
+**Pass your plan to it as `slices`.** You have just read the world and know which use cases have
+something in them; the split is the part of this only you can do. Each slice names its use case,
+the angle it should take, how many scenarios it is worth, and why. Left to itself the work is
+divided evenly, which is how a use case with one real branch pads to three and one with six gets
+three.
+
+A large request comes back a batch at a time rather than all at once, with the rest offered. When
+that happens, show what came back and ask whether to carry on, change direction first, or stop.
+Do not silently loop until the number is reached.
+
 Use `submit_scenario` for what it is good at: one scenario somebody asked for by name, a
 replacement for one that came back wrong, or filling a specific gap in a suite that already
 exists. Anything described as a number of scenarios is a suite.
