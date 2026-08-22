@@ -197,6 +197,10 @@ services:
       # addressed by container name instead of loopback.
       ALK_DOCKER_NETWORK: ${HARNESS_DOCKER_NETWORK:-futureagi_default}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Generating a suite runs one session per use case, so measuring a change to generation
+      # costs several sessions a time. Passed through, not defaulted: set it to a cheap model
+      # while iterating, and leave it unset for a suite meant to be kept.
+      ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-}
       # Evals are scored against the hosted platform, where the templates live; runs are
       # reported to the backend beside us, so they appear in the UI being looked at.
       HARNESS_PLATFORM_URL: ${HARNESS_PLATFORM_URL:-http://backend:80}
@@ -222,12 +226,23 @@ services:
       # nothing in here. Mounted below at a fixed location and repointed, or every stage fails
       # at its first model call.
       GOOGLE_APPLICATION_CREDENTIALS: /etc/harness/vertex.json
+      # The platform's own persona guidance, so a simulated caller behaves the same way here as
+      # it does in a platform simulation. Read from the mount below rather than restated in the
+      # harness, because two copies of the same wording drift apart unnoticed. Colon-separated,
+      # so a deployment holding additional guidance can append its own path without this file
+      # naming it.
+      HARNESS_PERSONA_GUIDES: ${HARNESS_PERSONA_GUIDES:-/etc/harness/persona/chat.py}
+      # And the values it accepts, so a generated persona is one the platform can act on rather
+      # than prose that renders and then selects nothing.
+      HARNESS_PERSONA_VOCABULARY: /etc/harness/persona/model.py
     volumes:
       # Source of truth for every session, world and recording — not a cache.
       - harness-artifacts:/app/artifacts
       # Source edits apply on restart without a rebuild.
       - ./futureagi/harness:/app
       - ${HARNESS_VERTEX_CREDENTIALS:-./Vertex_AI_Creds.json}:/etc/harness/vertex.json:ro
+      - ./futureagi/simulate/constants/persona_prompt_guides.py:/etc/harness/persona/chat.py:ro
+      - ./futureagi/simulate/models/persona.py:/etc/harness/persona/model.py:ro
     depends_on:
       - docker-proxy
     restart: unless-stopped
