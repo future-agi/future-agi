@@ -6,6 +6,8 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  LinearProgress,
+  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -18,6 +20,7 @@ import {
   createHarnessJob,
   getHarnessJob,
   listHarnessJobs,
+  preflightHarnessJob,
 } from "src/api/harness/harness";
 
 const terminalStages = new Set(["completed", "failed", "canceled"]);
@@ -43,17 +46,33 @@ function eventMessage(event) {
   const payload = event.payload || {};
   if (payload.detail) return String(payload.detail);
   if (payload.message) return String(payload.message);
-  if (payload.stage) return `${readable(payload.stage)} ${readable(event.type)}`;
+  if (payload.stage)
+    return `${readable(payload.stage)} ${readable(event.type)}`;
   return readable(event.type || "Progress updated");
 }
 
 export default function Harness() {
+  const [sourceMode, setSourceMode] = useState("local");
   const [sourcePath, setSourcePath] = useState("");
+  const [githubRepository, setGithubRepository] = useState("");
+  const [githubRef, setGithubRef] = useState("main");
+  const [githubVisibility, setGithubVisibility] = useState("public");
+  const [githubInstallationId, setGithubInstallationId] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
+  const [preflight, setPreflight] = useState(null);
+  const [secretRefs, setSecretRefs] = useState({});
+  const [configurationValues, setConfigurationValues] = useState({});
   const [jobs, setJobs] = useState([]);
   const [current, setCurrent] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const refreshList = useCallback(async () => {
     try {
@@ -86,14 +105,60 @@ export default function Harness() {
     return () => window.clearInterval(timer);
   }, [current?.job?.job_id, current?.status?.stage]);
 
+  const sourcePayload = () => {
+    if (sourceMode === "local") return { source_path: sourcePath.trim() };
+    return {
+      github_repository: githubRepository.trim(),
+      github_ref: githubRef.trim() || undefined,
+      github_visibility: githubVisibility,
+      github_installation_id:
+        githubVisibility === "private"
+          ? githubInstallationId.trim() || undefined
+          : undefined,
+    };
+  };
+
+  const configuredSecretRefs = () =>
+    Object.fromEntries(
+      Object.entries(secretRefs)
+        .filter(([, key]) => key.trim())
+        .map(([environmentName, key]) => [
+          environmentName,
+          {
+            manager: "futureagi",
+            key: key.trim(),
+            purpose: `Provide ${environmentName} to the isolated agent runtime`,
+          },
+        ]),
+    );
+
+  const inspect = async () => {
+    setChecking(true);
+    setError("");
+    try {
+      const value = await preflightHarnessJob({
+        ...sourcePayload(),
+        secret_refs: configuredSecretRefs(),
+        connector_config: configurationValues,
+      });
+      setPreflight(value);
+    } catch (requestError) {
+      setError(requestError?.response?.data?.detail || requestError.message);
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const run = async () => {
     setSubmitting(true);
     setError("");
     try {
       const value = await createHarnessJob({
-        source_path: sourcePath.trim(),
+        ...sourcePayload(),
         scenario_count: Number(scenarioCount),
         connector: "auto",
+        secret_refs: configuredSecretRefs(),
+        connector_config: configurationValues,
       });
       setCurrent(value);
       setJobs((existing) => [value, ...existing]);
@@ -110,6 +175,55 @@ export default function Harness() {
   };
 
   const stageIndex = stages.indexOf(current?.status?.stage);
+  const requirements = preflight?.credentials?.requirements || [];
+  const credentialChoices = preflight?.credentials?.credential_choices || [];
+  const choiceMembers = new Set(
+    credentialChoices.flatMap((choice) => choice.options.flat()),
+  );
+  const missingRequirements = requirements.filter(
+    (item) =>
+      item.required &&
+      item.status === "missing" &&
+      !choiceMembers.has(item.environment_name),
+  );
+  const requirementConfigured = (name) => {
+    const requirement = requirements.find(
+      (item) => item.environment_name === name,
+    );
+    if (requirement?.status !== "missing") return true;
+    if (requirement?.kind === "secret")
+      return Boolean(secretRefs[name]?.trim());
+    return Boolean(String(configurationValues[name] || "").trim());
+  };
+  const unsatisfiedChoices = credentialChoices.filter(
+    (choice) =>
+      !choice.satisfied &&
+      !choice.options.some((option) =>
+        option.every((name) => requirementConfigured(name)),
+      ),
+  );
+  const requirementsConfigured =
+    missingRequirements.every((item) =>
+      requirementConfigured(item.environment_name),
+    ) && unsatisfiedChoices.length === 0;
+  const requiredInputCount =
+    missingRequirements.length + unsatisfiedChoices.length;
+  const hasSource =
+    sourceMode === "local"
+      ? Boolean(sourcePath.trim())
+      : Boolean(githubRepository.trim()) &&
+        (githubVisibility === "public" || Boolean(githubInstallationId.trim()));
+  const progress = current
+    ? current.status.stage === "completed"
+      ? 100
+      : Math.max(2, ((Math.max(stageIndex, 0) + 0.5) / stages.length) * 100)
+    : 0;
+  const updatedAt = current?.status?.updated_at
+    ? new Date(current.status.updated_at)
+    : null;
+  const secondsSinceUpdate = updatedAt
+    ? Math.max(0, Math.floor((clock - updatedAt.getTime()) / 1000))
+    : null;
   const messages = useMemo(() => {
     const seen = new Set();
     return (current?.events || []).filter((event) => {
@@ -122,65 +236,464 @@ export default function Harness() {
 
   return (
     <>
-      <Helmet><title>RL Environment | Future AGI</title></Helmet>
-      <Box sx={{ height: "100%", display: "grid", gridTemplateColumns: "280px minmax(0, 1fr)", bgcolor: "background.default" }}>
+      <Helmet>
+        <title>RL Environment | Future AGI</title>
+      </Helmet>
+      <Box
+        sx={{
+          height: "100%",
+          display: "grid",
+          gridTemplateColumns: "280px minmax(0, 1fr)",
+          bgcolor: "background.default",
+        }}
+      >
         <Paper square variant="outlined" sx={{ p: 2, overflow: "auto" }}>
-          <Typography variant="overline" color="text.secondary">Harness jobs</Typography>
+          <Typography variant="overline" color="text.secondary">
+            Harness jobs
+          </Typography>
           <Stack spacing={1} mt={1}>
             {jobs.map((item) => (
               <Button
                 key={item.job.job_id}
-                variant={current?.job?.job_id === item.job.job_id ? "contained" : "text"}
+                variant={
+                  current?.job?.job_id === item.job.job_id
+                    ? "contained"
+                    : "text"
+                }
                 color="inherit"
                 onClick={() => setCurrent(item)}
-                sx={{ justifyContent: "flex-start", textAlign: "left", textTransform: "none" }}
+                sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
+                  textTransform: "none",
+                }}
               >
-                <Box><Typography variant="body2" fontWeight={600} noWrap>{item.job.metadata?.agent_name}</Typography><Typography variant="caption" color="text.secondary">{readable(item.status.stage)}</Typography></Box>
+                <Box>
+                  <Typography variant="body2" fontWeight={600} noWrap>
+                    {item.job.metadata?.agent_name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {readable(item.status.stage)}
+                  </Typography>
+                </Box>
               </Button>
             ))}
           </Stack>
         </Paper>
 
-        <Box sx={{ minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <Box
+          sx={{
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
+        >
           <Paper square variant="outlined" sx={{ p: 2 }}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems="center">
-              <TextField fullWidth size="small" label="Local agent folder" placeholder="/absolute/path/to/agent" value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} />
-              <TextField size="small" label="Scenarios" type="number" value={scenarioCount} onChange={(event) => setScenarioCount(event.target.value)} inputProps={{ min: 1, max: 100 }} sx={{ width: 120 }} />
-              <Button variant="contained" disabled={submitting || !sourcePath.trim()} onClick={run} startIcon={submitting ? <CircularProgress size={16} /> : <Iconify icon="solar:play-bold" />}>Run end to end</Button>
+            <Stack
+              direction={{ xs: "column", md: "row" }}
+              spacing={1.5}
+              alignItems="center"
+            >
+              <TextField
+                select
+                size="small"
+                label="Source"
+                value={sourceMode}
+                onChange={(event) => {
+                  setSourceMode(event.target.value);
+                  setPreflight(null);
+                }}
+                sx={{ minWidth: 130 }}
+              >
+                <MenuItem value="local">Local folder</MenuItem>
+                <MenuItem value="github">GitHub</MenuItem>
+              </TextField>
+              {sourceMode === "local" ? (
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Local agent folder"
+                  placeholder="/absolute/path/to/agent"
+                  value={sourcePath}
+                  onChange={(event) => {
+                    setSourcePath(event.target.value);
+                    setPreflight(null);
+                  }}
+                />
+              ) : (
+                <>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="GitHub repository"
+                    placeholder="owner/repository or GitHub URL"
+                    value={githubRepository}
+                    onChange={(event) => {
+                      setGithubRepository(event.target.value);
+                      setPreflight(null);
+                    }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Ref"
+                    value={githubRef}
+                    onChange={(event) => setGithubRef(event.target.value)}
+                    sx={{ width: 140 }}
+                  />
+                  <TextField
+                    select
+                    size="small"
+                    label="Visibility"
+                    value={githubVisibility}
+                    onChange={(event) => {
+                      setGithubVisibility(event.target.value);
+                      setPreflight(null);
+                    }}
+                    sx={{ minWidth: 120 }}
+                  >
+                    <MenuItem value="public">Public</MenuItem>
+                    <MenuItem value="private">Private</MenuItem>
+                  </TextField>
+                  {githubVisibility === "private" && (
+                    <TextField
+                      size="small"
+                      label="GitHub App installation ID"
+                      value={githubInstallationId}
+                      onChange={(event) =>
+                        setGithubInstallationId(event.target.value)
+                      }
+                      sx={{ minWidth: 230 }}
+                    />
+                  )}
+                </>
+              )}
+              <TextField
+                size="small"
+                label="Scenarios"
+                type="number"
+                value={scenarioCount}
+                onChange={(event) => setScenarioCount(event.target.value)}
+                inputProps={{ min: 1, max: 100 }}
+                sx={{ width: 120 }}
+              />
+              <Button
+                variant="outlined"
+                disabled={checking || !hasSource}
+                onClick={inspect}
+                startIcon={
+                  checking ? (
+                    <CircularProgress size={16} />
+                  ) : (
+                    <Iconify icon="solar:magnifer-linear" />
+                  )
+                }
+              >
+                Preflight
+              </Button>
+              <Button
+                variant="contained"
+                disabled={
+                  submitting ||
+                  !hasSource ||
+                  !preflight ||
+                  !requirementsConfigured
+                }
+                onClick={run}
+                startIcon={
+                  submitting ? (
+                    <CircularProgress size={16} />
+                  ) : (
+                    <Iconify icon="solar:play-bold" />
+                  )
+                }
+              >
+                Run end to end
+              </Button>
             </Stack>
-            {error && <Alert severity="error" sx={{ mt: 1.5 }}>{error}</Alert>}
+            {preflight && (
+              <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5 }}>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  mb={requirements.length ? 1 : 0}
+                >
+                  <Chip
+                    size="small"
+                    color={requirementsConfigured ? "success" : "warning"}
+                    label={
+                      requirementsConfigured
+                        ? "Preflight ready"
+                        : `${requiredInputCount} credential choice${requiredInputCount === 1 ? "" : "s"} needed`
+                    }
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {preflight.credentials?.scanned_files || 0} files scanned ·{" "}
+                    {(preflight.credentials?.detected_connectors || []).join(
+                      ", ",
+                    ) || "connector discovered after checkout"}
+                  </Typography>
+                </Stack>
+                <Stack spacing={1}>
+                  {unsatisfiedChoices.map((choice) => (
+                    <Alert key={choice.id} severity="info">
+                      {choice.purpose}: choose{" "}
+                      {choice.options
+                        .map((option) => option.join(" + "))
+                        .join(" or ")}
+                    </Alert>
+                  ))}
+                  {requirements.map((item) => (
+                    <Stack
+                      key={item.id}
+                      direction={{ xs: "column", md: "row" }}
+                      spacing={1}
+                      alignItems={{ md: "center" }}
+                    >
+                      <Box sx={{ minWidth: 260 }}>
+                        <Typography variant="body2" fontWeight={600}>
+                          {item.environment_name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {item.provider} · {item.purpose} ·{" "}
+                          {readable(item.status)}
+                        </Typography>
+                      </Box>
+                      {item.status === "missing" && (
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label={
+                            item.kind === "secret"
+                              ? "Secret manager key (never the secret value)"
+                              : "Configuration value"
+                          }
+                          value={
+                            item.kind === "secret"
+                              ? secretRefs[item.environment_name] || ""
+                              : configurationValues[item.environment_name] || ""
+                          }
+                          onChange={(event) => {
+                            const setter =
+                              item.kind === "secret"
+                                ? setSecretRefs
+                                : setConfigurationValues;
+                            setter((existing) => ({
+                              ...existing,
+                              [item.environment_name]: event.target.value,
+                            }));
+                          }}
+                        />
+                      )}
+                    </Stack>
+                  ))}
+                </Stack>
+              </Paper>
+            )}
+            {error && (
+              <Alert severity="error" sx={{ mt: 1.5 }}>
+                {error}
+              </Alert>
+            )}
           </Paper>
 
           {!current ? (
-            <Stack flex={1} alignItems="center" justifyContent="center" spacing={1}>
+            <Stack
+              flex={1}
+              alignItems="center"
+              justifyContent="center"
+              spacing={1}
+            >
               <Iconify icon="solar:server-square-cloud-linear" width={54} />
-              <Typography variant="h6">Give us the agent folder; ALK does the rest.</Typography>
-              <Typography color="text.secondary">Environment discovery, services, realistic data, scenarios, calls and grading run without operator prompts.</Typography>
+              <Typography variant="h6">
+                Give us the agent folder; ALK does the rest.
+              </Typography>
+              <Typography color="text.secondary">
+                Environment discovery, services, realistic data, scenarios,
+                calls and grading run without operator prompts.
+              </Typography>
             </Stack>
           ) : (
-            <Box sx={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "minmax(380px, 0.9fr) minmax(480px, 1.4fr)" }}>
-              <Box sx={{ p: 2, overflow: "auto", borderRight: 1, borderColor: "divider" }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Box><Typography variant="h6">{current.job.metadata?.agent_name}</Typography><Typography variant="caption" color="text.secondary">{current.job.run_id}</Typography></Box>
-                  <Chip label={readable(current.status.stage)} color={current.status.stage === "failed" ? "error" : current.status.stage === "completed" ? "success" : "primary"} />
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                display: "grid",
+                gridTemplateColumns:
+                  "minmax(380px, 0.9fr) minmax(480px, 1.4fr)",
+              }}
+            >
+              <Box
+                sx={{
+                  p: 2,
+                  overflow: "auto",
+                  borderRight: 1,
+                  borderColor: "divider",
+                }}
+              >
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                >
+                  <Box>
+                    <Typography variant="h6">
+                      {current.job.metadata?.agent_name}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {current.job.run_id}
+                    </Typography>
+                  </Box>
+                  <Chip
+                    label={readable(current.status.stage)}
+                    color={
+                      current.status.stage === "failed"
+                        ? "error"
+                        : current.status.stage === "completed"
+                          ? "success"
+                          : "primary"
+                    }
+                  />
+                </Stack>
+                <LinearProgress
+                  variant="determinate"
+                  value={progress}
+                  color={
+                    current.status.stage === "failed" ? "error" : "primary"
+                  }
+                  sx={{ mt: 1.5 }}
+                />
+                <Stack direction="row" justifyContent="space-between" mt={0.5}>
+                  <Typography variant="caption" color="text.secondary">
+                    {current.status.completed_scenarios || 0} /{" "}
+                    {current.status.total_scenarios ||
+                      current.job.scenario_count}{" "}
+                    scenarios complete
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color={
+                      secondsSinceUpdate > 60 &&
+                      !terminalStages.has(current.status.stage)
+                        ? "warning.main"
+                        : "text.secondary"
+                    }
+                  >
+                    Updated {secondsSinceUpdate ?? 0}s ago · attempt{" "}
+                    {current.status.attempt || 1}
+                  </Typography>
                 </Stack>
                 <Divider sx={{ my: 2 }} />
                 <Stack spacing={1.2}>
                   {stages.map((stage, index) => {
-                    const reached = stageIndex >= index || current.status.stage === "completed";
-                    return <Stack key={stage} direction="row" spacing={1.2} alignItems="center"><Iconify icon={reached ? "solar:check-circle-bold" : "solar:record-circle-linear"} color={reached ? "success.main" : "text.disabled"} /><Typography color={reached ? "text.primary" : "text.disabled"}>{readable(stage)}</Typography></Stack>;
+                    const reached =
+                      stageIndex >= index ||
+                      current.status.stage === "completed";
+                    return (
+                      <Stack
+                        key={stage}
+                        direction="row"
+                        spacing={1.2}
+                        alignItems="center"
+                      >
+                        <Iconify
+                          icon={
+                            reached
+                              ? "solar:check-circle-bold"
+                              : "solar:record-circle-linear"
+                          }
+                          color={reached ? "success.main" : "text.disabled"}
+                        />
+                        <Typography
+                          color={reached ? "text.primary" : "text.disabled"}
+                        >
+                          {readable(stage)}
+                        </Typography>
+                      </Stack>
+                    );
                   })}
                 </Stack>
-                {!terminalStages.has(current.status.stage) && <Button color="error" variant="outlined" onClick={cancel} sx={{ mt: 3 }}>Cancel run</Button>}
+                {!terminalStages.has(current.status.stage) && (
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    onClick={cancel}
+                    sx={{ mt: 3 }}
+                  >
+                    Cancel run
+                  </Button>
+                )}
               </Box>
 
               <Box sx={{ p: 2, overflow: "auto" }}>
-                <Typography variant="overline" color="text.secondary">Live harness activity</Typography>
+                <Typography variant="overline" color="text.secondary">
+                  Live harness activity
+                </Typography>
                 <Stack spacing={1.5} mt={1.5}>
-                  <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "action.hover" }}><Typography variant="body2">I’ll inspect the agent, build and seed its environment, create {current.job.scenario_count} diverse scenarios, run the calls, grade only observed behavior, and publish the results.</Typography></Paper>
-                  {messages.map((event) => <Paper key={event.event_id} variant="outlined" sx={{ p: 1.5 }}><Typography variant="caption" color="primary.main">{readable(event.payload?.stage || event.type)}</Typography><Typography variant="body2">{eventMessage(event)}</Typography></Paper>)}
-                  {current.status.detail && <Alert severity={current.status.stage === "failed" ? "error" : "info"}>{current.status.detail}</Alert>}
-                  {!terminalStages.has(current.status.stage) && <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={16} /><Typography variant="body2" color="text.secondary">ALK is working autonomously…</Typography></Stack>}
+                  {current.credentials && (
+                    <Paper variant="outlined" sx={{ p: 1.5 }}>
+                      <Typography variant="subtitle2">
+                        Runtime preflight
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {current.credentials.scanned_files} source files
+                        inspected ·{" "}
+                        {(current.credentials.detected_connectors || []).join(
+                          ", ",
+                        ) || "generic connector"}{" "}
+                        · {current.credentials.requirements?.length || 0}{" "}
+                        configuration requirements
+                      </Typography>
+                    </Paper>
+                  )}
+                  {messages.map((event) => (
+                    <Paper
+                      key={event.event_id}
+                      variant="outlined"
+                      sx={{ p: 1.5 }}
+                    >
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="caption" color="primary.main">
+                          {readable(event.payload?.stage || event.type)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {event.wall_time
+                            ? new Date(event.wall_time).toLocaleTimeString()
+                            : ""}
+                        </Typography>
+                      </Stack>
+                      <Typography variant="body2">
+                        {eventMessage(event)}
+                      </Typography>
+                    </Paper>
+                  ))}
+                  {current.status.failure && (
+                    <Alert severity="error">
+                      <Typography variant="subtitle2">
+                        {readable(current.status.failure.domain)} ·{" "}
+                        {current.status.failure.code}
+                      </Typography>
+                      {current.status.failure.message}
+                    </Alert>
+                  )}
+                  {current.status.detail && (
+                    <Alert
+                      severity={
+                        current.status.stage === "failed" ? "error" : "info"
+                      }
+                    >
+                      {current.status.detail}
+                    </Alert>
+                  )}
+                  {!terminalStages.has(current.status.stage) && (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <CircularProgress size={16} />
+                      <Typography variant="body2" color="text.secondary">
+                        ALK is working autonomously…
+                      </Typography>
+                    </Stack>
+                  )}
                 </Stack>
               </Box>
             </Box>

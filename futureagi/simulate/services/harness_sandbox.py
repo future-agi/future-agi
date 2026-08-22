@@ -25,7 +25,9 @@ class HarnessSandboxClient:
             or os.getenv("ALK_HARNESS_SANDBOX_URL")
             or "http://host.docker.internal:8788"
         ).rstrip("/")
-        self.token = token if token is not None else os.getenv("ALK_HARNESS_SANDBOX_TOKEN")
+        self.token = (
+            token if token is not None else os.getenv("ALK_HARNESS_SANDBOX_TOKEN")
+        )
 
     def health(self) -> dict[str, Any]:
         return self._request("GET", "/health", authenticated=False)
@@ -35,6 +37,9 @@ class HarnessSandboxClient:
 
     def submit(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/v1/jobs", json=payload)
+
+    def preflight(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/v1/preflight", json=payload)
 
     def get(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/jobs/{job_id}")

@@ -56,6 +56,10 @@ class ALKSimulateResultSerializer(serializers.Serializer):
     )
     error_message = serializers.CharField(required=False, allow_blank=True)
     call_summary = serializers.CharField(required=False, allow_blank=True)
+    result_digest = serializers.RegexField(r"^sha256:[0-9a-f]{64}$", required=False)
+    artifact_manifest_digest = serializers.RegexField(
+        r"^sha256:[0-9a-f]{64}$", required=False
+    )
 
     transcript = ALKSimulateTranscriptSegmentSerializer(many=True, required=False)
 
@@ -159,6 +163,11 @@ class ALKSimulateRecordingUploadRequestSerializer(serializers.Serializer):
 
     file = serializers.FileField()
     filename = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    sha256 = serializers.RegexField(r"^(?:sha256:)?[0-9a-fA-F]{64}$", required=False)
+    kind = serializers.ChoiceField(
+        choices=("combined", "stereo", "customer", "assistant"),
+        default="combined",
+    )
 
 
 class ALKSimulateRecordingUploadResultSerializer(serializers.Serializer):

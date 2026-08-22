@@ -2278,6 +2278,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/health/": [
         "get"
       ],
+      "/simulate/api/harness-jobs/preflight/": [
+        "post"
+      ],
       "/simulate/api/harness-jobs/{id}/": [
         "get"
       ],
@@ -5600,6 +5603,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-jobs/health/": [
     "get"
+  ],
+  "/simulate/api/harness-jobs/preflight/": [
+    "post"
   ],
   "/simulate/api/harness-jobs/{id}/": [
     "get"

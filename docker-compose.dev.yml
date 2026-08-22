@@ -215,5 +215,12 @@ services:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     restart: unless-stopped
 
+  # EE cloud config (cloud/agentcc_config/config.yaml) listens on 8090 and the
+  # EE clients (.env AGENTCC_*_URL, gateway_llm_client) call agentcc-gateway:8090,
+  # so remap from the OSS base contract (8090:8080) to 8090 end-to-end.
+  agentcc-gateway:
+    ports: !override
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
+
 volumes:
   alk_harness_artifacts:

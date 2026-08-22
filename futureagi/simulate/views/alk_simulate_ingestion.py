@@ -352,6 +352,8 @@ class ALKSimulateIngestionViewSet(ViewSet):
                 call_execution,
                 audio_bytes,
                 filename=filename,
+                expected_sha256=request.validated_data.get("sha256"),
+                kind=request.validated_data.get("kind", "combined"),
             )
         except ALKSimulateIngestionError as e:
             return self.gm.bad_request(str(e))

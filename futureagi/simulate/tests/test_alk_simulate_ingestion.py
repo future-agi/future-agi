@@ -598,6 +598,36 @@ class TestMixedResultRollup:
 @pytest.mark.api
 @pytest.mark.django_db
 class TestResultIngest:
+    def test_sealed_result_retry_is_idempotent_and_conflicting_digest_is_rejected(
+        self, auth_client, run_test
+    ):
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        endpoint = f"{ALK_BASE}/call-executions/{call_ids[0]}/result/"
+        body = {
+            "status": "completed",
+            "transcript": _transcript_payload(),
+            "result_digest": "sha256:" + "a" * 64,
+            "artifact_manifest_digest": "sha256:" + "b" * 64,
+        }
+
+        first = auth_client.patch(endpoint, body, format="json")
+        retry = auth_client.patch(endpoint, body, format="json")
+        conflict = auth_client.patch(
+            endpoint,
+            {**body, "result_digest": "sha256:" + "c" * 64},
+            format="json",
+        )
+
+        assert first.status_code == 200, first.content
+        assert retry.status_code == 200, retry.content
+        assert conflict.status_code == 400
+        assert "conflicts" in str(conflict.json()).lower()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["alk_result_digest"] == "sha256:" + "a" * 64
+        assert (
+            call.call_metadata["alk_artifact_manifest_digest"] == "sha256:" + "b" * 64
+        )
+
     def test_harness_checks_complete_external_parent_without_platform_eval_wait(
         self, auth_client, run_test
     ):
@@ -608,9 +638,7 @@ class TestResultIngest:
                 "status": "completed",
                 "transcript": _transcript_payload(),
                 "call_metadata": {
-                    "harness_evaluations": [
-                        {"name": "ride_booked", "passed": False}
-                    ]
+                    "harness_evaluations": [{"name": "ride_booked", "passed": False}]
                 },
             },
             format="json",
@@ -879,6 +907,97 @@ class TestRecordingUpload:
         assert call.recording_available is True
         # Bytes were written to the upload bucket via the storage client.
         fake_client.put_object.assert_called_once()
+
+    def test_recording_checksum_is_verified_and_duplicate_upload_is_idempotent(
+        self, auth_client, run_test
+    ):
+        import hashlib
+        from unittest.mock import MagicMock
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        _, call_ids = _start_and_batch(auth_client, run_test)
+        endpoint = f"{ALK_BASE}/call-executions/{call_ids[0]}/recording/"
+        content = b"RIFFdurable-audio-evidence"
+        digest = hashlib.sha256(content).hexdigest()
+        fake_client = MagicMock()
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_storage_client",
+                return_value=fake_client,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_object_url",
+                return_value="https://storage.example.com/recording.wav",
+            ),
+        ):
+            first = auth_client.post(
+                endpoint,
+                {
+                    "file": SimpleUploadedFile("call.wav", content),
+                    "filename": "call.wav",
+                    "sha256": digest,
+                },
+                format="multipart",
+            )
+            retry = auth_client.post(
+                endpoint,
+                {
+                    "file": SimpleUploadedFile("call.wav", content),
+                    "filename": "call.wav",
+                    "sha256": "sha256:" + digest,
+                },
+                format="multipart",
+            )
+
+        assert first.status_code == retry.status_code == 200
+        assert first.json()["result"] == retry.json()["result"]
+        fake_client.put_object.assert_called_once()
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert (
+            call.call_metadata["alk_recording_artifacts"]["combined"]["sha256"]
+            == digest
+        )
+
+        stereo_content = b"RIFFdifferent-stereo-evidence"
+        stereo_digest = hashlib.sha256(stereo_content).hexdigest()
+        with (
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_storage_client",
+                return_value=fake_client,
+            ),
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_object_url",
+                return_value="https://storage.example.com/stereo.wav",
+            ),
+        ):
+            stereo = auth_client.post(
+                endpoint,
+                {
+                    "file": SimpleUploadedFile("stereo.wav", stereo_content),
+                    "sha256": stereo_digest,
+                    "kind": "stereo",
+                },
+                format="multipart",
+            )
+        assert stereo.status_code == 200
+        call.refresh_from_db()
+        assert call.stereo_recording_url == "https://storage.example.com/stereo.wav"
+        assert (
+            call.call_metadata["alk_recording_artifacts"]["stereo"]["sha256"]
+            == stereo_digest
+        )
+
+        mismatch = auth_client.post(
+            endpoint,
+            {
+                "file": SimpleUploadedFile("call.wav", b"different"),
+                "sha256": digest,
+            },
+            format="multipart",
+        )
+        assert mismatch.status_code == 400
+        assert "sha256" in str(mismatch.json()).lower()
 
     def test_missing_file_returns_400(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)

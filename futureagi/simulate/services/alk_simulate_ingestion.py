@@ -10,6 +10,7 @@ never uploads bytes (same pattern as the Vapi provider adapter).
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -61,6 +62,9 @@ _RESERVED_CALL_METADATA_KEYS = frozenset(
         "eval_started",
         "eval_dispatch_failed",
         "csat_dispatch_failed",
+        "alk_result_digest",
+        "alk_artifact_manifest_digest",
+        "alk_recording_artifacts",
     }
 )
 
@@ -136,6 +140,8 @@ def store_alk_recording(
     audio_bytes: bytes,
     *,
     filename: str | None = None,
+    expected_sha256: str | None = None,
+    kind: str = "combined",
 ) -> RecordingUploadResult:
     """Persist an ALK-supplied recording to the shared upload bucket.
 
@@ -152,31 +158,70 @@ def store_alk_recording(
     if not audio_bytes:
         raise ALKSimulateIngestionError("recording upload was empty")
 
-    ext = _extension_from_filename(filename)
-    content_type = _CONTENT_TYPE_BY_EXT.get(ext, "application/octet-stream")
-    object_key = f"{_ALK_RECORDING_PREFIX}/{call_execution.id}/{uuid.uuid4().hex}.{ext}"
-    client = get_storage_client()
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=BytesIO(audio_bytes),
-        length=len(audio_bytes),
-        content_type=content_type,
-    )
-    recording_url = get_object_url(UPLOAD_BUCKET_NAME, object_key)
-    # The upload response alone is not enough: the simulations UI reads the
-    # CallExecution row later, after the SDK process is gone. Persist the URL
-    # here so transcript playback and downloads survive that boundary.
-    call_execution.recording_url = recording_url
-    # Harness reporting sends the result before uploading its recording.  The
-    # UI gates the player on this flag, so persisting only the URL leaves a
-    # perfectly valid uploaded recording rendered as "No recording found".
-    call_execution.recording_available = True
-    call_execution.save(update_fields=["recording_url", "recording_available"])
-    return RecordingUploadResult(
-        recording_url=recording_url,
-        object_key=object_key,
-    )
+    digest = hashlib.sha256(audio_bytes).hexdigest()
+    expected = (expected_sha256 or "").removeprefix("sha256:").lower()
+    if expected and digest != expected:
+        raise ALKSimulateIngestionError("recording sha256 did not match uploaded bytes")
+
+    # Distinct tracks can arrive concurrently. Lock the row while checking and
+    # extending the per-kind artifact map so one upload cannot overwrite another.
+    # The object key is content addressed, which makes a retry after a database
+    # failure safe even if storage already accepted the bytes.
+    with transaction.atomic():
+        call_execution = CallExecution.objects.select_for_update().get(
+            id=call_execution.id
+        )
+        metadata = dict(call_execution.call_metadata or {})
+        artifacts = dict(metadata.get("alk_recording_artifacts") or {})
+        existing_artifact = dict(artifacts.get(kind) or {})
+        existing_digest = existing_artifact.get("sha256")
+        if existing_digest and existing_digest != digest:
+            raise ALKSimulateIngestionError(
+                "recording digest conflicts with the previously ingested artifact"
+            )
+        existing_key = existing_artifact.get("object_key")
+        existing_url = existing_artifact.get("recording_url")
+        if existing_digest == digest and existing_key and existing_url:
+            return RecordingUploadResult(
+                recording_url=existing_url,
+                object_key=existing_key,
+            )
+
+        ext = _extension_from_filename(filename)
+        content_type = _CONTENT_TYPE_BY_EXT.get(ext, "application/octet-stream")
+        object_key = (
+            f"{_ALK_RECORDING_PREFIX}/{call_execution.id}/{kind}/{digest}.{ext}"
+        )
+        client = get_storage_client()
+        client.put_object(
+            bucket_name=UPLOAD_BUCKET_NAME,
+            object_name=object_key,
+            data=BytesIO(audio_bytes),
+            length=len(audio_bytes),
+            content_type=content_type,
+        )
+        recording_url = get_object_url(UPLOAD_BUCKET_NAME, object_key)
+        update_fields = ["call_metadata"]
+        if kind == "combined":
+            call_execution.recording_url = recording_url
+            call_execution.recording_available = True
+            update_fields.extend(["recording_url", "recording_available"])
+        elif kind == "stereo":
+            call_execution.stereo_recording_url = recording_url
+            call_execution.recording_available = True
+            update_fields.extend(["stereo_recording_url", "recording_available"])
+        artifacts[kind] = {
+            "sha256": digest,
+            "object_key": object_key,
+            "recording_url": recording_url,
+        }
+        metadata["alk_recording_artifacts"] = artifacts
+        call_execution.call_metadata = metadata
+        call_execution.save(update_fields=update_fields)
+        return RecordingUploadResult(
+            recording_url=recording_url,
+            object_key=object_key,
+        )
 
 
 def _extension_from_filename(filename: str | None) -> str:
@@ -599,7 +644,12 @@ def ingest_alk_sim_result(
             "ALK result can only be submitted to VOICE or TEXT call executions"
         )
 
-    _apply_payload(call_execution, payload)
+    with transaction.atomic():
+        call_execution = CallExecution.objects.select_for_update().get(
+            id=call_execution.id
+        )
+        _claim_result_digest(call_execution, payload)
+        _apply_payload(call_execution, payload)
 
     eval_dispatched = False
     if call_execution.status == CallExecution.CallStatus.COMPLETED:
@@ -659,6 +709,34 @@ def ingest_alk_sim_result(
     )
 
 
+def _claim_result_digest(
+    call_execution: CallExecution, payload: dict[str, Any]
+) -> None:
+    """Atomically make retries idempotent and reject conflicting evidence."""
+    incoming = payload.get("result_digest")
+    manifest = payload.get("artifact_manifest_digest")
+    metadata = dict(call_execution.call_metadata or {})
+    existing = metadata.get("alk_result_digest")
+    if existing and not incoming:
+        raise ALKSimulateIngestionError(
+            "result_digest is required when retrying a sealed result"
+        )
+    if existing and existing != incoming:
+        raise ALKSimulateIngestionError(
+            "result digest conflicts with the previously ingested result"
+        )
+    existing_manifest = metadata.get("alk_artifact_manifest_digest")
+    if existing_manifest and manifest and existing_manifest != manifest:
+        raise ALKSimulateIngestionError(
+            "artifact manifest digest conflicts with this execution"
+        )
+    if incoming:
+        metadata["alk_result_digest"] = incoming
+    if manifest:
+        metadata["alk_artifact_manifest_digest"] = manifest
+    call_execution.call_metadata = metadata
+
+
 def _roll_up_external_execution(test_execution_id) -> None:
     """Synchronously close an SDK-owned parent once all child calls finish.
 
@@ -685,9 +763,7 @@ def _roll_up_external_execution(test_execution_id) -> None:
         if calls.filter(status=CallExecution.CallStatus.COMPLETED).exists()
         else TestExecution.ExecutionStatus.FAILED
     )
-    completed_calls = calls.filter(
-        status=CallExecution.CallStatus.COMPLETED
-    ).count()
+    completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
     failed_calls = calls.filter(
         status__in=(
             CallExecution.CallStatus.FAILED,

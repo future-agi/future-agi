@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
     HarnessJobCreateSerializer,
+    HarnessPreflightSerializer,
 )
 from simulate.services.harness_sandbox import (
     HarnessSandboxClient,
@@ -30,20 +31,39 @@ class HarnessJobViewSet(viewsets.ViewSet):
         try:
             result = self._client().submit(request.validated_data)
         except HarnessSandboxUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
         return Response(result, status=status.HTTP_202_ACCEPTED)
 
     def list(self, request):
         try:
             return Response(self._client().list_jobs())
         except HarnessSandboxUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+    @validated_request(
+        request_serializer=HarnessPreflightSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=False, methods=["post"])
+    def preflight(self, request):
+        try:
+            return Response(self._client().preflight(request.validated_data))
+        except HarnessSandboxUnavailable as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
     def retrieve(self, request, pk=None):
         try:
             return Response(self._client().get(str(pk)))
         except HarnessSandboxUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
     @validated_request(
         request_serializer=HarnessJobActionSerializer,
@@ -54,11 +74,15 @@ class HarnessJobViewSet(viewsets.ViewSet):
         try:
             return Response(self._client().cancel(str(pk)))
         except HarnessSandboxUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
     @action(detail=False, methods=["get"])
     def health(self, request):
         try:
             return Response(self._client().health())
         except HarnessSandboxUnavailable as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
