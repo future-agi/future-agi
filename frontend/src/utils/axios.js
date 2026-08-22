@@ -1687,6 +1687,8 @@ export const endpoints = {
     metrics: apiPath("/tracer/dashboard/metrics/"),
     filterValues: apiPath("/tracer/dashboard/filter_values/"),
     simulationAgents: apiPath("/tracer/dashboard/simulation-agents/"),
+    resolveWorkspace: (id) =>
+      apiPath("/tracer/dashboard/{id}/resolve-workspace/", { id }),
     widgets: (dashboardId) =>
       apiPath("/tracer/dashboard/{dashboard_pk}/widgets/", {
         dashboard_pk: dashboardId,
