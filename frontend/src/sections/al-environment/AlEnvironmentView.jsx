@@ -8,6 +8,7 @@ import {
   useAlkSimulation,
   useAlkRuns,
   useAlkSimulations,
+  useAlkGeneration,
   useAlkStatus,
   useAlkSubgoals,
   useAlkWorld,
@@ -63,6 +64,7 @@ const AlEnvironmentView = () => {
   const navigate = useNavigate();
 
   const { status, isError, refetch } = useAlkStatus();
+  const { generation } = useAlkGeneration();
   const hasSession = Boolean(status?.session);
   const openId = status?.session?.id;
   // Added by the backend proxy at the top level of the status object, beside `busy` — not
@@ -340,6 +342,7 @@ const AlEnvironmentView = () => {
                 hasSession={hasSession}
                 thinking={conversation.thinking}
                 spentUsd={status?.spent_usd}
+                generation={generation}
                 onDismissError={conversation.dismissLive}
               />
             </Box>

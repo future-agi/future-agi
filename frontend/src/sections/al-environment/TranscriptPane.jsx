@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Box, Chip, Collapse, IconButton, Stack, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { ALK_MONO } from "./alkTokens";
+import GenerationTree from "./GenerationTree";
 import ThinkingStrip from "./ThinkingStrip";
 import Markdown from "./parts/Markdown";
 import JsonView from "./JsonView";
@@ -112,7 +113,7 @@ const grouped = (messages) => {
  * Read-only in slice 1. Slice 2 appends streamed events to the same `messages` array,
  * so the renderer deliberately knows nothing about where the messages came from.
  */
-const TranscriptPane = ({ messages, hasSession, thinking, spentUsd, onDismissError }) => {
+const TranscriptPane = ({ messages, hasSession, thinking, spentUsd, generation, onDismissError }) => {
   const theme = useTheme();
   const foot = useRef(null);
 
@@ -244,6 +245,7 @@ const TranscriptPane = ({ messages, hasSession, thinking, spentUsd, onDismissErr
           )}
         </Box>
       ))}
+      {generation?.slices?.length > 0 && <GenerationTree generation={generation} />}
       {thinking && <ThinkingStrip label={thinking} spentUsd={spentUsd} />}
       <Box ref={foot} />
     </Stack>
@@ -255,6 +257,7 @@ TranscriptPane.propTypes = {
   hasSession: PropTypes.bool,
   thinking: PropTypes.string,
   spentUsd: PropTypes.number,
+  generation: PropTypes.object,
   onDismissError: PropTypes.func,
 };
 

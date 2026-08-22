@@ -12,6 +12,7 @@ export const ALK_KEYS = {
   environments: ["alk", "environments"],
   subgoals: ["alk", "subgoals"],
   runs: ["alk", "runs"],
+  generation: ["alk", "generation"],
   simulation: (runId) => ["alk", "simulation", runId],
 };
 
@@ -28,6 +29,24 @@ export const useAlkStatus = () => {
     retry: false,
   });
   return { ...query, status: query.data ?? null };
+};
+
+/**
+ * What a suite generation is doing right now.
+ *
+ * Polled rather than streamed, because a person may open this page halfway through a suite,
+ * refresh it, or open it somewhere else, and each of those has to show the same thing. Polls
+ * quickly while the fan-out is running and stops once it settles, so a finished suite is not
+ * still being asked about minutes later.
+ */
+export const useAlkGeneration = () => {
+  const query = useQuery({
+    queryKey: ALK_KEYS.generation,
+    queryFn: () => alkAxios.get("/generation").then((r) => r.data),
+    refetchInterval: (q) => (q.state.data?.state === "running" ? 2000 : false),
+    retry: false,
+  });
+  return { ...query, generation: query.data ?? null };
 };
 
 export const useAlkSessions = () => {
