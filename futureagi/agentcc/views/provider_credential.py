@@ -144,28 +144,33 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data["gateway_warning"] = _GATEWAY_SYNC_WARNING
         return self._gm.success_response(data)
 
-    def update(self, request, *args, **kwargs):
-        """PUT (full update).
+    def _update_from_request(self, request, instance):
+        """Validate safe fields, persist them, and synchronize the gateway."""
+        serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return self._gm.bad_request(serializer.errors)
 
-        The update serializer marks every field as optional, so PUT behaves
-        like PATCH here: only the supplied fields are written. This reuses the
-        same whitelist and gateway-sync logic as partial_update, which
-        (a) avoids clobbering fields the client did not send and
-        (b) guarantees the gateway is synced. This fixes #2282, where PUT
-        previously fell through to DRF's default handler, wrote the DB only,
-        and left the gateway on stale config.
+        self._apply_safe_updates(instance, serializer.validated_data)
+        return self._respond_with_gateway_sync(instance)
+
+    def update(self, request, *args, **kwargs):
+        """PUT provider metadata/config and synchronize the live gateway.
+
+        ``get_object()`` intentionally stays outside the broad update-error
+        handler. Tenant-scoped misses and object-permission failures must keep
+        DRF's 404/403 semantics rather than being rewritten as a 400 response.
         """
-        return self.partial_update(request, *args, **kwargs)
+        instance = self.get_object()
+        try:
+            return self._update_from_request(request, instance)
+        except Exception as e:
+            logger.exception("provider_credential_update_error", error=str(e))
+            return self._gm.bad_request(str(e))
 
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            self._apply_safe_updates(instance, serializer.validated_data)
-            return self._respond_with_gateway_sync(instance)
+            return self._update_from_request(request, instance)
         except Exception as e:
             logger.exception("provider_credential_update_error", error=str(e))
             return self._gm.bad_request(str(e))
