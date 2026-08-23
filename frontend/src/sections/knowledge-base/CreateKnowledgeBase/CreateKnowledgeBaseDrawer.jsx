@@ -16,6 +16,7 @@ import Iconify from "src/components/iconify";
 import HelperText from "src/sections/develop-detail/Common/HelperText";
 import UploadKnowledgeBaseFile from "./UploadKnowledgeBaseFile";
 import UploadKnowledgeBaseSDK from "./UploadKnowledgeBaseSDK";
+import SelectDatasetSource from "./SelectDatasetSource";
 import SingleFileDetail from "./SingleFileDetail";
 import { getFileExtension } from "src/utils/utils";
 import { LoadingButton } from "@mui/lab";
@@ -33,6 +34,13 @@ import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 
 const tabItems = [
   { label: "Upload", value: "Upload", disabled: false },
+  {
+    label: "From dataset",
+    value: "FromDataset",
+    disabled: false,
+    // creation-only: an existing KB's dataset-derived content isn't editable here
+    hideOnAddFiles: true,
+  },
   {
     label: "Import from SDK",
     value: "ImprortfromSDK",
@@ -64,6 +72,8 @@ const CreateKnowledgeBaseDrawerChild = ({
   const theme = useTheme();
   const navigate = useNavigate();
   const [currentTab, setCurrentTab] = useState("Upload");
+  const [datasetId, setDatasetId] = useState(null);
+  const [columnIds, setColumnIds] = useState([]);
   const { refetch: refetchKnowledgeBaseList } = useKnowledgeBaseList();
 
   const [showSdkInfo, setShowSdkInfo] = useState(false);
@@ -183,6 +193,15 @@ const CreateKnowledgeBaseDrawerChild = ({
     if (knowledgeId) {
       formData.append("kb_id", knowledgeId);
     }
+    //@ts-ignore
+    createKnowledgeBase(formData);
+  };
+
+  const onCreateFromDataset = (data) => {
+    const formData = new FormData();
+    formData.append("name", data?.name);
+    formData.append("dataset_id", datasetId);
+    columnIds.forEach((columnId) => formData.append("column_ids", columnId));
     //@ts-ignore
     createKnowledgeBase(formData);
   };
@@ -329,7 +348,9 @@ const CreateKnowledgeBaseDrawerChild = ({
                   }}
                   sx={{ borderBottom: "1px solid", borderColor: "divider" }}
                 >
-                  {tabItems.map((tab) => (
+                  {tabItems
+                    .filter((tab) => !(knowledgeId && tab.hideOnAddFiles))
+                    .map((tab) => (
                     <Tab
                       disabled={tab.disabled}
                       key={tab.value}
@@ -360,6 +381,15 @@ const CreateKnowledgeBaseDrawerChild = ({
                     isPending={isPending}
                     handleShowSdkInfo={handleShowSdkInfo}
                     control={control}
+                  />
+                )}
+                {currentTab === "FromDataset" && (
+                  <SelectDatasetSource
+                    datasetId={datasetId}
+                    setDatasetId={setDatasetId}
+                    columnIds={columnIds}
+                    setColumnIds={setColumnIds}
+                    disabled={isPending}
                   />
                 )}
                 {currentTab === "ImprortfromSDK" && (
@@ -450,6 +480,26 @@ const CreateKnowledgeBaseDrawerChild = ({
             >
               <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
                 {knowledgeId ? "Add" : "Create"}
+              </Typography>
+            </LoadingButton>
+          </Box>
+        )}
+        {currentTab === "FromDataset" && (
+          <Box marginTop={"auto"}>
+            <LoadingButton
+              disabled={!datasetId || columnIds.length === 0}
+              loading={isPending}
+              fullWidth
+              type="button"
+              variant="contained"
+              color="primary"
+              onClick={handleSubmit(onCreateFromDataset)}
+              sx={{
+                py: "8px",
+              }}
+            >
+              <Typography typography="s1" fontWeight={"fontWeightSemiBold"}>
+                Create
               </Typography>
             </LoadingButton>
           </Box>

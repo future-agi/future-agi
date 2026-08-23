@@ -244,6 +244,7 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.kb_helpers import (
     cancel_kb_ingestion_workflow,
+    schedule_dataset_kb_ingestion_on_commit,
     schedule_kb_ingestion_on_commit,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
@@ -15150,7 +15151,30 @@ class CreateKnowledgeBaseView(APIView):
 
             data = request.validated_data
             created_by = User.objects.get(id=request.user.id).name
-            uploaded_files = request.FILES.getlist("file")
+            dataset_id = data.get("dataset_id")
+            # De-dupe (order-preserving): a repeated column would otherwise
+            # double-count toward matched_columns below and get concatenated
+            # twice into every row's indexed text.
+            column_ids = list(dict.fromkeys(data.get("column_ids") or []))
+
+            dataset = None
+            if dataset_id:
+                dataset = Dataset.objects.filter(
+                    id=dataset_id, organization=org, deleted=False
+                ).first()
+                if not dataset:
+                    return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
+                if not column_ids:
+                    return self._gm.bad_request(
+                        get_error_message("NO_COLUMNS_SELECTED")
+                    )
+                matched_columns = Column.objects.filter(
+                    id__in=column_ids, dataset=dataset
+                ).count()
+                if matched_columns != len(set(column_ids)):
+                    return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
+
+            uploaded_files = [] if dataset else request.FILES.getlist("file")
             file_names = {file.name for file in uploaded_files}
             if len(file_names) != len(uploaded_files):
                 return self._gm.bad_request(get_error_message("DUPLICATE_FILES"))
@@ -15236,20 +15260,30 @@ class CreateKnowledgeBaseView(APIView):
                     size=updated_size,
                 )
 
-                # Create file records and start S3 upload (fire-and-forget)
-                created_files = self.create_files_and_upload(
-                    uploaded_files, created_by, kb.id, org_id=str(org.id)
-                )
+                if dataset:
+                    created_files = {"files": [], "file_metadata": {}}
+                    # Schedule dataset-row ingestion after transaction commits
+                    schedule_dataset_kb_ingestion_on_commit(
+                        dataset.id,
+                        column_ids,
+                        kb.id,
+                        org.id,
+                    )
+                else:
+                    # Create file records and start S3 upload (fire-and-forget)
+                    created_files = self.create_files_and_upload(
+                        uploaded_files, created_by, kb.id, org_id=str(org.id)
+                    )
 
-                kb.files.set(Files.objects.filter(id__in=created_files["files"]))
-                kb.save()
+                    kb.files.set(Files.objects.filter(id__in=created_files["files"]))
+                    kb.save()
 
-                # Schedule ingestion after transaction commits
-                schedule_kb_ingestion_on_commit(
-                    created_files.get("file_metadata", {}),
-                    kb.id,
-                    org.id,
-                )
+                    # Schedule ingestion after transaction commits
+                    schedule_kb_ingestion_on_commit(
+                        created_files.get("file_metadata", {}),
+                        kb.id,
+                        org.id,
+                    )
 
             end_time = time.time()
             logger.info(f"END TIME: {str(end_time)}")
