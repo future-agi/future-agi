@@ -3887,6 +3887,304 @@ def non_llm_context_recall(output, expected, **kwargs):
     return {"result": recall, "reason": f"Context Recall: {recall:.4f} ({hits}/{len(reference)} found)"}
 
 
+def calculate_context_precision_score(hypothesis=None, reference=None, k=None, min_token_overlap=0.6, **kwargs):
+    """
+    RAG Context Precision with Rank-Aware Discount.
+    
+    Evaluates whether relevant retrieved context chunks are positioned at higher ranks.
+    Calculates Average Precision at K (AP@K):
+        AP@K = sum(Precision@k * rel(k)) / total_relevant_in_top_k
+    where chunk relevance rel(k) is determined by semantic token containment/overlap
+    with any ground-truth reference context.
+    """
+    import json
+    import ast
+    import re
+    from collections import Counter
+
+    def _parse_contexts(val):
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return [str(x).strip() for x in val if str(x).strip()]
+        if isinstance(val, str):
+            val = val.strip()
+            if not val:
+                return []
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except (json.JSONDecodeError, ValueError):
+                pass
+            try:
+                parsed = ast.literal_eval(val)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except (ValueError, SyntaxError):
+                pass
+            return [line.strip() for line in val.split("\n") if line.strip()]
+        return [str(val).strip()]
+
+    def _tokenize(text):
+        return re.findall(r"\b\w+\b", str(text).lower())
+
+    def _is_chunk_relevant(retrieved_chunk, ref_list, min_overlap):
+        hyp_tokens = _tokenize(retrieved_chunk)
+        if not hyp_tokens:
+            return False
+        hyp_counts = Counter(hyp_tokens)
+        for ref in ref_list:
+            ref_tokens = _tokenize(ref)
+            if not ref_tokens:
+                continue
+            ref_counts = Counter(ref_tokens)
+            overlap = sum((hyp_counts & ref_counts).values())
+            precision = overlap / len(hyp_tokens)
+            recall = overlap / len(ref_tokens)
+            f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+            if f1 >= min_overlap or precision >= min_overlap or recall >= min_overlap:
+                return True
+            if str(ref).lower().strip() in str(retrieved_chunk).lower().strip() or str(retrieved_chunk).lower().strip() in str(ref).lower().strip():
+                return True
+        return False
+
+    retrieved = _parse_contexts(kwargs.get("output", hypothesis))
+    reference_contexts = _parse_contexts(kwargs.get("expected", reference))
+
+    if not reference_contexts:
+        return {"result": 1.0 if not retrieved else 0.0, "reason": "No reference contexts provided"}
+    if not retrieved:
+        return {"result": 0.0, "reason": "No retrieved contexts provided"}
+
+    if k is not None:
+        try:
+            k = max(1, int(k))
+            retrieved = retrieved[:k]
+        except (ValueError, TypeError):
+            pass
+
+    hits = 0
+    cum_precision_sum = 0.0
+    for idx, chunk in enumerate(retrieved, start=1):
+        if _is_chunk_relevant(chunk, reference_contexts, min_token_overlap):
+            hits += 1
+            cum_precision_sum += (hits / idx)
+
+    if hits == 0:
+        score = 0.0
+    else:
+        score = cum_precision_sum / hits
+
+    return {
+        "result": float(score),
+        "reason": f"Context Precision: {score:.4f} ({hits}/{len(retrieved)} relevant chunks in ranked context)",
+    }
+
+
+def calculate_context_recall_score(hypothesis=None, reference=None, min_token_overlap=0.6, **kwargs):
+    """
+    RAG Context Recall (Factual Coverage).
+    
+    Measures the proportion of ground-truth reference statements or context units
+    that are successfully recalled/covered across all retrieved contexts.
+    """
+    import json
+    import ast
+    import re
+    from collections import Counter
+
+    def _parse_contexts(val):
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return [str(x).strip() for x in val if str(x).strip()]
+        if isinstance(val, str):
+            val = val.strip()
+            if not val:
+                return []
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except (json.JSONDecodeError, ValueError):
+                pass
+            try:
+                parsed = ast.literal_eval(val)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except (ValueError, SyntaxError):
+                pass
+            return [line.strip() for line in val.split("\n") if line.strip()]
+        return [str(val).strip()]
+
+    def _tokenize(text):
+        return re.findall(r"\b\w+\b", str(text).lower())
+
+    retrieved = _parse_contexts(kwargs.get("output", hypothesis))
+    reference_contexts = _parse_contexts(kwargs.get("expected", reference))
+
+    if not reference_contexts:
+        return {"result": 1.0 if not retrieved else 0.0, "reason": "No reference contexts provided"}
+    if not retrieved:
+        return {"result": 0.0, "reason": f"0/{len(reference_contexts)} reference contexts recalled (empty retrieval)"}
+
+    def _is_ref_covered(ref_str, ret_chunks, min_overlap=0.7):
+        r_toks = _tokenize(ref_str)
+        if not r_toks:
+            return True
+        r_counts = Counter(r_toks)
+        for chunk in ret_chunks:
+            c_toks = _tokenize(chunk)
+            if not c_toks:
+                continue
+            c_counts = Counter(c_toks)
+            overlap = sum((r_counts & c_counts).values())
+            cov = overlap / len(r_toks)
+            if cov >= min_overlap or str(ref_str).lower().strip() in str(chunk).lower().strip():
+                return True
+        return False
+
+    recalled_count = sum(1 for r in reference_contexts if _is_ref_covered(r, retrieved, min_token_overlap))
+    recall = recalled_count / len(reference_contexts)
+    return {
+        "result": float(recall),
+        "reason": f"Context Recall: {recall:.4f} ({recalled_count}/{len(reference_contexts)} reference contexts covered)",
+    }
+
+
+def calculate_faithfulness_score(output=None, context=None, **kwargs):
+    """
+    RAG Faithfulness / Groundedness Score.
+    
+    Evaluates whether each statement or claim in the generated response (`output`)
+    can be inferred directly from the provided context (`context`), detecting hallucinations.
+    """
+    import json
+    import ast
+    import re
+    from collections import Counter
+
+    def _parse_text_or_list(val):
+        if val is None:
+            return ""
+        if isinstance(val, list):
+            return "\n".join(str(x).strip() for x in val if str(x).strip())
+        if isinstance(val, str):
+            val = val.strip()
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return "\n".join(str(x).strip() for x in parsed if str(x).strip())
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return val
+        return str(val).strip()
+
+    def _split_into_sentences(text):
+        if not text:
+            return []
+        raw_sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
+        sentences = [s.strip() for s in raw_sentences if len(s.strip()) > 3]
+        return sentences
+
+    def _tokenize(text):
+        return re.findall(r"\b\w+\b", str(text).lower())
+
+    out_text = _parse_text_or_list(kwargs.get("output", output))
+    ctx_text = _parse_text_or_list(kwargs.get("context", context))
+
+    if not out_text and not ctx_text:
+        return {"result": 1.0, "reason": "Both output and context are empty"}
+    if not out_text:
+        return {"result": 1.0, "reason": "Empty output is vacuously faithful"}
+    if not ctx_text:
+        return {"result": 0.0, "reason": "Context is empty, output cannot be grounded"}
+
+    claims = _split_into_sentences(out_text)
+    if not claims:
+        claims = [out_text]
+
+    ctx_tokens = Counter(_tokenize(ctx_text))
+    supported_claims = 0
+
+    for claim in claims:
+        claim_tokens = _tokenize(claim)
+        if not claim_tokens:
+            supported_claims += 1
+            continue
+        claim_counts = Counter(claim_tokens)
+        overlap = sum((claim_counts & ctx_tokens).values())
+        grounded_ratio = overlap / len(claim_tokens)
+        if grounded_ratio >= 0.70 or claim.lower() in ctx_text.lower():
+            supported_claims += 1
+
+    score = supported_claims / len(claims)
+    return {
+        "result": float(score),
+        "reason": f"Faithfulness: {score:.4f} ({supported_claims}/{len(claims)} statements grounded in context)",
+    }
+
+
+def calculate_noise_sensitivity(output=None, expected=None, context=None, **kwargs):
+    """
+    RAG Context Noise Sensitivity.
+    
+    Measures how much the response is influenced or corrupted by irrelevant distractor
+    chunks in the context.
+    """
+    import json
+    import re
+    from collections import Counter
+
+    def _parse_text_or_list(val):
+        if val is None:
+            return ""
+        if isinstance(val, list):
+            return "\n".join(str(x).strip() for x in val if str(x).strip())
+        if isinstance(val, str):
+            val = val.strip()
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return "\n".join(str(x).strip() for x in parsed if str(x).strip())
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return val
+        return str(val).strip()
+
+    def _tokenize(text):
+        return re.findall(r"\b\w+\b", str(text).lower())
+
+    out_text = _parse_text_or_list(kwargs.get("output", output))
+    exp_text = _parse_text_or_list(kwargs.get("expected", expected))
+    ctx_text = _parse_text_or_list(kwargs.get("context", context))
+
+    if not out_text:
+        return {"result": 0.0, "reason": "No output provided"}
+    if not ctx_text:
+        return {"result": 0.0, "reason": "No context provided"}
+
+    out_tokens = Counter(_tokenize(out_text))
+    if not out_tokens:
+        return {"result": 0.0, "reason": "Empty output after tokenization"}
+
+    exp_tokens = Counter(_tokenize(exp_text)) if exp_text else Counter()
+    ctx_tokens = Counter(_tokenize(ctx_text))
+
+    noise_in_output = 0
+    total_out = sum(out_tokens.values())
+    for token, count in out_tokens.items():
+        if token in ctx_tokens and token not in exp_tokens:
+            noise_in_output += min(count, ctx_tokens[token])
+
+    sensitivity = noise_in_output / total_out if total_out > 0 else 0.0
+    return {
+        "result": float(sensitivity),
+        "reason": f"Noise Sensitivity: {sensitivity:.4f} ({noise_in_output}/{total_out} tokens driven by extraneous context)",
+    }
+
+
 def calculate_distinct_n(text, n=1, **kwargs):
     """Compute Distinct-N: ratio of unique n-grams to total n-grams. Measures text diversity."""
     text = str(text).strip().lower()
@@ -4092,6 +4390,10 @@ operations = {
     "WordInfoPreserved": calculate_word_info_preserved,
     "NonLlmContextPrecision": non_llm_context_precision,
     "NonLlmContextRecall": non_llm_context_recall,
+    "ContextPrecisionScore": calculate_context_precision_score,
+    "ContextRecallScore": calculate_context_recall_score,
+    "FaithfulnessScore": calculate_faithfulness_score,
+    "NoiseSensitivity": calculate_noise_sensitivity,
     "DistinctN": calculate_distinct_n,
     "TypeTokenRatio": calculate_type_token_ratio,
     "RepetitionRate": calculate_repetition_rate,
