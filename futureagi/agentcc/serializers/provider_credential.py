@@ -1,8 +1,8 @@
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.services.credential_manager import mask_key
+from integrations.services.credentials import CredentialManager
 
 
 class AgentccProviderCredentialSerializer(serializers.ModelSerializer):
@@ -63,9 +63,11 @@ class AgentccProviderCredentialCreateSerializer(serializers.Serializer):
     models_list = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
-    default_timeout_seconds = serializers.IntegerField(required=False, default=60)
-    max_concurrent = serializers.IntegerField(required=False, default=100)
-    conn_pool_size = serializers.IntegerField(required=False, default=100)
+    default_timeout_seconds = serializers.IntegerField(
+        required=False, default=60, min_value=1
+    )
+    max_concurrent = serializers.IntegerField(required=False, default=100, min_value=1)
+    conn_pool_size = serializers.IntegerField(required=False, default=100, min_value=1)
     extra_config = serializers.DictField(required=False, default=dict)
 
     def validate_credentials(self, value):
@@ -85,8 +87,8 @@ class AgentccProviderCredentialUpdateSerializer(serializers.Serializer):
     base_url = serializers.URLField(max_length=500, required=False, allow_blank=True)
     api_format = serializers.CharField(max_length=50, required=False)
     models_list = serializers.ListField(child=serializers.CharField(), required=False)
-    default_timeout_seconds = serializers.IntegerField(required=False)
-    max_concurrent = serializers.IntegerField(required=False)
-    conn_pool_size = serializers.IntegerField(required=False)
+    default_timeout_seconds = serializers.IntegerField(required=False, min_value=1)
+    max_concurrent = serializers.IntegerField(required=False, min_value=1)
+    conn_pool_size = serializers.IntegerField(required=False, min_value=1)
     extra_config = serializers.DictField(required=False)
     is_active = serializers.BooleanField(required=False)

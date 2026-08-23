@@ -168,8 +168,14 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return self._gm.bad_request(str(e))
 
     def partial_update(self, request, *args, **kwargs):
+        """PATCH provider metadata/config and synchronize the live gateway.
+
+        Mirrors :meth:`update`: ``get_object()`` stays outside the broad
+        update-error handler so tenant-scoped misses and object-permission
+        failures keep DRF's 404/403 semantics instead of being rewritten to 400.
+        """
+        instance = self.get_object()
         try:
-            instance = self.get_object()
             return self._update_from_request(request, instance)
         except Exception as e:
             logger.exception("provider_credential_update_error", error=str(e))

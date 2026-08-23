@@ -286,20 +286,32 @@ class TestAgentccProviderCredentialBoundary:
         cred.refresh_from_db()
         assert cred.is_active is True
 
-    def test_put_timeout_zero_and_negative(self, nb_secondary_org_context, nb_client):
+    def test_put_non_positive_timeout_rejected(
+        self, nb_secondary_org_context, nb_client
+    ):
+        """#2294 follow-up: 0 and negative timeouts must 400, not persist.
+
+        The gateway silently substitutes defaults for any value <= 0, so the
+        control plane must not report a successful save with a value the
+        runtime will never use. The update serializer rejects them.
+        """
         org, _ = nb_secondary_org_context
         cred = _make_cred(org, default_timeout_seconds=60)
-        # 0 is a valid integer boundary; negative is also accepted by the
-        # IntegerField (no min_value), so both must persist without 400.
-        for value in (0, -1):
-            response = nb_client.put(
-                f"/agentcc/provider-credentials/{cred.id}/",
-                {"default_timeout_seconds": value},
-                format="json",
-            )
-            assert response.status_code == 200, response.json()
-            cred.refresh_from_db()
-            assert cred.default_timeout_seconds == value
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ) as mock_push:
+            for value in (0, -1):
+                response = nb_client.put(
+                    f"/agentcc/provider-credentials/{cred.id}/",
+                    {"default_timeout_seconds": value},
+                    format="json",
+                )
+                assert response.status_code == 400, response.json()
+        # Neither rejected payload nor any gateway push must have happened.
+        mock_push.assert_not_called()
+        cred.refresh_from_db()
+        assert cred.default_timeout_seconds == 60
 
     def test_put_extra_config_empty_dict(self, nb_secondary_org_context, nb_client):
         org, _ = nb_secondary_org_context
@@ -362,6 +374,32 @@ class TestAgentccProviderCredentialRegression:
             return_value=True,
         ) as mock_push:
             response = nb_client.put(
+                f"/agentcc/provider-credentials/{cred.id}/",
+                {"display_name": "Must Not Apply"},
+                format="json",
+            )
+        assert response.status_code == 404
+        mock_push.assert_not_called()
+        cred.refresh_from_db()
+        assert cred.display_name == "OrgA"
+        assert bytes(cred.encrypted_credentials) == encrypted_before
+
+    def test_cross_tenant_patch_returns_404_without_gateway_push(
+        self, user, nb_secondary_org_context, nb_client
+    ):
+        """PUT/PATCH parity: a cross-tenant PATCH must also be 404, no push.
+
+        get_object() is taken outside the broad handler in both update() and
+        partial_update(), so a tenant-scoped miss keeps DRF's 404 semantics
+        instead of being rewritten to 400.
+        """
+        cred = _make_cred(user.organization, display_name="OrgA")
+        encrypted_before = bytes(cred.encrypted_credentials)
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ) as mock_push:
+            response = nb_client.patch(
                 f"/agentcc/provider-credentials/{cred.id}/",
                 {"display_name": "Must Not Apply"},
                 format="json",
