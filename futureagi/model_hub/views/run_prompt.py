@@ -1800,7 +1800,12 @@ class AddRunPromptColumnView(APIView):
                 if tools:
                     tool_ids = [tool.get("id") for tool in tools if "id" in tool]
                     if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
+                        tools_queryset = Tools.objects.filter(
+                            _request_workspace_filter(request),
+                            id__in=tool_ids,
+                            organization=organization,
+                            deleted=False,
+                        )
                         run_prompter.tools.set(tools_queryset)
 
                 run_prompter_id = str(run_prompter.id)
@@ -1903,7 +1908,16 @@ class PreviewRunPromptColumnView(APIView):
             if config.get("tools"):
                 tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
                 if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
+                    organization = (
+                        getattr(request, "organization", None)
+                        or request.user.organization
+                    )
+                    tools = Tools.objects.filter(
+                        _request_workspace_filter(request),
+                        id__in=tool_ids,
+                        organization=organization,
+                        deleted=False,
+                    )
                     tools_config = [tool.config for tool in tools]
 
             rf = config.get("response_format")
@@ -2111,7 +2125,16 @@ class EditRunPromptColumnView(APIView):
                 if tools:
                     tool_ids = [tool.get("id") for tool in tools if "id" in tool]
                     if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
+                        organization = (
+                            getattr(request, "organization", None)
+                            or request.user.organization
+                        )
+                        tools_queryset = Tools.objects.filter(
+                            _request_workspace_filter(request),
+                            id__in=tool_ids,
+                            organization=organization,
+                            deleted=False,
+                        )
                         run_prompter.tools.set(tools_queryset)
 
                 run_prompter.save()

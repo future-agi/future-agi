@@ -3402,3 +3402,54 @@ type mockMirrorProvider struct {
 func (p *mockMirrorProvider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
 	return p.fn(ctx, req)
 }
+
+// TestConditional_NumericOperators_NonNumericRejection tests that non-numeric or missing fields do not match $lt/$lte/$gt/$gte
+func TestConditional_NumericOperators_NonNumericRejection(t *testing.T) {
+	router, err := NewConditionalRouter([]config.ConditionalRouteConfig{
+		{
+			Name:     "lt_route",
+			Priority: 1,
+			Condition: config.ConditionConfig{
+				Field: "metadata.tokens",
+				Op:    "$lt",
+				Value: 1000,
+			},
+			Action: config.RouteActionConfig{Provider: "provider-lt"},
+		},
+		{
+			Name:     "gt_route",
+			Priority: 2,
+			Condition: config.ConditionConfig{
+				Field: "metadata.tokens",
+				Op:    "$gt",
+				Value: 100,
+			},
+			Action: config.RouteActionConfig{Provider: "provider-gt"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating router: %v", err)
+	}
+
+	// 1. Numeric value "500" should match lt_route (< 1000)
+	rcNum := testRC("gpt-4o", "", false, map[string]string{"tokens": "500"})
+	action := router.Evaluate(rcNum)
+	if action == nil || action.Provider != "provider-lt" {
+		t.Errorf("expected provider-lt for tokens=500, got %v", action)
+	}
+
+	// 2. Non-numeric string "not-a-number" must NOT match lt_route or gt_route
+	rcStr := testRC("gpt-4o", "", false, map[string]string{"tokens": "not-a-number"})
+	actionStr := router.Evaluate(rcStr)
+	if actionStr != nil {
+		t.Errorf("expected no match for string tokens, got %v", actionStr)
+	}
+
+	// 3. Missing tokens field must NOT match lt_route or gt_route
+	rcMissing := testRC("gpt-4o", "", false, map[string]string{"other": "val"})
+	actionMissing := router.Evaluate(rcMissing)
+	if actionMissing != nil {
+		t.Errorf("expected no match for missing tokens, got %v", actionMissing)
+	}
+}
+
