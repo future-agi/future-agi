@@ -215,9 +215,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     }
   }, [open]);
 
-  // Scenarios state. The hook resets to page 1 whenever the debounced
-  // search term changes, so a filtered result set can never be asked for
-  // a page it no longer has ("Invalid page.", #1485).
+  // Scenarios state
   const {
     search: scenarioSearch,
     setSearch: setScenarioSearch,
