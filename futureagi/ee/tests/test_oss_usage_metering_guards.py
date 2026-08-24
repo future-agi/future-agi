@@ -136,6 +136,101 @@ class TestEnhancedScenariosAgentUsagePrecheck:
                 )
 
 
+class TestPromptOptimizerUsageLogging:
+    """_get_evaluation_feedback must aggregate scores without EE usage logging."""
+
+    def _build_optimizer(self, eval_result):
+        from ee.agenthub.prompt_optimizer_agent.agent_task_v2 import PromptOptimizer
+
+        eval_template = Mock()
+        eval_template.config = {"eval_type_id": "TestEval", "output": "score"}
+        eval_metric = Mock()
+        eval_metric.template = eval_template
+        eval_metric.config = {"mapping": {"input": "col-1"}}
+
+        with patch.object(PromptOptimizer, "__init__", lambda self, **kwargs: None):
+            optimizer = PromptOptimizer()
+        optimizer.user_eval_metrics = [eval_metric]
+
+        runner_cls = Mock()
+        runner_cls.return_value._create_eval_instance.return_value.run.return_value = (
+            eval_result
+        )
+        patches = [
+            patch(
+                "ee.agenthub.prompt_optimizer_agent.agent_task_v2.EvaluationRunner",
+                runner_cls,
+            ),
+            patch("evaluations.engine.registry.is_registered", return_value=True),
+            patch("evaluations.engine.registry.get_eval_class", return_value=Mock()),
+            patch.object(PromptOptimizer, "_setup_eval_params", return_value={}),
+            patch.object(
+                PromptOptimizer, "_process_eval_result", return_value=(0.8, "ok")
+            ),
+            patch.object(
+                PromptOptimizer, "_format_judgements", return_value="aggregated"
+            ),
+        ]
+        return optimizer, patches
+
+    def test_scores_aggregate_when_usage_logging_unavailable(self):
+        """OSS mode: evals run and aggregate instead of the old cascade where
+        the None log_api_call raised per metric, every metric was skipped, and
+        sum(scores) / len(scores) died with ZeroDivisionError."""
+        optimizer, patches = self._build_optimizer(eval_result=Mock())
+        with patch(
+            "ee.agenthub.prompt_optimizer_agent.agent_task_v2.log_api_call", None
+        ):
+            for p in patches:
+                p.start()
+            try:
+                judgements, score = optimizer._get_evaluation_feedback(
+                    [{"role": "user", "content": "hi"}]
+                )
+            finally:
+                for p in patches:
+                    p.stop()
+
+        assert judgements == "aggregated"
+        assert score == 80.0
+
+    def test_api_call_row_updated_when_usage_logging_available(self):
+        """EE mode: the log row is created, enriched, and marked SUCCESS."""
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        eval_result = Mock()
+        eval_result.eval_results = [{"data": "row-data"}]
+        optimizer, patches = self._build_optimizer(eval_result=eval_result)
+
+        log_row = Mock()
+        log_row.status = APICallStatusChoices.PROCESSING
+        log_row.config = "{}"
+        column_cls = Mock()
+        column_cls.objects.filter.return_value.values.return_value = []
+
+        with (
+            patch(
+                "ee.agenthub.prompt_optimizer_agent.agent_task_v2.log_api_call",
+                return_value=log_row,
+            ) as mock_log,
+            patch("ee.agenthub.prompt_optimizer_agent.agent_task_v2.Column", column_cls),
+        ):
+            for p in patches:
+                p.start()
+            try:
+                judgements, score = optimizer._get_evaluation_feedback(
+                    [{"role": "user", "content": "hi"}]
+                )
+            finally:
+                for p in patches:
+                    p.stop()
+
+        mock_log.assert_called_once()
+        assert log_row.status == APICallStatusChoices.SUCCESS.value
+        log_row.save.assert_called_with(update_fields=["config", "status"])
+        assert score == 80.0
+
+
 class TestEnumsResolveWithoutEE:
     """The billing enums must come from tfc.constants, never be None."""
 
