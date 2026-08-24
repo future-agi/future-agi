@@ -942,6 +942,13 @@ providers:
     api_key: "${OPENAI_API_KEY}"
     models: [gpt-4o, gpt-4o-mini, o1]
 
+  vllm:
+    # A trailing /v1 is optional; both URL styles are accepted.
+    base_url: "http://localhost:8000/v1"
+    type: "vllm"
+    api_key: "${VLLM_API_KEY}"  # when vLLM is started with --api-key
+    # Models are discovered automatically from the authenticated /v1/models endpoint.
+
   anthropic:
     base_url: "https://api.anthropic.com"
     api_key: "${ANTHROPIC_API_KEY}"

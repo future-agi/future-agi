@@ -204,6 +204,47 @@ func TestAutoDiscoverModels(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts a base URL that already includes v1", func(t *testing.T) {
+		srv := newModelsServer(t, []string{"model-a"})
+		defer srv.Close()
+
+		cfg := config.ProviderConfig{
+			BaseURL:   srv.URL + "/v1/",
+			APIFormat: "openai",
+		}
+		got := autoDiscoverModels("test", &cfg)
+
+		if len(got) != 1 || got[0] != "model-a" {
+			t.Errorf("got %v, want [model-a]", got)
+		}
+	})
+
+	t.Run("authenticates discovery for protected vLLM servers", func(t *testing.T) {
+		const apiKey = "vllm-test-key"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []map[string]string{{"id": "secured-model"}},
+			})
+		}))
+		defer srv.Close()
+
+		cfg := config.ProviderConfig{
+			BaseURL:   srv.URL + "/v1",
+			APIKey:    apiKey,
+			APIFormat: "openai",
+		}
+		got := autoDiscoverModels("secured-vllm", &cfg)
+
+		if len(got) != 1 || got[0] != "secured-model" {
+			t.Errorf("got %v, want [secured-model]", got)
+		}
+	})
+
 	t.Run("skips when Models already populated", func(t *testing.T) {
 		srv := newModelsServer(t, []string{"model-a", "model-b"})
 		defer srv.Close()
@@ -300,6 +341,31 @@ func TestAutoDiscoverModels(t *testing.T) {
 			t.Errorf("expected nil for invalid JSON, got %v", got)
 		}
 	})
+}
+
+func TestConnectivityCheckAuthenticatesProtectedProvider(t *testing.T) {
+	const apiKey = "vllm-test-key"
+	requestSeen := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestSeen = true
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("path = %s, want /v1/models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Errorf("Authorization = %q, want Bearer token", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	connectivityCheck("secured-vllm", config.ProviderConfig{
+		BaseURL: srv.URL + "/v1",
+		APIKey:  apiKey,
+	})
+
+	if !requestSeen {
+		t.Fatal("connectivity check did not reach provider")
+	}
 }
 
 // ---------------------------------------------------------------------------
