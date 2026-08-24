@@ -405,6 +405,14 @@ class TestSpanAttributeKeysPartitionPruning:
         assert sql.count("LIMIT 10000") == 3
         assert sql.count("UNION ALL") == 5
 
+    def test_sample_lane_contributes_no_count(self, monkeypatch):
+        # A span inside both the window and the sample would otherwise be summed
+        # twice by the outer sum(cnt) and inflate argMax(type, cnt).
+        sql = self._capture_sql(monkeypatch, recent_days=None, include_counts=True)
+        assert sql.count("0 AS cnt") == 3
+        assert sql.count("count() AS cnt") == 3
+        assert "sum(cnt) AS count" in sql
+
 
 @pytest.mark.integration
 @pytest.mark.api

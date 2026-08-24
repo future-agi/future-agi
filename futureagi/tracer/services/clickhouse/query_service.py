@@ -131,7 +131,11 @@ class AnalyticsQueryService:
         include_counts: bool = False,
         order_by_count_desc: bool = False,
     ) -> list[dict]:
-        """Get distinct span attribute keys with types for one or more projects."""
+        """Get distinct span attribute keys with types for one or more projects.
+
+        ``count`` is scoped to the discovery window, so a key surfaced only by
+        the unbounded path's legacy sample lane reports 0.
+        """
         if not project_ids:
             return []
 
@@ -156,11 +160,11 @@ class AnalyticsQueryService:
                   {window_filter}
                 GROUP BY key"""
             if recent_days is None:
-                # Unbounded callers additionally keep the legacy sample, so a key
-                # visible before this change can never disappear from the picker.
+                # Visibility-only lane: window plus sample is a superset of the
+                # old sample, so the picker only gains keys. cnt 0 avoids double-count.
                 sql += f"""
                 UNION ALL
-                SELECT key, '{type_name}' AS type, count() AS cnt FROM (
+                SELECT key, '{type_name}' AS type, 0 AS cnt FROM (
                     SELECT {column}.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
