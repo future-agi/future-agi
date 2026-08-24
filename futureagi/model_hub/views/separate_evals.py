@@ -2948,8 +2948,16 @@ class EvalTemplateVersionCreateView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found or not editable.")
 
-            # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            # Start from the live template config (authoritative for
+            # structural fields like choices, choices_map, eval_type_id)
+            # then overlay the caller-supplied snapshot so a version can
+            # record an edit that was never written back to the template.
+            effective_config = dict(template.config or {})
+            if req.config_snapshot:
+                for k, v in req.config_snapshot.items():
+                    if k != k.lower():
+                        continue
+                    effective_config[k] = v
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -2959,9 +2967,12 @@ class EvalTemplateVersionCreateView(APIView):
                 user=request.user,
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
+                set_as_default=req.set_as_default,
             )
 
-            # Only set as default if this is the first version (no existing default)
+            # Only set as default if this is the first version (no existing
+            # default). Skipped when the caller opted out: a binding-scoped
+            # edit pins its own version without moving the template default.
             has_default = (
                 EvalTemplateVersion.objects.filter(
                     eval_template=template, is_default=True
@@ -2969,7 +2980,7 @@ class EvalTemplateVersionCreateView(APIView):
                 .exclude(id=version.id)
                 .exists()
             )
-            if not has_default:
+            if req.set_as_default and not has_default:
                 version.is_default = True
                 version.save(update_fields=["is_default"])
 
@@ -3950,7 +3961,10 @@ class CompositeEvalDetailView(APIView):
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
 
-                for link in existing_links:
+                # skip_template_update: the caller only wants a version
+                # snapshot of the current state, not to rewrite the shared
+                # template's child links.
+                for link in [] if req.skip_template_update else existing_links:
                     cid = str(link.child_id)
                     update_fields = []
                     if req.child_weights is not None and cid in req.child_weights:
@@ -3977,6 +3991,10 @@ class CompositeEvalDetailView(APIView):
             # Create a new version snapshot for the composite
             from model_hub.models.evals_metric import EvalTemplateVersion
 
+            # The snapshot records what the caller asked for, not only what
+            # was persisted. With skip_template_update the links are left
+            # alone on purpose, so reading them back would bake the old
+            # weights into a version created precisely to capture new ones.
             config_snapshot = {
                 "aggregation_enabled": parent.aggregation_enabled,
                 "aggregation_function": parent.aggregation_function,
@@ -3986,12 +4004,17 @@ class CompositeEvalDetailView(APIView):
                         "child_id": str(link.child_id),
                         "child_name": link.child.name,
                         "order": link.order,
-                        "weight": link.weight,
-                        "config": link.config or {},
-                        "pinned_version_id": (
+                        "weight": (req.child_weights or {}).get(
+                            str(link.child_id), link.weight
+                        ),
+                        "config": (req.child_configs or {}).get(str(link.child_id))
+                        or link.config
+                        or {},
+                        "pinned_version_id": (req.child_pinned_versions or {}).get(
+                            str(link.child_id),
                             str(link.pinned_version_id)
                             if link.pinned_version_id
-                            else None
+                            else None,
                         ),
                     }
                     for link in links
@@ -4007,22 +4030,34 @@ class CompositeEvalDetailView(APIView):
                 organization=organization,
                 workspace=workspace,
             )
+            # Mirror the snapshot: report what this call recorded, not the
+            # template links it deliberately left alone.
+            snapshot_children = {
+                c["child_id"]: c for c in config_snapshot["children"]
+            }
             child_items = [
                 CompositeChildItem(
                     child_id=str(link.child_id),
                     child_name=link.child.name,
                     order=link.order,
                     eval_type=derive_eval_type(link.child),
-                    pinned_version_id=(
-                        str(link.pinned_version_id) if link.pinned_version_id else None
+                    pinned_version_id=snapshot_children.get(
+                        str(link.child_id), {}
+                    ).get(
+                        "pinned_version_id",
+                        str(link.pinned_version_id) if link.pinned_version_id else None,
                     ),
                     pinned_version_number=(
                         link.pinned_version.version_number
                         if link.pinned_version
                         else None
                     ),
-                    weight=link.weight,
-                    config=link.config or {},
+                    weight=snapshot_children.get(str(link.child_id), {}).get(
+                        "weight", link.weight
+                    ),
+                    config=snapshot_children.get(str(link.child_id), {}).get(
+                        "config", link.config or {}
+                    ),
                     required_keys=list(
                         (link.child.config or {}).get("required_keys") or []
                     ),
@@ -4041,6 +4076,7 @@ class CompositeEvalDetailView(APIView):
                 tags=parent.eval_tags or [],
                 created_at=parent.created_at.isoformat() if parent.created_at else "",
                 updated_at=parent.updated_at.isoformat() if parent.updated_at else "",
+                version_id=str(new_version.id),
                 version_number=new_version.version_number,
             )
             return self._gm.success_response(response.model_dump())
