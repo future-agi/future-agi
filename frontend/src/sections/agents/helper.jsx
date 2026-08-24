@@ -675,6 +675,9 @@ const VOICE_QUICK_FILTER_COLUMNS = {
   },
   user_wpm: { id: "user_wpm", name: "User WPM", groupBy: "System Metrics" },
   bot_wpm: { id: "bot_wpm", name: "Agent WPM", groupBy: "System Metrics" },
+  // No `groupBy` on purpose: this one is text, and the `System Metrics` branch
+  // in applyQuickFilters assumes numeric — it would emit
+  // `filter_value: ["customer-ended-call", ""]` into the number popover.
   ended_reason: { id: "ended_reason", name: "Ended reason" },
 };
 
