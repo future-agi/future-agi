@@ -23,9 +23,12 @@ def is_versioned_template(eval_template):
     """
     from model_hub.models.choices import OwnerChoices
 
+    # getattr, not attribute access: fix_your_agent and the prompt-optimiser
+    # hand this duck-typed stand-ins that carry no owner. Those cannot be
+    # versioned, so treating them as unversioned is the correct answer.
     return (
         eval_template is not None
-        and eval_template.owner == OwnerChoices.USER.value
+        and getattr(eval_template, "owner", None) == OwnerChoices.USER.value
     )
 
 
