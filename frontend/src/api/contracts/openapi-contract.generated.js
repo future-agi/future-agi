@@ -76817,6 +76817,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Pinned version id",
           "type": "string",
           "readOnly": true
+        },
+        "pinned_version_number": {
+          "title": "Pinned version number",
+          "type": "integer",
+          "readOnly": true,
+          "x-nullable": true
         }
       }
     },
@@ -95140,6 +95146,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Pinned version id",
           "type": "string",
           "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "pinned_version_number": {
+          "title": "Pinned version number",
+          "type": "integer",
           "readOnly": true,
           "x-nullable": true
         }

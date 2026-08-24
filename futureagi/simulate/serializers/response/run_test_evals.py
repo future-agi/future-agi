@@ -104,6 +104,9 @@ class EvalConfigStructureSerializer(serializers.Serializer):
     config_params_option = serializers.DictField(read_only=True)
     api_key_available = serializers.BooleanField(read_only=True)
     pinned_version_id = serializers.UUIDField(read_only=True, allow_null=True)
+    pinned_version_number = serializers.IntegerField(
+        read_only=True, allow_null=True
+    )
 
 
 class EvalConfigStructureResultSerializer(serializers.Serializer):

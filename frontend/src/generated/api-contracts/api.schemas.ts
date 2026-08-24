@@ -17644,6 +17644,7 @@ export interface EvalConfigResponseApi {
   readonly eval_group?: string;
   readonly template_id?: string;
   readonly pinned_version_id?: string;
+  readonly pinned_version_number?: number;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -17706,6 +17707,7 @@ export interface EvalConfigStructureApi {
   readonly config_params_option?: EvalConfigStructureApiConfigParamsOption;
   readonly api_key_available?: boolean;
   readonly pinned_version_id?: string;
+  readonly pinned_version_number?: number;
 }
 
 export interface EvalConfigStructureResultApi {

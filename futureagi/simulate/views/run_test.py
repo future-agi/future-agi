@@ -4798,6 +4798,11 @@ class GetEvalConfigStructureView(APIView):
                     if eval_config.pinned_version_id
                     else None
                 ),
+                "pinned_version_number": (
+                    eval_config.pinned_version.version_number
+                    if eval_config.pinned_version
+                    else None
+                ),
             }
 
             return self._gm.success_response({"eval": eval_data})

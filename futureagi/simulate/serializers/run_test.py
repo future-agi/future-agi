@@ -40,6 +40,10 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
     template_id = serializers.PrimaryKeyRelatedField(
         source="eval_template", read_only=True
     )
+    # Saves the picker a versions lookup just to label the pinned version.
+    pinned_version_number = serializers.IntegerField(
+        source="pinned_version.version_number", read_only=True, allow_null=True
+    )
 
     class Meta:
         model = SimulateEvalConfig
@@ -55,6 +59,7 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "eval_group",
             "template_id",
             "pinned_version_id",
+            "pinned_version_number",
         ]
 
     def get_eval_group(self, obj):

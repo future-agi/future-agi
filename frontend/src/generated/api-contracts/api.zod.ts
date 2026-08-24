@@ -32710,7 +32710,8 @@ export const SimulateRunTestsEvalConfigsGetStructureListResponse = zod.object({
   "config_params_desc": zod.record(zod.string(), zod.string()).optional(),
   "config_params_option": zod.record(zod.string(), zod.string()).optional(),
   "api_key_available": zod.boolean().optional(),
-  "pinned_version_id": zod.string().uuid().optional()
+  "pinned_version_id": zod.string().uuid().optional(),
+  "pinned_version_number": zod.number().optional()
 })
 })
 })
