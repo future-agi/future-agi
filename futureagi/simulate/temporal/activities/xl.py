@@ -1071,6 +1071,11 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 "version_number": (
                     resolved_version.version_number if resolved_version else None
                 ),
+                **(
+                    {"composite": eval_result["composite"]}
+                    if isinstance(eval_result, dict) and eval_result.get("composite")
+                    else {}
+                ),
             }
             call_execution.save(update_fields=["eval_outputs"])
 

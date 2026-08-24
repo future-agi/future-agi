@@ -222,6 +222,7 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     status = serializers.CharField(allow_blank=True, required=False)
     skipped = serializers.BooleanField(required=False)
     error_localizer = serializers.BooleanField(required=False)
+    composite = serializers.JSONField(required=False, allow_null=True)
     error_analysis = serializers.JSONField(required=False, allow_null=True)
     error_localizer_status = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
@@ -761,6 +762,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
+                    **(
+                        {"composite": eval_data["composite"]}
+                        if isinstance(eval_data.get("composite"), dict)
+                        else {}
+                    ),
                 }
 
         return structured_outputs
@@ -836,6 +842,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                     "error_localizer": error_localizer_enabled(eval_config),
+                    **(
+                        {"composite": eval_data["composite"]}
+                        if isinstance(eval_data.get("composite"), dict)
+                        else {}
+                    ),
                 }
 
         call_execution_id = getattr(obj, "id", None)

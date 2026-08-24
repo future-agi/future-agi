@@ -23,6 +23,7 @@ def run_composite_eval(
     simulation binding records them (there is no per-binding overrides column).
     """
     from model_hub.models.evals_metric import CompositeEvalChild
+    from simulate.utils.eval_summary import derive_kpi_output_type
     from model_hub.utils.composite_execution import execute_composite_children_sync
 
     child_links = list(
@@ -65,8 +66,22 @@ def run_composite_eval(
         weight_overrides=weight_overrides,
     )
 
+    # Every other simulate result derives this from the template, so a
+    # pass/fail composite reports Pass/Fail rather than always a score.
     return {
         "output": outcome.aggregate_score,
         "reason": outcome.summary or "",
-        "output_type": "percentage",
+        "output_type": derive_kpi_output_type(eval_template),
+        # Same drill-down payload the dataset path writes into Cell.value_infos,
+        # so a composite result in simulation can show its children rather than
+        # a bare aggregate.
+        "composite": {
+            "composite_id": str(eval_template.id),
+            "aggregation_enabled": eval_template.aggregation_enabled,
+            "aggregation_function": eval_template.aggregation_function,
+            "aggregate_score": outcome.aggregate_score,
+            "aggregate_pass": outcome.aggregate_pass,
+            "summary": outcome.summary,
+            "children": [cr.model_dump() for cr in outcome.child_results],
+        },
     }
