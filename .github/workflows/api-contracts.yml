@@ -87,6 +87,7 @@ jobs:
     env:
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_REPO_BASE_BRANCH: ${{ github.base_ref || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -110,13 +111,19 @@ jobs:
       - name: Use matching EE branch when available
         working-directory: futureagi/ee/cloud
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
+          # Prefer an EE branch matching the PR head branch; otherwise fall
+          # back to the PR base branch (e.g. dev) so a PR pairs with the EE
+          # code its base was built against — the EE default branch can lag
+          # behind and fail to boot against newer backend code.
+          for ee_ref in "${EE_REPO_BRANCH}" "${EE_REPO_BASE_BRANCH}"; do
+            if [ -n "${ee_ref}" ] && git ls-remote --exit-code --heads origin "${ee_ref}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${ee_ref}"
+              git checkout --detach FETCH_HEAD
+              echo "Using EE branch ${ee_ref}"
+              exit 0
+            fi
+          done
+          echo "::notice::No EE branch matching ${EE_REPO_BRANCH} or the base branch; using the EE repository default branch."
 
       - name: Drop EE checkout credentials
         working-directory: futureagi/ee/cloud
@@ -196,6 +203,7 @@ jobs:
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_REPO_BASE_BRANCH: ${{ github.base_ref || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -245,13 +253,19 @@ jobs:
       - name: Use matching EE branch when available
         working-directory: futureagi/ee/cloud
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
+          # Prefer an EE branch matching the PR head branch; otherwise fall
+          # back to the PR base branch (e.g. dev) so a PR pairs with the EE
+          # code its base was built against — the EE default branch can lag
+          # behind and fail to boot against newer backend code.
+          for ee_ref in "${EE_REPO_BRANCH}" "${EE_REPO_BASE_BRANCH}"; do
+            if [ -n "${ee_ref}" ] && git ls-remote --exit-code --heads origin "${ee_ref}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${ee_ref}"
+              git checkout --detach FETCH_HEAD
+              echo "Using EE branch ${ee_ref}"
+              exit 0
+            fi
+          done
+          echo "::notice::No EE branch matching ${EE_REPO_BRANCH} or the base branch; using the EE repository default branch."
 
       - name: Drop EE checkout credentials
         working-directory: futureagi/ee/cloud
