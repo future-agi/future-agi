@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.28.1](https://github.com/future-agi/future-agi/compare/v1.28.0...v1.28.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **annotations:** route conversation traces to the voice UI in the queue ([5dc9ff2](https://github.com/future-agi/future-agi/commit/5dc9ff237fe076b218355d16352b37fe6c5f8c70))
+* **annotations:** route conversation traces to the voice UI in the queue ([584f6db](https://github.com/future-agi/future-agi/commit/584f6db93c8f936758e0d093aa60ebcf72e8103e))
+* **tracer:** make span attribute-key discovery exhaustive over its window [TH-7632] ([39f200a](https://github.com/future-agi/future-agi/commit/39f200aac9c599d3442c82f9627c7bf22e401aee))
+* **tracer:** make span attribute-key discovery exhaustive over its window [TH-7632] ([374eb63](https://github.com/future-agi/future-agi/commit/374eb633b032242a2abb9e68b4b91d56b60d645e))
+* **tracer:** stop the legacy sample lane inflating attribute key counts [TH-7632] ([ca8416d](https://github.com/future-agi/future-agi/commit/ca8416d6d3a1f085b1a5a4cb488e668a227aef3d))
+
 ## [1.28.0](https://github.com/future-agi/future-agi/compare/v1.27.4...v1.28.0) (2026-08-18)
 
 
