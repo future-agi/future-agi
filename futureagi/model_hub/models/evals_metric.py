@@ -548,6 +548,7 @@ class EvalTemplateVersionManager(models.Manager):
         choice_scores=_UNSET,
         error_localizer_enabled=_UNSET,
         eval_tags=_UNSET,
+        set_as_default=True,
     ):
         """
         Create a new version for an eval template.
@@ -598,9 +599,10 @@ class EvalTemplateVersionManager(models.Manager):
             )
             next_version = (last_version or 0) + 1
 
-            self.filter(
-                eval_template=eval_template, is_default=True
-            ).update(is_default=False)
+            if set_as_default:
+                self.filter(
+                    eval_template=eval_template, is_default=True
+                ).update(is_default=False)
 
             version = self.create(
                 eval_template=eval_template,
@@ -609,7 +611,7 @@ class EvalTemplateVersionManager(models.Manager):
                 config_snapshot=config_snapshot or {},
                 criteria=criteria or "",
                 model=model or "",
-                is_default=True,
+                is_default=set_as_default,
                 created_by=user,
                 organization=organization,
                 workspace=workspace,
