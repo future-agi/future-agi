@@ -69,6 +69,18 @@ export function useConnectorToolPermissions({
         ? enabled.filter((n) => n !== tool.name)
         : [...enabled, tool.name];
 
+      // An empty list is the "all tools enabled" sentinel on both sides
+      // (mcp_tools.py:207), so denying the last remaining tool would grant
+      // every tool instead of none — and it persists. Refuse the write until
+      // the schema can express "none enabled" (TH-7673).
+      if (next.length === 0) {
+        setToolError(
+          "Keep at least one tool enabled. An empty selection is stored as " +
+            '"all tools allowed" — use Disconnect to revoke the connector.',
+        );
+        return;
+      }
+
       await applyEnabledToolNames(connectorId, next);
     },
     [selectedItem, applyEnabledToolNames],

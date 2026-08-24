@@ -247,6 +247,43 @@ describe("Customize panel — connector tools", () => {
     );
   });
 
+  it("refuses to deny the last enabled tool, which would grant every tool", async () => {
+    // [] is the all-enabled sentinel on both sides (mcp_tools.py:207), so
+    // emptying the list inverts the permission and persists. TH-7673.
+    mocks.getConnector.mockResolvedValue({
+      ...DETAIL,
+      enabled_tool_names: ["ask_question"],
+    });
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Keep at least one tool enabled/i,
+    );
+    expect(mocks.updateConnectorTools).not.toHaveBeenCalled();
+  });
+
+  it("still allows denying a tool when others remain enabled", async () => {
+    mocks.getConnector.mockResolvedValue({
+      ...DETAIL,
+      enabled_tool_names: ["ask_question", "read_wiki_contents"],
+    });
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledWith("conn-1", [
+        "read_wiki_contents",
+      ]),
+    );
+  });
+
   it("surfaces a failed write instead of leaving the toggle silently stuck", async () => {
     mocks.updateConnectorTools.mockRejectedValue({
       response: { data: { detail: "Connector is not verified." } },
