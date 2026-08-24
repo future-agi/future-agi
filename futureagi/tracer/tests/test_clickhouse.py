@@ -3658,7 +3658,7 @@ class TestEvalMetricsQueryBuilder:
     """Test eval metrics query builder."""
 
     def test_build_float_eval(self):
-        """SCORE eval type should produce a query computing score aggregation."""
+        """Default SCORE queries must deduplicate the CDC source with FINAL."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -3668,8 +3668,13 @@ class TestEvalMetricsQueryBuilder:
             eval_output_type="SCORE",
         )
         query, params = builder.build()
-        # Pre-aggregated uses float_sum/float_count; raw uses output_float
-        assert "float_sum" in query or "output_float" in query
+        assert "output_float" in query
+        assert "tracer_eval_logger" in query
+        assert "FINAL" in query
+        assert "eval_metrics_hourly" not in query
+        assert "dictGetOrDefault('trace_dict'" in query
+        assert "dictGetOrDefault('trace_session_dict'" in query
+        assert "is_deleted = 0" in query or "deleted = 0" in query
         assert "eval_config_id" in params
 
     def test_build_float_eval_raw(self):
@@ -3688,7 +3693,7 @@ class TestEvalMetricsQueryBuilder:
         assert "eval_config_id" in params
 
     def test_build_bool_eval(self):
-        """PASS_FAIL eval type should produce a query computing pass rate."""
+        """Default PASS_FAIL queries must deduplicate the CDC source with FINAL."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -3698,8 +3703,13 @@ class TestEvalMetricsQueryBuilder:
             eval_output_type="PASS_FAIL",
         )
         query, params = builder.build()
-        # Pre-aggregated uses bool_pass/bool_fail; raw uses output_bool
-        assert "bool_pass" in query or "output_bool" in query
+        assert "output_bool" in query
+        assert "tracer_eval_logger" in query
+        assert "FINAL" in query
+        assert "eval_metrics_hourly" not in query
+        assert "dictGetOrDefault('trace_dict'" in query
+        assert "dictGetOrDefault('trace_session_dict'" in query
+        assert "is_deleted = 0" in query or "deleted = 0" in query
 
     def test_build_bool_eval_raw(self):
         """PASS_FAIL eval with use_preaggregated=False should use output_bool."""
@@ -3749,7 +3759,7 @@ class TestEvalMetricsQueryBuilder:
         assert len(query) > 0
 
     def test_build_with_preaggregated(self):
-        """When use_preaggregated=True, SCORE should use eval_metrics_hourly."""
+        """Pre-aggregation remains an explicit opt-in for legacy callers."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -3761,6 +3771,42 @@ class TestEvalMetricsQueryBuilder:
         )
         query, params = builder.build()
         assert "eval_metrics_hourly" in query
+
+    def test_default_raw_query_supports_v2_eval_logger(self):
+        """The correctness path must follow the configured eval logger table."""
+        from django.test import override_settings
+
+        from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
+
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2"):
+            builder = EvalMetricsQueryBuilder(
+                project_id="test-project-id",
+                custom_eval_config_id="00000000-0000-0000-0000-000000000001",
+                eval_output_type="SCORE",
+            )
+            query, _params = builder.build()
+
+        assert "FROM tracer_eval_logger_v2 AS e FINAL" in query
+        assert "e.is_deleted = 0" in query
+        assert "_peerdb_is_deleted" not in query
+
+    def test_default_raw_query_filters_legacy_cdc_tombstones(self):
+        """Legacy CDC reads must hide both tombstones and app soft deletes."""
+        from django.test import override_settings
+
+        from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
+
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger"):
+            builder = EvalMetricsQueryBuilder(
+                project_id="test-project-id",
+                custom_eval_config_id="00000000-0000-0000-0000-000000000001",
+                eval_output_type="SCORE",
+            )
+            query, _params = builder.build()
+
+        assert "FROM tracer_eval_logger AS e FINAL" in query
+        assert "e._peerdb_is_deleted = 0" in query
+        assert "(e.deleted = 0 OR e.deleted IS NULL)" in query
 
     def test_build_without_preaggregated(self):
         """When use_preaggregated=False, should query tracer_eval_logger directly."""
@@ -5839,7 +5885,7 @@ class TestEvalMetricsQueryBuilderExtended:
         query, _ = builder.build()
         assert "tracer_eval_logger" in query
         assert "FINAL" in query
-        assert "avg(output_float)" in query
+        assert "avg(e.output_float)" in query
 
     def test_pass_fail_agg_query_uses_correct_columns(self):
         """Pass/fail agg query should use bool_pass and bool_fail columns."""
@@ -5896,8 +5942,8 @@ class TestEvalMetricsQueryBuilderExtended:
         )
         query, params = builder.build()
         assert "countIf" in query
-        assert "has(JSONExtract(output_str_list, 'Array(String)')" in query
-        assert "OR output_str =" in query
+        assert "has(JSONExtract(e.output_str_list, 'Array(String)')" in query
+        assert "OR e.output_str =" in query
         assert "choice_0" in params
         assert "choice_1" in params
         assert "choice_2" in params
@@ -5913,7 +5959,7 @@ class TestEvalMetricsQueryBuilderExtended:
             choices=[],
         )
         query, _ = builder.build()
-        assert "avg(output_float)" in query
+        assert "avg(e.output_float)" in query
 
     def test_agg_query_filters_by_config_id(self):
         """Agg queries should filter by custom_eval_config_id."""
@@ -5976,7 +6022,7 @@ class TestEvalMetricsQueryBuilderExtended:
             use_preaggregated=False,
         )
         query, _ = builder.build()
-        assert "avg(output_float)" in query
+        assert "avg(e.output_float)" in query
 
 
 # ============================================================================
