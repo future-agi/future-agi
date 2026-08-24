@@ -686,8 +686,9 @@ def load_hf_dataset_with_retries(
                 response.raise_for_status()
                 return response.json()
             else:
-                from datasets import load_dataset
+                from tfc.utils.lazy_extras import load_extra
 
+                load_dataset = load_extra("datasets", "ml").load_dataset
                 hf_dataset = load_dataset(
                     dataset_name,
                     name=config_name,

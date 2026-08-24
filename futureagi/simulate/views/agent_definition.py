@@ -568,8 +568,9 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                 prompt = system_object.get("content")
 
             elif provider == ProviderChoices.RETELL:
-                from retell import Retell
+                from tfc.utils.lazy_extras import load_extra
 
+                Retell = load_extra("retell", "voice").Retell
                 client = Retell(api_key=api_key)
 
                 assistant_raw = client.agent.retrieve(

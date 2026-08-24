@@ -73,7 +73,9 @@ VOICE_ID_MAP = {
 
 def elevenlabs_speech_response(run_prompt_instance, start_time, api_key):
     """Handles Text-to-Speech generation using the ElevenLabs SDK."""
-    from elevenlabs.client import ElevenLabs
+    from tfc.utils.lazy_extras import load_extra
+
+    ElevenLabs = load_extra("elevenlabs.client", "audio").ElevenLabs
 
     input_text = run_prompt_instance._get_input_text_from_messages()
 
@@ -328,7 +330,9 @@ def get_elevenlabs_stt_parameters(model_name: str):
 
 def elevenlabs_transcription_response(run_prompt_instance, start_time, api_key):
     """Handles Speech-to-Text using the ElevenLabs SDK (scribe_v1 or scribe_v2)."""
-    from elevenlabs.client import ElevenLabs
+    from tfc.utils.lazy_extras import load_extra
+
+    ElevenLabs = load_extra("elevenlabs.client", "audio").ElevenLabs
 
     # Extract audio from messages
     raw_input = run_prompt_instance._get_input_audio_from_messages()
@@ -459,7 +463,9 @@ def elevenlabs_transcription_response(run_prompt_instance, start_time, api_key):
 
 def validate_elevenlabs_voice(voice_id, api_key):
     """Validates if a voice ID exists in ElevenLabs."""
-    from elevenlabs.client import ElevenLabs
+    from tfc.utils.lazy_extras import load_extra
+
+    ElevenLabs = load_extra("elevenlabs.client", "audio").ElevenLabs
 
     try:
         client = ElevenLabs(api_key=api_key)

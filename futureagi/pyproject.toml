@@ -102,7 +102,6 @@ dependencies = [
     "channels-rabbitmq",
     "filetype",
     "google-genai",
-    "ffmpeg-python",
     "json-repair",
     # Pinned: 20250327+ dropped PDFStackT which pdfplumber<0.11.10 still imports.
     "pdfminer.six<=20240706",
@@ -146,6 +145,9 @@ dependencies = [
     # Explicit pins — previously transitive via packages now in extras:
     "scikit-learn",  # TF-IDF in tracer/queries/feed.py (was via hdbscan)
     "websocket-client",  # Deepgram STT (was via livekit/retell-sdk)
+    # Deepgram STT (a base feature) segments audio with pydub — pure Python,
+    # pairs with the ffmpeg binary kept in the runtime image stage.
+    "pydub",
 ]
 
 [project.optional-dependencies]

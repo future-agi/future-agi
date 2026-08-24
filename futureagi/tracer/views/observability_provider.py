@@ -346,7 +346,13 @@ class WebhookHandlerView(APIView):
 
                     continue
 
-                from retell.lib.webhook_auth import verify as verify_retell_webhook
+                from tfc.utils.lazy_extras import load_extra
+
+                # Attribute lookup stays late-bound so tests can patch
+                # `retell.lib.webhook_auth.verify`.
+                verify_retell_webhook = load_extra(
+                    "retell.lib.webhook_auth", "voice"
+                ).verify
 
                 valid_signature = verify_retell_webhook(
                     json.dumps(post_data, separators=(",", ":"), ensure_ascii=False),

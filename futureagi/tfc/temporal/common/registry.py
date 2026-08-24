@@ -313,21 +313,14 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_agent_playground_workflows", error=str(e)
         )
 
-    # Register call execution workflows for tasks_l queue
+    # Register simulation orchestration workflows for tasks_l queue.
     # TestExecutionWorkflow: Parent orchestrator for test executions
-    # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
-    # CallDispatcherWorkflow: Singleton rate limiter for call slots
     # RerunCoordinatorWorkflow: Parent orchestrator for call execution reruns
+    # Registered separately from the ee.voice workflows below so that a
+    # build without the `voice` extra (slim OSS image) still runs text
+    # simulation — child voice workflows are referenced by name, so this
+    # block has no import-time dependency on ee.voice.
     try:
-        from ee.voice.temporal.workflows.call_dispatcher_workflow import (
-            CallDispatcherWorkflow,
-        )
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
-        from ee.voice.temporal.workflows.phone_number_dispatcher_workflow import (
-            PhoneNumberDispatcherWorkflow,
-        )
         from simulate.temporal.workflows.rerun_coordinator_workflow import (
             RerunCoordinatorWorkflow,
         )
@@ -339,10 +332,38 @@ def _ensure_workflows_registered() -> None:
             queues=["tasks_l"],
             workflows=[
                 TestExecutionWorkflow,
+                RerunCoordinatorWorkflow,
+            ],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_simulation_orchestration_workflows", error=str(e)
+        )
+
+    # Register voice call execution workflows for tasks_l queue.
+    # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
+    # CallDispatcherWorkflow: Singleton rate limiter for call slots
+    # These import ee.voice (and the `voice` extra's deps), so they are
+    # expected to be absent on slim OSS builds.
+    try:
+        from ee.voice.temporal.workflows.call_dispatcher_workflow import (
+            CallDispatcherWorkflow,
+        )
+        from ee.voice.temporal.workflows.call_execution_workflow import (
+            CallExecutionWorkflow,
+        )
+        from ee.voice.temporal.workflows.phone_number_dispatcher_workflow import (
+            PhoneNumberDispatcherWorkflow,
+        )
+
+        register_for_queues(
+            queues=["tasks_l"],
+            workflows=[
                 CallExecutionWorkflow,
                 CallDispatcherWorkflow,
                 PhoneNumberDispatcherWorkflow,
-                RerunCoordinatorWorkflow,
             ],
         )
     except ImportError as e:

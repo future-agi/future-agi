@@ -10563,7 +10563,9 @@ class AddVectorDBColumnView(APIView):
         }
 
         """
-        from pinecone import Pinecone
+        from tfc.utils.lazy_extras import load_extra
+
+        Pinecone = load_extra("pinecone", "vectordb").Pinecone
 
         pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
         index = pc.Index(config["index_name"])
@@ -10647,7 +10649,9 @@ class AddVectorDBColumnView(APIView):
                 )
 
             # Initialize Qdrant client
-            from qdrant_client import QdrantClient
+            from tfc.utils.lazy_extras import load_extra
+
+            QdrantClient = load_extra("qdrant_client", "vectordb").QdrantClient
 
             client = QdrantClient(
                 url=config["url"],
@@ -10683,8 +10687,10 @@ class AddVectorDBColumnView(APIView):
             raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
 
     def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
-        import weaviate
-        from weaviate import AuthApiKey
+        from tfc.utils.lazy_extras import load_extra
+
+        weaviate = load_extra("weaviate", "vectordb")
+        AuthApiKey = weaviate.AuthApiKey
 
         embedding_config = config.get("embedding_config", {})
         embedding_type = embedding_config.get("type", "")

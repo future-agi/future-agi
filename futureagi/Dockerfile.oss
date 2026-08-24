@@ -7,6 +7,14 @@
 # --------------- builder stage ---------------
 FROM python:3.11-slim-bookworm AS builder
 
+# Optional extras groups to bake into the image, comma-separated, e.g.
+#   docker build --build-arg EXTRAS=audio,pii -f Dockerfile.oss .
+# Available groups (see [project.optional-dependencies] in pyproject.toml):
+#   audio, ml, voice, pii, prompt-opt, vectordb
+# Versions come from uv.lock via `uv export`, so an extras build installs the
+# exact resolution CI tests — never a fresh re-resolve against PyPI.
+ARG EXTRAS=""
+
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UV_TIMEOUT=900
@@ -23,8 +31,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install uv
 
 WORKDIR /build
-COPY requirements.txt ./
+COPY requirements.txt pyproject.toml uv.lock ./
 RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache
+RUN if [ -n "$EXTRAS" ]; then \
+        uv export --frozen --no-dev --no-hashes --no-emit-project \
+            $(echo "$EXTRAS" | tr ',' '\n' | sed 's/^/--extra /' | tr '\n' ' ') \
+            -o /tmp/extras-requirements.txt \
+        && uv pip install --system -r /tmp/extras-requirements.txt \
+            --compile-bytecode --no-cache; \
+    fi
 
 # --------------- runtime stage ---------------
 FROM python:3.11-slim-bookworm

@@ -211,9 +211,66 @@ jobs:
           docker compose -f docker-compose.test.yml -p futureagi-test ps
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
 
+  slim-smoke:
+    # The only leg that exercises the slim (base-only) environment the OSS
+    # image ships: every other job syncs --all-extras, so a module-level
+    # import of an extras package (torch, av, weaviate, retell, ...) in base
+    # code would merge green and break the published image. This job syncs
+    # without extras, boots Django, force-loads the full URLconf (catches
+    # request-time view imports), and loads the temporal worker registry
+    # (catches worker-side imports), asserting text-simulation workflows
+    # still register when the voice extra is absent.
+    name: Slim image boot smoke (no extras)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - name: Install base dependencies only (no extras)
+        run: uv sync --frozen
+
+      - name: Boot Django, load URLconf and temporal registry
+        run: |
+          uv run python - <<'EOF'
+          import os
+
+          os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+
+          import django
+
+          django.setup()
+          print("django.setup() OK")
+
+          from django.urls import get_resolver
+
+          patterns = get_resolver().url_patterns
+          print(f"URLconf loaded OK: {len(patterns)} top-level patterns")
+
+          from tfc.temporal.common import registry
+
+          workflows = registry.get_workflows_for_queue("tasks_l")
+          names = {w.__name__ for w in workflows}
+          missing = {"TestExecutionWorkflow", "RerunCoordinatorWorkflow"} - names
+          assert not missing, (
+              f"text-simulation workflows failed to register without the "
+              f"voice extra: missing {missing}"
+          )
+          print(f"temporal registry OK: {sorted(names)} on tasks_l")
+          EOF
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
-    needs: [changes, plan, test]
+    needs: [changes, plan, test, slim-smoke]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

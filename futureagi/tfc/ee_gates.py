@@ -36,6 +36,11 @@ def voice_sim_oss_gate_response() -> Response | None:
     layer (capability service / cloud plan resolver), and voice_sim is open
     on self-hosted deployments regardless of license state, so deployment
     mode alone must never deny here."""
+    from tfc.utils.lazy_extras import extra_available
+
+    if not extra_available("livekit"):
+        return _voice_sim_code_unavailable_response()
+
     try:
         from tfc.capabilities import service as capability_service
         from tfc.licensing.types import DenialReason
