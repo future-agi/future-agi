@@ -871,6 +871,44 @@ class EvaluationRunner:
         if not format_output:
             self._initialize_eval_metric()
 
+    def _pinned_criteria(self):
+        resolved = getattr(self, "_resolved_version", None)
+        if resolved is None and getattr(self, "user_eval_metric", None):
+            resolved = getattr(self.user_eval_metric, "pinned_version", None)
+        if resolved and resolved.criteria:
+            return resolved.criteria
+        snap = getattr(resolved, "config_snapshot", None) if resolved else None
+        if isinstance(snap, dict) and snap.get("rule_prompt"):
+            return snap["rule_prompt"]
+        return self.eval_template.criteria if self.eval_template else None
+
+    def _pinned_choice_scores(self):
+        resolved = getattr(self, "_resolved_version", None)
+        if resolved is None and getattr(self, "user_eval_metric", None):
+            resolved = getattr(self.user_eval_metric, "pinned_version", None)
+        snap = getattr(resolved, "config_snapshot", None) if resolved else None
+        if isinstance(snap, dict) and "choice_scores" in snap:
+            return snap["choice_scores"]
+        return self.eval_template.choice_scores if self.eval_template else None
+
+    def _pinned_multi_choice(self):
+        resolved = getattr(self, "_resolved_version", None)
+        if resolved is None and getattr(self, "user_eval_metric", None):
+            resolved = getattr(self.user_eval_metric, "pinned_version", None)
+        snap = getattr(resolved, "config_snapshot", None) if resolved else None
+        if isinstance(snap, dict) and "multi_choice" in snap:
+            return snap["multi_choice"]
+        return self.eval_template.multi_choice if self.eval_template else None
+
+    def _pinned_choices(self):
+        resolved = getattr(self, "_resolved_version", None)
+        if resolved is None and getattr(self, "user_eval_metric", None):
+            resolved = getattr(self.user_eval_metric, "pinned_version", None)
+        snap = getattr(resolved, "config_snapshot", None) if resolved else None
+        if isinstance(snap, dict) and "choices" in snap:
+            return snap["choices"]
+        return self.eval_template.choices if self.eval_template else None
+
     def get_few_shot_examples(self, mapping, required_field=None):
         """
         Get few-shot examples from existing feedback for an eval template using RAG
@@ -966,10 +1004,10 @@ class EvaluationRunner:
     def _get_effective_eval_config(self):
         """Return template config with the resolved version snapshot applied.
 
-        The overlay covers only the config *dict* — model-level attributes
-        (`choice_scores`, `choices`, `criteria`, `multi_choice`) are still
-        read from the live `self.eval_template`. Callers that need those
-        should not assume this fully represents the pinned version.
+        The overlay covers the config *dict*. Model-level attributes
+        (`choice_scores`, `choices`, `criteria`, `multi_choice`) are
+        resolved via `_pinned_*()` helpers which read from the snapshot
+        first, falling back to the live template.
 
         Memoized on `self` — invariant across rows within a single run,
         invalidated automatically when `self.eval_template` or
@@ -1700,7 +1738,7 @@ class EvaluationRunner:
         ):
             required_field.append("criteria")
             mapping.append(
-                self.eval_template.criteria if not self.criteria else self.criteria
+                self._pinned_criteria() if not self.criteria else self.criteria
             )
 
         if self.futureagi_eval:
@@ -1990,7 +2028,7 @@ class EvaluationRunner:
         # If choice_scores exist, force choices processing
         if (
             self.eval_template
-            and self.eval_template.choice_scores
+            and self._pinned_choice_scores()
             and output_type not in ("Pass/Fail",)
         ):
             output_type = "choices"
@@ -2006,7 +2044,7 @@ class EvaluationRunner:
                 self._get_effective_eval_config().get("eval_type_id")
                 == "DeterministicEvaluator"
             ):
-                if not self.eval_template.multi_choice:
+                if not self._pinned_multi_choice():
                     data = data if data else []
                     value = data[0] if data else None
                 else:
@@ -2080,13 +2118,14 @@ class EvaluationRunner:
             # Map choice string to numeric score via choice_scores
             from model_hub.utils.scoring import apply_choice_scores
 
+            pinned_cs = self._pinned_choice_scores()
             if (
                 self.eval_template
-                and self.eval_template.choice_scores
+                and pinned_cs
                 and isinstance(choice_result, str)
             ):
                 mapped = apply_choice_scores(
-                    choice_result, self.eval_template.choice_scores
+                    choice_result, pinned_cs
                 )
                 value = {
                     "score": mapped if mapped is not None else 0.0,
@@ -2094,14 +2133,14 @@ class EvaluationRunner:
                 }
             elif (
                 self.eval_template
-                and self.eval_template.choice_scores
+                and pinned_cs
                 and isinstance(choice_result, list)
                 and choice_result
             ):
                 picked_scores = [
                     s
                     for s in (
-                        apply_choice_scores(str(c), self.eval_template.choice_scores)
+                        apply_choice_scores(str(c), pinned_cs)
                         for c in choice_result
                     )
                     if s is not None
@@ -2565,16 +2604,17 @@ class EvaluationRunner:
             config["rule_prompt"] = effective_config.get("rule_prompt")
             config["model"] = model or effective_config.get("model")
             raw_output = effective_config.get("output")
-            if self.eval_template.choice_scores and raw_output != "Pass/Fail":
+            agent_cs = self._pinned_choice_scores()
+            if agent_cs and raw_output != "Pass/Fail":
                 config["output_type"] = "choices"
             else:
                 config["output_type"] = raw_output
-            config["choices"] = self.eval_template.choices or (
-                list(self.eval_template.choice_scores.keys())
-                if self.eval_template.choice_scores
+            config["choices"] = self._pinned_choices() or (
+                list(agent_cs.keys())
+                if agent_cs
                 else []
             )
-            config["choice_scores"] = self.eval_template.choice_scores
+            config["choice_scores"] = agent_cs
             # pass_threshold and reverse_output control how the LLM's verdict
             # maps to a pass/fail decision. pass_threshold is stored on the
             # template model; reverse_output lives in the template config.
@@ -2621,7 +2661,8 @@ class EvaluationRunner:
             config["system_prompt"] = effective_config.get("system_prompt")
             # If choice_scores are defined, force choices mode
             raw_output = effective_config.get("output")
-            if self.eval_template.choice_scores and raw_output != "Pass/Fail":
+            custom_cs = self._pinned_choice_scores()
+            if custom_cs and raw_output != "Pass/Fail":
                 config["output_type"] = "choices"
             else:
                 config["output_type"] = raw_output
@@ -2654,12 +2695,12 @@ class EvaluationRunner:
             config["check_internet"] = effective_config.get("check_internet", False)
             config["multi_choice"] = effective_config.get("multi_choice")
             # Derive choices from choice_scores if not set on template
-            config["choices"] = self.eval_template.choices or (
-                list(self.eval_template.choice_scores.keys())
-                if self.eval_template.choice_scores
+            config["choices"] = self._pinned_choices() or (
+                list(custom_cs.keys())
+                if custom_cs
                 else []
             )
-            config["choice_scores"] = self.eval_template.choice_scores
+            config["choice_scores"] = custom_cs
         elif self.user_eval_metric_id == "CustomPromptEvaluator":
             config["system_prompt"] = config.get("system_prompt")
             config["output_type"] = config.get("output")
@@ -2710,9 +2751,9 @@ class EvaluationRunner:
             and effective_config.get("eval_type_id") == "DeterministicEvaluator"
         ):
             if "rule_prompt" not in config:
-                config["choices"] = self.eval_template.choices
-                config["rule_prompt"] = self.eval_template.criteria
-                config["multi_choice"] = self.eval_template.multi_choice
+                config["choices"] = self._pinned_choices()
+                config["rule_prompt"] = self._pinned_criteria()
+                config["multi_choice"] = self._pinned_multi_choice()
                 config["custom_eval"] = effective_config.get("custom_eval", False)
 
             config["model_type"] = model
