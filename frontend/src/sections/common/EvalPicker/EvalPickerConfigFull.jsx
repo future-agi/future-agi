@@ -289,7 +289,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         initial[c.child_id] = c.weight != null ? c.weight : 1.0;
       }
     });
-    const saved = evalData?.composite_weight_overrides || {};
+    const saved =
+      evalData?.composite_weight_overrides ||
+      evalData?.compositeWeightOverrides ||
+      {};
     if (saved && typeof saved === "object") {
       Object.entries(saved).forEach(([childId, w]) => {
         if (w != null) initial[childId] = w;
@@ -490,7 +493,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       setErrorLocalizerEnabled(!!config.error_localizer_enabled);
     }
 
-    if (Array.isArray(config.children)) {
+    if (Array.isArray(config.children) && !compositePopulatedRef.current) {
       setCompositeChildWeights(buildCompositeWeightsFromSnapshot(config.children));
     }
 
@@ -609,11 +612,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         setCode("");
       }
       setCodeLanguage(getEvalCodeLanguage(normalizedFullEval));
-      // Priority: user's saved run-config override → per-binding model
-      // (evalData.model, from UserEvalMetric.model in edit mode) →
-      // canonical template detail (`fullEval.model`) → fallback.
       setModel(
-        config?.model || evalData?.model || fullEval?.model || "turing_large",
+        config?.model ||
+          (isEditMode ? evalData?.model : null) ||
+          fullEval?.model ||
+          "turing_large",
       );
       setOutputType(fullEval.output_type || "pass_fail");
       // Prefer user's saved run_config overrides (edit flow) over template defaults
@@ -837,7 +840,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         if (Array.isArray(config.children)) {
           setCompositeChildWeights(buildCompositeWeightsFromSnapshot(config.children));
         }
-        setIsDirty(true);
       }
     },
     [versions, fullEval, normalizedFullEval, normalizedEvalData],
@@ -1136,6 +1138,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData,
     evalName,
     isEditMode,
+    isSystemEval,
     fagiLocked,
     model,
     sourceMapping,

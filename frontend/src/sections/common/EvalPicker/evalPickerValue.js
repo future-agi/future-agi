@@ -109,5 +109,9 @@ export const normalizeEvalPickerEval = (evalData) => {
     codeLanguage: getEvalCodeLanguage(evalData),
     pinned_version_id:
       evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null,
+    composite_weight_overrides:
+      evalData?.composite_weight_overrides ??
+      evalData?.compositeWeightOverrides ??
+      null,
   };
 };
