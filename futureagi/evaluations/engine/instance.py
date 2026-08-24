@@ -479,6 +479,102 @@ def prepare_eval_config(
     return config, criteria_override
 
 
+_VERSION_AUDIT_FIELDS = (
+    "rule_prompt",
+    "system_prompt",
+    "model",
+    "pass_threshold",
+    "output_type",
+    "choices",
+    "choice_scores",
+    "multi_choice",
+    "check_internet",
+    "required_keys",
+    "few_shot_examples",
+    "messages",
+    "summary",
+    "agent_mode",
+    "data_injection",
+    "tools",
+    "knowledge_bases",
+)
+
+_VERSION_AUDIT_ALIASES = {"output_type": "output"}
+
+
+def _audit_value(value, limit=120):
+    try:
+        text = value if isinstance(value, str) else repr(value)
+    except Exception:
+        return "<unreprable>"
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def log_version_application(
+    eval_template, resolved_version, version_number, config, runtime_config=None
+):
+    """Record where each evaluator kwarg came from, just before instantiation.
+
+    Classifies every audited field as version / run_config / template /
+    derived so a pinned run can be checked without re-reading the code.
+    """
+    try:
+        live = getattr(eval_template, "config", None) or {}
+        snapshot = (
+            getattr(resolved_version, "config_snapshot", None) or {}
+            if resolved_version is not None
+            else {}
+        )
+        run_config = (runtime_config or {}).get("run_config") or {}
+        running = config if isinstance(config, dict) else {}
+
+        origins = {}
+        for field in _VERSION_AUDIT_FIELDS:
+            if field not in running:
+                continue
+            value = running[field]
+            snap_key = _VERSION_AUDIT_ALIASES.get(field, field)
+            if field in run_config and value == run_config[field]:
+                origin = "run_config"
+            elif snap_key in snapshot and value == snapshot[snap_key]:
+                origin = "version"
+            elif resolved_version is not None and value == getattr(
+                resolved_version, field, object()
+            ):
+                origin = "version"
+            elif snap_key in live and value == live[snap_key]:
+                origin = "template"
+            else:
+                origin = "derived"
+            origins[field] = origin
+
+        logger.info(
+            "eval_version_applied",
+            eval_template_id=str(getattr(eval_template, "id", "")),
+            eval_type_id=live.get("eval_type_id", ""),
+            requested_version_number=version_number,
+            resolved_version_id=(
+                str(resolved_version.id) if resolved_version else None
+            ),
+            resolved_version_number=(
+                resolved_version.version_number if resolved_version else None
+            ),
+            snapshot_keys=len(snapshot),
+            prompt_messages_count=len(
+                getattr(resolved_version, "prompt_messages", None) or []
+            ),
+            origins=origins,
+            from_version=sorted(k for k, v in origins.items() if v == "version"),
+            from_run_config=sorted(
+                k for k, v in origins.items() if v == "run_config"
+            ),
+            from_template=sorted(k for k, v in origins.items() if v == "template"),
+            values={k: _audit_value(running.get(k)) for k in origins},
+        )
+    except Exception:
+        logger.debug("eval_version_logging_failed", exc_info=True)
+
+
 def create_eval_instance(
     eval_class,
     eval_template,
@@ -610,6 +706,10 @@ def create_eval_instance(
             )
     elif config:
         config.pop("template_format", None)
+
+    log_version_application(
+        eval_template, resolved_version, version_number, config, runtime_config
+    )
 
     # Instantiate
     if not config and not is_futureagi:
