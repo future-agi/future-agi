@@ -27,6 +27,7 @@ import React, {
   useState,
 } from "react";
 import { useWatch } from "react-hook-form";
+import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
@@ -119,6 +120,11 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
+const sortedEntries = (obj) =>
+  Object.entries(obj || {})
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+
 const buildCompositeWeightsFromSnapshot = (children) => {
   const weights = {};
   if (!Array.isArray(children)) return weights;
@@ -210,9 +216,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const versionSeededRef = useRef(false);
   useEffect(() => {
     if (versionSeededRef.current) return;
-    versionSeededRef.current = true;
     const pinned = evalData?.pinned_version_id ?? null;
-    if (pinned) setSelectedVersionId(pinned);
+    if (pinned) {
+      versionSeededRef.current = true;
+      setSelectedVersionId(pinned);
+    }
   }, [evalData?.pinned_version_id]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
@@ -839,7 +847,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             buildCompositeWeightsFromSnapshot(config.children),
           );
         }
-        setIsDirty(false);
+        setIsDirty(true);
       }
     },
     [versions, fullEval, normalizedFullEval, normalizedEvalData],
@@ -851,6 +859,66 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // save, the new version becomes the selected version in the tabs so
   // the user can Apply it to the dataset with the existing
   // "Add Evaluation" button.
+  // Shared by the manual "Save version" button and the auto-version created
+  // on Add — both must snapshot the same fields or a pinned version restores
+  // the prompt without the runtime toggles.
+  const buildVersionSnapshot = useCallback(
+    () => ({
+      ...(fullEval?.config || evalData?.config || {}),
+      rule_prompt: evalType === "code" ? "" : instructions,
+      code: evalType === "code" ? code : undefined,
+      language: evalType === "code" ? codeLanguage : undefined,
+      model,
+      output:
+        {
+          pass_fail: "Pass/Fail",
+          percentage: "score",
+          deterministic: "choices",
+        }[outputType] || "Pass/Fail",
+      pass_threshold: passThreshold,
+      choice_scores:
+        Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
+      multi_choice: multiChoice,
+      messages: evalType === "llm" ? messages : undefined,
+      few_shot_examples:
+        evalType === "llm" && fewShotExamples.length > 0
+          ? fewShotExamples
+          : undefined,
+      agent_mode: agentMode,
+      check_internet: useInternet,
+      summary:
+        summaryType === "custom"
+          ? { type: "custom", custom: "" }
+          : { type: summaryType },
+      tools: build_tools_payload(connectorIds),
+      knowledge_bases: knowledgeBaseIds,
+      data_injection: buildDataInjection(contextOptions),
+      error_localizer_enabled: errorLocalizerActive,
+    }),
+    [
+      fullEval,
+      evalData,
+      evalType,
+      instructions,
+      code,
+      codeLanguage,
+      model,
+      outputType,
+      passThreshold,
+      choiceScores,
+      multiChoice,
+      messages,
+      fewShotExamples,
+      agentMode,
+      useInternet,
+      summaryType,
+      connectorIds,
+      knowledgeBaseIds,
+      contextOptions,
+      errorLocalizerActive,
+    ],
+  );
+
   const handleSaveVersion = useCallback(async () => {
     if (isSystemEval) return;
     if (agentEvalLocked && evalType === "agent") {
@@ -893,38 +961,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       };
       await updateEval.mutateAsync(payload);
 
-      const configSnapshot = {
-        ...(fullEval?.config || evalData?.config || {}),
-        rule_prompt: evalType === "code" ? "" : instructions,
-        code: evalType === "code" ? code : undefined,
-        language: evalType === "code" ? codeLanguage : undefined,
-        model,
-        output:
-          {
-            pass_fail: "Pass/Fail",
-            percentage: "score",
-            deterministic: "choices",
-          }[outputType] || "Pass/Fail",
-        pass_threshold: passThreshold,
-        choice_scores:
-          Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
-        multi_choice: multiChoice,
-        messages: evalType === "llm" ? messages : undefined,
-        few_shot_examples:
-          evalType === "llm" && fewShotExamples.length > 0
-            ? fewShotExamples
-            : undefined,
-        agent_mode: agentMode,
-        check_internet: useInternet,
-        summary:
-          summaryType === "custom"
-            ? { type: "custom", custom: "" }
-            : { type: summaryType },
-        tools: build_tools_payload(connectorIds),
-        knowledge_bases: knowledgeBaseIds,
-        data_injection: buildDataInjection(contextOptions),
-        error_localizer_enabled: errorLocalizerActive,
-      };
+      const configSnapshot = buildVersionSnapshot();
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
         criteria: evalType === "code" ? code : instructions,
@@ -948,6 +985,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
   }, [
     isSystemEval,
+    buildVersionSnapshot,
     agentEvalLocked,
     fagiLocked,
     evalType,
@@ -956,20 +994,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     codeLanguage,
     model,
     outputType,
-    agentMode,
-    useInternet,
-    summaryType,
-    connectorIds,
-    knowledgeBaseIds,
-    contextOptions,
-    errorLocalizerActive,
     passThreshold,
     choiceScores,
     multiChoice,
     messages,
     fewShotExamples,
-    fullEval,
-    evalData,
     updateEval,
     createVersion,
   ]);
@@ -1005,7 +1034,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
   }, [templateId, fagiLocked, evalType, model, isComposite]);
 
-  const handleAdd = useCallback(() => {
+  const handleAdd = useCallback(async () => {
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -1083,19 +1112,103 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           ? evalName || evalData?.name
           : evalName || fullEval?.name || evalData?.name;
 
-    const resolvedVersionId = isSystemEval
-      ? null
-      : selectedVersionId ||
-        versions.find((v) => v.is_default)?.id ||
-        versions[0]?.id ||
-        null;
+    let resolvedVersionId = isSystemEval ? null : selectedVersionId || null;
+
+    // Unsaved edits have to become a version before they can be pinned —
+    // otherwise the binding points at the old snapshot and the user's change
+    // never reaches the evaluator. Composites version through their own
+    // child-weight endpoint, so they are left alone here.
+    const selectedVersion = versions.find((v) => v.id === selectedVersionId);
+    const nextSnapshot = buildVersionSnapshot();
+    // Selecting a version rehydrates the form from it, so "dirty" alone would
+    // fork a duplicate. Only mint a version when the form actually differs
+    // from whatever version is currently selected.
+    const differsFromSelected =
+      !selectedVersion ||
+      JSON.stringify(sortedEntries(selectedVersion.config_snapshot || {})) !==
+        JSON.stringify(sortedEntries(nextSnapshot));
+
+    // Composites version through their own detail endpoint — it snapshots the
+    // child links, which the single-template versions endpoint knows nothing
+    // about. An empty PATCH mutates nothing and just mints the version.
+    if (isDirty && isComposite && templateId) {
+      try {
+        const { data } = await axios.patch(
+          endpoints.develop.eval.getCompositeDetail(templateId),
+          {
+            // Version-only: never rewrite the shared template's child links
+            // from a binding-scoped edit.
+            skip_template_update: true,
+            ...(compositeChildWeights &&
+            Object.keys(compositeChildWeights).length
+              ? { child_weights: compositeChildWeights }
+              : {}),
+          },
+        );
+        const compositeVersionId = data?.result?.version_id;
+        if (compositeVersionId) {
+          resolvedVersionId = compositeVersionId;
+          setSelectedVersionId(compositeVersionId);
+          setIsDirty(false);
+        }
+      } catch (err) {
+        const message =
+          err?.response?.data?.result ||
+          err?.message ||
+          "Failed to create composite version";
+        enqueueSnackbar(
+          typeof message === "string" ? message : JSON.stringify(message),
+          { variant: "error" },
+        );
+        return;
+      }
+    }
+
+    if (
+      isDirty &&
+      differsFromSelected &&
+      !isSystemEval &&
+      !isComposite &&
+      templateId
+    ) {
+      try {
+        const newVersion = await createVersion.mutateAsync({
+          config_snapshot: nextSnapshot,
+          criteria: evalType === "code" ? code : instructions,
+          model,
+          // Binding-scoped edit: pin it without moving the template default,
+          // otherwise the template's own config drifts from its default
+          // version for everyone else using this eval.
+          set_as_default: false,
+        });
+        if (newVersion?.id) {
+          resolvedVersionId = newVersion.id;
+          setSelectedVersionId(newVersion.id);
+          setIsDirty(false);
+          enqueueSnackbar(
+            `Version V${newVersion?.version_number || ""} created`,
+            { variant: "success" },
+          );
+        }
+      } catch (err) {
+        const message =
+          err?.response?.data?.result ||
+          err?.message ||
+          "Failed to create eval version";
+        enqueueSnackbar(
+          typeof message === "string" ? message : JSON.stringify(message),
+          { variant: "error" },
+        );
+        return;
+      }
+    }
 
     if (templateType === "composite") {
       // Composite metrics don't carry prompt/model/output-type/choice-score
       // state — those live on each child template. Emit only the fields
       // the host needs to create a UserEvalMetric plus the per-binding
       // weight overrides.
-      onSave({
+      await onSave({
         templateId,
         evalTemplateId: templateId,
         userEvalId,
@@ -1114,7 +1227,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       return;
     }
 
-    onSave({
+    await onSave({
       templateId,
       evalTemplateId: templateId,
       userEvalId,
@@ -1166,6 +1279,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     isSystemEval,
     isDirty,
     versions,
+    createVersion,
+    buildVersionSnapshot,
     instructions,
     code,
     codeLanguage,
