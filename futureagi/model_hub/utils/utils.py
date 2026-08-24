@@ -1,6 +1,8 @@
 import ast
 import difflib
 import json
+import os
+import socket
 import time
 from collections import Counter
 from typing import Literal
@@ -922,19 +924,47 @@ def track_running_eval_count(
             cache.set(cache_key, existing_count - 1)
 
 
+_NLTK_RESOURCES = (
+    ("punkt", "tokenizers/punkt"),
+    ("averaged_perceptron_tagger", "taggers/averaged_perceptron_tagger"),
+    ("wordnet", "corpora/wordnet"),
+    ("omw-1.4", "corpora/omw-1.4"),
+    ("stopwords", "corpora/stopwords"),
+)
+
+# nltk.download() fetches over HTTPS with no timeout, and this module is
+# imported from tfc/urls.py — so an unreachable index wedges every management
+# command and the web server itself at import time. Skip what is already on
+# disk and bound the rest.
+_NLTK_DOWNLOAD_TIMEOUT = float(os.environ.get("NLTK_DOWNLOAD_TIMEOUT", "5"))
+
+
+def _ensure_nltk_resources():
+    missing = []
+    for package, path in _NLTK_RESOURCES:
+        try:
+            nltk.data.find(path)
+        except Exception:
+            missing.append(package)
+
+    if not missing:
+        return
+
+    previous_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(_NLTK_DOWNLOAD_TIMEOUT)
+    try:
+        for package in missing:
+            try:
+                nltk.download(package, quiet=True)
+            except Exception:
+                logger.warning("nltk_resource_download_failed", package=package)
+    finally:
+        socket.setdefaulttimeout(previous_timeout)
+
+
 class AnnotationCorpusBuilder:
     def __init__(self):
-        # Download necessary resources once
-        # Catch FileExistsError in case NLTK data directory already exists
-        try:
-            nltk.download("punkt", quiet=True)
-            nltk.download("averaged_perceptron_tagger", quiet=True)
-            nltk.download("wordnet", quiet=True)
-            nltk.download("omw-1.4", quiet=True)
-            nltk.download("stopwords", quiet=True)
-        except FileExistsError:
-            # Directory already exists, downloads can proceed
-            pass
+        _ensure_nltk_resources()
 
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words("english"))
