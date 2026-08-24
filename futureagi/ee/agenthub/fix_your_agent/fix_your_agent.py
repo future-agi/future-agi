@@ -625,6 +625,15 @@ class SimulationEvaluator(Evaluator):
                         getattr(eval_config, "error_localizer", False)
                     )
 
+                    from model_hub.services.eval_version_pinning import (
+                        resolve_version_for_binding,
+                    )
+
+                    resolved_version = resolve_version_for_binding(
+                        eval_template_for_runner,
+                        getattr(eval_config, "pinned_version", None),
+                    )
+
                     eval_result = run_eval_func(
                         config=config,
                         mappings=updated_mapping,
@@ -635,6 +644,12 @@ class SimulationEvaluator(Evaluator):
                         error_localizer=error_localizer,
                         workspace=self.workspace,
                         source=self.eval_source,
+                        version_number=(
+                            resolved_version.version_number
+                            if resolved_version
+                            else None
+                        ),
+                        resolved_version=resolved_version,
                     )
 
                     if isinstance(eval_result, dict):
