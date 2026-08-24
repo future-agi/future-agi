@@ -19,6 +19,7 @@ import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
+import { toolActionErrorMessage } from "src/sections/falcon-ai/components/connectorTools";
 import {
   fetchConnectors,
   useConnector,
@@ -54,16 +55,6 @@ function getStatusInfo(connector) {
   if (!isActive) return { label: "Inactive", color: "default" };
   if (isVerified) return { label: "Connected", color: "success" };
   return { label: "Pending", color: "warning" };
-}
-
-function getActionErrorMessage(error, fallback) {
-  return (
-    error?.response?.data?.detail ||
-    error?.response?.data?.error ||
-    error?.response?.data?.message ||
-    error?.message ||
-    fallback
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +469,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Connection test failed."),
+        message: toolActionErrorMessage(error, "Connection test failed."),
       });
     } finally {
       setTesting(false);
@@ -513,7 +504,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Tool discovery failed."),
+        message: toolActionErrorMessage(error, "Tool discovery failed."),
       });
     } finally {
       setDiscovering(false);
@@ -545,7 +536,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Authentication failed."),
+        message: toolActionErrorMessage(error, "Authentication failed."),
       });
     } finally {
       setReauthing(false);
@@ -565,7 +556,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
     } catch (error) {
       setFeedback({
         severity: "error",
-        message: getActionErrorMessage(error, "Failed to update tools."),
+        message: toolActionErrorMessage(error, "Failed to update tools."),
       });
     }
   };

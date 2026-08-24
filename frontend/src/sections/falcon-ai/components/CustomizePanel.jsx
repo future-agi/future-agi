@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -2142,6 +2148,19 @@ export default function CustomizePanel() {
   const [isEditingSkill, setIsEditingSkill] = useState(false);
   const [isEditingConnector, setIsEditingConnector] = useState(false);
 
+  // Monotonic ticket for the detail fetch kicked off by handleSelectItem.
+  // Bumped whenever the selection is cleared/changed out from under it, so a
+  // response that lands after a newer selection can't overwrite it.
+  const detailRequestRef = useRef(0);
+
+  // Abandon any in-flight detail fetch. Its response is ignored once the
+  // ticket moves, which means its `finally` no longer clears the loading flag
+  // either — so clear it here, or the pane keeps a skeleton up forever.
+  const abandonDetailRequest = useCallback(() => {
+    detailRequestRef.current += 1;
+    setConnectorDetailLoading(false);
+  }, []);
+
   // ---- Load data ----
   const loadSkills = useCallback(async () => {
     setLoadingSkills(true);
@@ -2178,10 +2197,14 @@ export default function CustomizePanel() {
   }, [loadSkills, loadConnectors]);
 
   // ---- Handlers ----
-  const handleTabChange = useCallback((tab) => {
-    setSelectedTab(tab);
-    setSelectedItem(null);
-  }, []);
+  const handleTabChange = useCallback(
+    (tab) => {
+      abandonDetailRequest();
+      setSelectedTab(tab);
+      setSelectedItem(null);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleSelectItem = useCallback(
     async (item) => {
@@ -2191,7 +2214,17 @@ export default function CustomizePanel() {
       setToolError(null); // stale error from the previously selected connector
       setDetailError(null);
 
-      if (!item?.id) return;
+      if (!item?.id) {
+        abandonDetailRequest();
+        return;
+      }
+
+      // Each call gets its own ticket; a response is only applied if it's
+      // still the most recent one requested. Without this, selecting B while
+      // A's detail fetch is still in flight lets A's late response clobber
+      // B's once it resolves out of order.
+      const ticket = ++detailRequestRef.current;
+      const isStale = () => ticket !== detailRequestRef.current;
 
       // Both tabs list from an endpoint whose serializer is a summary: skills
       // arrive without instructions, connectors without discovered_tools or
@@ -2202,64 +2235,84 @@ export default function CustomizePanel() {
         const api = await import("../hooks/useFalconAPI");
         if (selectedTab === "skills") {
           const resp = await api.getSkill(item.id);
+          if (isStale()) return;
           setSelectedItem(resp.result || resp);
         } else if (selectedTab === "connectors") {
-          setSelectedItem(await api.getConnector(item.id));
+          const detail = await api.getConnector(item.id);
+          if (isStale()) return;
+          setSelectedItem(detail);
         }
       } catch (error) {
+        if (isStale()) return;
         setDetailError(
           toolActionErrorMessage(error, "Couldn't load this connector."),
         );
       } finally {
-        setConnectorDetailLoading(false);
+        if (!isStale()) setConnectorDetailLoading(false);
       }
     },
-    [selectedTab],
+    [selectedTab, abandonDetailRequest],
   );
 
   const handleCreateSkill = useCallback(() => {
+    abandonDetailRequest();
     setSelectedItem(null);
     setIsEditingSkill(true);
-  }, []);
+  }, [abandonDetailRequest]);
 
-  const handleEditSkill = useCallback((skill) => {
-    setSelectedItem(skill);
-    setIsEditingSkill(true);
-  }, []);
+  const handleEditSkill = useCallback(
+    (skill) => {
+      abandonDetailRequest();
+      setSelectedItem(skill);
+      setIsEditingSkill(true);
+    },
+    [abandonDetailRequest],
+  );
 
-  const handleDuplicateSkill = useCallback((skill) => {
-    // Pre-fill form with skill data but clear id so it creates a new one
-    setSelectedItem({
-      ...skill,
-      id: null,
-      name: `${skill.name} (copy)`,
-      is_system: false,
-      is_builtin: false,
-    });
-    setIsEditingSkill(true);
-  }, []);
+  const handleDuplicateSkill = useCallback(
+    (skill) => {
+      abandonDetailRequest();
+      // Pre-fill form with skill data but clear id so it creates a new one
+      setSelectedItem({
+        ...skill,
+        id: null,
+        name: `${skill.name} (copy)`,
+        is_system: false,
+        is_builtin: false,
+      });
+      setIsEditingSkill(true);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleSkillSaved = useCallback(() => {
+    abandonDetailRequest();
     loadSkills();
     setSelectedItem(null);
     setIsEditingSkill(false);
-  }, [loadSkills]);
+  }, [loadSkills, abandonDetailRequest]);
 
   const handleCreateConnector = useCallback(() => {
+    abandonDetailRequest();
     setSelectedItem(null);
     setIsEditingConnector(true);
-  }, []);
+  }, [abandonDetailRequest]);
 
-  const handleEditConnector = useCallback((conn) => {
-    setSelectedItem(conn);
-    setIsEditingConnector(true);
-  }, []);
+  const handleEditConnector = useCallback(
+    (conn) => {
+      abandonDetailRequest();
+      setSelectedItem(conn);
+      setIsEditingConnector(true);
+    },
+    [abandonDetailRequest],
+  );
 
   const handleConnectorSaved = useCallback(() => {
+    abandonDetailRequest();
     loadConnectors();
     setSelectedItem(null);
     setIsEditingConnector(false);
-  }, [loadConnectors]);
+  }, [loadConnectors, abandonDetailRequest]);
 
   // Listen for OAuth callback postMessage from popup
   useEffect(() => {
@@ -2284,12 +2337,16 @@ export default function CustomizePanel() {
           // if this fails, the connector data from loadConnectors is still valid.
         }
 
-        // Fetch the updated connector list to get the connector with tools
+        // Re-select through handleSelectItem rather than assigning the row:
+        // the list serializer carries neither discovered_tools nor
+        // enabled_tool_names, so assigning it would blank the tools the user
+        // just authorised. handleSelectItem fetches the detail record and
+        // takes a ticket, so a slow response can't land on a newer selection.
         try {
           const data = await fetchConnectors();
           const results = data.results || data || [];
           const updated = results.find((c) => c.id === connectorId);
-          if (updated) setSelectedItem(updated);
+          if (updated) await handleSelectItem(updated);
         } catch {
           // silent — loadConnectors already refreshed the list
         }
@@ -2297,7 +2354,7 @@ export default function CustomizePanel() {
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [loadConnectors, selectedItem?.id]);
+  }, [loadConnectors, selectedItem?.id, handleSelectItem]);
 
   const handleReauth = useCallback(
     async (connectorId) => {
@@ -2342,15 +2399,19 @@ export default function CustomizePanel() {
     [loadConnectors, connectors],
   );
 
-  const handleDisconnect = useCallback(async (connectorId) => {
-    try {
-      await deleteConnector(connectorId);
-      setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
-      setSelectedItem(null);
-    } catch {
-      // silent
-    }
-  }, []);
+  const handleDisconnect = useCallback(
+    async (connectorId) => {
+      try {
+        await deleteConnector(connectorId);
+        abandonDetailRequest();
+        setConnectors((prev) => prev.filter((c) => c.id !== connectorId));
+        setSelectedItem(null);
+      } catch {
+        // silent
+      }
+    },
+    [abandonDetailRequest],
+  );
 
   // ---- Render ----
   return (

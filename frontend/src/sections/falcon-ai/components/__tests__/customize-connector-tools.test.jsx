@@ -1,9 +1,11 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, fireEvent, act } from "src/utils/test-utils";
 
 import CustomizePanel from "../CustomizePanel";
 import { resolveEnabledNames } from "../connectorTools";
+import { falconAIQueryKeys } from "../../hooks/useFalconAPI";
 
 const mocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
@@ -14,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   updateConnectorTools: vi.fn(),
   discoverConnectorTools: vi.fn(),
   authenticateConnector: vi.fn(),
+  falconAIQueryKeys: {
+    connector: (id) => ["falcon-ai", "connector", id],
+  },
 }));
 
 vi.mock("../../hooks/useFalconAPI", () => mocks);
@@ -46,10 +51,56 @@ const DETAIL = {
   ],
 };
 
-const openConnector = async () => {
-  render(<CustomizePanel />);
+// A second connector, used to reproduce an out-of-order detail response.
+const LIST_ROW_B = {
+  id: "conn-2",
+  name: "GitHub",
+  server_url: "https://mcp.github.com/mcp",
+  transport: "streamable_http",
+  auth_type: "oauth",
+  is_active: true,
+  is_verified: true,
+  tool_count: 2,
+};
+
+const DETAIL_B = {
+  ...LIST_ROW_B,
+  discovered_tools: [
+    { name: "list_prs", description: "List pull requests." },
+    { name: "create_issue", description: "Create an issue." },
+  ],
+  enabled_tool_names: ["list_prs", "create_issue"],
+};
+
+// A promise the test controls the settlement of, to force out-of-order
+// resolution between two overlapping detail fetches.
+const createDeferred = () => {
+  let resolve;
+  const promise = new Promise((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+};
+
+// useConnectorToolPermissions writes through to the react-query cache after a
+// successful toggle, so every render of the panel needs a real QueryClient.
+const createTestQueryClient = () =>
+  new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+const renderPanel = (queryClient = createTestQueryClient()) => {
+  render(
+    <QueryClientProvider client={queryClient}>
+      <CustomizePanel />
+    </QueryClientProvider>,
+  );
+  return queryClient;
+};
+
+const openConnector = async (queryClient) => {
+  const client = renderPanel(queryClient);
   fireEvent.click(await screen.findByText("Connectors"));
   fireEvent.click(await screen.findByText("DeepWiki"));
+  return client;
 };
 
 describe("resolveEnabledNames", () => {
@@ -108,7 +159,7 @@ describe("Customize panel — connector tools", () => {
       }),
     );
 
-    render(<CustomizePanel />);
+    renderPanel();
     fireEvent.click(await screen.findByText("Connectors"));
     fireEvent.click(await screen.findByText("DeepWiki"));
 
@@ -135,7 +186,7 @@ describe("Customize panel — connector tools", () => {
       response: { data: { detail: "Connector detail is unavailable." } },
     });
 
-    render(<CustomizePanel />);
+    renderPanel();
     fireEvent.click(await screen.findByText("Connectors"));
     fireEvent.click(await screen.findByText("DeepWiki"));
 
@@ -174,6 +225,28 @@ describe("Customize panel — connector tools", () => {
     );
   });
 
+  it("updates the shared react-query cache so the settings page sees the new permissions", async () => {
+    // ConnectorSettingsPage reads this same connector through useConnector(id),
+    // keyed identically in the same QueryClient. Seed it as if that page had
+    // already fetched the record, pre-toggle.
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(falconAIQueryKeys.connector("conn-1"), DETAIL);
+
+    await openConnector(queryClient);
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    await waitFor(() => expect(mocks.updateConnectorTools).toHaveBeenCalled());
+
+    const cached = queryClient.getQueryData(
+      falconAIQueryKeys.connector("conn-1"),
+    );
+    expect(cached.enabled_tool_names).not.toContain("ask_question");
+    expect(cached.enabled_tool_names).toEqual(
+      expect.arrayContaining(["read_wiki_contents", "read_wiki_structure"]),
+    );
+  });
+
   it("surfaces a failed write instead of leaving the toggle silently stuck", async () => {
     mocks.updateConnectorTools.mockRejectedValue({
       response: { data: { detail: "Connector is not verified." } },
@@ -187,6 +260,155 @@ describe("Customize panel — connector tools", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Connector is not verified.",
     );
+  });
+
+  it("ignores a stale detail response when a newer selection is already in flight", async () => {
+    mocks.fetchConnectors.mockResolvedValue({
+      results: [LIST_ROW, LIST_ROW_B],
+    });
+
+    const deferredA = createDeferred();
+    const deferredB = createDeferred();
+    mocks.getConnector.mockImplementation((id) => {
+      if (id === "conn-1") return deferredA.promise;
+      if (id === "conn-2") return deferredB.promise;
+      throw new Error(`unexpected connector id ${id}`);
+    });
+
+    renderPanel();
+    fireEvent.click(await screen.findByText("Connectors"));
+
+    // Select A, then select B before A's detail request has resolved.
+    fireEvent.click(await screen.findByText("DeepWiki"));
+    fireEvent.click(await screen.findByText("GitHub"));
+
+    await waitFor(() => expect(mocks.getConnector).toHaveBeenCalledTimes(2));
+
+    // Resolve out of order: the newer request (B) settles first, then the
+    // stale one (A) settles after.
+    await act(async () => {
+      deferredB.resolve(DETAIL_B);
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("list_prs")).toBeInTheDocument();
+
+    await act(async () => {
+      deferredA.resolve(DETAIL);
+      // A macrotask tick flushes every microtask queued by A's now-settled
+      // await chain, giving a buggy implementation a full chance to apply.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // B's tools must still be showing; A's late response must not have
+    // clobbered them.
+    expect(screen.getByText("list_prs")).toBeInTheDocument();
+    expect(screen.queryByText("ask_question")).not.toBeInTheDocument();
+  });
+
+  it("keeps the loading indicator up while a newer request is still in flight, even if a stale one settles first", async () => {
+    mocks.fetchConnectors.mockResolvedValue({
+      results: [LIST_ROW, LIST_ROW_B],
+    });
+
+    const deferredA = createDeferred();
+    const deferredB = createDeferred();
+    mocks.getConnector.mockImplementation((id) => {
+      if (id === "conn-1") return deferredA.promise;
+      if (id === "conn-2") return deferredB.promise;
+      throw new Error(`unexpected connector id ${id}`);
+    });
+
+    renderPanel();
+    fireEvent.click(await screen.findByText("Connectors"));
+
+    fireEvent.click(await screen.findByText("DeepWiki"));
+    fireEvent.click(await screen.findByText("GitHub"));
+
+    await waitFor(() => expect(mocks.getConnector).toHaveBeenCalledTimes(2));
+
+    // The stale (first) request settles while the newer one is still pending.
+    await act(async () => {
+      deferredA.resolve(DETAIL);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // B's request hasn't resolved yet — the loading indicator must still be
+    // up. A stale settlement must not have cleared it out from under B.
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      "Loading tools",
+    );
+
+    await act(async () => {
+      deferredB.resolve(DETAIL_B);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(await screen.findByText("list_prs")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("clears the loading state when an in-flight detail fetch is abandoned", async () => {
+    // Editing mid-fetch bumps the ticket, so the abandoned response is ignored
+    // and its `finally` no longer clears the flag. Nothing else would.
+    const deferred = createDeferred();
+    mocks.getConnector.mockImplementation(() => deferred.promise);
+
+    renderPanel();
+    fireEvent.click(await screen.findByText("Connectors"));
+    fireEvent.click(await screen.findByText("DeepWiki"));
+    await waitFor(() => expect(mocks.getConnector).toHaveBeenCalled());
+
+    fireEvent.click(await screen.findByText("Edit"));
+    await act(async () => {
+      deferred.resolve(DETAIL);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.click(await screen.findByText("Cancel"));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("does not invent a cache entry when nothing has fetched the connector", async () => {
+    // A partial entry would be stamped fresh, so the settings page would render
+    // it — with no discovered_tools — instead of fetching the real record.
+    const queryClient = createTestQueryClient();
+    await openConnector(queryClient);
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    await waitFor(() => expect(mocks.updateConnectorTools).toHaveBeenCalled());
+
+    expect(
+      queryClient.getQueryData(falconAIQueryKeys.connector("conn-1")),
+    ).toBeUndefined();
+  });
+
+  it("keeps the tools on screen after an OAuth callback", async () => {
+    // The callback used to assign a row from the LIST endpoint, whose
+    // serializer carries no discovered_tools — blanking the very tools the
+    // user had just authorised.
+    mocks.getConnector.mockResolvedValue(DETAIL);
+    mocks.discoverConnectorTools.mockResolvedValue({});
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { type: "falcon_oauth_callback", status: "success" },
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(await screen.findByText("ask_question")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No tools discovered yet/i),
+    ).not.toBeInTheDocument();
   });
 
   it("allows a whole group in one request instead of racing per tool", async () => {

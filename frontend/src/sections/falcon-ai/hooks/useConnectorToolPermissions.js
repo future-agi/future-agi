@@ -1,10 +1,11 @@
 import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import {
   resolveEnabledNames,
   toolActionErrorMessage,
 } from "../components/connectorTools";
-import { updateConnectorTools } from "./useFalconAPI";
+import { falconAIQueryKeys, updateConnectorTools } from "./useFalconAPI";
 
 /**
  * Owns allow/deny for a connector's tools.
@@ -24,12 +25,17 @@ export function useConnectorToolPermissions({
   setConnectors,
 }) {
   const [toolError, setToolError] = useState(null);
+  const queryClient = useQueryClient();
 
   const applyEnabledToolNames = useCallback(
     async (connectorId, nextNames) => {
       try {
         await updateConnectorTools(connectorId, nextNames);
         setToolError(null);
+        queryClient.setQueryData(
+          falconAIQueryKeys.connector(connectorId),
+          (prev) => (prev ? { ...prev, enabled_tool_names: nextNames } : prev),
+        );
         setSelectedItem((prev) =>
           prev?.id === connectorId
             ? { ...prev, enabled_tool_names: nextNames }
@@ -47,7 +53,7 @@ export function useConnectorToolPermissions({
         );
       }
     },
-    [setSelectedItem, setConnectors],
+    [setSelectedItem, setConnectors, queryClient],
   );
 
   const handleToolToggle = useCallback(
