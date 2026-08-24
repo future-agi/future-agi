@@ -281,16 +281,35 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     compositeDetail?.children || [],
   );
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
-  const compositePopulatedRef = useRef(false);
+  const compositePopulatedRef = useRef(null);
   useEffect(() => {
     if (!isComposite) return;
     if (!compositeDetail) return;
     // In edit mode, wait for evalData so saved overrides aren't missed
     if (isEditMode && !evalData) return;
-    if (compositePopulatedRef.current) return;
-    // Start from template child weights, then overlay saved per-binding overrides
+    // A pinned version owns the child weights; the template links keep their
+    // own. Seeding from compositeDetail would latch the template defaults for
+    // a binding pinned to something else, so wait for the versions query and
+    // prefer the pinned snapshot when there is one.
+    const pinnedId = selectedVersionId || evalData?.pinned_version_id || null;
+    if (pinnedId && !versions.length) return;
+    const pinnedChildren = pinnedId
+      ? versions.find((v) => v.id === pinnedId)?.config_snapshot?.children
+      : null;
+    const weightSource =
+      Array.isArray(pinnedChildren) && pinnedChildren.length
+        ? pinnedChildren
+        : compositeDetail.children || [];
+
+    // Keyed on what we populated from: a pin that arrives after the template
+    // detail must still be able to replace the defaults, but re-running for
+    // the same source must not stomp the user's edits.
+    const populatedKey = pinnedId || "template";
+    if (compositePopulatedRef.current === populatedKey) return;
+
+    // Start from the resolved child weights, then overlay saved per-binding overrides
     const initial = {};
-    (compositeDetail.children || []).forEach((c) => {
+    weightSource.forEach((c) => {
       if (c?.child_id != null) {
         initial[c.child_id] = c.weight != null ? c.weight : 1.0;
       }
@@ -302,8 +321,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       });
     }
     setCompositeChildWeights(initial);
-    compositePopulatedRef.current = true;
-  }, [isComposite, compositeDetail, evalData]);
+    compositePopulatedRef.current = populatedKey;
+  }, [
+    isComposite,
+    compositeDetail,
+    evalData,
+    isEditMode,
+    versions,
+    selectedVersionId,
+  ]);
   // Configuring a per-dataset attachment (UserEvalMetric) — NOT editing the
   // underlying template itself. Lock-down policy:
   //   - System evals: instructions + output_type category are READ-ONLY.
@@ -442,6 +468,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
+  const initialLoadDone = useRef(false);
   useEffect(() => {
     if (!selectedVersionId || !versions.length || isDirty) return;
     const version = versions.find((v) => v.id === selectedVersionId);
@@ -518,7 +545,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   ]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
-  const initialLoadDone = useRef(false);
   useEffect(() => {
     // React Query can return cached detail first and fresh network detail next.
     // Re-hydrate while the form is still clean so fresh fields (e.g.
