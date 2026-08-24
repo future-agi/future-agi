@@ -38,7 +38,7 @@ def resolve_pin_for_new_binding(eval_template, pinned_version_id=None):
     pinned_version_id is ignored there.
     """
     if not is_versioned_template(eval_template):
-        logger.info(
+        logger.debug(
             "eval_pin_selected",
             eval_template_id=str(getattr(eval_template, "id", "")),
             requested_version_id=str(pinned_version_id) if pinned_version_id else None,
@@ -60,7 +60,7 @@ def resolve_pin_for_new_binding(eval_template, pinned_version_id=None):
         selected = EvalTemplateVersion.objects.get_default(eval_template)
         outcome = "requested_not_found_used_default" if pinned_version_id else "default"
 
-    logger.info(
+    logger.debug(
         "eval_pin_selected",
         eval_template_id=str(getattr(eval_template, "id", "")),
         requested_version_id=str(pinned_version_id) if pinned_version_id else None,
@@ -84,7 +84,7 @@ def resolve_version_for_binding(eval_template, pinned_version):
     rather than `template`.
     """
     if not is_versioned_template(eval_template):
-        logger.info(
+        logger.debug(
             "eval_pin_resolved",
             eval_template_id=str(getattr(eval_template, "id", "")),
             resolved_version_id=None,
@@ -102,7 +102,7 @@ def resolve_version_for_binding(eval_template, pinned_version):
             else "template_default"
         )
 
-    logger.info(
+    logger.debug(
         "eval_pin_resolved",
         eval_template_id=str(getattr(eval_template, "id", "")),
         binding_pin_id=str(pinned_version.id) if pinned_version else None,

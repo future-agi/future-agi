@@ -548,7 +548,7 @@ def log_version_application(
                 origin = "derived"
             origins[field] = origin
 
-        logger.info(
+        logger.debug(
             "eval_version_applied",
             eval_template_id=str(getattr(eval_template, "id", "")),
             eval_type_id=live.get("eval_type_id", ""),
