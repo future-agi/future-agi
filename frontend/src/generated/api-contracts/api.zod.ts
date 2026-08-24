@@ -19677,7 +19677,7 @@ export const ModelHubEvalTemplatesCompositePartialUpdateParams = zod.object({
 export const modelHubEvalTemplatesCompositePartialUpdateBodyNameMax = 255;
 
 
-
+export const modelHubEvalTemplatesCompositePartialUpdateBodySkipTemplateUpdateDefault = false;
 
 export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "name": zod.string().min(1).max(modelHubEvalTemplatesCompositePartialUpdateBodyNameMax).optional(),
@@ -19695,7 +19695,8 @@ export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "child_configs": zod.object({
 
 }).passthrough().optional(),
-  "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional()
+  "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional(),
+  "skip_template_update": zod.boolean().default(modelHubEvalTemplatesCompositePartialUpdateBodySkipTemplateUpdateDefault)
 })
 
 
@@ -20263,12 +20264,15 @@ export const ModelHubEvalTemplatesVersionsCreateCreateParams = zod.object({
   "template_id": zod.string()
 })
 
+export const modelHubEvalTemplatesVersionsCreateCreateBodySetAsDefaultDefault = true;
+
 export const ModelHubEvalTemplatesVersionsCreateCreateBody = zod.object({
   "criteria": zod.string().optional(),
   "model": zod.string().optional(),
   "config_snapshot": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "set_as_default": zod.boolean().default(modelHubEvalTemplatesVersionsCreateCreateBodySetAsDefaultDefault)
 })
 
 export const ModelHubEvalTemplatesVersionsCreateCreateResponse = zod.object({

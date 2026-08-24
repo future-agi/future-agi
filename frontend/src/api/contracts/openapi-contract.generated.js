@@ -50241,6 +50241,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "code"
           ],
           "x-nullable": true
+        },
+        "skip_template_update": {
+          "title": "Skip template update",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -55620,6 +55625,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config snapshot",
           "type": "object",
           "x-nullable": true
+        },
+        "set_as_default": {
+          "title": "Set as default",
+          "type": "boolean",
+          "default": true
         }
       }
     },

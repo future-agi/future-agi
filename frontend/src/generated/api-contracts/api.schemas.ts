@@ -10220,6 +10220,7 @@ export interface CompositeEvalUpdateRequestApi {
   child_pinned_versions?: CompositeEvalUpdateRequestApiChildPinnedVersions;
   child_configs?: CompositeEvalUpdateRequestApiChildConfigs;
   composite_child_axis?: CompositeEvalUpdateRequestApiCompositeChildAxis;
+  skip_template_update?: boolean;
 }
 
 export type CompositeEvalExecuteRequestApiMapping = { [key: string]: unknown };
@@ -10673,6 +10674,7 @@ export interface EvalTemplateVersionCreateRequestApi {
   criteria?: string;
   model?: string;
   config_snapshot?: EvalTemplateVersionCreateRequestApiConfigSnapshot;
+  set_as_default?: boolean;
 }
 
 export interface EvalTemplateVersionResponseResultApi {
