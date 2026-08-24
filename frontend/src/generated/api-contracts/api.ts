@@ -549,6 +549,8 @@ import type {
   GroundTruthUploadResponseApi,
   HarnessJobActionApi,
   HarnessJobCreateApi,
+  HarnessPreflightApi,
+  HarnessSourceUploadResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -1028,6 +1030,7 @@ import type {
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
   SimulateApiCallExecutionsListParams,
+  SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
   SimulateApiPersonasFieldOptions200,
   SimulateApiPersonasFieldOptionsParams,
@@ -52456,6 +52459,12 @@ if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.file !== undefined) 
 if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.filename !== undefined) {
  formData.append(`filename`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.filename);
  }
+if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.sha256 !== undefined) {
+ formData.append(`sha256`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.sha256);
+ }
+if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.kind !== undefined) {
+ formData.append(`kind`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.kind);
+ }
 
   return apiMutator<simulateApiAlkSimulateCallExecutionsRecordingUploadResponse>(getSimulateApiAlkSimulateCallExecutionsRecordingUploadUrl(callExecutionId),
   {
@@ -52977,6 +52986,104 @@ export const simulateApiHarnessJobsHealth = async ( options?: RequestInit): Prom
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsPreflightResponse201 = {
+  data: HarnessPreflightApi
+  status: 201
+}
+
+export type simulateApiHarnessJobsPreflightResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type simulateApiHarnessJobsPreflightResponseSuccess = (simulateApiHarnessJobsPreflightResponse201) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsPreflightResponseError = (simulateApiHarnessJobsPreflightResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsPreflightResponse = (simulateApiHarnessJobsPreflightResponseSuccess | simulateApiHarnessJobsPreflightResponseError)
+
+export const getSimulateApiHarnessJobsPreflightUrl = () => {
+
+
+
+
+  return `/simulate/api/harness-jobs/preflight/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsPreflight = async (harnessPreflightApi: HarnessPreflightApi, options?: RequestInit): Promise<simulateApiHarnessJobsPreflightResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsPreflightResponse>(getSimulateApiHarnessJobsPreflightUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      harnessPreflightApi,)
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsSourceUploadResponse201 = {
+  data: HarnessSourceUploadResponseApi
+  status: 201
+}
+
+export type simulateApiHarnessJobsSourceUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type simulateApiHarnessJobsSourceUploadResponseSuccess = (simulateApiHarnessJobsSourceUploadResponse201) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsSourceUploadResponseError = (simulateApiHarnessJobsSourceUploadResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsSourceUploadResponse = (simulateApiHarnessJobsSourceUploadResponseSuccess | simulateApiHarnessJobsSourceUploadResponseError)
+
+export const getSimulateApiHarnessJobsSourceUploadUrl = () => {
+
+
+
+
+  return `/simulate/api/harness-jobs/sources/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsSourceUpload = async (simulateApiHarnessJobsSourceUploadBody?: SimulateApiHarnessJobsSourceUploadBody, options?: RequestInit): Promise<simulateApiHarnessJobsSourceUploadResponse> => {
+    const formData = new FormData();
+if(simulateApiHarnessJobsSourceUploadBody?.files !== undefined) {
+ formData.append(`files`, simulateApiHarnessJobsSourceUploadBody.files);
+ }
+if(simulateApiHarnessJobsSourceUploadBody?.paths !== undefined) {
+ formData.append(`paths`, simulateApiHarnessJobsSourceUploadBody.paths);
+ }
+if(simulateApiHarnessJobsSourceUploadBody?.name !== undefined) {
+ formData.append(`name`, simulateApiHarnessJobsSourceUploadBody.name);
+ }
+
+  return apiMutator<simulateApiHarnessJobsSourceUploadResponse>(getSimulateApiHarnessJobsSourceUploadUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body:
+      formData,
   }
 );}
 

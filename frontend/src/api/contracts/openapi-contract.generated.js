@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 988,
+  "endpointCount": 990,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -27351,6 +27351,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/simulate/api/harness-jobs/preflight/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_preflight",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessPreflight"
+        },
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessPreflight"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness-jobs/sources/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_source_upload",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessSourceUploadResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/simulate/api/harness-jobs/{id}/": {
       "get": {
         "operationId": "simulate_api_harness-jobs_read",
@@ -41774,6 +41810,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "call_summary": {
           "title": "Call summary",
           "type": "string"
+        },
+        "result_digest": {
+          "title": "Result digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        },
+        "artifact_manifest_digest": {
+          "title": "Artifact manifest digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
         },
         "transcript": {
           "type": "array",
@@ -58185,9 +58233,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "HarnessJobCreate": {
-      "required": [
-        "source_path"
-      ],
       "type": "object",
       "properties": {
         "source_path": {
@@ -58195,6 +58240,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "maxLength": 4096,
           "minLength": 1
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "minLength": 1
+        },
+        "github_repository": {
+          "title": "Github repository",
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "github_ref": {
+          "title": "Github ref",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "github_commit_sha": {
+          "title": "Github commit sha",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$",
+          "minLength": 1
+        },
+        "github_visibility": {
+          "title": "Github visibility",
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ],
+          "default": "public"
+        },
+        "github_installation_id": {
+          "title": "Github installation id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "secret_refs": {
+          "title": "Secret refs",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SecretReference"
+          },
+          "default": {}
+        },
+        "environment_values": {
+          "title": "Environment values",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "default": {}
+        },
+        "connector_config": {
+          "title": "Connector config",
+          "type": "object",
+          "default": {}
         },
         "scenario_count": {
           "title": "Scenario count",
@@ -58220,10 +58326,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "maxLength": 128,
           "minLength": 1
         },
-        "connector_config": {
-          "title": "Connector config",
+        "metadata": {
+          "title": "Metadata",
           "type": "object",
           "default": {}
+        }
+      }
+    },
+    "HarnessPreflight": {
+      "type": "object",
+      "properties": {
+        "source_path": {
+          "title": "Source path",
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "minLength": 1
+        },
+        "github_repository": {
+          "title": "Github repository",
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "github_ref": {
+          "title": "Github ref",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "github_commit_sha": {
+          "title": "Github commit sha",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$",
+          "minLength": 1
+        },
+        "github_visibility": {
+          "title": "Github visibility",
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ],
+          "default": "public"
+        },
+        "github_installation_id": {
+          "title": "Github installation id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
         },
         "secret_refs": {
           "title": "Secret refs",
@@ -58233,10 +58389,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "default": {}
         },
-        "metadata": {
-          "title": "Metadata",
+        "environment_values": {
+          "title": "Environment values",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "default": {}
+        },
+        "connector_config": {
+          "title": "Connector config",
           "type": "object",
           "default": {}
+        }
+      }
+    },
+    "HarnessSourceUploadResponse": {
+      "required": [
+        "source_id",
+        "name",
+        "file_count",
+        "total_bytes"
+      ],
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "file_count": {
+          "title": "File count",
+          "type": "integer"
+        },
+        "total_bytes": {
+          "title": "Total bytes",
+          "type": "integer"
         }
       }
     },

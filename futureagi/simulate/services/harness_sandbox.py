@@ -12,6 +12,12 @@ class HarnessSandboxUnavailable(RuntimeError):
     pass
 
 
+class HarnessSandboxRejected(RuntimeError):
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+
+
 class HarnessSandboxClient:
     """Small provider-neutral HTTP client.
 
@@ -41,6 +47,31 @@ class HarnessSandboxClient:
     def preflight(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", "/v1/preflight", json=payload)
 
+    def upload_source(
+        self, files: list[Any], paths: list[str], name: str
+    ) -> dict[str, Any]:
+        multipart = [
+            (
+                "files",
+                (
+                    str(path).rsplit("/", 1)[-1],
+                    uploaded.file,
+                    getattr(uploaded, "content_type", None)
+                    or "application/octet-stream",
+                ),
+            )
+            for uploaded, path in zip(files, paths, strict=True)
+        ]
+        data = [("paths", path) for path in paths]
+        data.append(("name", name))
+        return self._request(
+            "POST",
+            "/v1/sources",
+            files=multipart,
+            data=data,
+            timeout=(5, 300),
+        )
+
     def get(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/jobs/{job_id}")
 
@@ -63,7 +94,7 @@ class HarnessSandboxClient:
                 method,
                 f"{self.base_url}{path}",
                 headers=headers,
-                timeout=(5, 30),
+                timeout=kwargs.pop("timeout", (5, 30)),
                 **kwargs,
             )
         except requests.RequestException as exc:
@@ -75,10 +106,17 @@ class HarnessSandboxClient:
                 detail = response.json().get("detail")
             except (ValueError, AttributeError):
                 detail = response.text[:500]
+            message = detail or "unknown error"
+            if response.status_code < 500:
+                raise HarnessSandboxRejected(response.status_code, message)
             raise HarnessSandboxUnavailable(
-                f"ALK sandbox returned {response.status_code}: {detail or 'unknown error'}"
+                f"ALK sandbox returned {response.status_code}: {message}"
             )
         return response.json()
 
 
-__all__ = ["HarnessSandboxClient", "HarnessSandboxUnavailable"]
+__all__ = [
+    "HarnessSandboxClient",
+    "HarnessSandboxRejected",
+    "HarnessSandboxUnavailable",
+]

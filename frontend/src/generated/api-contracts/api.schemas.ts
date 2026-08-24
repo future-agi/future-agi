@@ -15716,6 +15716,16 @@ export interface ALKSimulateResultApi {
   ended_reason?: string;
   error_message?: string;
   call_summary?: string;
+  /**
+     * @minLength 1
+     * @pattern ^sha256:[0-9a-f]{64}$
+     */
+  result_digest?: string;
+  /**
+     * @minLength 1
+     * @pattern ^sha256:[0-9a-f]{64}$
+     */
+  artifact_manifest_digest?: string;
   transcript?: ALKSimulateTranscriptSegmentApi[];
   /** @maxLength 500 */
   recording_url?: string;
@@ -15874,7 +15884,13 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
-export type HarnessJobCreateApiConnectorConfig = { [key: string]: unknown };
+export type HarnessJobCreateApiGithubVisibility = typeof HarnessJobCreateApiGithubVisibility[keyof typeof HarnessJobCreateApiGithubVisibility];
+
+
+export const HarnessJobCreateApiGithubVisibility = {
+  public: 'public',
+  private: 'private',
+} as const;
 
 export interface SecretReferenceApi {
   /**
@@ -15901,6 +15917,10 @@ export interface SecretReferenceApi {
 
 export type HarnessJobCreateApiSecretRefs = {[key: string]: SecretReferenceApi};
 
+export type HarnessJobCreateApiEnvironmentValues = {[key: string]: string};
+
+export type HarnessJobCreateApiConnectorConfig = { [key: string]: unknown };
+
 export type HarnessJobCreateApiMetadata = { [key: string]: unknown };
 
 export interface HarnessJobCreateApi {
@@ -15908,7 +15928,36 @@ export interface HarnessJobCreateApi {
      * @minLength 1
      * @maxLength 4096
      */
-  source_path: string;
+  source_path?: string;
+  /**
+     * @minLength 1
+     * @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+     */
+  source_id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 512
+     */
+  github_repository?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  github_ref?: string;
+  /**
+     * @minLength 1
+     * @pattern ^[0-9a-fA-F]{40}$
+     */
+  github_commit_sha?: string;
+  github_visibility?: HarnessJobCreateApiGithubVisibility;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  github_installation_id?: string;
+  secret_refs?: HarnessJobCreateApiSecretRefs;
+  environment_values?: HarnessJobCreateApiEnvironmentValues;
+  connector_config?: HarnessJobCreateApiConnectorConfig;
   /**
      * @minimum 1
      * @maximum 100
@@ -15922,9 +15971,66 @@ export interface HarnessJobCreateApi {
      * @maxLength 128
      */
   connector?: string;
-  connector_config?: HarnessJobCreateApiConnectorConfig;
-  secret_refs?: HarnessJobCreateApiSecretRefs;
   metadata?: HarnessJobCreateApiMetadata;
+}
+
+export type HarnessPreflightApiGithubVisibility = typeof HarnessPreflightApiGithubVisibility[keyof typeof HarnessPreflightApiGithubVisibility];
+
+
+export const HarnessPreflightApiGithubVisibility = {
+  public: 'public',
+  private: 'private',
+} as const;
+
+export type HarnessPreflightApiSecretRefs = {[key: string]: SecretReferenceApi};
+
+export type HarnessPreflightApiEnvironmentValues = {[key: string]: string};
+
+export type HarnessPreflightApiConnectorConfig = { [key: string]: unknown };
+
+export interface HarnessPreflightApi {
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  source_path?: string;
+  /**
+     * @minLength 1
+     * @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+     */
+  source_id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 512
+     */
+  github_repository?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  github_ref?: string;
+  /**
+     * @minLength 1
+     * @pattern ^[0-9a-fA-F]{40}$
+     */
+  github_commit_sha?: string;
+  github_visibility?: HarnessPreflightApiGithubVisibility;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  github_installation_id?: string;
+  secret_refs?: HarnessPreflightApiSecretRefs;
+  environment_values?: HarnessPreflightApiEnvironmentValues;
+  connector_config?: HarnessPreflightApiConnectorConfig;
+}
+
+export interface HarnessSourceUploadResponseApi {
+  source_id: string;
+  /** @minLength 1 */
+  name: string;
+  file_count: number;
+  total_bytes: number;
 }
 
 export interface HarnessJobActionApi {
@@ -26129,6 +26235,8 @@ export type SimulateApiAgentPromptOptimiserList200 = {
 export type SimulateApiAlkSimulateCallExecutionsRecordingUploadBody = {
   file: Blob;
   filename?: string;
+  sha256?: string;
+  kind?: string;
 };
 
 export type SimulateApiCallExecutionsListParams = {
@@ -26143,6 +26251,14 @@ page?: number;
  * @minimum 1
  */
 limit?: number;
+};
+
+export type SimulateApiHarnessJobsSourceUploadBody = {
+  /** Repeat this field once for every source file. */
+  files: Blob;
+  /** Repeat in file order with each repository-relative path. */
+  paths: string;
+  name?: string;
 };
 
 /**

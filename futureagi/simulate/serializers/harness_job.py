@@ -1,4 +1,20 @@
+import re
+
 from rest_framework import serializers
+
+
+RUNNER_RESERVED_ENVIRONMENT = {
+    "DOCKER_HOST",
+    "FI_API_KEY",
+    "FI_BASE_URL",
+    "FI_SECRET_KEY",
+    "HARNESS_PLATFORM_API_KEY",
+    "HARNESS_PLATFORM_SECRET_KEY",
+    "HARNESS_PLATFORM_URL",
+    "HOME",
+    "PATH",
+    "PYTHONPATH",
+}
 
 
 class SecretReferenceSerializer(serializers.Serializer):
@@ -10,6 +26,10 @@ class SecretReferenceSerializer(serializers.Serializer):
 
 class HarnessSourceSerializer(serializers.Serializer):
     source_path = serializers.CharField(max_length=4096, required=False)
+    source_id = serializers.RegexField(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        required=False,
+    )
     github_repository = serializers.CharField(max_length=512, required=False)
     github_ref = serializers.CharField(max_length=255, required=False)
     github_commit_sha = serializers.RegexField(r"^[0-9a-fA-F]{40}$", required=False)
@@ -19,6 +39,14 @@ class HarnessSourceSerializer(serializers.Serializer):
     github_installation_id = serializers.CharField(max_length=255, required=False)
     secret_refs = serializers.DictField(
         child=SecretReferenceSerializer(), required=False, default=dict
+    )
+    environment_values = serializers.DictField(
+        child=serializers.CharField(
+            max_length=65536, allow_blank=True, trim_whitespace=False
+        ),
+        required=False,
+        default=dict,
+        write_only=True,
     )
     connector_config = serializers.JSONField(required=False, default=dict)
 
@@ -39,10 +67,40 @@ class HarnessSourceSerializer(serializers.Serializer):
             )
         return value
 
-    def validate(self, attrs):
-        if bool(attrs.get("source_path")) == bool(attrs.get("github_repository")):
+    def validate_environment_values(self, value):
+        if len(value) > 256:
+            raise serializers.ValidationError("at most 256 environment values are allowed")
+        invalid = [
+            str(name)
+            for name, item in value.items()
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name))
+            or "\x00" in item
+            or str(name) in RUNNER_RESERVED_ENVIRONMENT
+            or str(name).startswith("ALK_")
+        ]
+        if invalid:
             raise serializers.ValidationError(
-                "provide exactly one of source_path or github_repository"
+                f"invalid environment variable names or values: {', '.join(invalid)}"
+            )
+        total = sum(
+            len(str(name).encode()) + len(item.encode())
+            for name, item in value.items()
+        )
+        if total > 262_144:
+            raise serializers.ValidationError(
+                "combined environment values may not exceed 256 KiB"
+            )
+        return value
+
+    def validate(self, attrs):
+        sources = (
+            attrs.get("source_path"),
+            attrs.get("source_id"),
+            attrs.get("github_repository"),
+        )
+        if sum(bool(value) for value in sources) != 1:
+            raise serializers.ValidationError(
+                "provide exactly one of source_id, source_path or github_repository"
             )
         if (
             attrs.get("github_repository")
@@ -53,6 +111,10 @@ class HarnessSourceSerializer(serializers.Serializer):
                 {
                     "github_installation_id": "install/select the GitHub App for a private repository"
                 }
+            )
+        if set(attrs.get("environment_values", {})) & set(attrs.get("secret_refs", {})):
+            raise serializers.ValidationError(
+                "an environment variable cannot be both uploaded and a secret reference"
             )
         return attrs
 
@@ -78,3 +140,10 @@ class HarnessJobActionSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="Optional operator-provided reason for the action.",
     )
+
+
+class HarnessSourceUploadResponseSerializer(serializers.Serializer):
+    source_id = serializers.UUIDField()
+    name = serializers.CharField()
+    file_count = serializers.IntegerField()
+    total_bytes = serializers.IntegerField()

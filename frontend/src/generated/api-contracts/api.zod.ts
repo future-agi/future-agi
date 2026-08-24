@@ -29155,7 +29155,9 @@ export const SimulateApiAlkSimulateCallExecutionsRecordingUploadParams = zod.obj
 
 export const SimulateApiAlkSimulateCallExecutionsRecordingUploadBody = zod.object({
   "file": zod.instanceof(File),
-  "filename": zod.string().optional()
+  "filename": zod.string().optional(),
+  "sha256": zod.string().optional(),
+  "kind": zod.string().optional()
 })
 
 export const simulateApiAlkSimulateCallExecutionsRecordingUploadResponseStatusDefault = true;
@@ -29187,6 +29189,12 @@ export const simulateApiAlkSimulateCallExecutionsResultBodyDurationSecondsMin = 
 
 export const simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax = 10000;
 
+
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
 
@@ -29214,6 +29222,8 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
   "ended_reason": zod.string().max(simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax).optional(),
   "error_message": zod.string().optional(),
   "call_summary": zod.string().optional(),
+  "result_digest": zod.string().min(1).regex(simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp).optional(),
+  "artifact_manifest_digest": zod.string().min(1).regex(simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp).optional(),
   "transcript": zod.array(zod.object({
   "speaker_role": zod.enum(['user', 'assistant', 'system', 'tool_calls', 'tool_call_result', 'unknown']),
   "content": zod.string(),
@@ -29542,15 +29552,19 @@ export const SimulateApiCallExecutionsListResponse = zod.array(SimulateApiCallEx
  */
 export const simulateApiHarnessJobsCreateBodySourcePathMax = 4096;
 
-export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 100;
 
-export const simulateApiHarnessJobsCreateBodyAgentNameMax = 255;
 
-export const simulateApiHarnessJobsCreateBodyConnectorDefault = `auto`;
-export const simulateApiHarnessJobsCreateBodyConnectorMax = 128;
+export const simulateApiHarnessJobsCreateBodySourceIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+export const simulateApiHarnessJobsCreateBodyGithubRepositoryMax = 512;
 
-export const simulateApiHarnessJobsCreateBodyConnectorConfigDefault = {  };
+export const simulateApiHarnessJobsCreateBodyGithubRefMax = 255;
+
+
+
+export const simulateApiHarnessJobsCreateBodyGithubCommitShaRegExp = new RegExp('^[0-9a-fA-F]{40}$');
+export const simulateApiHarnessJobsCreateBodyGithubVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodyGithubInstallationIdMax = 255;
+
 export const simulateApiHarnessJobsCreateBodySecretRefsManagerMax = 64;
 
 export const simulateApiHarnessJobsCreateBodySecretRefsKeyMax = 255;
@@ -29560,26 +29574,108 @@ export const simulateApiHarnessJobsCreateBodySecretRefsVersionMax = 255;
 export const simulateApiHarnessJobsCreateBodySecretRefsPurposeMax = 128;
 
 export const simulateApiHarnessJobsCreateBodySecretRefsDefault = {  };
+export const simulateApiHarnessJobsCreateBodyEnvironmentValuesMaxOne = 65536;
+
+export const simulateApiHarnessJobsCreateBodyEnvironmentValuesDefault = {  };
+export const simulateApiHarnessJobsCreateBodyConnectorConfigDefault = {  };
+export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 100;
+
+export const simulateApiHarnessJobsCreateBodyAgentNameMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyConnectorDefault = `auto`;
+export const simulateApiHarnessJobsCreateBodyConnectorMax = 128;
+
 export const simulateApiHarnessJobsCreateBodyMetadataDefault = {  };
 
 export const SimulateApiHarnessJobsCreateBody = zod.object({
-  "source_path": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySourcePathMax),
-  "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyScenarioCountMax).default(simulateApiHarnessJobsCreateBodyScenarioCountDefault),
-  "seed": zod.number().optional(),
-  "agent_name": zod.string().max(simulateApiHarnessJobsCreateBodyAgentNameMax).optional(),
-  "connector": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyConnectorMax).default(simulateApiHarnessJobsCreateBodyConnectorDefault),
-  "connector_config": zod.object({
-
-}).passthrough().default(simulateApiHarnessJobsCreateBodyConnectorConfigDefault),
+  "source_path": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySourcePathMax).optional(),
+  "source_id": zod.string().min(1).regex(simulateApiHarnessJobsCreateBodySourceIdRegExp).optional(),
+  "github_repository": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyGithubRepositoryMax).optional(),
+  "github_ref": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyGithubRefMax).optional(),
+  "github_commit_sha": zod.string().min(1).regex(simulateApiHarnessJobsCreateBodyGithubCommitShaRegExp).optional(),
+  "github_visibility": zod.enum(['public', 'private']).default(simulateApiHarnessJobsCreateBodyGithubVisibilityDefault),
+  "github_installation_id": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyGithubInstallationIdMax).optional(),
   "secret_refs": zod.record(zod.string(), zod.object({
   "manager": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsManagerMax),
   "key": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsKeyMax),
   "version": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsVersionMax).optional(),
   "purpose": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsPurposeMax)
 })).default(simulateApiHarnessJobsCreateBodySecretRefsDefault),
+  "environment_values": zod.record(zod.string(), zod.string().max(simulateApiHarnessJobsCreateBodyEnvironmentValuesMaxOne)).default(simulateApiHarnessJobsCreateBodyEnvironmentValuesDefault),
+  "connector_config": zod.object({
+
+}).passthrough().default(simulateApiHarnessJobsCreateBodyConnectorConfigDefault),
+  "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyScenarioCountMax).default(simulateApiHarnessJobsCreateBodyScenarioCountDefault),
+  "seed": zod.number().optional(),
+  "agent_name": zod.string().max(simulateApiHarnessJobsCreateBodyAgentNameMax).optional(),
+  "connector": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyConnectorMax).default(simulateApiHarnessJobsCreateBodyConnectorDefault),
   "metadata": zod.object({
 
 }).passthrough().default(simulateApiHarnessJobsCreateBodyMetadataDefault)
+})
+
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsPreflightBodySourcePathMax = 4096;
+
+
+
+export const simulateApiHarnessJobsPreflightBodySourceIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+export const simulateApiHarnessJobsPreflightBodyGithubRepositoryMax = 512;
+
+export const simulateApiHarnessJobsPreflightBodyGithubRefMax = 255;
+
+
+
+export const simulateApiHarnessJobsPreflightBodyGithubCommitShaRegExp = new RegExp('^[0-9a-fA-F]{40}$');
+export const simulateApiHarnessJobsPreflightBodyGithubVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodyGithubInstallationIdMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodySecretRefsManagerMax = 64;
+
+export const simulateApiHarnessJobsPreflightBodySecretRefsKeyMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodySecretRefsVersionMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodySecretRefsPurposeMax = 128;
+
+export const simulateApiHarnessJobsPreflightBodySecretRefsDefault = {  };
+export const simulateApiHarnessJobsPreflightBodyEnvironmentValuesMaxOne = 65536;
+
+export const simulateApiHarnessJobsPreflightBodyEnvironmentValuesDefault = {  };
+export const simulateApiHarnessJobsPreflightBodyConnectorConfigDefault = {  };
+
+export const SimulateApiHarnessJobsPreflightBody = zod.object({
+  "source_path": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodySourcePathMax).optional(),
+  "source_id": zod.string().min(1).regex(simulateApiHarnessJobsPreflightBodySourceIdRegExp).optional(),
+  "github_repository": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyGithubRepositoryMax).optional(),
+  "github_ref": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyGithubRefMax).optional(),
+  "github_commit_sha": zod.string().min(1).regex(simulateApiHarnessJobsPreflightBodyGithubCommitShaRegExp).optional(),
+  "github_visibility": zod.enum(['public', 'private']).default(simulateApiHarnessJobsPreflightBodyGithubVisibilityDefault),
+  "github_installation_id": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyGithubInstallationIdMax).optional(),
+  "secret_refs": zod.record(zod.string(), zod.object({
+  "manager": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodySecretRefsManagerMax),
+  "key": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodySecretRefsKeyMax),
+  "version": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodySecretRefsVersionMax).optional(),
+  "purpose": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodySecretRefsPurposeMax)
+})).default(simulateApiHarnessJobsPreflightBodySecretRefsDefault),
+  "environment_values": zod.record(zod.string(), zod.string().max(simulateApiHarnessJobsPreflightBodyEnvironmentValuesMaxOne)).default(simulateApiHarnessJobsPreflightBodyEnvironmentValuesDefault),
+  "connector_config": zod.object({
+
+}).passthrough().default(simulateApiHarnessJobsPreflightBodyConnectorConfigDefault)
+})
+
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
+  "files": zod.instanceof(File),
+  "paths": zod.string().describe('Repeat in file order with each repository-relative path.'),
+  "name": zod.string().optional()
 })
 
 

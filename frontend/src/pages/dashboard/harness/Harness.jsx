@@ -6,11 +6,13 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  IconButton,
   LinearProgress,
   MenuItem,
   Paper,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { Helmet } from "react-helmet-async";
@@ -21,7 +23,10 @@ import {
   getHarnessJob,
   listHarnessJobs,
   preflightHarnessJob,
+  uploadHarnessSource,
 } from "src/api/harness/harness";
+import { parseDotEnv } from "./dotenv";
+import { prepareSourceFolder } from "./sourceUpload";
 
 const terminalStages = new Set(["completed", "failed", "canceled"]);
 const stages = [
@@ -52,16 +57,18 @@ function eventMessage(event) {
 }
 
 export default function Harness() {
-  const [sourceMode, setSourceMode] = useState("local");
-  const [sourcePath, setSourcePath] = useState("");
+  const [sourceMode, setSourceMode] = useState("upload");
+  const [uploadedSource, setUploadedSource] = useState(null);
+  const [sourceUploadProgress, setSourceUploadProgress] = useState(null);
   const [githubRepository, setGithubRepository] = useState("");
-  const [githubRef, setGithubRef] = useState("main");
   const [githubVisibility, setGithubVisibility] = useState("public");
   const [githubInstallationId, setGithubInstallationId] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
   const [preflight, setPreflight] = useState(null);
-  const [secretRefs, setSecretRefs] = useState({});
   const [configurationValues, setConfigurationValues] = useState({});
+  const [environmentValues, setEnvironmentValues] = useState({});
+  const [environmentText, setEnvironmentText] = useState("");
+  const [environmentError, setEnvironmentError] = useState("");
   const [jobs, setJobs] = useState([]);
   const [current, setCurrent] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -106,10 +113,10 @@ export default function Harness() {
   }, [current?.job?.job_id, current?.status?.stage]);
 
   const sourcePayload = () => {
-    if (sourceMode === "local") return { source_path: sourcePath.trim() };
+    if (sourceMode === "upload")
+      return { source_id: uploadedSource?.source_id };
     return {
       github_repository: githubRepository.trim(),
-      github_ref: githubRef.trim() || undefined,
       github_visibility: githubVisibility,
       github_installation_id:
         githubVisibility === "private"
@@ -118,28 +125,15 @@ export default function Harness() {
     };
   };
 
-  const configuredSecretRefs = () =>
-    Object.fromEntries(
-      Object.entries(secretRefs)
-        .filter(([, key]) => key.trim())
-        .map(([environmentName, key]) => [
-          environmentName,
-          {
-            manager: "futureagi",
-            key: key.trim(),
-            purpose: `Provide ${environmentName} to the isolated agent runtime`,
-          },
-        ]),
-    );
-
   const inspect = async () => {
     setChecking(true);
     setError("");
     try {
       const value = await preflightHarnessJob({
         ...sourcePayload(),
-        secret_refs: configuredSecretRefs(),
+        secret_refs: {},
         connector_config: configurationValues,
+        environment_values: environmentValues,
       });
       setPreflight(value);
     } catch (requestError) {
@@ -157,8 +151,9 @@ export default function Harness() {
         ...sourcePayload(),
         scenario_count: Number(scenarioCount),
         connector: "auto",
-        secret_refs: configuredSecretRefs(),
+        secret_refs: {},
         connector_config: configurationValues,
+        environment_values: environmentValues,
       });
       setCurrent(value);
       setJobs((existing) => [value, ...existing]);
@@ -172,6 +167,23 @@ export default function Harness() {
   const cancel = async () => {
     const value = await cancelHarnessJob(current.job.job_id);
     setCurrent(value);
+  };
+
+  const startNewEnvironment = () => {
+    setCurrent(null);
+    setSourceMode("upload");
+    setUploadedSource(null);
+    setSourceUploadProgress(null);
+    setGithubRepository("");
+    setGithubVisibility("public");
+    setGithubInstallationId("");
+    setScenarioCount(10);
+    setPreflight(null);
+    setConfigurationValues({});
+    setEnvironmentValues({});
+    setEnvironmentText("");
+    setEnvironmentError("");
+    setError("");
   };
 
   const stageIndex = stages.indexOf(current?.status?.stage);
@@ -192,7 +204,8 @@ export default function Harness() {
     );
     if (requirement?.status !== "missing") return true;
     if (requirement?.kind === "secret")
-      return Boolean(secretRefs[name]?.trim());
+      return Boolean(String(environmentValues[name] || "").trim());
+    if (Object.hasOwn(environmentValues, name)) return true;
     return Boolean(String(configurationValues[name] || "").trim());
   };
   const unsatisfiedChoices = credentialChoices.filter(
@@ -209,8 +222,8 @@ export default function Harness() {
   const requiredInputCount =
     missingRequirements.length + unsatisfiedChoices.length;
   const hasSource =
-    sourceMode === "local"
-      ? Boolean(sourcePath.trim())
+    sourceMode === "upload"
+      ? Boolean(uploadedSource?.source_id)
       : Boolean(githubRepository.trim()) &&
         (githubVisibility === "public" || Boolean(githubInstallationId.trim()));
   const progress = current
@@ -234,6 +247,68 @@ export default function Harness() {
     });
   }, [current?.events]);
 
+  const loadEnvironment = (text) => {
+    try {
+      const values = parseDotEnv(text);
+      setEnvironmentValues(values);
+      setEnvironmentText("");
+      setEnvironmentError("");
+      setPreflight(null);
+    } catch (parseError) {
+      setEnvironmentError(parseError.message);
+    }
+  };
+
+  const uploadEnvironment = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 262144) {
+      setEnvironmentError("The .env file may not exceed 256 KiB");
+      return;
+    }
+    loadEnvironment(await file.text());
+  };
+
+  const uploadSourceFolder = async (event) => {
+    const selected = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!selected.length) return;
+    setError("");
+    setPreflight(null);
+    setUploadedSource(null);
+    let prepared;
+    try {
+      prepared = prepareSourceFolder(selected);
+    } catch (uploadError) {
+      setError(uploadError.message);
+      return;
+    }
+    const formData = new FormData();
+    prepared.files.forEach((file, index) => {
+      formData.append("files", file, file.name);
+      formData.append("paths", prepared.paths[index]);
+    });
+    formData.append("name", prepared.name);
+    setSourceUploadProgress(0);
+    try {
+      const result = await uploadHarnessSource(formData, (progressEvent) => {
+        if (progressEvent.total)
+          setSourceUploadProgress(
+            Math.round((progressEvent.loaded / progressEvent.total) * 100),
+          );
+      });
+      setUploadedSource({
+        ...result,
+        excluded_count: prepared.excludedCount,
+      });
+    } catch (requestError) {
+      setError(requestError?.response?.data?.detail || requestError.message);
+    } finally {
+      setSourceUploadProgress(null);
+    }
+  };
+
   return (
     <>
       <Helmet>
@@ -248,9 +323,21 @@ export default function Harness() {
         }}
       >
         <Paper square variant="outlined" sx={{ p: 2, overflow: "auto" }}>
-          <Typography variant="overline" color="text.secondary">
-            Harness jobs
-          </Typography>
+          <Stack direction="row" alignItems="center" justifyContent="space-between">
+            <Typography variant="overline" color="text.secondary">
+              RL environments
+            </Typography>
+            <Tooltip title="New RL environment">
+              <IconButton
+                size="small"
+                color="primary"
+                aria-label="Create a new RL environment"
+                onClick={startNewEnvironment}
+              >
+                <Iconify icon="mingcute:add-line" width={20} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
           <Stack spacing={1} mt={1}>
             {jobs.map((item) => (
               <Button
@@ -306,40 +393,50 @@ export default function Harness() {
                 }}
                 sx={{ minWidth: 130 }}
               >
-                <MenuItem value="local">Local folder</MenuItem>
+                <MenuItem value="upload">Upload folder</MenuItem>
                 <MenuItem value="github">GitHub</MenuItem>
               </TextField>
-              {sourceMode === "local" ? (
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Local agent folder"
-                  placeholder="/absolute/path/to/agent"
-                  value={sourcePath}
-                  onChange={(event) => {
-                    setSourcePath(event.target.value);
-                    setPreflight(null);
-                  }}
-                />
+              {sourceMode === "upload" ? (
+                <Stack sx={{ minWidth: 280 }} spacing={0.5}>
+                  <Button
+                    component="label"
+                    variant="outlined"
+                    disabled={sourceUploadProgress !== null}
+                    startIcon={<Iconify icon="solar:folder-with-files-linear" />}
+                  >
+                    {sourceUploadProgress !== null
+                      ? `Uploading ${sourceUploadProgress}%`
+                      : uploadedSource
+                        ? "Replace folder"
+                        : "Choose agent folder"}
+                    <Box
+                      component="input"
+                      type="file"
+                      multiple
+                      directory=""
+                      webkitdirectory=""
+                      onChange={uploadSourceFolder}
+                      sx={{ display: "none" }}
+                    />
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    {uploadedSource
+                      ? `${uploadedSource.name}: ${uploadedSource.file_count} files (${(uploadedSource.total_bytes / 1024 / 1024).toFixed(1)} MiB)${uploadedSource.excluded_count ? `; ${uploadedSource.excluded_count} generated or secret files excluded` : ""}`
+                      : "The folder is uploaded to the isolated runner. .env and generated dependency folders are excluded."}
+                  </Typography>
+                </Stack>
               ) : (
                 <>
                   <TextField
                     fullWidth
                     size="small"
-                    label="GitHub repository"
-                    placeholder="owner/repository or GitHub URL"
+                    label="GitHub repository URL"
+                    placeholder="https://github.com/owner/repository or .../tree/branch"
                     value={githubRepository}
                     onChange={(event) => {
                       setGithubRepository(event.target.value);
                       setPreflight(null);
                     }}
-                  />
-                  <TextField
-                    size="small"
-                    label="Ref"
-                    value={githubRef}
-                    onChange={(event) => setGithubRef(event.target.value)}
-                    sx={{ width: 140 }}
                   />
                   <TextField
                     select
@@ -411,6 +508,66 @@ export default function Harness() {
                 Run end to end
               </Button>
             </Stack>
+            <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5 }}>
+              <Stack spacing={1}>
+                <Stack
+                  direction={{ xs: "column", md: "row" }}
+                  spacing={1}
+                  alignItems={{ md: "center" }}
+                >
+                  <Button
+                    component="label"
+                    variant="outlined"
+                    startIcon={<Iconify icon="solar:upload-minimalistic-linear" />}
+                  >
+                    Upload .env
+                    <Box
+                      component="input"
+                      type="file"
+                      accept=".env,text/plain"
+                      onChange={uploadEnvironment}
+                      sx={{ display: "none" }}
+                    />
+                  </Button>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    multiline
+                    maxRows={4}
+                    label="Or paste .env contents"
+                    placeholder="OPENAI_API_KEY=..."
+                    value={environmentText}
+                    onChange={(event) => setEnvironmentText(event.target.value)}
+                  />
+                  <Button
+                    variant="text"
+                    disabled={!environmentText.trim()}
+                    onClick={() => loadEnvironment(environmentText)}
+                  >
+                    Use values
+                  </Button>
+                  {Object.keys(environmentValues).length > 0 && (
+                    <Button
+                      color="inherit"
+                      onClick={() => {
+                        setEnvironmentValues({});
+                        setPreflight(null);
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  {Object.keys(environmentValues).length
+                    ? `${Object.keys(environmentValues).length} variables loaded: ${Object.keys(environmentValues).join(", ")}`
+                    : "Values stay in this browser session, are sent only for preflight/run execution, and are never written to jobs, logs, or artifacts."}
+                </Typography>
+                {environmentError && (
+                  <Alert severity="error">{environmentError}</Alert>
+                )}
+              </Stack>
+            </Paper>
             {preflight && (
               <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5 }}>
                 <Stack
@@ -466,24 +623,30 @@ export default function Harness() {
                           size="small"
                           label={
                             item.kind === "secret"
-                              ? "Secret manager key (never the secret value)"
+                              ? "Secret value (used for this run only)"
                               : "Configuration value"
                           }
+                          type={item.kind === "secret" ? "password" : "text"}
                           value={
                             item.kind === "secret"
-                              ? secretRefs[item.environment_name] || ""
+                              ? environmentValues[item.environment_name] || ""
                               : configurationValues[item.environment_name] || ""
                           }
                           onChange={(event) => {
                             const setter =
                               item.kind === "secret"
-                                ? setSecretRefs
+                                ? setEnvironmentValues
                                 : setConfigurationValues;
                             setter((existing) => ({
                               ...existing,
                               [item.environment_name]: event.target.value,
                             }));
                           }}
+                          helperText={
+                            item.kind === "secret"
+                              ? "Injected ephemerally and removed when the run finishes"
+                              : undefined
+                          }
                         />
                       )}
                     </Stack>
