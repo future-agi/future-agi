@@ -82,8 +82,8 @@ function getDashboardViewers(db) {
     seen.add(u.email);
     users.push({ ...u, displayName: u.name || u.email, time });
   };
-  addUser(db.updated_by, db.updated_at);
   addUser(db.created_by, db.created_at);
+  addUser(db.updated_by, db.updated_at);
   return users;
 }
 
@@ -271,12 +271,13 @@ function ViewerAvatars({ db }) {
         direction="row"
         alignItems="center"
         gap={1}
-        onClick={(e) => e.stopPropagation()}
-        sx={{ cursor: "default", minWidth: 0, width: "100%" }}
+        sx={{ minWidth: 0 }}
       >
         <AvatarGroup
           max={3}
+          onClick={(e) => e.stopPropagation()}
           sx={{
+            cursor: "default",
             flexShrink: 0,
             "& .MuiAvatar-root": {
               width: 26,
@@ -619,7 +620,7 @@ export default function DashboardsListView() {
             />
           )
         ) : (
-          <Stack spacing={1} sx={{ minWidth: 650 }}>
+          <Stack spacing={1} sx={{ minWidth: 742 }}>
             {/* Table Header */}
             <Stack
               direction="row"
@@ -667,7 +668,7 @@ export default function DashboardsListView() {
                 Created by
               </Typography>
 
-              <Box sx={{ width: 34, flexShrink: 0 }} />
+              {canDelete && <Box sx={{ width: 28, flexShrink: 0 }} />}
             </Stack>
 
             {filteredDashboards.map((db) => (
