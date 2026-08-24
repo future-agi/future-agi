@@ -35,10 +35,18 @@ def test_out_of_range_page_number_returns_last_page():
 
 
 def test_non_numeric_page_number_returns_first_page():
-    # Docstring: "values below 1 (or non-numeric) return the first page".
+    # Only PageNotAnInteger maps to page 1; see the below-1 case for contrast.
     page, meta = paginate_queryset(ITEMS, _request(page_number="abc", page_size="10"))
     assert meta["page_number"] == 1
     assert list(page) == list(range(0, 10))
+
+
+def test_below_one_page_number_returns_last_page():
+    # A page number below 1 raises EmptyPage (not PageNotAnInteger), which
+    # get_page clamps to num_pages -- i.e. the LAST page, not the first.
+    page, meta = paginate_queryset(ITEMS, _request(page_number="0", page_size="10"))
+    assert meta["page_number"] == 3
+    assert list(page) == list(range(20, 25))
 
 
 def test_non_numeric_page_size_falls_back_to_default():

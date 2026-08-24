@@ -9,9 +9,10 @@ def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]
     """
     Paginate a queryset using ``page_number`` and ``page_size`` query params.
 
-    Uses Django's ``Paginator.get_page()`` which clamps out-of-range page
-    numbers: values above ``total_pages`` return the last page, values
-    below 1 (or non-numeric) return the first page.
+    Uses Django's ``Paginator.get_page()`` to resolve ``page_number``:
+    non-numeric values return the first page, while out-of-range values
+    are clamped to the nearest valid page. Note that values below 1 are
+    out of range, not non-numeric, so they clamp to the *last* page.
 
     Args:
         queryset: The Django QuerySet to paginate.
