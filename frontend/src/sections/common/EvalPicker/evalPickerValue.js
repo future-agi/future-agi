@@ -107,5 +107,7 @@ export const normalizeEvalPickerEval = (evalData) => {
     requiredKeys: getEvalRequiredKeys(evalData),
     code: getEvalCode(evalData),
     codeLanguage: getEvalCodeLanguage(evalData),
+    pinned_version_id:
+      evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null,
   };
 };

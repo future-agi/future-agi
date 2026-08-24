@@ -31624,7 +31624,8 @@ export const SimulatePromptTemplatesSimulationsCreateBody = zod.object({
   "error_localizer": zod.boolean().default(simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigItemErrorLocalizerDefault).describe('Enables granular error localization on evaluation failures.'),
   "model": zod.string().min(1).optional().describe('Model to use for running this evaluation.'),
   "kb_id": zod.string().uuid().optional().describe('Knowledge base file to use for this evaluation.'),
-  "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.')
+  "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.'),
+  "pinned_version_id": zod.string().uuid().optional().describe('Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template\'s default version.')
 })).default(simulatePromptTemplatesSimulationsCreateBodyEvaluationsConfigDefault).describe('Evaluation configurations to create'),
   "enable_tool_evaluation": zod.boolean().default(simulatePromptTemplatesSimulationsCreateBodyEnableToolEvaluationDefault).describe('Enable automatic tool evaluation for this simulation run')
 })
@@ -32101,7 +32102,8 @@ export const SimulateRunTestsCreateCreateBody = zod.object({
   "error_localizer": zod.boolean().default(simulateRunTestsCreateCreateBodyEvaluationsConfigItemErrorLocalizerDefault).describe('Enables granular error localization on evaluation failures.'),
   "model": zod.string().min(1).optional().describe('Model to use for running this evaluation.'),
   "kb_id": zod.string().uuid().optional().describe('Knowledge base file to use for this evaluation.'),
-  "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.')
+  "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.'),
+  "pinned_version_id": zod.string().uuid().optional().describe('Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template\'s default version.')
 })).default(simulateRunTestsCreateCreateBodyEvaluationsConfigDefault).describe('Evaluation configurations to create'),
   "enable_tool_evaluation": zod.boolean().default(simulateRunTestsCreateCreateBodyEnableToolEvaluationDefault).describe('Enable automatic tool evaluation for this test run'),
   "replay_session_id": zod.string().uuid().optional().describe('Optional replay session ID to mark as completed after run test creation'),
@@ -32628,7 +32630,8 @@ export const SimulateRunTestsEvalConfigsCreateBody = zod.object({
   "error_localizer": zod.boolean().default(simulateRunTestsEvalConfigsCreateBodyEvaluationsConfigItemErrorLocalizerDefault).describe('Enables granular error localization on evaluation failures.'),
   "model": zod.string().min(1).optional().describe('Model to use for running this evaluation.'),
   "kb_id": zod.string().uuid().optional().describe('Knowledge base file to use for this evaluation.'),
-  "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.')
+  "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.'),
+  "pinned_version_id": zod.string().uuid().optional().describe('Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template\'s default version.')
 })).min(1).describe('Array of evaluation configuration objects to add. At least one required.')
 })
 
@@ -32702,7 +32705,8 @@ export const SimulateRunTestsEvalConfigsGetStructureListResponse = zod.object({
 }).passthrough().optional(),
   "config_params_desc": zod.record(zod.string(), zod.string()).optional(),
   "config_params_option": zod.record(zod.string(), zod.string()).optional(),
-  "api_key_available": zod.boolean().optional()
+  "api_key_available": zod.boolean().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 })
 })
 })
@@ -32728,6 +32732,7 @@ export const SimulateRunTestsEvalConfigsUpdateCreateBody = zod.object({
   "error_localizer": zod.boolean().optional().describe('Enable granular error localization in evaluation results.'),
   "kb_id": zod.string().uuid().optional().describe('UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association.'),
   "template_id": zod.string().uuid().optional().describe('UUID of the evaluation template to switch to.'),
+  "pinned_version_id": zod.string().uuid().optional().describe('Eval template version to pin for runtime. Omit to leave the current pin unchanged, or pass null to unpin. Ignored for system evals.'),
   "filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
   "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),

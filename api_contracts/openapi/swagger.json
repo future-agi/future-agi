@@ -117267,6 +117267,13 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "description": "Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template's default version.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },
@@ -118014,6 +118021,11 @@
                     "type": "string",
                     "format": "uuid",
                     "readOnly": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "readOnly": true
                 }
             }
         },
@@ -118221,6 +118233,13 @@
                     "title": "Api key available",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
                 }
             }
         },
@@ -118292,6 +118311,13 @@
                     "description": "UUID of the evaluation template to switch to.",
                     "type": "string",
                     "format": "uuid"
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "description": "Eval template version to pin for runtime. Omit to leave the current pin unchanged, or pass null to unpin. Ignored for system evals.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 },
                 "filters": {
                     "description": "Updated canonical filter list to restrict which test results are evaluated.",

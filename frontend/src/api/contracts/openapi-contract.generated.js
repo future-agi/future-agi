@@ -53723,6 +53723,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid"
         },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "description": "Eval template version to pin for runtime. Omit to leave the current pin unchanged, or pass null to unpin. Ignored for system evals.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
         "filters": {
           "description": "Updated canonical filter list to restrict which test results are evaluated.",
           "type": "array",
@@ -76712,6 +76719,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "description": "Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template's default version.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
@@ -76787,6 +76801,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Template id",
           "type": "string",
           "format": "uuid",
+          "readOnly": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
           "readOnly": true
         }
       }
@@ -95106,6 +95125,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Api key available",
           "type": "boolean",
           "readOnly": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
         }
       }
     },

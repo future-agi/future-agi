@@ -17375,6 +17375,8 @@ export interface EvalConfigDefinitionApi {
   kb_id?: string;
   /** Eval group that created this evaluation config. */
   eval_group?: string;
+  /** Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template's default version. */
+  pinned_version_id?: string;
 }
 
 export interface CreatePromptSimulationRequestApi {
@@ -17639,6 +17641,7 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  readonly pinned_version_id?: string;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -17700,6 +17703,7 @@ export interface EvalConfigStructureApi {
   readonly config_params_desc?: EvalConfigStructureApiConfigParamsDesc;
   readonly config_params_option?: EvalConfigStructureApiConfigParamsOption;
   readonly api_key_available?: boolean;
+  readonly pinned_version_id?: string;
 }
 
 export interface EvalConfigStructureResultApi {
@@ -17760,6 +17764,8 @@ export interface EvalConfigUpdateRequestApi {
   kb_id?: string;
   /** UUID of the evaluation template to switch to. */
   template_id?: string;
+  /** Eval template version to pin for runtime. Omit to leave the current pin unchanged, or pass null to unpin. Ignored for system evals. */
+  pinned_version_id?: string;
   /** Updated canonical filter list to restrict which test results are evaluated. */
   filters?: EvalConfigUpdateRequestApiFiltersItem[];
   /**
