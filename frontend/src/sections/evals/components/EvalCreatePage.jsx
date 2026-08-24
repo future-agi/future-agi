@@ -20,6 +20,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
 import { useCreateEval } from "../hooks/useCreateEval";
@@ -153,6 +154,9 @@ const EvalCreatePage = () => {
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // TH-7177: Error Localization is cloud-only; off-cloud the control is
+  // hidden entirely instead of rendering something that cannot run.
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed defaults raw and only
   // strip them on confirmed denial — seeding off `locked` (which is true
   // while loading) would blank the default model / flip the eval type for
@@ -187,7 +191,8 @@ const EvalCreatePage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !agentEvalLocked;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   const [tags, setTags] = useState([]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
@@ -1120,9 +1125,10 @@ const EvalCreatePage = () => {
                     />
                   )}
 
-                  {/* Error Localization — LLM/Agent only. Code evals don't
-                      produce model traces for the localizer to introspect. */}
-                  {evalType !== "code" && (
+                  {/* Error Localization — cloud-only (TH-7177), LLM/Agent only. Code
+                      evals don't produce model traces for the localizer to
+                      introspect. */}
+                  {errorLocalizerAvailable && evalType !== "code" && (
                     <Box>
                       <CustomTooltip
                         show={agentEvalLocked}

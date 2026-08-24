@@ -24,6 +24,7 @@ import { useGetJsonColumnSchema } from "src/api/develop/develop-detail";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
 import { FormCheckboxField } from "../../../components/FormCheckboxField";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { LoadingButton } from "@mui/lab";
 import { ADD_AND_RUN_BUTTON_MAPPER, ADD_BUTTON_MAPPER } from "./common";
@@ -117,6 +118,8 @@ export default function EvaluationMappingFormContent({
 }) {
   const [_, setSearchParams] = useSearchParams();
   const theme = useTheme();
+  // TH-7177: Error Localization is cloud-only; hide the control off-cloud.
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   const navigate = useNavigate();
   const model = useWatch({
     control,
@@ -908,38 +911,40 @@ export default function EvaluationMappingFormContent({
           })}
         </Box>
       </ShowComponent>
-      <Box
-        display={"flex"}
-        py={theme.spacing(2)}
-        px={theme.spacing(1.5)}
-        border={`1px solid`}
-        borderColor={"divider"}
-        borderRadius={theme.spacing(0.5)}
-      >
-        <HeadingAndSubHeading
-          heading={
-            <FormCheckboxField
-              control={control}
-              fieldName={"errorLocalizer"}
-              label={"Error Localization"}
-              helperText={undefined}
-              disabled={isViewMode}
-              labelPlacement="end"
-              defaultValue={formState.defaultValues.errorLocalizer}
-              labelProps={{
-                gap: theme.spacing(1),
-              }}
-              checkboxSx={{
-                padding: 0,
-                "&.Mui-checked": {
-                  color: "primary.light",
-                },
-              }}
-            />
-          }
-          subHeading="Pinpoints the errors in your LLM output"
-        />
-      </Box>
+      {errorLocalizerAvailable && (
+        <Box
+          display={"flex"}
+          py={theme.spacing(2)}
+          px={theme.spacing(1.5)}
+          border={`1px solid`}
+          borderColor={"divider"}
+          borderRadius={theme.spacing(0.5)}
+        >
+          <HeadingAndSubHeading
+            heading={
+              <FormCheckboxField
+                control={control}
+                fieldName={"errorLocalizer"}
+                label={"Error Localization"}
+                helperText={undefined}
+                disabled={isViewMode}
+                labelPlacement="end"
+                defaultValue={formState.defaultValues.errorLocalizer}
+                labelProps={{
+                  gap: theme.spacing(1),
+                }}
+                checkboxSx={{
+                  padding: 0,
+                  "&.Mui-checked": {
+                    color: "primary.light",
+                  },
+                }}
+              />
+            }
+            subHeading="Pinpoints the errors in your LLM output"
+          />
+        </Box>
+      )}
       <Box display={"flex"} flexGrow={1} />
       <ShowComponent condition={!selectedEval?.isGroupEvals}>
         <Box

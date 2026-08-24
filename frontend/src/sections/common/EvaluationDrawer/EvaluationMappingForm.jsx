@@ -34,6 +34,7 @@ import { format } from "date-fns";
 import logger from "src/utils/logger";
 import EvaluationMappingFormContent from "./EvaluationMappingFormContent";
 import { sanitizeEvalMapping } from "src/sections/common/EvalPicker/serializeEvalConfig";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 
 function removeElements(array1, array2) {
   return array1.filter((element) => !array2.includes(element));
@@ -146,6 +147,9 @@ const EvaluationMappingFormChild = ({
 }) => {
   const { role } = useAuthContext();
   const theme = useTheme();
+  // TH-7177: the form defaults errorLocalizer to true, so gate the submitted
+  // value too - off-cloud the hidden field must never post true.
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
 
   // Get the id for fetching JSON schemas
   const {
@@ -556,7 +560,7 @@ const EvaluationMappingFormChild = ({
             ? false
             : run,
         template_id: selectedEval.id,
-        error_localizer: errorLocalizer,
+        error_localizer: Boolean(errorLocalizer) && errorLocalizerAvailable,
         ...(kbId ? { kb_id: kbId } : {}),
       };
       if (payload.kb_id === "") {
