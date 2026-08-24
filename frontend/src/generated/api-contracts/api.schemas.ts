@@ -16818,6 +16818,8 @@ export const CallExecutionDetailApiStatus = {
  */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
 
+export type CallExecutionEvalMetricApiComposite = { [key: string]: unknown };
+
 export type CallExecutionEvalMetricApiErrorAnalysis = { [key: string]: unknown };
 
 export type CallExecutionEvalMetricApiInputData = { [key: string]: unknown };
@@ -16837,6 +16839,7 @@ export interface CallExecutionEvalMetricApi {
   status?: string;
   skipped?: boolean;
   error_localizer?: boolean;
+  composite?: CallExecutionEvalMetricApiComposite;
   error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
   error_localizer_status?: string;
   error_localizer_message?: string;

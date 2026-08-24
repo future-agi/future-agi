@@ -30902,6 +30902,9 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "status": zod.string().optional(),
   "skipped": zod.boolean().optional(),
   "error_localizer": zod.boolean().optional(),
+  "composite": zod.object({
+
+}).passthrough().optional(),
   "error_analysis": zod.object({
 
 }).passthrough().optional(),

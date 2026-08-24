@@ -78570,6 +78570,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Error localizer",
           "type": "boolean"
         },
+        "composite": {
+          "title": "Composite",
+          "type": "object",
+          "x-nullable": true
+        },
         "error_analysis": {
           "title": "Error analysis",
           "type": "object",
