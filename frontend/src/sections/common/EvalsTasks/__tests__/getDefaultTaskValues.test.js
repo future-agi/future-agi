@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { startOfToday, startOfTomorrow } from "date-fns";
 import { formatDate } from "src/utils/report-utils";
 import { getDefaultTaskValues } from "../common";
+import { inferPreset } from "src/sections/projects/legacyPresetInference";
 
 const task = (dateRange, extra = {}, runType = "historical") => ({
   run_type: runType,
@@ -89,7 +90,12 @@ describe("getDefaultTaskValues time window", () => {
     expect(v.filters).toHaveLength(0);
   });
 
-  it("starts create mode explicit", () => {
-    expect(getDefaultTaskValues(null, null).datePreset).toBe("Custom");
+  // Placeholder shape only — every caller resets with real data before render.
+  // It still has to describe its own range, or it seeds a frozen window if a
+  // caller ever loses its load guard.
+  it("labels the no-data placeholder to match its six-month range", () => {
+    const v = getDefaultTaskValues(null, null);
+    expect(v.datePreset).toBe("6M");
+    expect(inferPreset(v.startDate, v.endDate)).toBe("6M");
   });
 });

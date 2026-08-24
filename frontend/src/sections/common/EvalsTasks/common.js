@@ -328,7 +328,7 @@ export const getDefaultTaskValues = (data, observeId) => {
         }),
       ),
       endDate: formatDate(endOfToday()),
-      datePreset: "Custom",
+      datePreset: "6M",
       runType: "",
     };
   }
