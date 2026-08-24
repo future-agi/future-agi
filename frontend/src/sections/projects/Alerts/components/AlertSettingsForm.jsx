@@ -352,6 +352,10 @@ export default function AlertSettingsForm({
         data?.notification?.slack?.webhookUrl ?? "";
       notificationPayload.slack_notes = data?.notification?.slack?.notes ?? "";
     }
+    if (data?.notification?.method === "webhook") {
+      notificationPayload.webhook_url = 
+        data?.notification?.webhook?.webhookUrl ?? "";
+    }
     if (
       selectedMetricOptions?.length > 0 &&
       data?.metric_type === "evaluation_metrics" &&
@@ -1078,6 +1082,24 @@ export default function AlertSettingsForm({
                     fullWidth
                     multiline
                     rows={4}
+                  />
+                </Stack>
+              </ShowComponent>
+              <ShowComponent condition={selectedNotificationMethod === "webhook"}>
+                <Stack
+                  sx={{
+                    padding: 3,
+                    gap: 3,
+                  }}
+                >
+                  <FormTextFieldV2
+                    control={control}
+                    required
+                    placeholder="Enter webhook URL (e.g., PagerDuty, Opsgenie, Teams)"
+                    fieldName="notification.webhook.webhookUrl"
+                    label="Webhook URL"
+                    size="small"
+                    fullWidth
                   />
                 </Stack>
               </ShowComponent>
