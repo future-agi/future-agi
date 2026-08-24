@@ -69,6 +69,8 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 
+const DASHBOARD_FILTER_DEBOUNCE_MS = 400;
+
 /** Group a flat sorted widget list into rows based on cumulative widths.
  *  Widgets in each row are normalized so their widths sum to exactly 12. */
 function computeRows(widgets) {
@@ -667,7 +669,7 @@ export default function DashboardDetailView() {
     () => resolveGlobalDateRange(datePreset, customDateRange),
     [datePreset, customDateRange],
   );
-  const debouncedGlobalDateRange = useDebounce(globalDateRange, 400);
+  const debouncedGlobalDateRange = useDebounce(globalDateRange, DASHBOARD_FILTER_DEBOUNCE_MS);
 
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
