@@ -12,7 +12,19 @@ import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common"
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import { getEvalNonScoreStatus } from "src/utils/evalStatus";
 
+const formatChildScore = (child) => {
+  if (child?.status === "failed" || child?.error) return "Failed";
+  if (typeof child?.score !== "number") return "-";
+  const pct = child.score <= 1 ? child.score * 100 : child.score;
+  return `${Math.round(pct)}%`;
+};
+
 const EvalCellRenderer = ({ value: evalData }) => {
+  // Composite cells show the aggregate, but the aggregate alone hides which
+  // child moved it. Surface the per-child breakdown in the tooltip.
+  const compositeChildren = evalData?.composite?.children;
+  const hasBreakdown =
+    Array.isArray(compositeChildren) && compositeChildren.length > 0;
   // Numeric output type keeps its dedicated cell.
   const isNumeric = evalData?.type === OutputTypes.NUMERIC;
   const result = normalizeEvalResult(evalData?.value, evalData?.type);
@@ -104,9 +116,32 @@ const EvalCellRenderer = ({ value: evalData }) => {
 
   return (
     <CustomTooltip
-      show={evalData?.reason?.length}
+      show={evalData?.reason?.length || hasBreakdown}
       placement="bottom"
-      title={FormattedValueReason(evalData?.reason)}
+      title={
+        hasBreakdown ? (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+            {evalData?.reason?.length
+              ? FormattedValueReason(evalData.reason)
+              : null}
+            {compositeChildren.map((child, idx) => (
+              <Box
+                key={child?.child_id ?? idx}
+                sx={{
+                  display: "flex",
+                  gap: 1.5,
+                  justifyContent: "space-between",
+                }}
+              >
+                <span>{child?.child_name ?? "Child"}</span>
+                <span>{formatChildScore(child)}</span>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          FormattedValueReason(evalData?.reason)
+        )
+      }
       arrow
       size="small"
     >
