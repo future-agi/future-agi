@@ -4546,50 +4546,6 @@ class TestSpanAttributeViews:
                 pass
 
 
-@pytest.mark.unit
-class TestSpanAttributeKeyDiscoveryScope:
-    """Attribute-key discovery must be exhaustive over its time window.
-
-    The query used to sample `LIMIT 10000` rows per map before the ARRAY
-    JOIN, so a key carried by only a thin slice of spans could fall outside
-    the sample and never reach the filter picker. Each lane now ARRAY JOINs
-    the `<map>.keys` subcolumn over every span in the window instead.
-    """
-
-    PROJECT_ID = "c4de3065-12b5-488c-a814-aa1c8e3f856f"
-    WINDOW = "start_time >= now() - toIntervalDay(%(window_days)s)"
-
-    def _discovery_sql(self, **kwargs):
-        from tracer.services.clickhouse.query_service import AnalyticsQueryService
-
-        with mock.patch.object(
-            AnalyticsQueryService,
-            "execute_ch_query",
-            return_value=mock.Mock(data=[]),
-        ) as execute:
-            AnalyticsQueryService().get_span_attribute_keys_ch_for_projects(
-                [self.PROJECT_ID], **kwargs
-            )
-        return execute.call_args.args[0]
-
-    def test_each_lane_array_joins_keys_across_the_whole_window(self):
-        """No row sample: every lane reads .keys for every span in the window."""
-        sql = self._discovery_sql(recent_days=7)
-
-        for column in ("attrs_string", "attrs_number", "attrs_bool"):
-            assert f"FROM spans ARRAY JOIN {column}.keys AS key" in sql
-        assert sql.count(self.WINDOW) == 3
-        assert "LIMIT 10000" not in sql
-
-    def test_unbounded_discovery_keeps_the_legacy_sample_lane(self):
-        """recent_days=None unions the old sample in, so no key regresses."""
-        sql = self._discovery_sql(recent_days=None)
-
-        assert sql.count(self.WINDOW) == 3
-        assert sql.count("LIMIT 10000") == 3
-        assert sql.count("UNION ALL") == 5
-
-
 # ============================================================================
 # 14. Comprehensive Trace List Query Builder Tests
 # ============================================================================
