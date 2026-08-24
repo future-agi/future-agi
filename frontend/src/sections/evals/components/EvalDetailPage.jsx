@@ -1104,9 +1104,7 @@ const EvalDetailPage = () => {
   }, [evalId, enqueueSnackbar, navigate]);
 
   if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (fetchError || !evalData) {

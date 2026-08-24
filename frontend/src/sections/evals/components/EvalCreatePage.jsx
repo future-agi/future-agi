@@ -685,7 +685,6 @@ const EvalCreatePage = () => {
   const canSave =
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
-
   if (capabilitiesLoading) {
     return null;
   }
@@ -946,10 +945,7 @@ const EvalCreatePage = () => {
                                   }}
                                 >
                                   {tab.label}
-                                  <Iconify
-                                    icon="mdi:lock-outline"
-                                    width={14}
-                                  />
+                                  <Iconify icon="mdi:lock-outline" width={14} />
                                 </Box>
                               </CustomTooltip>
                             ) : (

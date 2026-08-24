@@ -418,80 +418,82 @@ export default function EvaluationMappingFormContent({
       {(isFutureagiBuilt || alwaysShowModel) &&
         visibleModels.length > 0 &&
         !hideModel && (
-        <HeadingAndSubHeading
-          heading={
-            <FormSearchSelectFieldControl
-              control={control}
-              disabled={isViewMode}
-              options={visibleModels.map((model) => {
-                return {
-                  ...model,
-                  component: (
-                    <Box sx={{ padding: theme.spacing(0.75, 1) }}>
-                      <Box
-                        display={"flex"}
-                        flexDirection={"row"}
-                        alignItems={"center"}
-                        gap={"8px"}
-                      >
-                        <img
-                          src={"/favicon/logo.svg"}
-                          style={{
-                            height: theme.spacing(2),
-                            width: theme.spacing(2),
-                          }}
-                        />
+          <HeadingAndSubHeading
+            heading={
+              <FormSearchSelectFieldControl
+                control={control}
+                disabled={isViewMode}
+                options={visibleModels.map((model) => {
+                  return {
+                    ...model,
+                    component: (
+                      <Box sx={{ padding: theme.spacing(0.75, 1) }}>
+                        <Box
+                          display={"flex"}
+                          flexDirection={"row"}
+                          alignItems={"center"}
+                          gap={"8px"}
+                        >
+                          <img
+                            src={"/favicon/logo.svg"}
+                            style={{
+                              height: theme.spacing(2),
+                              width: theme.spacing(2),
+                            }}
+                          />
+                          <Typography
+                            typography="s1"
+                            fontWeight={"fontWeightMedium"}
+                            color={"text.primary"}
+                          >
+                            {model.label}
+                          </Typography>
+                        </Box>
                         <Typography
-                          typography="s1"
-                          fontWeight={"fontWeightMedium"}
+                          typography={"s2"}
+                          sx={{
+                            marginLeft: theme.spacing(3),
+                            wordWrap: "break-word",
+                            whiteSpace: "normal",
+                          }}
                           color={"text.primary"}
                         >
-                          {model.label}
+                          {model.description}
                         </Typography>
                       </Box>
-                      <Typography
-                        typography={"s2"}
-                        sx={{
-                          marginLeft: theme.spacing(3),
-                          wordWrap: "break-word",
-                          whiteSpace: "normal",
+                    ),
+                  };
+                })}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <img
+                        src={"/favicon/logo.svg"}
+                        style={{
+                          height: theme.spacing(2),
+                          width: theme.spacing(2),
                         }}
-                        color={"text.primary"}
-                      >
-                        {model.description}
-                      </Typography>
-                    </Box>
+                      />
+                    </InputAdornment>
                   ),
-                };
-              })}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <img
-                      src={"/favicon/logo.svg"}
-                      style={{
-                        height: theme.spacing(2),
-                        width: theme.spacing(2),
-                      }}
-                    />
-                  </InputAdornment>
-                ),
-              }}
-              error={formState.errors?.model && formState.errors.model.message}
-              fieldName={"model"}
-              label={"Language Model"}
-              size={"small"}
-              fullWidth
-              required
-            />
-          }
-          subHeading={
-            modeHelpMessage
-              ? modeHelpMessage
-              : "The model to use for evaluation"
-          }
-        />
-      )}
+                }}
+                error={
+                  formState.errors?.model && formState.errors.model.message
+                }
+                fieldName={"model"}
+                label={"Language Model"}
+                size={"small"}
+                fullWidth
+                required
+              />
+            }
+            subHeading={
+              modeHelpMessage
+                ? modeHelpMessage
+                : "The model to use for evaluation"
+            }
+          />
+        )}
       <ShowComponent condition={!hideKnowledgeBase}>
         <HeadingAndSubHeading
           heading={
