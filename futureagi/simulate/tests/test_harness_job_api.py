@@ -306,3 +306,44 @@ def test_harness_job_cancel_accepts_optional_audit_reason(user):
     assert response.status_code == 200
     assert response.json() == expected
     cancel.assert_called_once_with("job-1")
+
+
+@pytest.mark.django_db
+def test_harness_job_adjustment_is_validated_and_forwarded(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    expected = {
+        "job": {"job_id": "job-1"},
+        "status": {"stage": "generating_scenarios"},
+        "adjustments": [{"status": "pending"}],
+    }
+    payload = {
+        "instruction": "Add 10 more scenarios covering payment failures",
+        "client_request_id": "browser-1",
+    }
+
+    with patch(
+        "simulate.views.harness_job.HarnessSandboxClient.adjust",
+        return_value=expected,
+    ) as adjust:
+        response = client.post(
+            "/simulate/api/harness-jobs/job-1/adjust/", payload, format="json"
+        )
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    adjust.assert_called_once_with("job-1", payload)
+
+
+@pytest.mark.django_db
+def test_harness_job_adjustment_rejects_empty_instruction(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/job-1/adjust/",
+        {"instruction": "   "},
+        format="json",
+    )
+
+    assert response.status_code == 400

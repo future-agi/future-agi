@@ -5,6 +5,8 @@ const jobsPath = () => apiPath("/simulate/api/harness-jobs/");
 const jobPath = (id) => apiPath("/simulate/api/harness-jobs/{id}/", { id });
 const cancelPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/cancel/", { id });
+const adjustPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/adjust/", { id });
 const preflightPath = () => apiPath("/simulate/api/harness-jobs/preflight/");
 const sourcesPath = () => apiPath("/simulate/api/harness-jobs/sources/");
 
@@ -24,3 +26,5 @@ export const uploadHarnessSource = async (formData, onUploadProgress) =>
 export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;
 export const cancelHarnessJob = async (id) =>
   (await axios.post(cancelPath(id))).data;
+export const adjustHarnessJob = async (id, payload) =>
+  (await axios.post(adjustPath(id), payload)).data;

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 990,
+  "endpointCount": 991,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -27395,6 +27395,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness-jobs/{id}/adjust/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_adjust",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessJobAdjustment"
+        },
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessJobAdjustment"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -58229,6 +58248,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "description": "Optional operator-provided reason for the action.",
           "type": "string",
           "maxLength": 500
+        }
+      }
+    },
+    "HarnessJobAdjustment": {
+      "required": [
+        "instruction"
+      ],
+      "type": "object",
+      "properties": {
+        "instruction": {
+          "title": "Instruction",
+          "description": "A user correction to apply at the next safe harness stage boundary.",
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        },
+        "client_request_id": {
+          "title": "Client request id",
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
         }
       }
     },

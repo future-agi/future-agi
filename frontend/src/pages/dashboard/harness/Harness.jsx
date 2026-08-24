@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import PropTypes from "prop-types";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -18,6 +22,7 @@ import {
 import { Helmet } from "react-helmet-async";
 import Iconify from "src/components/iconify";
 import {
+  adjustHarnessJob,
   cancelHarnessJob,
   createHarnessJob,
   getHarnessJob,
@@ -56,6 +61,107 @@ function eventMessage(event) {
   return readable(event.type || "Progress updated");
 }
 
+function StageOutput({ output }) {
+  const data = output.data || {};
+  return (
+    <Accordion variant="outlined" defaultExpanded={output.kind !== "scenarios"}>
+      <AccordionSummary
+        expandIcon={<Iconify icon="eva:arrow-ios-downward-fill" />}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2">{output.title}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {output.summary}
+          </Typography>
+        </Box>
+      </AccordionSummary>
+      <AccordionDetails>
+        {output.kind === "contract" && (
+          <Stack spacing={1}>
+            <Typography variant="body2">{data.one_liner}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Modality: {data.modality || "unknown"} · Runtime:{" "}
+              {typeof data.runtime === "string"
+                ? data.runtime
+                : data.runtime?.entrypoint || "discovered"}
+            </Typography>
+            <Stack direction="row" gap={0.75} flexWrap="wrap">
+              {(data.tools || []).map((tool) => (
+                <Chip
+                  key={tool.name || String(tool)}
+                  size="small"
+                  label={tool.name || String(tool)}
+                  variant="outlined"
+                />
+              ))}
+            </Stack>
+            {(data.hard_constraints || []).map((constraint) => (
+              <Typography key={String(constraint)} variant="body2">
+                • {String(constraint)}
+              </Typography>
+            ))}
+          </Stack>
+        )}
+        {output.kind === "environment" && (
+          <Stack spacing={1}>
+            <Stack direction="row" gap={0.75} flexWrap="wrap">
+              {(data.services || []).map((service) => (
+                <Chip
+                  key={service}
+                  size="small"
+                  label={service}
+                  color="success"
+                />
+              ))}
+            </Stack>
+            <Typography variant="body2">
+              Project: {data.project || "isolated run"} ·{" "}
+              {data.managed ? "ALK-managed" : "repository-provided"}
+            </Typography>
+            {Object.entries(data.overrides || {}).map(([name, value]) => (
+              <Typography key={name} variant="caption" color="text.secondary">
+                {name} → {String(value)}
+              </Typography>
+            ))}
+          </Stack>
+        )}
+        {output.kind === "scenarios" && (
+          <Stack spacing={1}>
+            {(Array.isArray(data) ? data : []).map((scenario) => (
+              <Paper key={scenario.name} variant="outlined" sx={{ p: 1.25 }}>
+                <Typography variant="subtitle2">
+                  {readable(scenario.name)}
+                </Typography>
+                <Typography variant="body2">{scenario.instruction}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {scenario.use_case || "Generated test case"}
+                </Typography>
+              </Paper>
+            ))}
+          </Stack>
+        )}
+        {!["contract", "environment", "scenarios"].includes(output.kind) && (
+          <Box
+            component="pre"
+            sx={{ m: 0, whiteSpace: "pre-wrap", fontSize: 12 }}
+          >
+            {JSON.stringify(data, null, 2)}
+          </Box>
+        )}
+      </AccordionDetails>
+    </Accordion>
+  );
+}
+
+StageOutput.propTypes = {
+  output: PropTypes.shape({
+    data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
+    kind: PropTypes.string.isRequired,
+    summary: PropTypes.string,
+    title: PropTypes.string.isRequired,
+  }).isRequired,
+};
+
 export default function Harness() {
   const [sourceMode, setSourceMode] = useState("upload");
   const [uploadedSource, setUploadedSource] = useState(null);
@@ -74,6 +180,8 @@ export default function Harness() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
+  const [adjustment, setAdjustment] = useState("");
+  const [adjusting, setAdjusting] = useState(false);
   const [clock, setClock] = useState(Date.now());
 
   useEffect(() => {
@@ -167,6 +275,24 @@ export default function Harness() {
   const cancel = async () => {
     const value = await cancelHarnessJob(current.job.job_id);
     setCurrent(value);
+  };
+
+  const submitAdjustment = async () => {
+    if (!adjustment.trim() || !current?.job?.job_id) return;
+    setAdjusting(true);
+    setError("");
+    try {
+      const value = await adjustHarnessJob(current.job.job_id, {
+        instruction: adjustment.trim(),
+        client_request_id: window.crypto?.randomUUID?.(),
+      });
+      setCurrent(value);
+      setAdjustment("");
+    } catch (requestError) {
+      setError(requestError?.response?.data?.detail || requestError.message);
+    } finally {
+      setAdjusting(false);
+    }
   };
 
   const startNewEnvironment = () => {
@@ -323,7 +449,11 @@ export default function Harness() {
         }}
       >
         <Paper square variant="outlined" sx={{ p: 2, overflow: "auto" }}>
-          <Stack direction="row" alignItems="center" justifyContent="space-between">
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+          >
             <Typography variant="overline" color="text.secondary">
               RL environments
             </Typography>
@@ -402,7 +532,9 @@ export default function Harness() {
                     component="label"
                     variant="outlined"
                     disabled={sourceUploadProgress !== null}
-                    startIcon={<Iconify icon="solar:folder-with-files-linear" />}
+                    startIcon={
+                      <Iconify icon="solar:folder-with-files-linear" />
+                    }
                   >
                     {sourceUploadProgress !== null
                       ? `Uploading ${sourceUploadProgress}%`
@@ -518,7 +650,9 @@ export default function Harness() {
                   <Button
                     component="label"
                     variant="outlined"
-                    startIcon={<Iconify icon="solar:upload-minimalistic-linear" />}
+                    startIcon={
+                      <Iconify icon="solar:upload-minimalistic-linear" />
+                    }
                   >
                     Upload .env
                     <Box
@@ -750,9 +884,10 @@ export default function Harness() {
                 <Divider sx={{ my: 2 }} />
                 <Stack spacing={1.2}>
                   {stages.map((stage, index) => {
-                    const reached =
-                      stageIndex >= index ||
+                    const completed =
+                      stageIndex > index ||
                       current.status.stage === "completed";
+                    const active = stageIndex === index;
                     return (
                       <Stack
                         key={stage}
@@ -762,14 +897,26 @@ export default function Harness() {
                       >
                         <Iconify
                           icon={
-                            reached
+                            completed
                               ? "solar:check-circle-bold"
-                              : "solar:record-circle-linear"
+                              : active
+                                ? "solar:play-circle-bold"
+                                : "solar:record-circle-linear"
                           }
-                          color={reached ? "success.main" : "text.disabled"}
+                          color={
+                            completed
+                              ? "success.main"
+                              : active
+                                ? "primary.main"
+                                : "text.disabled"
+                          }
                         />
                         <Typography
-                          color={reached ? "text.primary" : "text.disabled"}
+                          color={
+                            completed || active
+                              ? "text.primary"
+                              : "text.disabled"
+                          }
                         >
                           {readable(stage)}
                         </Typography>
@@ -791,9 +938,12 @@ export default function Harness() {
 
               <Box sx={{ p: 2, overflow: "auto" }}>
                 <Typography variant="overline" color="text.secondary">
-                  Live harness activity
+                  Run details and live activity
                 </Typography>
                 <Stack spacing={1.5} mt={1.5}>
+                  {(current.stage_outputs || []).map((output) => (
+                    <StageOutput key={output.id} output={output} />
+                  ))}
                   {current.credentials && (
                     <Paper variant="outlined" sx={{ p: 1.5 }}>
                       <Typography variant="subtitle2">
@@ -831,6 +981,24 @@ export default function Harness() {
                       </Typography>
                     </Paper>
                   ))}
+                  {(current.adjustments || []).map((item) => (
+                    <Alert
+                      key={item.adjustment_id}
+                      severity={item.status === "applied" ? "success" : "info"}
+                      icon={
+                        item.status === "pending" ||
+                        item.status === "applying" ? (
+                          <CircularProgress size={16} />
+                        ) : undefined
+                      }
+                    >
+                      <Typography variant="subtitle2">
+                        Change {readable(item.status)} ·{" "}
+                        {readable(item.target_stage)}
+                      </Typography>
+                      {item.instruction}
+                    </Alert>
+                  ))}
                   {current.status.failure && (
                     <Alert severity="error">
                       <Typography variant="subtitle2">
@@ -850,12 +1018,65 @@ export default function Harness() {
                     </Alert>
                   )}
                   {!terminalStages.has(current.status.stage) && (
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <CircularProgress size={16} />
-                      <Typography variant="body2" color="text.secondary">
-                        ALK is working autonomously…
-                      </Typography>
-                    </Stack>
+                    <Paper variant="outlined" sx={{ p: 1.5 }}>
+                      <Stack spacing={1}>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <CircularProgress size={16} />
+                          <Box>
+                            <Typography variant="body2">
+                              ALK is working autonomously on{" "}
+                              {readable(current.status.stage)}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              Latest runner update {secondsSinceUpdate ?? 0}s
+                              ago. This page refreshes every 2 seconds; changes
+                              are applied at the next safe stage boundary.
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Stack
+                          direction={{ xs: "column", md: "row" }}
+                          spacing={1}
+                        >
+                          <TextField
+                            fullWidth
+                            size="small"
+                            multiline
+                            maxRows={4}
+                            label="Adjust this run"
+                            placeholder='For example: "Add 10 more scenarios covering payment failures"'
+                            value={adjustment}
+                            onChange={(event) =>
+                              setAdjustment(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (
+                                (event.metaKey || event.ctrlKey) &&
+                                event.key === "Enter"
+                              )
+                                submitAdjustment();
+                            }}
+                          />
+                          <Button
+                            variant="contained"
+                            disabled={adjusting || !adjustment.trim()}
+                            onClick={submitAdjustment}
+                            startIcon={
+                              adjusting ? (
+                                <CircularProgress size={16} />
+                              ) : (
+                                <Iconify icon="solar:plain-2-bold" />
+                              )
+                            }
+                          >
+                            Apply change
+                          </Button>
+                        </Stack>
+                      </Stack>
+                    </Paper>
                   )}
                 </Stack>
               </Box>
