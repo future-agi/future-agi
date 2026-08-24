@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
-// Review comment 11 on PR #2000. Effects run child-first and WorkspaceProvider
+// Effects run child-first and WorkspaceProvider
 // is nested inside OrganizationProvider, so on the render where a new `user`
 // arrives this provider still sees the *previous* currentOrganizationId. When
 // the backend has resolved a different org, preferring that stale value adopts

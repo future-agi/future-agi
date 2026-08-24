@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 
-// These cover the session-storage layer behind review comments 6, 7 and 8 on
-// PR #2000. All three are the same defect: each key is written only when the
+// These cover the per-tab session-storage layer: which org and workspace a tab
+// is pinned to, and when that pin is allowed to survive. Most of them are the
+// same defect seen from different angles — each key is written only when the
 // incoming value is truthy, so a missing value leaves the previous org's data
 // in place instead of clearing it.
 
@@ -19,7 +20,11 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 vi.mock("src/components/snackbar", () => ({ enqueueSnackbar: vi.fn() }));
-vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({}) }));
+// Mutable so a test can drive the auth transitions the provider reacts to
+// (login -> logout -> a different user logging in in the same tab). Defaults to
+// an unsettled context, which is what the switch tests below expect.
+const auth = vi.hoisted(() => ({ current: {} }));
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth.current }));
 // The provider reads the org context; leaving it unsettled is what makes the
 // pinned org the only remaining source for the switch payload.
 vi.mock("src/contexts/OrganizationContext", () => ({
@@ -44,9 +49,25 @@ const ORG_B = "org-bbbb";
 
 beforeEach(() => {
   sessionStorage.clear();
+  auth.current = {};
 });
 
-describe("comment 8 — a workspace saved without an org id is silently discarded", () => {
+const signedIn = (orgId, ws) => ({
+  authenticated: true,
+  loading: false,
+  user: {
+    organization: { id: orgId },
+    default_workspace_id: ws.id,
+    default_workspace_name: ws.name,
+    default_workspace_display_name: ws.name,
+    default_workspace_role: ws.role,
+    ws_level: ws.wsLevel,
+  },
+});
+
+const signedOut = { authenticated: false, loading: false, user: null };
+
+describe("a workspace saved without an org id is silently discarded", () => {
   it("keeps the workspace when the org id is known", () => {
     writeSessionWorkspace({
       id: "ws-1",
@@ -76,7 +97,7 @@ describe("comment 8 — a workspace saved without an org id is silently discarde
   });
 });
 
-describe("comment 7 — a workspace row must not carry another org's role", () => {
+describe("a workspace row must not carry another org's role", () => {
   it("rejects a stored workspace belonging to a different org", () => {
     writeSessionWorkspace({
       id: "ws-a",
@@ -90,7 +111,7 @@ describe("comment 7 — a workspace row must not carry another org's role", () =
   });
 });
 
-describe("comment 6 — pinning a new org must not leave the previous org's details", () => {
+describe("pinning a new org must not leave the previous org's details", () => {
   it("writes the org details when they are supplied", () => {
     pinResolvedOrganization({
       organization: { id: ORG_A, name: "A", display_name: "A" },
@@ -123,7 +144,7 @@ describe("comment 6 — pinning a new org must not leave the previous org's deta
   });
 });
 
-describe("comment 8 — the tab's pinned org is the last-resort owner", () => {
+describe("the tab's pinned org is the last-resort owner", () => {
   beforeEach(() => {
     axios.post.mockReset();
     assigned.length = 0;
@@ -154,5 +175,81 @@ describe("comment 8 — the tab's pinned org is the last-resort owner", () => {
     // The switch ends in a hard reload; without an owner on the row the
     // reader rejects it and the tab reseeds from the default workspace.
     expect(assigned).toEqual(["/dashboard/develop"]);
+  });
+});
+
+describe("logging out must leave nothing for the next user in the tab", () => {
+  // sessionStorage survives navigation within a tab and logout() itself only
+  // removes the 2FA and user-id keys, so the org and workspace rows are cleared
+  // by the providers reacting to the auth drop. Without that, the next user to
+  // log in in the same tab inherits the previous user's workspace.
+  it("clears the workspace row when auth drops", () => {
+    auth.current = signedIn(ORG_A, {
+      id: "ws-a",
+      name: "Alpha Default",
+      role: "Owner",
+      wsLevel: 15,
+    });
+    const { rerender } = renderHook(() => useWorkspace(), {
+      wrapper: WorkspaceProvider,
+    });
+    expect(sessionStorage.getItem("workspaceId")).toBe("ws-a");
+
+    auth.current = signedOut;
+    rerender();
+
+    expect(sessionStorage.getItem("workspaceId")).toBe(null);
+    expect(sessionStorage.getItem("workspaceOrgId")).toBe(null);
+    expect(sessionStorage.getItem("workspaceRole")).toBe(null);
+    expect(sessionStorage.getItem("wsLevel")).toBe(null);
+    expect(readSessionWorkspaceForOrg(ORG_A)).toBe(null);
+  });
+
+  it("gives the next user their own workspace, not the previous user's", () => {
+    auth.current = signedIn(ORG_A, {
+      id: "ws-a",
+      name: "Alpha Default",
+      role: "Owner",
+      wsLevel: 15,
+    });
+    const { rerender } = renderHook(() => useWorkspace(), {
+      wrapper: WorkspaceProvider,
+    });
+
+    auth.current = signedOut;
+    rerender();
+
+    // A different user signs in in the same tab. Even in the same org, the row
+    // must be seeded from their own user-info, never adopted from the tab.
+    auth.current = signedIn(ORG_A, {
+      id: "ws-b",
+      name: "B Default",
+      role: "Member",
+      wsLevel: 5,
+    });
+    rerender();
+
+    expect(sessionStorage.getItem("workspaceId")).toBe("ws-b");
+    expect(sessionStorage.getItem("workspaceRole")).toBe("Member");
+    expect(sessionStorage.getItem("wsLevel")).toBe("5");
+  });
+
+  it("keeps the row while auth is still loading, so a refresh survives", () => {
+    // The clear is gated on !loading for exactly this reason: on a reload the
+    // tab is briefly unauthenticated while user-info is in flight.
+    writeSessionWorkspace({
+      id: "ws-a",
+      name: "Alpha Default",
+      displayName: "Alpha Default",
+      role: "Owner",
+      wsLevel: 15,
+      orgId: ORG_A,
+    });
+
+    auth.current = { authenticated: false, loading: true, user: null };
+    renderHook(() => useWorkspace(), { wrapper: WorkspaceProvider });
+
+    expect(sessionStorage.getItem("workspaceId")).toBe("ws-a");
+    expect(readSessionWorkspaceForOrg(ORG_A)?.id).toBe("ws-a");
   });
 });
