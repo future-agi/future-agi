@@ -357,10 +357,9 @@ class TestSpanAttributeKeysPartitionPruning:
         assert "attrs_bool.keys" in sql
         assert "mapKeys(" not in sql
 
-    def test_preserves_limit_and_type_labels(self, monkeypatch):
+    def test_preserves_type_labels(self, monkeypatch):
         sql = self._capture_sql(monkeypatch, recent_days=7)
-        # The per-map LIMIT and type labels are unchanged by the fix.
-        assert "LIMIT 10000" in sql
+        # The windowed lanes are exhaustive, so only the type labels survive.
         assert "'string'" in sql
         assert "'number'" in sql
         assert "'boolean'" in sql
@@ -372,11 +371,11 @@ class TestSpanAttributeKeysPartitionPruning:
         assert "ORDER BY created_at" not in sql
 
     def test_full_project_discovery_skips_order_by_to_short_circuit(self, monkeypatch):
-        # recent_days=None (dashboard/metrics filter discovery): no window, so
-        # the ORDER BY must be dropped or LIMIT 10000 can't short-circuit and
-        # CH scans the whole project (~477k rows) instead of ~15k.
+        # recent_days=None (dashboard/metrics filter discovery) unions the
+        # windowed lane with the legacy sample; the ORDER BY must stay dropped
+        # or LIMIT 10000 can't short-circuit and CH scans the whole project
+        # (~477k rows) instead of ~15k.
         sql = self._capture_sql(monkeypatch, recent_days=None)
-        assert "start_time >= now()" not in sql
         assert "ORDER BY start_time" not in sql
         assert "LIMIT 10000" in sql
 
