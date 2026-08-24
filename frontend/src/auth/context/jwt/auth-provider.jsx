@@ -28,10 +28,6 @@ import {
   SS_KEY_USER_ID,
 } from "src/utils/sessionKeys";
 
-// Session storage key for per-tab user tracking
-
-// Session storage key for this tab's organization
-
 // Helper to decode JWT and extract user ID (without verification)
 function decodeTokenUserId(token) {
   if (!token) return null;
