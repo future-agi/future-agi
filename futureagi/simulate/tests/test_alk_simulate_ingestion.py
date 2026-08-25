@@ -18,11 +18,13 @@ from unittest.mock import patch
 import pytest
 
 from model_hub.models.choices import StatusType
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     RunTest,
     Scenarios,
     SimulatorAgent,
+    SimulateEvalConfig,
 )
 from simulate.models.test_execution import (
     CallExecution,
@@ -176,7 +178,12 @@ class TestProvisionRunTest:
             auth_client,
             name="sdk-e2e",
             personas=[
-                {"name": "Sam", "situation": "refund please", "outcome": "refunded"}
+                {
+                    "name": "Sam",
+                    "scenario_name": "Resolve a late refund",
+                    "situation": "refund please",
+                    "outcome": "refunded",
+                }
             ],
         )
         assert resp.status_code == 200, resp.content
@@ -190,6 +197,8 @@ class TestProvisionRunTest:
         )
         assert run_test.scenarios.count() == 1
         scenario = Scenarios.objects.get(id=result["scenario_ids"][0])
+        assert scenario.name == "Resolve a late refund"
+        assert not scenario.name.startswith(run_test.name)
         assert scenario.status == StatusType.COMPLETED.value
         assert scenario.metadata["persona"]["name"] == "Sam"
 
@@ -349,6 +358,49 @@ class TestStartTestExecution:
         )
         assert resp.status_code == 404
         assert resp.json()["status"] is False
+
+    def test_scenario_selectors_preserve_runner_order_for_saved_run(
+        self, auth_client, run_test, scenario
+    ):
+        scenario.metadata = {
+            "origin": "alk_sdk_ingestion",
+            "persona": {"scenario_key": "case-a", "persona": {"name": "A"}},
+        }
+        scenario.save(update_fields=["metadata"])
+        second = Scenarios.objects.create(
+            name="Second saved case",
+            source="second",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            agent_definition=run_test.agent_definition,
+            status=StatusType.COMPLETED.value,
+            metadata={
+                "origin": "alk_sdk_ingestion",
+                "persona": {
+                    "scenario_key": "case-b",
+                    "persona": {"name": "B"},
+                },
+            },
+        )
+        run_test.scenarios.add(second)
+
+        resp = auth_client.post(
+            f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+            {
+                "scenario_selectors": [
+                    {"scenario_key": "case-b", "persona_name": "B"},
+                    {"scenario_key": "case-a", "persona_name": "A"},
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["result"]["scenario_ids"] == [
+            str(second.id),
+            str(scenario.id),
+        ]
 
     def test_scenario_not_on_run_test_returns_400(self, auth_client, run_test):
         other = "11111111-1111-4111-8111-111111111111"
@@ -667,11 +719,74 @@ class TestResultIngest:
         execution = SimTestExecution.objects.get(id=test_execution_id)
         assert call.call_metadata["eval_started"] is True
         assert call.call_metadata["eval_completed"] is True
+        assert len(call.eval_outputs) == 1
+        direct_result = next(iter(call.eval_outputs.values()))
+        assert direct_result == {
+            "name": "ride_booked",
+            "output": "Failed",
+            "output_type": "Pass/Fail",
+            "reason": "",
+            "status": "completed",
+            "source": "harness",
+            "kind": "checkpoint",
+            "platform_template": "",
+        }
         assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
         assert execution.completed_at is not None
         assert execution.total_calls == 1
         assert execution.completed_calls == 1
         assert execution.failed_calls == 0
+
+    def test_platform_judgement_is_linked_to_run_eval_config_and_output(
+        self, auth_client, run_test
+    ):
+        template = EvalTemplate.objects.create(
+            name="alk-platform-check",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [
+                        {
+                            "name": "response_wording",
+                            "kind": "eval",
+                            "passed": True,
+                            "reason": "matched the required response",
+                            "platform_template": template.name,
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        config = SimulateEvalConfig.objects.get(
+            run_test=run_test,
+            eval_template=template,
+            name="response_wording",
+        )
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.eval_outputs[str(config.id)] == {
+            "name": "response_wording",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "reason": "matched the required response",
+            "status": "completed",
+            "source": "harness",
+            "kind": "eval",
+            "platform_template": template.name,
+        }
 
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
@@ -2025,6 +2140,7 @@ class TestAlkVoiceCsatScoring:
 
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 8.0
+        assert call.call_metadata["csat_status"] == "completed"
         # eval-derived overall_score must not be clobbered
         assert call.overall_score == 3.0
 
@@ -2044,6 +2160,7 @@ class TestAlkVoiceCsatScoring:
         scorer.assert_not_called()
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 6.0
+        assert call.call_metadata["csat_status"] == "completed"
 
     def test_seeds_overall_score_when_unset(self, auth_client, run_test):
         from simulate.tasks import alk_sim
@@ -2060,6 +2177,23 @@ class TestAlkVoiceCsatScoring:
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 7.0
         assert call.overall_score == 7.0
+        assert call.call_metadata["csat_status"] == "completed"
+
+    def test_failed_scorer_is_durable_and_retryable(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=None),
+            pytest.raises(RuntimeError, match="returned no result"),
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "failed"
+        assert "returned no result" in call.call_metadata["csat_error"]
+        assert not (call.conversation_metrics_data or {}).get("csat_score")
 
 
 def test_alk_sim_task_module_registered_for_worker():

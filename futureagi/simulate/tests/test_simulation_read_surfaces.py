@@ -215,6 +215,32 @@ def test_get_eval_outputs_skips_missing_config(simulation_tree, eval_configs):
 
 
 @pytest.mark.django_db
+def test_get_eval_outputs_keeps_external_harness_results_without_config(
+    simulation_tree, eval_configs
+):
+    live, _ = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    harness_id = str(uuid.uuid4())
+    call_execution.eval_outputs = {
+        harness_id: {
+            "name": "database_state_verified",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+            "source": "harness",
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    outputs = CallExecutionDetailSerializer(
+        context={"eval_configs": {str(live.id): live}}
+    ).get_eval_outputs(call_execution)
+
+    assert outputs[harness_id]["name"] == "database_state_verified"
+    assert outputs[harness_id]["value"] == "Passed"
+
+
+@pytest.mark.django_db
 def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     call_execution = simulation_tree["call_execution"]

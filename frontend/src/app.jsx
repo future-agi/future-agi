@@ -214,7 +214,7 @@ export default function App() {
           </WorkspaceProvider>
         </OrganizationProvider>
       </AuthProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      {/* <ReactQueryDevtools initialIsOpen={false} /> */}
     </QueryClientProvider>
   );
 }

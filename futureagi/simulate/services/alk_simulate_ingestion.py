@@ -19,13 +19,16 @@ from typing import Any
 
 import structlog
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     CallExecution,
     RunTest,
     Scenarios,
+    SimulateEvalConfig,
     SimulatorAgent,
     TestExecution,
 )
@@ -62,6 +65,8 @@ _RESERVED_CALL_METADATA_KEYS = frozenset(
         "eval_started",
         "eval_dispatch_failed",
         "csat_dispatch_failed",
+        "csat_status",
+        "csat_error",
         "alk_result_digest",
         "alk_artifact_manifest_digest",
         "alk_recording_artifacts",
@@ -86,6 +91,12 @@ _TRANSCRIPT_ROLE_TO_METRIC_ROLE = {
     CallTranscript.SpeakerRole.USER: "user",
     CallTranscript.SpeakerRole.ASSISTANT: "bot",
 }
+
+# Stable IDs let externally-computed harness checks live in ``eval_outputs``
+# without creating a new global EvalTemplate for every deterministic database
+# assertion. Platform-backed checks use their real SimulateEvalConfig ID; only
+# execution-native checks use this namespace.
+_HARNESS_EVAL_NAMESPACE = uuid.UUID("754ea237-3306-4c91-a718-c3e1c304689c")
 
 
 @dataclass(frozen=True)
@@ -354,7 +365,12 @@ def provision_alk_sim_run_test(
             persona = dict(persona or {})
             persona_name = (persona.get("name") or f"persona-{idx + 1}").strip()
             situation = (persona.get("situation") or "").strip()
-            scenario_name = f"{name} · {persona_name}"[:255]
+            # The run-test title already supplies the agent/run context. Repeating it on every
+            # scenario made a two-call suite render as several nearly identical UUID-prefixed
+            # rows. ALK sends the behavior being tested separately from the persona identity.
+            scenario_name = (
+                persona.get("scenario_name") or situation or persona_name
+            ).strip()[:255]
             # A real 1-row dataset (persona/situation/outcome) makes the scenario
             # render with persona rows AND lets the simulator prompt's
             # {{persona}}/{{situation}} placeholders resolve — without it the
@@ -458,7 +474,9 @@ def create_alk_sim_test_execution(
     run_test: RunTest,
     *,
     scenario_ids: list[str] | None = None,
+    scenario_selectors: list[dict[str, str]] | None = None,
     simulator_agent: SimulatorAgent | None = None,
+    harness_job_id: str | None = None,
 ) -> TestExecution:
     """Create a TestExecution shell for an ALK-owned run.
 
@@ -478,6 +496,34 @@ def create_alk_sim_test_execution(
             raise ALKSimulateIngestionError(
                 f"Scenarios not attached to this run test: {sorted(missing)}"
             )
+    elif scenario_selectors:
+        attached = list(run_test.scenarios.filter(deleted=False))
+        chosen = []
+        used: set[str] = set()
+        for selector in scenario_selectors:
+            scenario_key = str(selector.get("scenario_key") or "").strip()
+            persona_name = str(selector.get("persona_name") or "").strip()
+            exact = []
+            fallback = []
+            for scenario in attached:
+                if str(scenario.id) in used:
+                    continue
+                persona = (scenario.metadata or {}).get("persona") or {}
+                if str(persona.get("scenario_key") or "") == scenario_key:
+                    exact.append(scenario)
+                identity = persona.get("persona") or {}
+                stored_name = str(identity.get("name") or persona.get("name") or "")
+                if persona_name and stored_name == persona_name:
+                    fallback.append(scenario)
+            matches = exact or fallback
+            if len(matches) != 1:
+                label = scenario_key or persona_name or "<empty>"
+                raise ALKSimulateIngestionError(
+                    f"Scenario selector {label!r} matched {len(matches)} saved scenarios"
+                )
+            selected = matches[0]
+            chosen.append(str(selected.id))
+            used.add(str(selected.id))
     else:
         chosen = [str(sid) for sid in active_scenario_ids]
 
@@ -496,6 +542,9 @@ def create_alk_sim_test_execution(
         simulator_agent=simulator_agent or run_test.simulator_agent,
         agent_definition=run_test.agent_definition,
         agent_version=run_test.agent_version,
+        execution_metadata=(
+            {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
+        ),
     )
 
 
@@ -653,13 +702,11 @@ def ingest_alk_sim_result(
 
     eval_dispatched = False
     if call_execution.status == CallExecution.CallStatus.COMPLETED:
-        # Chat CSAT is computed synchronously by _aggregate_chat_metrics during
-        # _apply_payload; only voice needs the async CSAT task.
-        if (
-            call_execution.simulation_call_type
-            == CallExecution.SimulationCallType.VOICE
-        ):
-            _dispatch_csat_once(call_execution)
+        # Chat attempts CSAT synchronously with its native metric aggregation.
+        # If that scorer is unavailable, the same durable async path used by
+        # voice retries it instead of silently leaving a completed call with a
+        # null score.
+        _dispatch_csat_once(call_execution)
         call_metadata = call_execution.call_metadata or {}
         if "harness_evaluations" in call_metadata:
             # An ALK harness result already contains the execution-backed
@@ -986,6 +1033,8 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         merged = call_execution.call_metadata or {}
         merged.update(incoming)
         call_execution.call_metadata = merged
+
+    _apply_harness_evaluation_outputs(call_execution)
 
     segments = payload.get("transcript") or []
     is_text = (
@@ -1359,11 +1408,141 @@ def _coerce_token(value) -> int | None:
         return None
 
 
+def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
+    """Normalize execution-backed harness checks into the platform eval shape.
+
+    The harness has already run these checks; executing the platform evaluator a
+    second time would both waste money and risk producing a different answer.
+    Platform-backed judgements are attached to their existing EvalTemplate via a
+    run-scoped SimulateEvalConfig. Deterministic code checks have no template by
+    design, so they receive a stable external-result ID and remain explicitly
+    marked ``source=harness``.
+    """
+    metadata = call_execution.call_metadata or {}
+    evaluations = metadata.get("harness_evaluations")
+    if not isinstance(evaluations, list):
+        return
+
+    outputs = dict(call_execution.eval_outputs or {})
+    run_test = call_execution.test_execution.run_test
+    for evaluation in evaluations:
+        if not isinstance(evaluation, dict):
+            continue
+        name = str(evaluation.get("name") or "").strip()[:255]
+        if not name:
+            continue
+        kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
+        template = _resolve_harness_eval_template(run_test, evaluation, name)
+        if template is not None:
+            config = _get_or_create_harness_eval_config(run_test, template, name)
+            output_id = str(config.id)
+        else:
+            output_id = str(
+                uuid.uuid5(
+                    _HARNESS_EVAL_NAMESPACE,
+                    f"{run_test.id}:{kind}:{name}",
+                )
+            )
+
+        if evaluation.get("score") is not None:
+            try:
+                output = float(evaluation["score"])
+            except (TypeError, ValueError):
+                output = evaluation["score"]
+            output_type = "score"
+        else:
+            output = "Passed" if bool(evaluation.get("passed")) else "Failed"
+            output_type = "Pass/Fail"
+
+        outputs[output_id] = {
+            "name": name,
+            "output": output,
+            "output_type": output_type,
+            "reason": str(evaluation.get("reason") or "")[:10000],
+            "status": "completed",
+            "source": "harness",
+            "kind": kind,
+            "platform_template": str(
+                evaluation.get("platform_template") or ""
+            )[:2000],
+        }
+    call_execution.eval_outputs = outputs
+
+
+def _resolve_harness_eval_template(
+    run_test: RunTest,
+    evaluation: dict[str, Any],
+    fallback_name: str,
+) -> EvalTemplate | None:
+    """Find the reusable template that produced a harness judgement.
+
+    New runners send ``platform_template`` explicitly. Built-in suite evals
+    historically sent only their template name as ``name``, so eval-kind checks
+    retain that exact-name fallback. We deliberately do not guess for code or
+    locally judged checks.
+    """
+    template_name = str(evaluation.get("platform_template") or "").strip()
+    if not template_name and evaluation.get("kind") == "eval":
+        template_name = fallback_name
+    if not template_name:
+        return None
+
+    visible_scope = Q(organization=run_test.organization) | Q(organization__isnull=True)
+    workspace_scope = Q(workspace=run_test.workspace) | Q(workspace__isnull=True)
+    return (
+        EvalTemplate.no_workspace_objects.filter(
+            visible_scope,
+            workspace_scope,
+            name=template_name,
+            deleted=False,
+        )
+        .order_by("-organization_id", "-created_at")
+        .first()
+    )
+
+
+def _get_or_create_harness_eval_config(
+    run_test: RunTest,
+    template: EvalTemplate,
+    name: str,
+) -> SimulateEvalConfig:
+    """Idempotently bind one external result column to its originating run."""
+    config_id = uuid.uuid5(
+        _HARNESS_EVAL_NAMESPACE,
+        f"{run_test.id}:{template.id}:{name}",
+    )
+    config, _ = SimulateEvalConfig.objects.get_or_create(
+        id=config_id,
+        defaults={
+            "eval_template": template,
+            "name": name,
+            "config": template.config or {},
+            "mapping": {},
+            "run_test": run_test,
+            "filters": {},
+            "model": template.model,
+        },
+    )
+    return config
+
+
 def _dispatch_csat_once(call_execution: CallExecution) -> None:
     call_metadata = call_execution.call_metadata or {}
-    if call_metadata.get("csat_dispatched"):
+    existing_csat = (call_execution.conversation_metrics_data or {}).get("csat_score")
+    if existing_csat is not None:
+        if call_metadata.get("csat_status") != "completed":
+            call_metadata["csat_status"] = "completed"
+            call_metadata.pop("csat_error", None)
+            call_execution.call_metadata = call_metadata
+            call_execution.save(update_fields=["call_metadata"])
+        return
+    if call_metadata.get("csat_dispatched") and call_metadata.get(
+        "csat_status"
+    ) not in {"failed"}:
         return
     call_metadata["csat_dispatched"] = True
+    call_metadata["csat_status"] = "pending"
+    call_metadata.pop("csat_error", None)
     call_execution.call_metadata = call_metadata
     call_execution.save(update_fields=["call_metadata"])
     try:
@@ -1376,6 +1555,8 @@ def _dispatch_csat_once(call_execution: CallExecution) -> None:
             call_execution_id=str(call_execution.id),
         )
         call_metadata["csat_dispatched"] = False
+        call_metadata["csat_status"] = "failed"
+        call_metadata["csat_error"] = str(dispatch_error)[:2000]
         call_metadata["csat_dispatch_failed"] = str(dispatch_error)
         call_execution.call_metadata = call_metadata
         call_execution.save(update_fields=["call_metadata"])

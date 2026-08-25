@@ -138,7 +138,16 @@ class ALKSimulateStartTestExecutionRequestSerializer(serializers.Serializer):
     scenario_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, allow_empty=True
     )
+    scenario_selectors = serializers.ListField(
+        child=serializers.DictField(
+            child=serializers.CharField(max_length=255, allow_blank=True)
+        ),
+        required=False,
+        allow_empty=True,
+        max_length=100,
+    )
     simulator_agent_id = serializers.UUIDField(required=False, allow_null=True)
+    harness_job_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class ALKSimulateStartTestExecutionResultSerializer(serializers.Serializer):
@@ -182,6 +191,9 @@ class ALKSimulateRecordingUploadResponseSerializer(serializers.Serializer):
 
 class ALKSimulateProvisionPersonaSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    scenario_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=255
+    )
     role = serializers.CharField(required=False, allow_blank=True, max_length=255)
     situation = serializers.CharField(required=False, allow_blank=True)
     outcome = serializers.CharField(required=False, allow_blank=True)

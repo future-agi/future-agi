@@ -115,8 +115,12 @@ export ENV_PROJECT_ROOT
 # Change to the backend directory
 cd /app/backend
 
-# Install any missing dependencies (2FA/WebAuthn added after Docker image build)
-pip install --quiet "pyotp>=2.9.0" "qrcode[pil]>=7.4" "webauthn>=2.2.0" 2>/dev/null || true
+# Install small compatibility dependencies that may be newer than the local
+# base image. Do not hide failures: a service that cannot import Django must
+# fail visibly instead of leaving a watcher/container looking healthy while no
+# worker is polling its queue.
+pip install --quiet "pyotp>=2.9.0" "qrcode[pil]>=7.4" "webauthn>=2.2.0" \
+    "disposable-email-domains==0.0.239"
 
 # Create logs directory if it doesn't exist
 mkdir -p logs media static
@@ -513,19 +517,14 @@ case "$SERVICE_TYPE" in
             # Production: run worker with graceful shutdown handling
             exec ./bin/temporal-worker --task-queue "$TEMPORAL_TASK_QUEUE" $RESOURCE_TUNING_ARGS
         else
-            # Build list of watch paths, skipping any that don't exist.
-            # ``watchfiles`` exits immediately with a non-zero code if any
-            # watch target is missing (e.g. ``./utils`` is absent in some
-            # checkouts), which makes the container crash-loop under
-            # ``restart: unless-stopped`` and the Temporal worker never
-            # stays alive long enough to poll activities.
-            WATCH_PATHS=()
-            for d in tfc accounts analytics model_hub sockets tracer usage utils simulate agent_playground; do
-                [ -d "./$d" ] && WATCH_PATHS+=("./$d")
-            done
-            exec watchfiles --filter python \
-                "python manage.py start_temporal_worker --task-queue $TEMPORAL_TASK_QUEUE $ALL_QUEUES_ARG $RESOURCE_TUNING_ARGS" \
-                "${WATCH_PATHS[@]}"
+            # A watchfiles parent remains alive when its child fails to import,
+            # which made Docker report a healthy-looking worker while Temporal
+            # had zero pollers and an ever-growing backlog. Correctness matters
+            # more than hot reload for background workers: let the worker be PID
+            # 1 so Docker restarts it and exposes repeated startup failures.
+            exec python manage.py start_temporal_worker \
+                --task-queue "$TEMPORAL_TASK_QUEUE" \
+                $ALL_QUEUES_ARG $RESOURCE_TUNING_ARGS
         fi
         ;;
 
