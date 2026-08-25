@@ -1,5 +1,6 @@
 import { Box, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   getColumnDefsSignature,
@@ -427,9 +428,13 @@ const TestRunDetailGrid = () => {
         params.node.setSelected(!selected);
         return;
       }
-      // Skip if click was on the "Listen" button (live call monitor)
+      // Skip if click was on the "Listen" button (live call monitor) or the
+      // composite breakdown badge, which opens its own dialog.
       const target = params?.event?.target;
-      if (target?.closest?.("[data-listen-btn]")) {
+      if (
+        target?.closest?.("[data-listen-btn]") ||
+        target?.closest?.("[data-composite-badge]")
+      ) {
         return;
       }
       const rowData = params.data;
@@ -510,6 +515,7 @@ const TestRunDetailGrid = () => {
         </SingleImageViewerProvider>
       </AudioPlaybackProvider>
       <TestDetailConfigureEval />
+      <CompositeEvalDialog />
     </Box>
   );
 };

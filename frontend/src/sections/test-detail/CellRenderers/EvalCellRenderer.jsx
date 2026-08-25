@@ -11,6 +11,8 @@ import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRendere
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import { getEvalNonScoreStatus } from "src/utils/evalStatus";
+import Iconify from "src/components/iconify";
+import { useCompositeEvalStore } from "src/sections/develop-detail/states";
 
 const formatChildScore = (child) => {
   if (child?.status === "failed" || child?.error) return "Failed";
@@ -21,10 +23,12 @@ const formatChildScore = (child) => {
 
 const EvalCellRenderer = ({ value: evalData }) => {
   // Composite cells show the aggregate, but the aggregate alone hides which
-  // child moved it. Surface the per-child breakdown in the tooltip.
+  // child moved it. Surface the per-child breakdown in the tooltip, and open
+  // the shared drill-down dialog from the badge.
   const compositeChildren = evalData?.composite?.children;
   const hasBreakdown =
     Array.isArray(compositeChildren) && compositeChildren.length > 0;
+  const setCompositeEval = useCompositeEvalStore((s) => s.setCompositeEval);
   // Numeric output type keeps its dedicated cell.
   const isNumeric = evalData?.type === OutputTypes.NUMERIC;
   const result = normalizeEvalResult(evalData?.value, evalData?.type);
@@ -158,6 +162,26 @@ const EvalCellRenderer = ({ value: evalData }) => {
         }}
       >
         {renderContent()}
+        {hasBreakdown ? (
+          <Chip
+            size="small"
+            data-composite-badge=""
+            icon={<Iconify icon="mdi:graph-outline" width={12} />}
+            label={`${compositeChildren.length} children`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCompositeEval(evalData.composite);
+            }}
+            sx={{
+              ml: 0.75,
+              height: 20,
+              fontSize: "10px",
+              fontWeight: 600,
+              cursor: "pointer",
+              "& .MuiChip-icon": { marginLeft: "4px", marginRight: "-4px" },
+            }}
+          />
+        ) : null}
       </Box>
     </CustomTooltip>
   );
