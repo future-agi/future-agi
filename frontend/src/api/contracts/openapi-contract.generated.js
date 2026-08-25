@@ -29327,6 +29327,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "type": "integer",
               "minimum": 1
             }
+          },
+          "selected_scenarios": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
           }
         },
         "responses": {
@@ -29411,6 +29418,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          "selected_scenarios": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
             }
           }
         },
