@@ -6360,6 +6360,44 @@ def _hosted_execution_eligible(run_test) -> bool:
     return False
 
 
+def _repository_harness_job_id(test_execution) -> str | None:
+    """Return the ALK job owning this repository-backed execution, if any.
+
+    New executions carry an explicit immutable reference. The name fallback keeps already-created
+    development runs rerunnable; it accepts only ALK's exact content-free ``harness-<uuid>`` name
+    and therefore does not redirect native/provider-only runs.
+    """
+
+    metadata = test_execution.execution_metadata or {}
+    explicit = str(metadata.get("harness_job_id") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F-]{36}", explicit):
+        return explicit
+    match = re.fullmatch(
+        r"harness-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+        str(test_execution.run_test.name or ""),
+    )
+    return match.group(1) if match else None
+
+
+def _dispatch_repository_harness_rerun(
+    test_execution, *, environment_values: dict[str, str]
+) -> dict:
+    from simulate.services.harness_sandbox import HarnessSandboxClient
+
+    job_id = _repository_harness_job_id(test_execution)
+    if not job_id:
+        raise ValueError("execution has no saved repository harness job")
+    return HarnessSandboxClient().rerun(
+        job_id,
+        {
+            "environment_values": environment_values,
+            "secret_refs": {},
+            "only": [],
+        },
+    )
+
+
 def _dispatch_hosted_rerun(test_execution, call_execution_ids=None) -> str:
     """Re-dispatch a hosted execution's rerun via the simulation runner, reusing
     the existing TestExecution id. The reset CallExecution rows (PENDING, cleared
@@ -6404,6 +6442,7 @@ class CallExecutionRerunView(APIView):
         request_serializer=CallExecutionRerunSerializer,
         responses={
             200: RerunCallsResponseSerializer,
+            202: RerunCallsResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
@@ -6503,6 +6542,52 @@ class CallExecutionRerunView(APIView):
             if not call_executions.exists():
                 return self._gm.bad_request(
                     "No call executions found that can be rerun."
+                )
+
+            # A repository-backed ALK execution owns the target environment lifecycle. Its rerun
+            # must go back through that saved session so Compose/processes, seed/reset, agent,
+            # calls, grading and cleanup happen together. The generic hosted voice path below is
+            # intentionally retained for native/connect-only/Vapi/Retell runs.
+            repository_job_id = _repository_harness_job_id(test_execution)
+            if rerun_type == "call_and_eval" and repository_job_id:
+                if not select_all or call_execution_ids:
+                    return self._gm.bad_request(
+                        "Repository harness reruns currently require select_all=true so the "
+                        "saved scenario suite and isolated environment remain aligned."
+                    )
+                try:
+                    queued = _dispatch_repository_harness_rerun(
+                        test_execution,
+                        environment_values=request.validated_data.get(
+                            "environment_values", {}
+                        ),
+                    )
+                except Exception as dispatch_error:
+                    logger.exception(
+                        "repository_harness_rerun_dispatch_failed",
+                        test_execution_id=str(test_execution.id),
+                        harness_job_id=repository_job_id,
+                    )
+                    return self._gm.bad_request(
+                        f"Saved harness environment could not be restarted: {dispatch_error}"
+                    )
+                return Response(
+                    {
+                        "message": (
+                            "Saved harness environment restart and full simulation rerun queued"
+                        ),
+                        "test_execution_id": str(test_execution.id),
+                        "rerun_type": rerun_type,
+                        "total_processed": 0,
+                        "harness_job_id": repository_job_id,
+                        "harness_status": queued.get("status", {}),
+                        "successful_reruns": [],
+                        "failed_reruns": [],
+                        "success_count": 0,
+                        "failure_count": 0,
+                        "dispatch_error": None,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
                 )
 
             # Process each call execution

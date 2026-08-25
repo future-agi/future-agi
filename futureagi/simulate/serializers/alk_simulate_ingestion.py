@@ -139,6 +139,7 @@ class ALKSimulateStartTestExecutionRequestSerializer(serializers.Serializer):
         child=serializers.UUIDField(), required=False, allow_empty=True
     )
     simulator_agent_id = serializers.UUIDField(required=False, allow_null=True)
+    harness_job_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class ALKSimulateStartTestExecutionResultSerializer(serializers.Serializer):

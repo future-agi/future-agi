@@ -30,7 +30,7 @@ _CSAT_CHOICES = list(CSAT_SCORE_PROMPT["choices"])
 
 @temporal_activity(
     time_limit=600,
-    max_retries=0,
+    max_retries=2,
     queue="tasks_xl",
 )
 def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
@@ -48,14 +48,20 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     # evals permanently suppress CSAT whenever they win the race.
     existing_csat = (call.conversation_metrics_data or {}).get("csat_score")
     if existing_csat is not None:
+        _set_csat_state(call, "completed")
         return
 
-    csat_score = _score_from_recording(call)
-    if csat_score is None:
-        csat_score = _score_from_transcript(call)
-    if csat_score is None:
-        logger.info("alk_csat_unavailable", call_execution_id=str(call.id))
-        return
+    _set_csat_state(call, "running")
+    try:
+        csat_score = _score_from_recording(call)
+        if csat_score is None:
+            csat_score = _score_from_transcript(call)
+        if csat_score is None:
+            raise RuntimeError("CSAT scorer returned no result for available evidence")
+    except Exception as exc:
+        _set_csat_state(call, "failed", str(exc))
+        logger.exception("alk_csat_failed", call_execution_id=str(call.id))
+        raise
 
     metrics = dict(call.conversation_metrics_data or {})
     metrics["csat_score"] = csat_score
@@ -67,6 +73,7 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
         call.overall_score = csat_score
         update_fields.append("overall_score")
     call.save(update_fields=update_fields)
+    _set_csat_state(call, "completed")
     logger.info(
         "alk_csat_scored",
         call_execution_id=str(call.id),
@@ -130,6 +137,16 @@ def _run_agent_csat(output: str) -> float | None:
 
 
 def _build_transcript_text(call: CallExecution) -> str | None:
+    if call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
+        from simulate.models.chat_message import ChatMessageModel
+        from simulate.utils.chat_simulation import _build_chat_transcript
+
+        messages = list(
+            ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
+        )
+        transcript = _build_chat_transcript(messages)
+        return transcript if transcript and transcript.strip() else None
+
     from simulate.models.test_execution import CallTranscript
 
     segments = list(
@@ -148,3 +165,18 @@ def _build_transcript_text(call: CallExecution) -> str | None:
         if content:
             lines.append(f"{role}: {content}")
     return "\n".join(lines) if lines else None
+
+
+def _set_csat_state(
+    call: CallExecution,
+    status: str,
+    error: str = "",
+) -> None:
+    metadata = dict(call.call_metadata or {})
+    metadata["csat_status"] = status
+    if error:
+        metadata["csat_error"] = error[:2000]
+    else:
+        metadata.pop("csat_error", None)
+    call.call_metadata = metadata
+    call.save(update_fields=["call_metadata"])

@@ -342,6 +342,50 @@ class TestCallExecutionRerunView:
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
 
     @pytest.mark.requires_ee
+    @patch("simulate.services.harness_sandbox.HarnessSandboxClient.rerun")
+    def test_repository_harness_rerun_restarts_saved_environment_without_resetting_calls(
+        self,
+        rerun_saved_job,
+        auth_client,
+        test_execution,
+        call_execution,
+    ):
+        job_id = uuid.uuid4()
+        test_execution.execution_metadata = {"harness_job_id": str(job_id)}
+        test_execution.save(update_fields=["execution_metadata"])
+        rerun_saved_job.return_value = {
+            "status": {"stage": "queued", "detail": "waiting to restart"}
+        }
+        original_metadata = dict(call_execution.call_metadata)
+
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id),
+            {
+                "rerun_type": "call_and_eval",
+                "select_all": True,
+                "environment_values": {"LIVEKIT_URL": "wss://example.invalid"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert response.json()["harness_job_id"] == str(job_id)
+        rerun_saved_job.assert_called_once_with(
+            str(job_id),
+            {
+                "environment_values": {
+                    "LIVEKIT_URL": "wss://example.invalid"
+                },
+                "secret_refs": {},
+                "only": [],
+            },
+        )
+        call_execution.refresh_from_db()
+        assert call_execution.status == CallExecution.CallStatus.COMPLETED
+        assert call_execution.call_metadata == original_metadata
+
+    @pytest.mark.requires_ee
+    @patch("simulate.views.run_test._hosted_execution_eligible", return_value=False)
     @patch(
         "simulate.temporal.client.rerun_call_executions",
         side_effect=TimeoutError("temporal dispatch timed out"),
@@ -349,6 +393,7 @@ class TestCallExecutionRerunView:
     def test_rerun_call_and_eval_marks_failed_when_dispatch_fails(
         self,
         mock_rerun,
+        _native_execution,
         auth_client,
         test_execution,
         call_execution,
