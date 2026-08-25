@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -17,9 +17,19 @@ import {
   Link,
   Stack,
 } from "@mui/material";
-import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
+import {
+  useAnnotationQueueDetail,
+  useQueueAgreement,
+} from "src/api/annotation-queues/annotation-queues";
+import { useAuthContext } from "src/auth/hooks";
 import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
+import {
+  QUEUE_ROLES,
+  hasQueueRole,
+  shortId,
+} from "../constants";
+import { resolveQueueItemWorkspaceMode } from "../annotate/annotation-view-mode";
 
 function getAgreementColor(pct) {
   if (pct === null || pct === undefined) return "text.secondary";
@@ -35,18 +45,36 @@ function formatPct(val) {
 
 export default function QueueAgreementTab({ queueId }) {
   const navigate = useNavigate();
+  const { user } = useAuthContext();
+  const currentUserId = user?.id ? String(user.id) : null;
+  const { data: queue } = useAnnotationQueueDetail(queueId);
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
   const [anchorEl, setAnchorEl] = useState(null);
-  const [selectedLabel, setSelectedLabel] = useState(null);
+  const [selectedLabelId, setSelectedLabelId] = useState(null);
 
-  const handleOpenPopover = (event, label) => {
+  const myQueueMembership = useMemo(() => {
+    if (!queue || !user) return null;
+    if (Array.isArray(queue.viewer_roles) && queue.viewer_roles.length > 0) {
+      return { role: queue.viewer_role, roles: queue.viewer_roles };
+    }
+    const annotators = queue.annotators || [];
+    return annotators.find((a) => String(a.user_id) === currentUserId) || null;
+  }, [queue, user, currentUserId]);
+
+  const isManager = hasQueueRole(myQueueMembership, QUEUE_ROLES.MANAGER);
+  const canAnnotateQueue =
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.ANNOTATOR) || isManager;
+  const canViewSubmissions =
+    hasQueueRole(myQueueMembership, QUEUE_ROLES.REVIEWER) || isManager;
+
+  const handleOpenPopover = (event, labelId) => {
     setAnchorEl(event.currentTarget);
-    setSelectedLabel(label);
+    setSelectedLabelId(labelId);
   };
 
   const handleClosePopover = () => {
     setAnchorEl(null);
-    setSelectedLabel(null);
+    setSelectedLabelId(null);
   };
 
   const popoverOpen = Boolean(anchorEl);
@@ -65,6 +93,7 @@ export default function QueueAgreementTab({ queueId }) {
   const overallAgreement = overall_agreement;
   const labelEntries = Object.entries(labels || {});
   const pairs = annotator_pairs || [];
+  const selectedLabel = selectedLabelId ? labels?.[selectedLabelId] : null;
 
   return (
     <Box sx={{ p: 3 }}>
@@ -114,7 +143,7 @@ export default function QueueAgreementTab({ queueId }) {
                     <TableCell align="right">
                       <Typography
                         color={getAgreementColor(label.agreement_pct)}
-                        fontWeight={600}
+                        fontWeight="fontWeightSemiBold"
                       >
                         {formatPct(label.agreement_pct)}
                       </Typography>
@@ -130,27 +159,22 @@ export default function QueueAgreementTab({ queueId }) {
                           id={`disagreement-trigger-${id}`}
                           component="button"
                           variant="body2"
-                          onClick={(e) => handleOpenPopover(e, label)}
+                          onClick={(e) => handleOpenPopover(e, id)}
                           aria-haspopup="true"
                           aria-expanded={
-                            popoverOpen && selectedLabel === label
+                            popoverOpen && selectedLabelId === id
                               ? "true"
                               : "false"
                           }
                           aria-controls={
-                            popoverOpen && selectedLabel === label
+                            popoverOpen && selectedLabelId === id
                               ? "disagreement-popover"
                               : undefined
                           }
                           sx={{
-                            fontWeight: 600,
+                            fontWeight: "fontWeightSemiBold",
                             color: "primary.main",
                             textDecoration: "underline",
-                            cursor: "pointer",
-                            border: "none",
-                            background: "none",
-                            padding: 0,
-                            fontFamily: "inherit",
                             "&:hover": {
                               color: "primary.dark",
                             },
@@ -194,7 +218,7 @@ export default function QueueAgreementTab({ queueId }) {
                     <TableCell align="right">
                       <Typography
                         color={getAgreementColor(pair.agreement_pct)}
-                        fontWeight={600}
+                        fontWeight="fontWeightSemiBold"
                       >
                         {formatPct(pair.agreement_pct)}
                       </Typography>
@@ -212,6 +236,9 @@ export default function QueueAgreementTab({ queueId }) {
 
       <Popover
         id="disagreement-popover"
+        aria-labelledby={
+          selectedLabelId ? `disagreement-trigger-${selectedLabelId}` : undefined
+        }
         open={popoverOpen}
         anchorEl={anchorEl}
         onClose={handleClosePopover}
@@ -236,7 +263,10 @@ export default function QueueAgreementTab({ queueId }) {
       >
         {selectedLabel && (
           <>
-            <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
+            <Typography
+              variant="subtitle2"
+              sx={{ mb: 1.5, fontWeight: "fontWeightSemiBold" }}
+            >
               Disagreed Items: {selectedLabel.label_name}
             </Typography>
             <Stack spacing={1} sx={{ overflowY: "auto", flexGrow: 1 }}>
@@ -246,8 +276,12 @@ export default function QueueAgreementTab({ queueId }) {
                   component="button"
                   variant="body2"
                   onClick={() => {
+                    const mode = resolveQueueItemWorkspaceMode({
+                      canViewSubmissions,
+                      canAnnotate: canAnnotateQueue,
+                    });
                     navigate(
-                      `${paths.dashboard.annotations.annotate(queueId)}?itemId=${itemId}&mode=review`
+                      `${paths.dashboard.annotations.annotate(queueId)}?itemId=${itemId}&mode=${mode}`,
                     );
                     handleClosePopover();
                   }}
@@ -262,16 +296,13 @@ export default function QueueAgreementTab({ queueId }) {
                     width: "100%",
                     textDecoration: "none",
                     color: "primary.main",
-                    backgroundColor: "transparent",
-                    border: "none",
-                    cursor: "pointer",
                     "&:hover": {
                       backgroundColor: "action.hover",
                       textDecoration: "underline",
                     },
                   }}
                 >
-                  <span>Item #{itemId}</span>
+                  <span>Item #{shortId(itemId)}</span>
                   <Iconify icon="eva:arrow-ios-forward-fill" width={16} />
                 </Link>
               ))}
