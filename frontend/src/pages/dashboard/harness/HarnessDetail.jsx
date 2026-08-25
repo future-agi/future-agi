@@ -700,20 +700,35 @@ export default function HarnessDetail() {
                 onChange={(_, value) => setDetailTab(value)}
                 variant="scrollable"
                 scrollButtons={false}
-                sx={{
+                sx={(theme) => ({
                   minHeight: 38,
                   // The theme gives every tab a 40px right margin at sm+
                   // (theme/overrides/components/tabs.js), which spreads four short labels
                   // across the whole column. Override that rather than adding a gap on top.
+                  // Unselected labels sit on text.subtitle rather than text.secondary. In
+                  // light mode that is black[600] against black[800] — noticeably softer —
+                  // while in dark mode both resolve to the same value, so nothing moves.
+                  "& .MuiTab-root:not(.Mui-selected)": { color: "text.subtitle" },
+                  // The pass green is #16A34A in light and #4ADE80 in dark, so the same
+                  // opacity reads heavy on white and washed out on black. Hold the ticks
+                  // back in dark, and let them keep their weight in light.
+                  "& .MuiTab-iconWrapper": {
+                    opacity: theme.palette.mode === "light" ? 0.9 : 0.5,
+                  },
+                  "& .Mui-selected .MuiTab-iconWrapper": { opacity: 1 },
                   "& .MuiTab-root": {
                     minHeight: 38,
                     minWidth: "auto",
-                    // The indicator spans the tab's own width, so with no horizontal padding
-                    // it stopped dead at the label. Padding gives it something to span.
-                    px: 1.25,
-                    "&:not(:last-of-type)": { mr: 1 },
+                    // Tabs sit flush against each other and space themselves with padding,
+                    // so the indicator spans a whole tab and the row reads as one rail. The
+                    // theme's 40px right margin would break it back into separate boxes.
+                    // The tick sits to the left of the label, so equal padding leaves the
+                    // label sitting right of centre. A little extra on the right settles it.
+                    pl: 1.5,
+                    pr: 2.25,
+                    "&:not(:last-of-type)": { mr: 0 },
                   },
-                }}
+                })}
               >
                 {DETAIL_TABS.map((tab) => (
                   <Tab
@@ -723,9 +738,11 @@ export default function HarnessDetail() {
                     icon={
                       outputCounts[tab.value] ? (
                         <Iconify
-                          icon="solar:check-circle-bold"
+                          // Outline, not filled: a solid glyph carries as much ink as the
+                          // label beside it, which is too much for a secondary marker.
+                          icon="solar:check-circle-linear"
                           color="accent.pass"
-                          width={15}
+                          width={14}
                         />
                       ) : undefined
                     }
