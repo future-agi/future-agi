@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { canonicalEntries } from "src/utils/utils";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 
 const WrapperBox = styled(Box)(({ theme }) => ({
   display: "flex",
@@ -62,6 +63,12 @@ const EvalDrawerSection = () => {
       testDetailDrawerOpenId: state.testDetailDrawerOpen?.id,
     }),
   );
+
+  const composite = evalView?.metricDetail?.composite;
+  const compositeChildren = Array.isArray(composite?.children)
+    ? composite.children
+    : [];
+  const isCompositeEval = compositeChildren.length > 0;
 
   const isErrorLocalizerEnabled = evalView?.metricDetail?.errorLocalizer;
 
@@ -224,14 +231,16 @@ const EvalDrawerSection = () => {
               borderRadius: "4px",
             }}
           >
-            {reason?.trim() ? (
+            {isCompositeEval ? (
+              <CompositeResultView compositeResult={composite} />
+            ) : reason?.trim() ? (
               <CellMarkdown spacing={0} text={reason} />
             ) : (
               "Unable to fetch Explanation"
             )}
           </Box>
         </Box>
-        <ShowComponent condition={!isErrorLocalizerEnabled}>
+        <ShowComponent condition={!isCompositeEval && !isErrorLocalizerEnabled}>
           <WrapperBox>
             <Typography typography="s2" sx={{ textAlign: "center" }}>
               You have not enabled error localizer for this evaluation. Please
@@ -240,7 +249,7 @@ const EvalDrawerSection = () => {
             </Typography>
           </WrapperBox>
         </ShowComponent>
-        <ShowComponent condition={isErrorLocalizerEnabled}>
+        <ShowComponent condition={!isCompositeEval && isErrorLocalizerEnabled}>
           <ShowComponent condition={isErrorLocalizerTaskRunning}>
             <WrapperBox>
               <MemoizedBarsIcon />
