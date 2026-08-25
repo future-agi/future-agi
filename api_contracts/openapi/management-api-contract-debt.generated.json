@@ -1,8 +1,8 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 988,
-    "operations": 1334,
+    "paths": 921,
+    "operations": 1212,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
@@ -128,17 +128,8 @@
       "broad_error_response_schemas": 0
     },
     "simulate": {
-      "paths": 116,
-      "operations": 137,
-      "mutation_endpoints_without_body_schema": 0,
-      "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 0,
-      "operations_without_error_response_schema": 0,
-      "broad_error_response_schemas": 0
-    },
-    "telemetry": {
-      "paths": 2,
-      "operations": 2,
+      "paths": 122,
+      "operations": 143,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
@@ -154,18 +145,9 @@
       "operations_without_error_response_schema": 0,
       "broad_error_response_schemas": 0
     },
-    "usage": {
-      "paths": 64,
-      "operations": 119,
-      "mutation_endpoints_without_body_schema": 0,
-      "operations_without_response_schema": 0,
-      "broad_success_response_schemas": 0,
-      "operations_without_error_response_schema": 0,
-      "broad_error_response_schemas": 0
-    },
     "v1": {
-      "paths": 8,
-      "operations": 8,
+      "paths": 1,
+      "operations": 1,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,

@@ -8,8 +8,15 @@ const cancelPath = (id) =>
 const preflightPath = () => apiPath("/simulate/api/harness-jobs/preflight/");
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
-export const createHarnessJob = async (payload) =>
-  (await axios.post(jobsPath(), payload)).data;
+export const createHarnessJob = async (
+  payload,
+  idempotencyKey = crypto.randomUUID(),
+) =>
+  (
+    await axios.post(jobsPath(), payload, {
+      headers: { "Idempotency-Key": idempotencyKey },
+    })
+  ).data;
 export const preflightHarnessJob = async (payload) =>
   (await axios.post(preflightPath(), payload)).data;
 export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;

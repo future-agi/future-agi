@@ -20468,6 +20468,9 @@ export const ModelHubExperimentsUpdateResponse = zod.object({
 
 
 export const ModelHubExperimentsDataListQueryParams = zod.object({
+  "created_at": zod.string().optional(),
+  "status": zod.string().optional(),
+  "dataset_id": zod.string().optional(),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "search": zod.string().optional().describe('A search term.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -20606,6 +20609,9 @@ export const ModelHubExperimentsV2CreateResponse = zod.object({
  * V2 experiment list with filtering, search, and pagination.
  */
 export const ModelHubExperimentsV2ListListQueryParams = zod.object({
+  "created_at": zod.string().optional(),
+  "status": zod.string().optional(),
+  "dataset_id": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -22897,6 +22903,8 @@ export const ModelHubMetricsByColumnListResponse = zod.object({
 
 
 export const ModelHubOptimisationListQueryParams = zod.object({
+  "optimize_type": zod.string().optional(),
+  "status": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24105,6 +24113,7 @@ export const ModelHubPromptBaseTemplatesDeleteParams = zod.object({
 
 
 export const ModelHubPromptExecutionsListQueryParams = zod.object({
+  "name": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24298,6 +24307,9 @@ export const ModelHubPromptFoldersDeleteParams = zod.object({
 
 
 export const ModelHubPromptHistoryExecutionsListQueryParams = zod.object({
+  "template_name": zod.string().optional(),
+  "template_version": zod.string().optional(),
+  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24360,6 +24372,9 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = zod.obje
 })
 
 export const ModelHubPromptHistoryExecutionsGetExecutionDetailsQueryParams = zod.object({
+  "template_name": zod.string().optional(),
+  "template_version": zod.string().optional(),
+  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24740,6 +24755,9 @@ export const ModelHubPromptLabelsAssignLabelByIdBody = zod.object({
 
 
 export const ModelHubPromptTemplatesListQueryParams = zod.object({
+  "name": zod.string().optional(),
+  "version": zod.string().optional(),
+  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24935,6 +24953,9 @@ If no version is specified, returns the default version (is_default=True).
 If a version is specified, returns that specific version.
  */
 export const ModelHubPromptTemplatesGetTemplateByNameQueryParams = zod.object({
+  "name": zod.string().optional(),
+  "version": zod.string().optional(),
+  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -29155,7 +29176,9 @@ export const SimulateApiAlkSimulateCallExecutionsRecordingUploadParams = zod.obj
 
 export const SimulateApiAlkSimulateCallExecutionsRecordingUploadBody = zod.object({
   "file": zod.instanceof(File),
-  "filename": zod.string().optional()
+  "filename": zod.string().optional(),
+  "sha256": zod.string().optional(),
+  "kind": zod.string().optional()
 })
 
 export const simulateApiAlkSimulateCallExecutionsRecordingUploadResponseStatusDefault = true;
@@ -29187,6 +29210,12 @@ export const simulateApiAlkSimulateCallExecutionsResultBodyDurationSecondsMin = 
 
 export const simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax = 10000;
 
+
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
 
@@ -29214,6 +29243,8 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
   "ended_reason": zod.string().max(simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax).optional(),
   "error_message": zod.string().optional(),
   "call_summary": zod.string().optional(),
+  "result_digest": zod.string().min(1).regex(simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp).optional(),
+  "artifact_manifest_digest": zod.string().min(1).regex(simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp).optional(),
   "transcript": zod.array(zod.object({
   "speaker_role": zod.enum(['user', 'assistant', 'system', 'tool_calls', 'tool_call_result', 'unknown']),
   "content": zod.string(),
@@ -29538,53 +29569,271 @@ export const SimulateApiCallExecutionsListResponse = zod.array(SimulateApiCallEx
 
 
 /**
- * Control-plane facade over the configured ALK sandbox provider.
+ * Tenant-bound control plane for hosted ALK harness jobs.
  */
-export const simulateApiHarnessJobsCreateBodySourcePathMax = 4096;
+export const simulateApiHarnessJobsCreateBodySchemaVersionDefault = `futureagi.harness-job.v1`;
 
+export const simulateApiHarnessJobsCreateBodySourceRepositoryRegExp = new RegExp('^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$');
+
+
+export const simulateApiHarnessJobsCreateBodySourceRefRegExp = new RegExp('^[A-Za-z0-9._\/-]+$');
+
+
+export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp('^[0-9a-fA-F]{40}$');
+export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
+
+
+export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodyAgentConfigDefault = {  };
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {  };
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 100;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 10;
 
-export const simulateApiHarnessJobsCreateBodyAgentNameMax = 255;
+export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
+export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
 
-export const simulateApiHarnessJobsCreateBodyConnectorDefault = `auto`;
-export const simulateApiHarnessJobsCreateBodyConnectorMax = 128;
+export const simulateApiHarnessJobsCreateBodyRuntimeMemoryMbDefault = 8192;
+export const simulateApiHarnessJobsCreateBodyRuntimeMemoryMbMin = 1024;
 
-export const simulateApiHarnessJobsCreateBodyConnectorConfigDefault = {  };
-export const simulateApiHarnessJobsCreateBodySecretRefsManagerMax = 64;
+export const simulateApiHarnessJobsCreateBodyRuntimeParallelismDefault = 1;
+export const simulateApiHarnessJobsCreateBodyRuntimeParallelismMax = 8;
 
-export const simulateApiHarnessJobsCreateBodySecretRefsKeyMax = 255;
+export const simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightDefault = 1;
+export const simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightMax = 10;
 
-export const simulateApiHarnessJobsCreateBodySecretRefsVersionMax = 255;
+export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsDefault = 3600;
+export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMin = 60;
+export const simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMax = 86400;
 
-export const simulateApiHarnessJobsCreateBodySecretRefsPurposeMax = 128;
+export const simulateApiHarnessJobsCreateBodyRuntimeNetworkPolicyDefault = `live`;
+export const simulateApiHarnessJobsCreateBodyRuntimeDefault = { isolation: "dedicated_vm", cpu_units: 4, memory_mb: 8192, parallelism: 1, concurrency_weight: 1, max_duration_seconds: 3600, network_policy: "live" };
+export const simulateApiHarnessJobsCreateBodySecurityUntrustedSourceDefault = true;
+export const simulateApiHarnessJobsCreateBodySecurityReadOnlySourceDefault = true;
+export const simulateApiHarnessJobsCreateBodySecurityAllowPrivilegedDefault = false;
+export const simulateApiHarnessJobsCreateBodySecurityAllowHostRuntimeControlDefault = false;
 
-export const simulateApiHarnessJobsCreateBodySecretRefsDefault = {  };
+export const simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsItemRegExp = new RegExp('^(?:[A-Za-z0-9-]+\\.)\*[A-Za-z0-9-]+$');
+export const simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsDefault = [];
+export const simulateApiHarnessJobsCreateBodySecurityDefault = { untrusted_source: true, read_only_source: true, allow_privileged: false, allow_host_runtime_control: false, allowed_egress_domains: [] };
+export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsDefault = 2;
+export const simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsMax = 5;
+
+export const simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsDefault = 1;
+export const simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMax = 60;
+
+export const simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsDefault = 15;
+export const simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMax = 300;
+
+export const simulateApiHarnessJobsCreateBodyRetryDefault = { max_infrastructure_attempts: 2, initial_backoff_seconds: 1, max_backoff_seconds: 15, retryable_domains: ["infrastructure", "connectivity"] };
+export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysDefault = 30;
+export const simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysMax = 3650;
+
+export const simulateApiHarnessJobsCreateBodyArtifactsAllowBundleDownloadDefault = false;
+export const simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesDefault = 1073741824;
+export const simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesMin = 0;
+
+export const simulateApiHarnessJobsCreateBodyPlatformRunIdMax = 255;
+
 export const simulateApiHarnessJobsCreateBodyMetadataDefault = {  };
 
 export const SimulateApiHarnessJobsCreateBody = zod.object({
-  "source_path": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySourcePathMax),
+  "schema_version": zod.enum(['futureagi.harness-job.v1']).default(simulateApiHarnessJobsCreateBodySchemaVersionDefault),
+  "run_id": zod.string().uuid().optional(),
+  "source": zod.object({
+  "kind": zod.enum(['github', 'archive', 'remote']),
+  "repository": zod.string().min(1).regex(simulateApiHarnessJobsCreateBodySourceRepositoryRegExp).optional(),
+  "ref": zod.string().min(1).regex(simulateApiHarnessJobsCreateBodySourceRefRegExp).optional(),
+  "commit_sha": zod.string().min(1).regex(simulateApiHarnessJobsCreateBodySourceCommitShaRegExp).optional(),
+  "installation_id": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySourceInstallationIdMax).optional(),
+  "archive_artifact_id": zod.string().uuid().optional(),
+  "endpoint": zod.string().url().min(1).optional(),
+  "visibility": zod.enum(['public', 'private']).default(simulateApiHarnessJobsCreateBodySourceVisibilityDefault)
+}),
+  "agent": zod.object({
+  "connector": zod.enum(['livekit', 'vapi', 'retell', 'auto']),
+  "config": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
+  "secret_refs": zod.record(zod.string(), zod.object({
+  "manager": zod.enum(['platform-vault']),
+  "key": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax),
+  "version": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax).optional(),
+  "purpose": zod.enum(['target_provider', 'source_checkout'])
+})).default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault)
+}),
   "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyScenarioCountMax).default(simulateApiHarnessJobsCreateBodyScenarioCountDefault),
   "seed": zod.number().optional(),
-  "agent_name": zod.string().max(simulateApiHarnessJobsCreateBodyAgentNameMax).optional(),
-  "connector": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyConnectorMax).default(simulateApiHarnessJobsCreateBodyConnectorDefault),
-  "connector_config": zod.object({
-
-}).passthrough().default(simulateApiHarnessJobsCreateBodyConnectorConfigDefault),
-  "secret_refs": zod.record(zod.string(), zod.object({
-  "manager": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsManagerMax),
-  "key": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsKeyMax),
-  "version": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsVersionMax).optional(),
-  "purpose": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsPurposeMax)
-})).default(simulateApiHarnessJobsCreateBodySecretRefsDefault),
-  "metadata": zod.object({
-
-}).passthrough().default(simulateApiHarnessJobsCreateBodyMetadataDefault)
+  "runtime": zod.object({
+  "isolation": zod.enum(['dedicated_vm']).default(simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault),
+  "cpu_units": zod.number().min(1).default(simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault),
+  "memory_mb": zod.number().min(simulateApiHarnessJobsCreateBodyRuntimeMemoryMbMin).default(simulateApiHarnessJobsCreateBodyRuntimeMemoryMbDefault),
+  "parallelism": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyRuntimeParallelismMax).default(simulateApiHarnessJobsCreateBodyRuntimeParallelismDefault),
+  "concurrency_weight": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightMax).default(simulateApiHarnessJobsCreateBodyRuntimeConcurrencyWeightDefault),
+  "max_duration_seconds": zod.number().min(simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMin).max(simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsMax).default(simulateApiHarnessJobsCreateBodyRuntimeMaxDurationSecondsDefault),
+  "network_policy": zod.enum(['live']).default(simulateApiHarnessJobsCreateBodyRuntimeNetworkPolicyDefault)
+}).default(simulateApiHarnessJobsCreateBodyRuntimeDefault),
+  "security": zod.object({
+  "untrusted_source": zod.boolean().default(simulateApiHarnessJobsCreateBodySecurityUntrustedSourceDefault),
+  "read_only_source": zod.boolean().default(simulateApiHarnessJobsCreateBodySecurityReadOnlySourceDefault),
+  "allow_privileged": zod.boolean().default(simulateApiHarnessJobsCreateBodySecurityAllowPrivilegedDefault),
+  "allow_host_runtime_control": zod.boolean().default(simulateApiHarnessJobsCreateBodySecurityAllowHostRuntimeControlDefault),
+  "allowed_egress_domains": zod.array(zod.string().min(1).regex(simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsItemRegExp)).default(simulateApiHarnessJobsCreateBodySecurityAllowedEgressDomainsDefault)
+}).default(simulateApiHarnessJobsCreateBodySecurityDefault),
+  "retry": zod.object({
+  "max_infrastructure_attempts": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsMax).default(simulateApiHarnessJobsCreateBodyRetryMaxInfrastructureAttemptsDefault),
+  "initial_backoff_seconds": zod.number().min(simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMin).max(simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsMax).default(simulateApiHarnessJobsCreateBodyRetryInitialBackoffSecondsDefault),
+  "max_backoff_seconds": zod.number().min(simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMin).max(simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsMax).default(simulateApiHarnessJobsCreateBodyRetryMaxBackoffSecondsDefault),
+  "retryable_domains": zod.array(zod.enum(['infrastructure', 'connectivity', 'platform_sync'])).default([`infrastructure`, `connectivity`])
+}).default(simulateApiHarnessJobsCreateBodyRetryDefault),
+  "artifacts": zod.object({
+  "level": zod.enum(['metadata-only', 'traces', 'traces-and-recordings', 'full']),
+  "retention_days": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysMax).default(simulateApiHarnessJobsCreateBodyArtifactsRetentionDaysDefault),
+  "allow_bundle_download": zod.boolean().default(simulateApiHarnessJobsCreateBodyArtifactsAllowBundleDownloadDefault),
+  "max_artifact_bytes": zod.number().min(simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesMin).default(simulateApiHarnessJobsCreateBodyArtifactsMaxArtifactBytesDefault)
+}),
+  "platform_run_id": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyPlatformRunIdMax).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsCreateBodyMetadataDefault)
 })
 
 
 /**
- * Control-plane facade over the configured ALK sandbox provider.
+ * Tenant-bound control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsPreflightBodySchemaVersionDefault = `futureagi.harness-job.v1`;
+
+export const simulateApiHarnessJobsPreflightBodySourceRepositoryRegExp = new RegExp('^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$');
+
+
+export const simulateApiHarnessJobsPreflightBodySourceRefRegExp = new RegExp('^[A-Za-z0-9._\/-]+$');
+
+
+export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp = new RegExp('^[0-9a-fA-F]{40}$');
+export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
+
+
+export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodyAgentConfigDefault = {  };
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {  };
+export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 10;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
+export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbDefault = 8192;
+export const simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbMin = 1024;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeParallelismDefault = 1;
+export const simulateApiHarnessJobsPreflightBodyRuntimeParallelismMax = 8;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightDefault = 1;
+export const simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightMax = 10;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsDefault = 3600;
+export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMin = 60;
+export const simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMax = 86400;
+
+export const simulateApiHarnessJobsPreflightBodyRuntimeNetworkPolicyDefault = `live`;
+export const simulateApiHarnessJobsPreflightBodyRuntimeDefault = { isolation: "dedicated_vm", cpu_units: 4, memory_mb: 8192, parallelism: 1, concurrency_weight: 1, max_duration_seconds: 3600, network_policy: "live" };
+export const simulateApiHarnessJobsPreflightBodySecurityUntrustedSourceDefault = true;
+export const simulateApiHarnessJobsPreflightBodySecurityReadOnlySourceDefault = true;
+export const simulateApiHarnessJobsPreflightBodySecurityAllowPrivilegedDefault = false;
+export const simulateApiHarnessJobsPreflightBodySecurityAllowHostRuntimeControlDefault = false;
+
+export const simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsItemRegExp = new RegExp('^(?:[A-Za-z0-9-]+\\.)\*[A-Za-z0-9-]+$');
+export const simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsDefault = [];
+export const simulateApiHarnessJobsPreflightBodySecurityDefault = { untrusted_source: true, read_only_source: true, allow_privileged: false, allow_host_runtime_control: false, allowed_egress_domains: [] };
+export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsDefault = 2;
+export const simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsMax = 5;
+
+export const simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsDefault = 1;
+export const simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMax = 60;
+
+export const simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsDefault = 15;
+export const simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMin = 0;
+export const simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMax = 300;
+
+export const simulateApiHarnessJobsPreflightBodyRetryDefault = { max_infrastructure_attempts: 2, initial_backoff_seconds: 1, max_backoff_seconds: 15, retryable_domains: ["infrastructure", "connectivity"] };
+export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysDefault = 30;
+export const simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysMax = 3650;
+
+export const simulateApiHarnessJobsPreflightBodyArtifactsAllowBundleDownloadDefault = false;
+export const simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesDefault = 1073741824;
+export const simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesMin = 0;
+
+export const simulateApiHarnessJobsPreflightBodyPlatformRunIdMax = 255;
+
+export const simulateApiHarnessJobsPreflightBodyMetadataDefault = {  };
+
+export const SimulateApiHarnessJobsPreflightBody = zod.object({
+  "schema_version": zod.enum(['futureagi.harness-job.v1']).default(simulateApiHarnessJobsPreflightBodySchemaVersionDefault),
+  "run_id": zod.string().uuid().optional(),
+  "source": zod.object({
+  "kind": zod.enum(['github', 'archive', 'remote']),
+  "repository": zod.string().min(1).regex(simulateApiHarnessJobsPreflightBodySourceRepositoryRegExp).optional(),
+  "ref": zod.string().min(1).regex(simulateApiHarnessJobsPreflightBodySourceRefRegExp).optional(),
+  "commit_sha": zod.string().min(1).regex(simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp).optional(),
+  "installation_id": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodySourceInstallationIdMax).optional(),
+  "archive_artifact_id": zod.string().uuid().optional(),
+  "endpoint": zod.string().url().min(1).optional(),
+  "visibility": zod.enum(['public', 'private']).default(simulateApiHarnessJobsPreflightBodySourceVisibilityDefault)
+}),
+  "agent": zod.object({
+  "connector": zod.enum(['livekit', 'vapi', 'retell', 'auto']),
+  "config": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
+  "secret_refs": zod.record(zod.string(), zod.object({
+  "manager": zod.enum(['platform-vault']),
+  "key": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax),
+  "version": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax).optional(),
+  "purpose": zod.enum(['target_provider', 'source_checkout'])
+})).default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault)
+}),
+  "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsPreflightBodyScenarioCountMax).default(simulateApiHarnessJobsPreflightBodyScenarioCountDefault),
+  "seed": zod.number().optional(),
+  "runtime": zod.object({
+  "isolation": zod.enum(['dedicated_vm']).default(simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault),
+  "cpu_units": zod.number().min(1).default(simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault),
+  "memory_mb": zod.number().min(simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbMin).default(simulateApiHarnessJobsPreflightBodyRuntimeMemoryMbDefault),
+  "parallelism": zod.number().min(1).max(simulateApiHarnessJobsPreflightBodyRuntimeParallelismMax).default(simulateApiHarnessJobsPreflightBodyRuntimeParallelismDefault),
+  "concurrency_weight": zod.number().min(1).max(simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightMax).default(simulateApiHarnessJobsPreflightBodyRuntimeConcurrencyWeightDefault),
+  "max_duration_seconds": zod.number().min(simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMin).max(simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsMax).default(simulateApiHarnessJobsPreflightBodyRuntimeMaxDurationSecondsDefault),
+  "network_policy": zod.enum(['live']).default(simulateApiHarnessJobsPreflightBodyRuntimeNetworkPolicyDefault)
+}).default(simulateApiHarnessJobsPreflightBodyRuntimeDefault),
+  "security": zod.object({
+  "untrusted_source": zod.boolean().default(simulateApiHarnessJobsPreflightBodySecurityUntrustedSourceDefault),
+  "read_only_source": zod.boolean().default(simulateApiHarnessJobsPreflightBodySecurityReadOnlySourceDefault),
+  "allow_privileged": zod.boolean().default(simulateApiHarnessJobsPreflightBodySecurityAllowPrivilegedDefault),
+  "allow_host_runtime_control": zod.boolean().default(simulateApiHarnessJobsPreflightBodySecurityAllowHostRuntimeControlDefault),
+  "allowed_egress_domains": zod.array(zod.string().min(1).regex(simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsItemRegExp)).default(simulateApiHarnessJobsPreflightBodySecurityAllowedEgressDomainsDefault)
+}).default(simulateApiHarnessJobsPreflightBodySecurityDefault),
+  "retry": zod.object({
+  "max_infrastructure_attempts": zod.number().min(1).max(simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsMax).default(simulateApiHarnessJobsPreflightBodyRetryMaxInfrastructureAttemptsDefault),
+  "initial_backoff_seconds": zod.number().min(simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMin).max(simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsMax).default(simulateApiHarnessJobsPreflightBodyRetryInitialBackoffSecondsDefault),
+  "max_backoff_seconds": zod.number().min(simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMin).max(simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsMax).default(simulateApiHarnessJobsPreflightBodyRetryMaxBackoffSecondsDefault),
+  "retryable_domains": zod.array(zod.enum(['infrastructure', 'connectivity', 'platform_sync'])).default([`infrastructure`, `connectivity`])
+}).default(simulateApiHarnessJobsPreflightBodyRetryDefault),
+  "artifacts": zod.object({
+  "level": zod.enum(['metadata-only', 'traces', 'traces-and-recordings', 'full']),
+  "retention_days": zod.number().min(1).max(simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysMax).default(simulateApiHarnessJobsPreflightBodyArtifactsRetentionDaysDefault),
+  "allow_bundle_download": zod.boolean().default(simulateApiHarnessJobsPreflightBodyArtifactsAllowBundleDownloadDefault),
+  "max_artifact_bytes": zod.number().min(simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesMin).default(simulateApiHarnessJobsPreflightBodyArtifactsMaxArtifactBytesDefault)
+}),
+  "platform_run_id": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyPlatformRunIdMax).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsPreflightBodyMetadataDefault)
+})
+
+
+/**
+ * Tenant-bound control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   "id": zod.string()
@@ -29592,18 +29841,226 @@ export const SimulateApiHarnessJobsReadParams = zod.object({
 
 
 /**
- * Control-plane facade over the configured ALK sandbox provider.
+ * Tenant-bound control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsCancelParams = zod.object({
   "id": zod.string()
 })
 
-export const simulateApiHarnessJobsCancelBodyReasonMax = 500;
-
-
+export const simulateApiHarnessJobsCancelBodyReasonDefault = `user_canceled`;
 
 export const SimulateApiHarnessJobsCancelBody = zod.object({
-  "reason": zod.string().max(simulateApiHarnessJobsCancelBodyReasonMax).optional().describe('Optional operator-provided reason for the action.')
+  "reason": zod.enum(['user_canceled', 'ttl_exceeded']).default(simulateApiHarnessJobsCancelBodyReasonDefault)
+})
+
+
+export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams = zod.object({
+  "id": zod.string()
+})
+
+
+
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemArtifactIdRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemKindMax = 32;
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemSizeMin = 0;
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemScenarioKeyMax = 255;
+
+
+
+export const simulateApiHarnessAttemptsArtifactsArtifactManifestBodyDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+
+
+export const SimulateApiHarnessAttemptsArtifactsArtifactManifestBody = zod.object({
+  "schema_version": zod.enum(['futureagi.harness-manifest.v1']),
+  "job_id": zod.string().uuid(),
+  "attempt_id": zod.string().uuid(),
+  "attempt_number": zod.number().min(1),
+  "entries": zod.array(zod.object({
+  "artifact_id": zod.string().min(1).regex(simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemArtifactIdRegExp),
+  "kind": zod.string().min(1).max(simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemKindMax),
+  "size": zod.number().min(simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemSizeMin),
+  "scenario_key": zod.string().min(1).max(simulateApiHarnessAttemptsArtifactsArtifactManifestBodyEntriesItemScenarioKeyMax).optional()
+})),
+  "complete": zod.boolean(),
+  "digest": zod.string().min(1).regex(simulateApiHarnessAttemptsArtifactsArtifactManifestBodyDigestRegExp)
+})
+
+export const SimulateApiHarnessAttemptsArtifactsArtifactManifestResponse = zod.object({
+  "accepted": zod.boolean(),
+  "duplicate": zod.boolean()
+})
+
+
+export const SimulateApiHarnessAttemptsArtifactUploadParams = zod.object({
+  "id": zod.string(),
+  "artifact_digest": zod.string()
+})
+
+export const SimulateApiHarnessAttemptsArtifactUploadBody = zod.instanceof(File)
+
+
+
+
+export const SimulateApiHarnessAttemptsArtifactUploadResponse = zod.object({
+  "artifact_id": zod.string().min(1),
+  "duplicate": zod.boolean()
+})
+
+
+export const SimulateApiHarnessAttemptsEventsParams = zod.object({
+  "id": zod.string()
+})
+
+
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemEventIdRegExp = new RegExp('^[A-Za-z0-9_-]{1,64}$');
+
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemStageMax = 64;
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemTypeMax = 64;
+
+
+
+export const simulateApiHarnessAttemptsEventsBodyEventsItemDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+
+
+export const SimulateApiHarnessAttemptsEventsBody = zod.object({
+  "schema_version": zod.enum(['futureagi.harness-event.v1']),
+  "events": zod.array(zod.object({
+  "event_id": zod.string().min(1).regex(simulateApiHarnessAttemptsEventsBodyEventsItemEventIdRegExp),
+  "job_id": zod.string().uuid(),
+  "attempt_id": zod.string().uuid(),
+  "attempt_number": zod.number().min(1),
+  "sequence": zod.number().min(1),
+  "emitted_at": zod.string().datetime({"offset":true}),
+  "stage": zod.string().min(1).max(simulateApiHarnessAttemptsEventsBodyEventsItemStageMax),
+  "type": zod.string().min(1).max(simulateApiHarnessAttemptsEventsBodyEventsItemTypeMax),
+  "payload": zod.object({
+
+}).passthrough(),
+  "digest": zod.string().min(1).regex(simulateApiHarnessAttemptsEventsBodyEventsItemDigestRegExp)
+}))
+})
+
+
+
+
+
+
+export const SimulateApiHarnessAttemptsEventsResponse = zod.object({
+  "acked_through_sequence": zod.number(),
+  "rejected": zod.array(zod.object({
+  "event_id": zod.string().min(1),
+  "sequence": zod.number(),
+  "code": zod.string().min(1),
+  "message": zod.string().min(1)
+}))
+})
+
+
+export const SimulateApiHarnessAttemptsResultsParams = zod.object({
+  "id": zod.string()
+})
+
+
+export const simulateApiHarnessAttemptsResultsBodyScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodyScenarioAttemptMax = 2;
+
+export const simulateApiHarnessAttemptsResultsBodyWorldIndexMin = 0;
+export const simulateApiHarnessAttemptsResultsBodyWorldIndexMax = 7;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
+
+export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
+
+
+
+export const simulateApiHarnessAttemptsResultsBodyCallTranscriptArtifactRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+
+
+export const simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsItemRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+export const simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsDefault = [];
+export const simulateApiHarnessAttemptsResultsBodyFailureStageMax = 64;
+
+export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
+
+export const simulateApiHarnessAttemptsResultsBodyFailureMessageMax = 2000;
+
+
+
+export const simulateApiHarnessAttemptsResultsBodyDigestRegExp = new RegExp('^sha256:[0-9a-f]{64}$');
+
+
+export const SimulateApiHarnessAttemptsResultsBody = zod.object({
+  "schema_version": zod.enum(['futureagi.harness-result.v1']),
+  "job_id": zod.string().uuid(),
+  "attempt_id": zod.string().uuid(),
+  "attempt_number": zod.number().min(1),
+  "scenario_key": zod.string().min(1).max(simulateApiHarnessAttemptsResultsBodyScenarioKeyMax),
+  "scenario_id": zod.string().uuid(),
+  "scenario_attempt": zod.number().min(1).max(simulateApiHarnessAttemptsResultsBodyScenarioAttemptMax),
+  "world_index": zod.number().min(simulateApiHarnessAttemptsResultsBodyWorldIndexMin).max(simulateApiHarnessAttemptsResultsBodyWorldIndexMax),
+  "status": zod.enum(['passed', 'failed', 'errored', 'skipped']),
+  "sub_goals": zod.array(zod.object({
+  "name": zod.string().min(1).max(simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax),
+  "held": zod.boolean(),
+  "reason": zod.string().optional(),
+  "judged": zod.boolean()
+})),
+  "evaluations": zod.object({
+
+}).passthrough(),
+  "call": zod.object({
+  "started_at": zod.string().datetime({"offset":true}),
+  "ended_at": zod.string().datetime({"offset":true}),
+  "duration_ms": zod.number().min(simulateApiHarnessAttemptsResultsBodyCallDurationMsMin),
+  "turns": zod.number().min(simulateApiHarnessAttemptsResultsBodyCallTurnsMin),
+  "transcript_artifact": zod.string().min(1).regex(simulateApiHarnessAttemptsResultsBodyCallTranscriptArtifactRegExp).optional(),
+  "recording_artifacts": zod.array(zod.string().min(1).regex(simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsItemRegExp)).default(simulateApiHarnessAttemptsResultsBodyCallRecordingArtifactsDefault)
+}),
+  "failure": zod.object({
+  "domain": zod.enum(['agent', 'simulator', 'environment', 'connectivity', 'infrastructure', 'grading', 'platform_sync']),
+  "stage": zod.string().min(1).max(simulateApiHarnessAttemptsResultsBodyFailureStageMax),
+  "code": zod.string().min(1).max(simulateApiHarnessAttemptsResultsBodyFailureCodeMax),
+  "message": zod.string().min(1).max(simulateApiHarnessAttemptsResultsBodyFailureMessageMax)
+}),
+  "digest": zod.string().min(1).regex(simulateApiHarnessAttemptsResultsBodyDigestRegExp)
+})
+
+export const SimulateApiHarnessAttemptsResultsResponse = zod.object({
+  "accepted": zod.boolean(),
+  "duplicate": zod.boolean()
+})
+
+
+export const SimulateApiHarnessAttemptsScenariosParams = zod.object({
+  "id": zod.string()
+})
+
+export const SimulateApiHarnessAttemptsScenariosBody = zod.object({
+  "operation": zod.enum(['provision', 'begin'])
+})
+
+
+
+
+export const SimulateApiHarnessAttemptsScenariosResponse = zod.object({
+  "result": zod.object({
+  "run_test_id": zod.string().uuid().optional(),
+  "test_execution_id": zod.string().uuid().optional(),
+  "scenarios": zod.array(zod.object({
+  "scenario_key": zod.string().min(1),
+  "scenario_id": zod.string().uuid(),
+  "call_execution_id": zod.string().uuid().optional()
+}))
+})
 })
 
 
@@ -34185,109 +34642,6 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
 })).optional(),
   "total_calls": zod.number().optional(),
   "total_transcripts": zod.number().optional()
-})
-
-
-export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
-export const telemetryHeartbeatCreateBodyVersionMax = 100;
-
-export const telemetryHeartbeatCreateBodyActiveUsersCountMin = 0;
-export const telemetryHeartbeatCreateBodyActiveUsersCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyTracesCountMin = 0;
-export const telemetryHeartbeatCreateBodyTracesCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodySpansCountMin = 0;
-export const telemetryHeartbeatCreateBodySpansCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyProjectsCountMin = 0;
-export const telemetryHeartbeatCreateBodyProjectsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyEvalLoggerCountMin = 0;
-export const telemetryHeartbeatCreateBodyEvalLoggerCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyModelHubEvaluationsCountMin = 0;
-export const telemetryHeartbeatCreateBodyModelHubEvaluationsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyDatasetEvalRunsCountMin = 0;
-export const telemetryHeartbeatCreateBodyDatasetEvalRunsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyTotalEvaluationsCountMin = 0;
-export const telemetryHeartbeatCreateBodyTotalEvaluationsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodySimulationRunsCountMin = 0;
-export const telemetryHeartbeatCreateBodySimulationRunsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodySimulationCallsCountMin = 0;
-export const telemetryHeartbeatCreateBodySimulationCallsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyExperimentsCountMin = 0;
-export const telemetryHeartbeatCreateBodyExperimentsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyGatewayRequestsCountMin = 0;
-export const telemetryHeartbeatCreateBodyGatewayRequestsCountMax = 9223372036854776000;
-
-export const telemetryHeartbeatCreateBodyDatasetsCountMin = 0;
-export const telemetryHeartbeatCreateBodyDatasetsCountMax = 9223372036854776000;
-
-
-
-export const TelemetryHeartbeatCreateBody = zod.object({
-  "schema_version": zod.number().default(telemetryHeartbeatCreateBodySchemaVersionDefault),
-  "instance_id": zod.string().uuid(),
-  "version": zod.string().min(1).max(telemetryHeartbeatCreateBodyVersionMax),
-  "window_start": zod.string().datetime({"offset":true}),
-  "window_end": zod.string().datetime({"offset":true}),
-  "active_users_count": zod.number().min(telemetryHeartbeatCreateBodyActiveUsersCountMin).max(telemetryHeartbeatCreateBodyActiveUsersCountMax),
-  "traces_count": zod.number().min(telemetryHeartbeatCreateBodyTracesCountMin).max(telemetryHeartbeatCreateBodyTracesCountMax),
-  "spans_count": zod.number().min(telemetryHeartbeatCreateBodySpansCountMin).max(telemetryHeartbeatCreateBodySpansCountMax),
-  "projects_count": zod.number().min(telemetryHeartbeatCreateBodyProjectsCountMin).max(telemetryHeartbeatCreateBodyProjectsCountMax),
-  "eval_logger_count": zod.number().min(telemetryHeartbeatCreateBodyEvalLoggerCountMin).max(telemetryHeartbeatCreateBodyEvalLoggerCountMax),
-  "model_hub_evaluations_count": zod.number().min(telemetryHeartbeatCreateBodyModelHubEvaluationsCountMin).max(telemetryHeartbeatCreateBodyModelHubEvaluationsCountMax),
-  "dataset_eval_runs_count": zod.number().min(telemetryHeartbeatCreateBodyDatasetEvalRunsCountMin).max(telemetryHeartbeatCreateBodyDatasetEvalRunsCountMax),
-  "total_evaluations_count": zod.number().min(telemetryHeartbeatCreateBodyTotalEvaluationsCountMin).max(telemetryHeartbeatCreateBodyTotalEvaluationsCountMax),
-  "simulation_runs_count": zod.number().min(telemetryHeartbeatCreateBodySimulationRunsCountMin).max(telemetryHeartbeatCreateBodySimulationRunsCountMax),
-  "simulation_calls_count": zod.number().min(telemetryHeartbeatCreateBodySimulationCallsCountMin).max(telemetryHeartbeatCreateBodySimulationCallsCountMax),
-  "experiments_count": zod.number().min(telemetryHeartbeatCreateBodyExperimentsCountMin).max(telemetryHeartbeatCreateBodyExperimentsCountMax),
-  "gateway_requests_count": zod.number().min(telemetryHeartbeatCreateBodyGatewayRequestsCountMin).max(telemetryHeartbeatCreateBodyGatewayRequestsCountMax),
-  "datasets_count": zod.number().min(telemetryHeartbeatCreateBodyDatasetsCountMin).max(telemetryHeartbeatCreateBodyDatasetsCountMax)
-})
-
-export const TelemetryHeartbeatCreateResponse = zod.object({
-  "status": zod.enum(['ok'])
-})
-
-
-export const telemetryRegisterCreateBodySchemaVersionDefault = 1;
-export const telemetryRegisterCreateBodyVersionMax = 100;
-
-export const telemetryRegisterCreateBodyDeploymentTypeMax = 50;
-
-export const telemetryRegisterCreateBodyUsersItemEmailMax = 254;
-
-export const telemetryRegisterCreateBodyUsersItemDomainMax = 253;
-
-export const telemetryRegisterCreateBodyUsersDefault = [];
-
-export const TelemetryRegisterCreateBody = zod.object({
-  "schema_version": zod.number().default(telemetryRegisterCreateBodySchemaVersionDefault),
-  "instance_id": zod.string().uuid(),
-  "version": zod.string().min(1).max(telemetryRegisterCreateBodyVersionMax),
-  "deployment_type": zod.string().min(1).max(telemetryRegisterCreateBodyDeploymentTypeMax),
-  "timestamp": zod.string().datetime({"offset":true}),
-  "telemetry_disabled": zod.boolean(),
-  "users": zod.array(zod.object({
-  "email": zod.string().email().min(1).max(telemetryRegisterCreateBodyUsersItemEmailMax),
-  "domain": zod.string().min(1).max(telemetryRegisterCreateBodyUsersItemDomainMax)
-})).default(telemetryRegisterCreateBodyUsersDefault)
-})
-
-
-
-
-export const TelemetryRegisterCreateResponse = zod.object({
-  "status": zod.enum(['ok']),
-  "instance_secret": zod.string().min(1)
 })
 
 
@@ -44299,2660 +44653,6 @@ export const TracerWebhookCreateResponse = zod.object({
 
 
 /**
- * Get custom plan summary for an org.
- */
-
-
-
-export const UsageAdminCustomPlanListQueryParams = zod.object({
-  "organization_id": zod.string().uuid(),
-  "dimension": zod.string().min(1).optional()
-})
-
-export const UsageAdminCustomPlanListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-/**
- * Request body:
-{
-    "organization_id": "uuid",
-    "platform_fee": 1500.00,
-    "entitlements": {"monitors": -1, "has_knowledge_base": true, ...},
-    "pricing": {
-        "ai_credits": [
-            {"tier_start": 0, "tier_end": 10000, "price_per_unit": 0.005},
-            {"tier_start": 10000, "tier_end": null, "price_per_unit": 0.003}
-        ], ...
-    }
-}
- * @summary Create full custom plan.
- */
-
-
-
-export const UsageAdminCustomPlanCreateBody = zod.object({
-  "organization_id": zod.string().uuid(),
-  "platform_fee": zod.string().optional(),
-  "platform_fee_billing_cycle": zod.number().min(1).optional(),
-  "contract_end_date": zod.string().date().optional(),
-  "start_date": zod.string().date().optional(),
-  "entitlements": zod.record(zod.string(), zod.object({
-
-}).passthrough()).optional(),
-  "pricing": zod.record(zod.string(), zod.array(zod.object({
-  "tier_start": zod.string(),
-  "tier_end": zod.string().optional(),
-  "price_per_unit": zod.string(),
-  "display_unit": zod.string().optional()
-}))).optional(),
-  "create_stripe_subscription": zod.boolean().optional()
-})
-
-export const UsageAdminCustomPlanCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-/**
- * Update existing custom plan (entitlements/pricing/fee).
- */
-
-
-
-export const UsageAdminCustomPlanUpdateBody = zod.object({
-  "organization_id": zod.string().uuid(),
-  "platform_fee": zod.string().optional(),
-  "platform_fee_billing_cycle": zod.number().min(1).optional(),
-  "contract_end_date": zod.string().date().optional(),
-  "start_date": zod.string().date().optional(),
-  "entitlements": zod.record(zod.string(), zod.object({
-
-}).passthrough()).optional(),
-  "pricing": zod.record(zod.string(), zod.array(zod.object({
-  "tier_start": zod.string(),
-  "tier_end": zod.string().optional(),
-  "price_per_unit": zod.string(),
-  "display_unit": zod.string().optional()
-}))).optional(),
-  "create_stripe_subscription": zod.boolean().optional()
-})
-
-export const UsageAdminCustomPlanUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-/**
- * List entitlement overrides for an org.
- */
-
-
-
-export const UsageAdminEntitlementsListQueryParams = zod.object({
-  "organization_id": zod.string().uuid(),
-  "feature": zod.string().min(1).optional()
-})
-
-export const UsageAdminEntitlementsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-/**
- * Create or update an entitlement override.
- */
-
-
-
-export const UsageAdminEntitlementsCreateBody = zod.object({
-  "organization_id": zod.string().uuid(),
-  "feature": zod.string().min(1),
-  "value_int": zod.number().optional(),
-  "value_bool": zod.boolean().optional()
-})
-
-
-
-
-export const UsageAdminEntitlementsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number(),
-  "feature": zod.string().min(1),
-  "created": zod.boolean(),
-  "value_int": zod.number().optional(),
-  "value_bool": zod.boolean().optional()
-})
-})
-
-
-/**
- * Remove an entitlement override (falls back to plan default).
- */
-
-
-
-export const UsageAdminEntitlementsDeleteQueryParams = zod.object({
-  "organization_id": zod.string().uuid(),
-  "feature": zod.string().min(1).optional()
-})
-
-export const UsageAdminEntitlementsDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-/**
- * Generate invoice for an org+period.
- */
-
-
-export const usageAdminInvoiceGenerateCreateBodyPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const UsageAdminInvoiceGenerateCreateBody = zod.object({
-  "organization_id": zod.string().uuid(),
-  "period": zod.string().min(1).regex(usageAdminInvoiceGenerateCreateBodyPeriodRegExp)
-})
-
-
-
-
-
-export const UsageAdminInvoiceGenerateCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "created": zod.number(),
-  "skipped": zod.number(),
-  "errors": zod.number(),
-  "invoice_id": zod.string().uuid().optional(),
-  "total": zod.string().min(1).optional(),
-  "status": zod.string().min(1).optional(),
-  "period_start": zod.string().date().optional(),
-  "period_end": zod.string().date().optional(),
-  "line_items_count": zod.number().optional()
-})
-})
-
-
-/**
- * Preview invoice for an org+period (no side effects).
- */
-
-
-export const usageAdminInvoicePreviewCreateBodyPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const UsageAdminInvoicePreviewCreateBody = zod.object({
-  "organization_id": zod.string().uuid(),
-  "period": zod.string().min(1).regex(usageAdminInvoicePreviewCreateBodyPeriodRegExp)
-})
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-export const UsageAdminInvoicePreviewCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "org_id": zod.string().uuid(),
-  "period": zod.string().min(1),
-  "plan": zod.string().min(1),
-  "backfill_ran": zod.boolean(),
-  "usage_summary_count": zod.number(),
-  "invoice_exists": zod.boolean(),
-  "platform_fee": zod.string().min(1),
-  "usage_total": zod.string().min(1),
-  "credits_applied": zod.string().min(1),
-  "subtotal": zod.string().min(1),
-  "tax": zod.string().min(1),
-  "total": zod.string().min(1),
-  "line_items": zod.array(zod.object({
-  "line_type": zod.string().min(1),
-  "dimension": zod.string().optional(),
-  "description": zod.string().min(1),
-  "quantity": zod.string().min(1),
-  "unit": zod.string().optional(),
-  "unit_price": zod.string().min(1),
-  "amount": zod.string().min(1),
-  "tier_breakdown": zod.object({
-
-}).passthrough().optional()
-}))
-})
-})
-
-
-/**
- * List custom pricing tiers for an org.
- */
-
-
-
-export const UsageAdminPricingListQueryParams = zod.object({
-  "organization_id": zod.string().uuid(),
-  "dimension": zod.string().min(1).optional()
-})
-
-
-
-
-export const UsageAdminPricingListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "pricing": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "dimension": zod.string().min(1),
-  "tier_start": zod.string(),
-  "tier_end": zod.string().optional(),
-  "price_per_unit": zod.string(),
-  "display_unit": zod.string().optional()
-}))
-})
-})
-
-
-/**
- * Create or update a pricing tier.
- */
-
-
-
-export const UsageAdminPricingCreateBody = zod.object({
-  "organization_id": zod.string().uuid(),
-  "dimension": zod.string().min(1),
-  "tier_start": zod.string(),
-  "tier_end": zod.string().optional(),
-  "price_per_unit": zod.string(),
-  "display_unit": zod.string().optional()
-})
-
-
-
-
-export const UsageAdminPricingCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number(),
-  "dimension": zod.string().min(1),
-  "created": zod.boolean()
-})
-})
-
-
-/**
- * Remove all custom pricing tiers for a dimension.
- */
-
-
-
-export const UsageAdminPricingDeleteQueryParams = zod.object({
-  "organization_id": zod.string().uuid(),
-  "dimension": zod.string().min(1).optional()
-})
-
-export const UsageAdminPricingDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-export const usageApiCallCountListQueryMonthMax = 12;
-
-
-
-
-export const UsageApiCallCountListQueryParams = zod.object({
-  "year": zod.number().optional(),
-  "month": zod.number().min(1).max(usageApiCallCountListQueryMonthMax).optional(),
-  "api_call_type": zod.string().min(1).optional()
-})
-
-export const UsageApiCallCountListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "data": zod.record(zod.string(), zod.number())
-})
-})
-
-
-export const UsageApiCallTypeListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "name": zod.enum(['prompt_bench', 'dataset_protect', 'dataset_protect_flash', 'turing_large_evaluator', 'turing_small_evaluator', 'turing_flash_evaluator', 'protect_evaluator', 'protect_flash_evaluator', 'code_evaluator', 'user_add', 'observe_add', 'prototype_add', 'dataset_add', 'row_add', 'knowledge_base', 'synthetic_data_generation', 'error_localizer', 'auto_annotation', 'dataset_evaluation', 'experiment_evaluation', 'optimisation_evaluation', 'eval_explanation', 'dataset_run_prompt', 'dataset_optimization', 'dataset_experiment', 'voice_call', 'text_call', 'wallet_refund', 'wallet_refill', 'wallet_auto_recharge', 'wallet_add_funds', 'trace_error_analysis']),
-  "description": zod.string().optional()
-}))
-})
-
-
-export const UsageCancelSubscriptionCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageCancelSubscriptionCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-export const UsageCreateAutoRechargeSessionCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-
-
-
-
-
-export const UsageCreateAutoRechargeSessionCreateResponse = zod.object({
-  "status": zod.boolean().optional(),
-  "result": zod.object({
-  "session_id": zod.string().min(1).optional(),
-  "url": zod.string().url().min(1).optional(),
-  "status": zod.string().min(1).optional(),
-  "message": zod.string().min(1).optional()
-}).optional(),
-  "session_id": zod.string().min(1).optional(),
-  "url": zod.string().url().min(1).optional()
-})
-
-
-export const UsageCreateBillingPortalSessionCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageCreateBillingPortalSessionCreateResponse = zod.object({
-  "url": zod.string().url().min(1)
-})
-
-
-
-
-
-export const UsageCreateCheckoutSessionCreateBody = zod.object({
-  "subscription_type": zod.string().min(1).optional()
-})
-
-
-
-
-
-
-
-
-
-export const UsageCreateCheckoutSessionCreateResponse = zod.object({
-  "status": zod.boolean().optional(),
-  "result": zod.object({
-  "session_id": zod.string().min(1).optional(),
-  "url": zod.string().url().min(1).optional(),
-  "status": zod.string().min(1).optional(),
-  "message": zod.string().min(1).optional()
-}).optional(),
-  "session_id": zod.string().min(1).optional(),
-  "url": zod.string().url().min(1).optional()
-})
-
-
-export const UsageCreateCustomPaymentCheckoutSessionCreateBody = zod.object({
-  "amount": zod.string()
-})
-
-
-
-
-
-
-
-
-
-export const UsageCreateCustomPaymentCheckoutSessionCreateResponse = zod.object({
-  "status": zod.boolean().optional(),
-  "result": zod.object({
-  "session_id": zod.string().min(1).optional(),
-  "url": zod.string().url().min(1).optional(),
-  "status": zod.string().min(1).optional(),
-  "message": zod.string().min(1).optional()
-}).optional(),
-  "session_id": zod.string().min(1).optional(),
-  "url": zod.string().url().min(1).optional()
-})
-
-
-
-
-
-export const UsageDownloadInvoiceCreateBody = zod.object({
-  "invoice_id": zod.string().min(1)
-})
-
-
-
-
-export const UsageDownloadInvoiceCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "invoice_pdf_url": zod.string().url().min(1)
-})
-})
-
-
-
-
-
-export const UsageGetAutoReloadSettingsListResponse = zod.object({
-  "status": zod.string().min(1),
-  "data": zod.object({
-  "autoreload_enabled": zod.boolean(),
-  "autoreload_wallet_amount": zod.string(),
-  "autoreload_wallet_threshold": zod.string()
-})
-})
-
-
-
-
-
-export const UsageGetBillingDetailsListResponse = zod.object({
-  "status": zod.string().min(1),
-  "billing_info": zod.object({
-  "name": zod.string().optional(),
-  "email": zod.string().email().optional(),
-  "company": zod.string().optional(),
-  "billing_address1": zod.string().optional(),
-  "billing_address2": zod.string().optional(),
-  "city": zod.string().optional(),
-  "state": zod.string().optional(),
-  "country": zod.string().optional(),
-  "postal_code": zod.string().optional(),
-  "tax_id": zod.string().optional()
-})
-})
-
-
-
-
-
-
-
-
-export const UsageGetCustomerInvoicesListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "invoices": zod.array(zod.object({
-  "date": zod.string().min(1),
-  "id": zod.string().min(1),
-  "is_invoice_available": zod.boolean(),
-  "amount": zod.string().min(1),
-  "receipt_url": zod.string().url().optional(),
-  "payment_type": zod.string().min(1)
-})),
-  "total": zod.number()
-})
-})
-
-
-export const UsageGetLastFourDigitsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "last4": zod.string()
-})
-})
-
-
-export const UsageGetWalletBalanceListResponse = zod.object({
-  "wallet_balance": zod.string()
-})
-
-
-export const UsageGetLatestPricesListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.number())
-})
-
-
-export const usageOrganizationBillingListResponseResultItemBillingContactNameMax = 100;
-
-export const usageOrganizationBillingListResponseResultItemBillingContactEmailMax = 254;
-
-export const usageOrganizationBillingListResponseResultItemCompanyMax = 100;
-
-export const usageOrganizationBillingListResponseResultItemBillingAddress1Max = 255;
-
-export const usageOrganizationBillingListResponseResultItemBillingAddress2Max = 255;
-
-export const usageOrganizationBillingListResponseResultItemCityMax = 100;
-
-export const usageOrganizationBillingListResponseResultItemStateMax = 100;
-
-export const usageOrganizationBillingListResponseResultItemCountryMax = 100;
-
-export const usageOrganizationBillingListResponseResultItemPostalCodeMax = 20;
-
-export const usageOrganizationBillingListResponseResultItemTaxIdMax = 50;
-
-
-
-export const UsageOrganizationBillingListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "organization": zod.string().uuid().optional(),
-  "billing_contact_name": zod.string().max(usageOrganizationBillingListResponseResultItemBillingContactNameMax).optional(),
-  "billing_contact_email": zod.string().email().max(usageOrganizationBillingListResponseResultItemBillingContactEmailMax).optional(),
-  "company": zod.string().max(usageOrganizationBillingListResponseResultItemCompanyMax).optional(),
-  "billing_address1": zod.string().max(usageOrganizationBillingListResponseResultItemBillingAddress1Max).optional(),
-  "billing_address2": zod.string().max(usageOrganizationBillingListResponseResultItemBillingAddress2Max).optional(),
-  "city": zod.string().max(usageOrganizationBillingListResponseResultItemCityMax).optional(),
-  "state": zod.string().max(usageOrganizationBillingListResponseResultItemStateMax).optional(),
-  "country": zod.string().max(usageOrganizationBillingListResponseResultItemCountryMax).optional(),
-  "postal_code": zod.string().max(usageOrganizationBillingListResponseResultItemPostalCodeMax).optional(),
-  "tax_id": zod.string().max(usageOrganizationBillingListResponseResultItemTaxIdMax).optional()
-}))
-})
-
-
-export const UsageOrganizationBillingPartialUpdateParams = zod.object({
-  "billing_id": zod.string()
-})
-
-export const usageOrganizationBillingPartialUpdateBodyBillingContactNameMax = 100;
-
-export const usageOrganizationBillingPartialUpdateBodyBillingContactEmailMax = 254;
-
-export const usageOrganizationBillingPartialUpdateBodyCompanyMax = 100;
-
-export const usageOrganizationBillingPartialUpdateBodyBillingAddress1Max = 255;
-
-export const usageOrganizationBillingPartialUpdateBodyBillingAddress2Max = 255;
-
-export const usageOrganizationBillingPartialUpdateBodyCityMax = 100;
-
-export const usageOrganizationBillingPartialUpdateBodyStateMax = 100;
-
-export const usageOrganizationBillingPartialUpdateBodyCountryMax = 100;
-
-export const usageOrganizationBillingPartialUpdateBodyPostalCodeMax = 20;
-
-export const usageOrganizationBillingPartialUpdateBodyTaxIdMax = 50;
-
-
-
-export const UsageOrganizationBillingPartialUpdateBody = zod.object({
-  "billing_contact_name": zod.string().max(usageOrganizationBillingPartialUpdateBodyBillingContactNameMax).optional(),
-  "billing_contact_email": zod.string().email().max(usageOrganizationBillingPartialUpdateBodyBillingContactEmailMax).optional(),
-  "company": zod.string().max(usageOrganizationBillingPartialUpdateBodyCompanyMax).optional(),
-  "billing_address1": zod.string().max(usageOrganizationBillingPartialUpdateBodyBillingAddress1Max).optional(),
-  "billing_address2": zod.string().max(usageOrganizationBillingPartialUpdateBodyBillingAddress2Max).optional(),
-  "city": zod.string().max(usageOrganizationBillingPartialUpdateBodyCityMax).optional(),
-  "state": zod.string().max(usageOrganizationBillingPartialUpdateBodyStateMax).optional(),
-  "country": zod.string().max(usageOrganizationBillingPartialUpdateBodyCountryMax).optional(),
-  "postal_code": zod.string().max(usageOrganizationBillingPartialUpdateBodyPostalCodeMax).optional(),
-  "tax_id": zod.string().max(usageOrganizationBillingPartialUpdateBodyTaxIdMax).optional()
-})
-
-export const usageOrganizationBillingPartialUpdateResponseResultBillingContactNameMax = 100;
-
-export const usageOrganizationBillingPartialUpdateResponseResultBillingContactEmailMax = 254;
-
-export const usageOrganizationBillingPartialUpdateResponseResultCompanyMax = 100;
-
-export const usageOrganizationBillingPartialUpdateResponseResultBillingAddress1Max = 255;
-
-export const usageOrganizationBillingPartialUpdateResponseResultBillingAddress2Max = 255;
-
-export const usageOrganizationBillingPartialUpdateResponseResultCityMax = 100;
-
-export const usageOrganizationBillingPartialUpdateResponseResultStateMax = 100;
-
-export const usageOrganizationBillingPartialUpdateResponseResultCountryMax = 100;
-
-export const usageOrganizationBillingPartialUpdateResponseResultPostalCodeMax = 20;
-
-export const usageOrganizationBillingPartialUpdateResponseResultTaxIdMax = 50;
-
-
-
-export const UsageOrganizationBillingPartialUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "organization": zod.string().uuid().optional(),
-  "billing_contact_name": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultBillingContactNameMax).optional(),
-  "billing_contact_email": zod.string().email().max(usageOrganizationBillingPartialUpdateResponseResultBillingContactEmailMax).optional(),
-  "company": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultCompanyMax).optional(),
-  "billing_address1": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultBillingAddress1Max).optional(),
-  "billing_address2": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultBillingAddress2Max).optional(),
-  "city": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultCityMax).optional(),
-  "state": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultStateMax).optional(),
-  "country": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultCountryMax).optional(),
-  "postal_code": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultPostalCodeMax).optional(),
-  "tax_id": zod.string().max(usageOrganizationBillingPartialUpdateResponseResultTaxIdMax).optional()
-})
-})
-
-
-export const UsageOrganizationBillingReadParams = zod.object({
-  "billing_id": zod.string()
-})
-
-export const usageOrganizationBillingReadResponseResultItemBillingContactNameMax = 100;
-
-export const usageOrganizationBillingReadResponseResultItemBillingContactEmailMax = 254;
-
-export const usageOrganizationBillingReadResponseResultItemCompanyMax = 100;
-
-export const usageOrganizationBillingReadResponseResultItemBillingAddress1Max = 255;
-
-export const usageOrganizationBillingReadResponseResultItemBillingAddress2Max = 255;
-
-export const usageOrganizationBillingReadResponseResultItemCityMax = 100;
-
-export const usageOrganizationBillingReadResponseResultItemStateMax = 100;
-
-export const usageOrganizationBillingReadResponseResultItemCountryMax = 100;
-
-export const usageOrganizationBillingReadResponseResultItemPostalCodeMax = 20;
-
-export const usageOrganizationBillingReadResponseResultItemTaxIdMax = 50;
-
-
-
-export const UsageOrganizationBillingReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "organization": zod.string().uuid().optional(),
-  "billing_contact_name": zod.string().max(usageOrganizationBillingReadResponseResultItemBillingContactNameMax).optional(),
-  "billing_contact_email": zod.string().email().max(usageOrganizationBillingReadResponseResultItemBillingContactEmailMax).optional(),
-  "company": zod.string().max(usageOrganizationBillingReadResponseResultItemCompanyMax).optional(),
-  "billing_address1": zod.string().max(usageOrganizationBillingReadResponseResultItemBillingAddress1Max).optional(),
-  "billing_address2": zod.string().max(usageOrganizationBillingReadResponseResultItemBillingAddress2Max).optional(),
-  "city": zod.string().max(usageOrganizationBillingReadResponseResultItemCityMax).optional(),
-  "state": zod.string().max(usageOrganizationBillingReadResponseResultItemStateMax).optional(),
-  "country": zod.string().max(usageOrganizationBillingReadResponseResultItemCountryMax).optional(),
-  "postal_code": zod.string().max(usageOrganizationBillingReadResponseResultItemPostalCodeMax).optional(),
-  "tax_id": zod.string().max(usageOrganizationBillingReadResponseResultItemTaxIdMax).optional()
-}))
-})
-
-
-export const usageOrganizationFilterListResponseResultItemNameMax = 255;
-
-
-
-export const UsageOrganizationFilterListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(usageOrganizationFilterListResponseResultItemNameMax)
-}))
-})
-
-
-export const usageOrganizationSubscriptionListResponseResultItemCustomSubscriptionIdMax = 100;
-
-export const usageOrganizationSubscriptionListResponseResultItemStripeCustomerIdTestMax = 100;
-
-export const usageOrganizationSubscriptionListResponseResultItemStripeCustomerIdLiveMax = 100;
-
-export const usageOrganizationSubscriptionListResponseResultItemPaymentMethodIdMax = 100;
-
-
-
-export const UsageOrganizationSubscriptionListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "organization": zod.string().uuid(),
-  "subscription_tier": zod.string().optional(),
-  "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionListResponseResultItemCustomSubscriptionIdMax).optional(),
-  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
-  "subscription_price": zod.string().optional().describe('Price of the subscription.'),
-  "wallet_balance": zod.string().optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "next_renewal_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionListResponseResultItemStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
-  "stripe_customer_id_live": zod.string().max(usageOrganizationSubscriptionListResponseResultItemStripeCustomerIdLiveMax).optional().describe('Stripe customer ID for live mode. NULL values are allowed.'),
-  "auto_recharge_enabled": zod.boolean().optional(),
-  "auto_recharge_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "auto_recharge_threshold": zod.string().optional().describe('Threshold to trigger auto recharge.'),
-  "payment_method_id": zod.string().max(usageOrganizationSubscriptionListResponseResultItemPaymentMethodIdMax).optional(),
-  "last_refill_date": zod.string().date().optional(),
-  "last_refill_amount": zod.string().optional().describe('Amount of the last refill.')
-}))
-})
-
-
-export const UsageOrganizationSubscriptionCreateParams = zod.object({
-  "organization_subscription_id": zod.string()
-})
-
-export const usageOrganizationSubscriptionCreateBodyStripeCustomerIdTestMax = 100;
-
-export const usageOrganizationSubscriptionCreateBodyStripeCustomerIdLiveMax = 100;
-
-export const usageOrganizationSubscriptionCreateBodyPaymentMethodIdMax = 100;
-
-export const usageOrganizationSubscriptionCreateBodyCustomSubscriptionIdMax = 100;
-
-
-
-export const UsageOrganizationSubscriptionCreateBody = zod.object({
-  "next_renewal_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_price": zod.string().optional().describe('Price of the subscription.'),
-  "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "wallet_balance": zod.string().optional(),
-  "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionCreateBodyStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
-  "stripe_customer_id_live": zod.string().max(usageOrganizationSubscriptionCreateBodyStripeCustomerIdLiveMax).optional().describe('Stripe customer ID for live mode. NULL values are allowed.'),
-  "auto_recharge_enabled": zod.boolean().optional(),
-  "auto_recharge_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "auto_recharge_threshold": zod.string().optional().describe('Threshold to trigger auto recharge.'),
-  "payment_method_id": zod.string().max(usageOrganizationSubscriptionCreateBodyPaymentMethodIdMax).optional(),
-  "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionCreateBodyCustomSubscriptionIdMax).optional(),
-  "organization": zod.string().uuid(),
-  "subscription_tier": zod.number()
-})
-
-export const usageOrganizationSubscriptionCreateResponseResultStripeCustomerIdTestMax = 100;
-
-export const usageOrganizationSubscriptionCreateResponseResultStripeCustomerIdLiveMax = 100;
-
-export const usageOrganizationSubscriptionCreateResponseResultPaymentMethodIdMax = 100;
-
-export const usageOrganizationSubscriptionCreateResponseResultCustomSubscriptionIdMax = 100;
-
-
-
-export const UsageOrganizationSubscriptionCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "next_renewal_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_price": zod.string().optional().describe('Price of the subscription.'),
-  "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "wallet_balance": zod.string().optional(),
-  "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionCreateResponseResultStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
-  "stripe_customer_id_live": zod.string().max(usageOrganizationSubscriptionCreateResponseResultStripeCustomerIdLiveMax).optional().describe('Stripe customer ID for live mode. NULL values are allowed.'),
-  "auto_recharge_enabled": zod.boolean().optional(),
-  "auto_recharge_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "auto_recharge_threshold": zod.string().optional().describe('Threshold to trigger auto recharge.'),
-  "payment_method_id": zod.string().max(usageOrganizationSubscriptionCreateResponseResultPaymentMethodIdMax).optional(),
-  "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionCreateResponseResultCustomSubscriptionIdMax).optional(),
-  "organization": zod.string().uuid(),
-  "subscription_tier": zod.number()
-})
-})
-
-
-export const UsageOrganizationSubscriptionPartialUpdateParams = zod.object({
-  "organization_subscription_id": zod.string()
-})
-
-export const usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdTestMax = 100;
-
-export const usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdLiveMax = 100;
-
-export const usageOrganizationSubscriptionPartialUpdateBodyPaymentMethodIdMax = 100;
-
-export const usageOrganizationSubscriptionPartialUpdateBodyCustomSubscriptionIdMax = 100;
-
-
-
-export const UsageOrganizationSubscriptionPartialUpdateBody = zod.object({
-  "next_renewal_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_price": zod.string().optional().describe('Price of the subscription.'),
-  "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "wallet_balance": zod.string().optional(),
-  "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
-  "stripe_customer_id_live": zod.string().max(usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdLiveMax).optional().describe('Stripe customer ID for live mode. NULL values are allowed.'),
-  "auto_recharge_enabled": zod.boolean().optional(),
-  "auto_recharge_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "auto_recharge_threshold": zod.string().optional().describe('Threshold to trigger auto recharge.'),
-  "payment_method_id": zod.string().max(usageOrganizationSubscriptionPartialUpdateBodyPaymentMethodIdMax).optional(),
-  "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionPartialUpdateBodyCustomSubscriptionIdMax).optional(),
-  "organization": zod.string().uuid(),
-  "subscription_tier": zod.number()
-})
-
-export const usageOrganizationSubscriptionPartialUpdateResponseResultStripeCustomerIdTestMax = 100;
-
-export const usageOrganizationSubscriptionPartialUpdateResponseResultStripeCustomerIdLiveMax = 100;
-
-export const usageOrganizationSubscriptionPartialUpdateResponseResultPaymentMethodIdMax = 100;
-
-export const usageOrganizationSubscriptionPartialUpdateResponseResultCustomSubscriptionIdMax = 100;
-
-
-
-export const UsageOrganizationSubscriptionPartialUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "next_renewal_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_price": zod.string().optional().describe('Price of the subscription.'),
-  "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "wallet_balance": zod.string().optional(),
-  "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionPartialUpdateResponseResultStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
-  "stripe_customer_id_live": zod.string().max(usageOrganizationSubscriptionPartialUpdateResponseResultStripeCustomerIdLiveMax).optional().describe('Stripe customer ID for live mode. NULL values are allowed.'),
-  "auto_recharge_enabled": zod.boolean().optional(),
-  "auto_recharge_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "auto_recharge_threshold": zod.string().optional().describe('Threshold to trigger auto recharge.'),
-  "payment_method_id": zod.string().max(usageOrganizationSubscriptionPartialUpdateResponseResultPaymentMethodIdMax).optional(),
-  "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionPartialUpdateResponseResultCustomSubscriptionIdMax).optional(),
-  "organization": zod.string().uuid(),
-  "subscription_tier": zod.number()
-})
-})
-
-
-export const UsageOrganizationSubscriptionDeleteParams = zod.object({
-  "organization_subscription_id": zod.string()
-})
-
-
-
-
-export const UsageOrganizationSubscriptionDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.string().min(1)
-})
-
-
-export const UsageOrganizationSubscriptionReadParams = zod.object({
-  "organization_subscription_id": zod.string()
-})
-
-export const usageOrganizationSubscriptionReadResponseResultItemCustomSubscriptionIdMax = 100;
-
-export const usageOrganizationSubscriptionReadResponseResultItemStripeCustomerIdTestMax = 100;
-
-export const usageOrganizationSubscriptionReadResponseResultItemStripeCustomerIdLiveMax = 100;
-
-export const usageOrganizationSubscriptionReadResponseResultItemPaymentMethodIdMax = 100;
-
-
-
-export const UsageOrganizationSubscriptionReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "organization": zod.string().uuid(),
-  "subscription_tier": zod.string().optional(),
-  "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionReadResponseResultItemCustomSubscriptionIdMax).optional(),
-  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
-  "subscription_price": zod.string().optional().describe('Price of the subscription.'),
-  "wallet_balance": zod.string().optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "next_renewal_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
-  "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionReadResponseResultItemStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
-  "stripe_customer_id_live": zod.string().max(usageOrganizationSubscriptionReadResponseResultItemStripeCustomerIdLiveMax).optional().describe('Stripe customer ID for live mode. NULL values are allowed.'),
-  "auto_recharge_enabled": zod.boolean().optional(),
-  "auto_recharge_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
-  "auto_recharge_threshold": zod.string().optional().describe('Threshold to trigger auto recharge.'),
-  "payment_method_id": zod.string().max(usageOrganizationSubscriptionReadResponseResultItemPaymentMethodIdMax).optional(),
-  "last_refill_date": zod.string().date().optional(),
-  "last_refill_amount": zod.string().optional().describe('Amount of the last refill.')
-}))
-})
-
-
-export const usageOrganizationsListResponseResultItemNameMax = 255;
-
-
-
-export const UsageOrganizationsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(usageOrganizationsListResponseResultItemNameMax)
-}))
-})
-
-
-export const UsagePricingCardDetailsCreateBody = zod.object({
-
-}).passthrough()
-
-export const UsagePricingCardDetailsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "business_monthly_price": zod.number(),
-  "business_yearly_price": zod.number(),
-  "discount_percentage": zod.number(),
-  "custom_price": zod.number().optional()
-})
-})
-
-
-export const UsagePricingListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.number(),
-  "price_per_call": zod.string(),
-  "organization": zod.string().uuid().optional()
-}))
-})
-
-
-export const UsagePricingCreateParams = zod.object({
-  "pricing_id": zod.string()
-})
-
-export const UsagePricingCreateBody = zod.object({
-  "api_call_type": zod.number(),
-  "price_per_call": zod.string(),
-  "organization": zod.string().uuid().optional()
-})
-
-export const UsagePricingCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.number(),
-  "price_per_call": zod.string(),
-  "organization": zod.string().uuid().optional()
-})
-})
-
-
-export const UsagePricingPartialUpdateParams = zod.object({
-  "pricing_id": zod.string()
-})
-
-export const UsagePricingPartialUpdateBody = zod.object({
-  "api_call_type": zod.number(),
-  "price_per_call": zod.string(),
-  "organization": zod.string().uuid().optional()
-})
-
-export const UsagePricingPartialUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.string().optional(),
-  "price_per_call": zod.string(),
-  "organization": zod.string().uuid().optional()
-})
-})
-
-
-export const UsagePricingDeleteParams = zod.object({
-  "pricing_id": zod.string()
-})
-
-
-
-
-export const UsagePricingDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.string().min(1)
-})
-
-
-export const UsagePricingReadParams = zod.object({
-  "pricing_id": zod.string()
-})
-
-export const UsagePricingReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.number(),
-  "price_per_call": zod.string(),
-  "organization": zod.string().uuid().optional()
-}))
-})
-
-
-export const usageRateLimitsListResponseResultItemMinuteLimitMin = 0;
-export const usageRateLimitsListResponseResultItemMinuteLimitMax = 2147483647;
-
-export const usageRateLimitsListResponseResultItemHourLimitMin = 0;
-export const usageRateLimitsListResponseResultItemHourLimitMax = 2147483647;
-
-export const usageRateLimitsListResponseResultItemDayLimitMin = 0;
-export const usageRateLimitsListResponseResultItemDayLimitMax = 2147483647;
-
-export const usageRateLimitsListResponseResultItemMonthLimitMin = 0;
-export const usageRateLimitsListResponseResultItemMonthLimitMax = 2147483647;
-
-
-
-export const UsageRateLimitsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.string().optional(),
-  "organization": zod.string().uuid().optional(),
-  "minute_limit": zod.number().min(usageRateLimitsListResponseResultItemMinuteLimitMin).max(usageRateLimitsListResponseResultItemMinuteLimitMax).optional().describe('Max calls per minute'),
-  "hour_limit": zod.number().min(usageRateLimitsListResponseResultItemHourLimitMin).max(usageRateLimitsListResponseResultItemHourLimitMax).optional().describe('Max calls per hour'),
-  "day_limit": zod.number().min(usageRateLimitsListResponseResultItemDayLimitMin).max(usageRateLimitsListResponseResultItemDayLimitMax).optional().describe('Max calls per day'),
-  "month_limit": zod.number().min(usageRateLimitsListResponseResultItemMonthLimitMin).max(usageRateLimitsListResponseResultItemMonthLimitMax).optional().describe('Max calls per month'),
-  "subscription_tier": zod.string().optional()
-}))
-})
-
-
-export const UsageRateLimitsCreateParams = zod.object({
-  "rate_limit_id": zod.string()
-})
-
-export const usageRateLimitsCreateBodyMinuteLimitMin = 0;
-export const usageRateLimitsCreateBodyMinuteLimitMax = 2147483647;
-
-export const usageRateLimitsCreateBodyHourLimitMin = 0;
-export const usageRateLimitsCreateBodyHourLimitMax = 2147483647;
-
-export const usageRateLimitsCreateBodyDayLimitMin = 0;
-export const usageRateLimitsCreateBodyDayLimitMax = 2147483647;
-
-export const usageRateLimitsCreateBodyMonthLimitMin = 0;
-export const usageRateLimitsCreateBodyMonthLimitMax = 2147483647;
-
-
-
-export const UsageRateLimitsCreateBody = zod.object({
-  "api_call_type": zod.number(),
-  "organization": zod.string().uuid().optional(),
-  "minute_limit": zod.number().min(usageRateLimitsCreateBodyMinuteLimitMin).max(usageRateLimitsCreateBodyMinuteLimitMax).optional().describe('Max calls per minute'),
-  "hour_limit": zod.number().min(usageRateLimitsCreateBodyHourLimitMin).max(usageRateLimitsCreateBodyHourLimitMax).optional().describe('Max calls per hour'),
-  "day_limit": zod.number().min(usageRateLimitsCreateBodyDayLimitMin).max(usageRateLimitsCreateBodyDayLimitMax).optional().describe('Max calls per day'),
-  "month_limit": zod.number().min(usageRateLimitsCreateBodyMonthLimitMin).max(usageRateLimitsCreateBodyMonthLimitMax).optional().describe('Max calls per month'),
-  "subscription_tier": zod.number()
-})
-
-export const usageRateLimitsCreateResponseResultMinuteLimitMin = 0;
-export const usageRateLimitsCreateResponseResultMinuteLimitMax = 2147483647;
-
-export const usageRateLimitsCreateResponseResultHourLimitMin = 0;
-export const usageRateLimitsCreateResponseResultHourLimitMax = 2147483647;
-
-export const usageRateLimitsCreateResponseResultDayLimitMin = 0;
-export const usageRateLimitsCreateResponseResultDayLimitMax = 2147483647;
-
-export const usageRateLimitsCreateResponseResultMonthLimitMin = 0;
-export const usageRateLimitsCreateResponseResultMonthLimitMax = 2147483647;
-
-
-
-export const UsageRateLimitsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.number(),
-  "organization": zod.string().uuid().optional(),
-  "minute_limit": zod.number().min(usageRateLimitsCreateResponseResultMinuteLimitMin).max(usageRateLimitsCreateResponseResultMinuteLimitMax).optional().describe('Max calls per minute'),
-  "hour_limit": zod.number().min(usageRateLimitsCreateResponseResultHourLimitMin).max(usageRateLimitsCreateResponseResultHourLimitMax).optional().describe('Max calls per hour'),
-  "day_limit": zod.number().min(usageRateLimitsCreateResponseResultDayLimitMin).max(usageRateLimitsCreateResponseResultDayLimitMax).optional().describe('Max calls per day'),
-  "month_limit": zod.number().min(usageRateLimitsCreateResponseResultMonthLimitMin).max(usageRateLimitsCreateResponseResultMonthLimitMax).optional().describe('Max calls per month'),
-  "subscription_tier": zod.number()
-})
-})
-
-
-export const UsageRateLimitsPartialUpdateParams = zod.object({
-  "rate_limit_id": zod.string()
-})
-
-export const usageRateLimitsPartialUpdateBodyMinuteLimitMin = 0;
-export const usageRateLimitsPartialUpdateBodyMinuteLimitMax = 2147483647;
-
-export const usageRateLimitsPartialUpdateBodyHourLimitMin = 0;
-export const usageRateLimitsPartialUpdateBodyHourLimitMax = 2147483647;
-
-export const usageRateLimitsPartialUpdateBodyDayLimitMin = 0;
-export const usageRateLimitsPartialUpdateBodyDayLimitMax = 2147483647;
-
-export const usageRateLimitsPartialUpdateBodyMonthLimitMin = 0;
-export const usageRateLimitsPartialUpdateBodyMonthLimitMax = 2147483647;
-
-
-
-export const UsageRateLimitsPartialUpdateBody = zod.object({
-  "api_call_type": zod.number(),
-  "organization": zod.string().uuid().optional(),
-  "minute_limit": zod.number().min(usageRateLimitsPartialUpdateBodyMinuteLimitMin).max(usageRateLimitsPartialUpdateBodyMinuteLimitMax).optional().describe('Max calls per minute'),
-  "hour_limit": zod.number().min(usageRateLimitsPartialUpdateBodyHourLimitMin).max(usageRateLimitsPartialUpdateBodyHourLimitMax).optional().describe('Max calls per hour'),
-  "day_limit": zod.number().min(usageRateLimitsPartialUpdateBodyDayLimitMin).max(usageRateLimitsPartialUpdateBodyDayLimitMax).optional().describe('Max calls per day'),
-  "month_limit": zod.number().min(usageRateLimitsPartialUpdateBodyMonthLimitMin).max(usageRateLimitsPartialUpdateBodyMonthLimitMax).optional().describe('Max calls per month'),
-  "subscription_tier": zod.number()
-})
-
-export const usageRateLimitsPartialUpdateResponseResultMinuteLimitMin = 0;
-export const usageRateLimitsPartialUpdateResponseResultMinuteLimitMax = 2147483647;
-
-export const usageRateLimitsPartialUpdateResponseResultHourLimitMin = 0;
-export const usageRateLimitsPartialUpdateResponseResultHourLimitMax = 2147483647;
-
-export const usageRateLimitsPartialUpdateResponseResultDayLimitMin = 0;
-export const usageRateLimitsPartialUpdateResponseResultDayLimitMax = 2147483647;
-
-export const usageRateLimitsPartialUpdateResponseResultMonthLimitMin = 0;
-export const usageRateLimitsPartialUpdateResponseResultMonthLimitMax = 2147483647;
-
-
-
-export const UsageRateLimitsPartialUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.string().optional(),
-  "organization": zod.string().uuid().optional(),
-  "minute_limit": zod.number().min(usageRateLimitsPartialUpdateResponseResultMinuteLimitMin).max(usageRateLimitsPartialUpdateResponseResultMinuteLimitMax).optional().describe('Max calls per minute'),
-  "hour_limit": zod.number().min(usageRateLimitsPartialUpdateResponseResultHourLimitMin).max(usageRateLimitsPartialUpdateResponseResultHourLimitMax).optional().describe('Max calls per hour'),
-  "day_limit": zod.number().min(usageRateLimitsPartialUpdateResponseResultDayLimitMin).max(usageRateLimitsPartialUpdateResponseResultDayLimitMax).optional().describe('Max calls per day'),
-  "month_limit": zod.number().min(usageRateLimitsPartialUpdateResponseResultMonthLimitMin).max(usageRateLimitsPartialUpdateResponseResultMonthLimitMax).optional().describe('Max calls per month'),
-  "subscription_tier": zod.string().optional()
-})
-})
-
-
-export const UsageRateLimitsDeleteParams = zod.object({
-  "rate_limit_id": zod.string()
-})
-
-
-
-
-export const UsageRateLimitsDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.string().min(1)
-})
-
-
-export const UsageRateLimitsReadParams = zod.object({
-  "rate_limit_id": zod.string()
-})
-
-export const usageRateLimitsReadResponseResultItemMinuteLimitMin = 0;
-export const usageRateLimitsReadResponseResultItemMinuteLimitMax = 2147483647;
-
-export const usageRateLimitsReadResponseResultItemHourLimitMin = 0;
-export const usageRateLimitsReadResponseResultItemHourLimitMax = 2147483647;
-
-export const usageRateLimitsReadResponseResultItemDayLimitMin = 0;
-export const usageRateLimitsReadResponseResultItemDayLimitMax = 2147483647;
-
-export const usageRateLimitsReadResponseResultItemMonthLimitMin = 0;
-export const usageRateLimitsReadResponseResultItemMonthLimitMax = 2147483647;
-
-
-
-export const UsageRateLimitsReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "api_call_type": zod.string().optional(),
-  "organization": zod.string().uuid().optional(),
-  "minute_limit": zod.number().min(usageRateLimitsReadResponseResultItemMinuteLimitMin).max(usageRateLimitsReadResponseResultItemMinuteLimitMax).optional().describe('Max calls per minute'),
-  "hour_limit": zod.number().min(usageRateLimitsReadResponseResultItemHourLimitMin).max(usageRateLimitsReadResponseResultItemHourLimitMax).optional().describe('Max calls per hour'),
-  "day_limit": zod.number().min(usageRateLimitsReadResponseResultItemDayLimitMin).max(usageRateLimitsReadResponseResultItemDayLimitMax).optional().describe('Max calls per day'),
-  "month_limit": zod.number().min(usageRateLimitsReadResponseResultItemMonthLimitMin).max(usageRateLimitsReadResponseResultItemMonthLimitMax).optional().describe('Max calls per month'),
-  "subscription_tier": zod.string().optional()
-}))
-})
-
-
-export const usageResourceLimitsListResponseResultItemLimitMin = 0;
-export const usageResourceLimitsListResponseResultItemLimitMax = 2147483647;
-
-
-
-export const UsageResourceLimitsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "resource_type": zod.string().optional(),
-  "subscription_tier": zod.string().optional(),
-  "limit": zod.number().min(usageResourceLimitsListResponseResultItemLimitMin).max(usageResourceLimitsListResponseResultItemLimitMax).describe('Limit for the resource'),
-  "organization": zod.string().uuid().optional()
-}))
-})
-
-
-export const UsageResourceLimitsCreateParams = zod.object({
-  "resource_limit_id": zod.string()
-})
-
-export const usageResourceLimitsCreateBodyLimitMin = 0;
-export const usageResourceLimitsCreateBodyLimitMax = 2147483647;
-
-
-
-export const UsageResourceLimitsCreateBody = zod.object({
-  "resource_type": zod.number(),
-  "subscription_tier": zod.number(),
-  "limit": zod.number().min(usageResourceLimitsCreateBodyLimitMin).max(usageResourceLimitsCreateBodyLimitMax).describe('Limit for the resource'),
-  "organization": zod.string().uuid().optional()
-})
-
-export const usageResourceLimitsCreateResponseResultLimitMin = 0;
-export const usageResourceLimitsCreateResponseResultLimitMax = 2147483647;
-
-
-
-export const UsageResourceLimitsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "resource_type": zod.number(),
-  "subscription_tier": zod.number(),
-  "limit": zod.number().min(usageResourceLimitsCreateResponseResultLimitMin).max(usageResourceLimitsCreateResponseResultLimitMax).describe('Limit for the resource'),
-  "organization": zod.string().uuid().optional()
-})
-})
-
-
-export const UsageResourceLimitsPartialUpdateParams = zod.object({
-  "resource_limit_id": zod.string()
-})
-
-export const usageResourceLimitsPartialUpdateBodyLimitMin = 0;
-export const usageResourceLimitsPartialUpdateBodyLimitMax = 2147483647;
-
-
-
-export const UsageResourceLimitsPartialUpdateBody = zod.object({
-  "resource_type": zod.number(),
-  "subscription_tier": zod.number(),
-  "limit": zod.number().min(usageResourceLimitsPartialUpdateBodyLimitMin).max(usageResourceLimitsPartialUpdateBodyLimitMax).describe('Limit for the resource'),
-  "organization": zod.string().uuid().optional()
-})
-
-export const usageResourceLimitsPartialUpdateResponseResultLimitMin = 0;
-export const usageResourceLimitsPartialUpdateResponseResultLimitMax = 2147483647;
-
-
-
-export const UsageResourceLimitsPartialUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "resource_type": zod.string().optional(),
-  "subscription_tier": zod.string().optional(),
-  "limit": zod.number().min(usageResourceLimitsPartialUpdateResponseResultLimitMin).max(usageResourceLimitsPartialUpdateResponseResultLimitMax).describe('Limit for the resource'),
-  "organization": zod.string().uuid().optional()
-})
-})
-
-
-export const UsageResourceLimitsDeleteParams = zod.object({
-  "resource_limit_id": zod.string()
-})
-
-
-
-
-export const UsageResourceLimitsDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.string().min(1)
-})
-
-
-export const UsageResourceLimitsReadParams = zod.object({
-  "resource_limit_id": zod.string()
-})
-
-export const usageResourceLimitsReadResponseResultItemLimitMin = 0;
-export const usageResourceLimitsReadResponseResultItemLimitMax = 2147483647;
-
-
-
-export const UsageResourceLimitsReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "resource_type": zod.string().optional(),
-  "subscription_tier": zod.string().optional(),
-  "limit": zod.number().min(usageResourceLimitsReadResponseResultItemLimitMin).max(usageResourceLimitsReadResponseResultItemLimitMax).describe('Limit for the resource'),
-  "organization": zod.string().uuid().optional()
-}))
-})
-
-
-export const UsageResourceTypeListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "name": zod.enum(['project', 'dataset', 'logs', 'rows', 'columns', 'users', 'traces', 'observe', 'prototypes', 'knowledge_base']),
-  "description": zod.string().optional()
-}))
-})
-
-
-
-
-
-export const UsageSubscriptionPlansListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "status": zod.enum(['success', 'error']),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "current_subscription": zod.string().min(1).optional(),
-  "message": zod.string().optional()
-})
-})
-
-
-
-
-
-
-
-export const UsageSubscriptionStatusListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "next_renewal_date": zod.string().date().optional(),
-  "subscription_status": zod.string().min(1).optional(),
-  "tier": zod.string().min(1).optional(),
-  "subscription_price": zod.string().optional(),
-  "subscription_future_tier": zod.string().min(1).optional(),
-  "subscription_future_start_date": zod.string().date().optional(),
-  "subscription_future_price": zod.string().optional()
-})
-})
-
-
-export const usageSubscriptionTierListResponseResultItemStripePriceIdMax = 100;
-
-
-
-export const UsageSubscriptionTierListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "name": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "description": zod.string(),
-  "stripe_price_id": zod.string().max(usageSubscriptionTierListResponseResultItemStripePriceIdMax).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.')
-}))
-})
-
-
-export const UsageSubscriptionTierCreateParams = zod.object({
-  "subscription_id": zod.string()
-})
-
-export const usageSubscriptionTierCreateBodyStripePriceIdMax = 100;
-
-
-
-export const UsageSubscriptionTierCreateBody = zod.object({
-  "description": zod.string(),
-  "stripe_price_id": zod.string().max(usageSubscriptionTierCreateBodyStripePriceIdMax).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.')
-})
-
-export const usageSubscriptionTierCreateResponseResultStripePriceIdMax = 100;
-
-
-
-export const UsageSubscriptionTierCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "name": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "description": zod.string(),
-  "stripe_price_id": zod.string().max(usageSubscriptionTierCreateResponseResultStripePriceIdMax).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.')
-})
-})
-
-
-export const UsageSubscriptionTierPartialUpdateParams = zod.object({
-  "subscription_id": zod.string()
-})
-
-export const usageSubscriptionTierPartialUpdateBodyStripePriceIdMax = 100;
-
-
-
-export const UsageSubscriptionTierPartialUpdateBody = zod.object({
-  "description": zod.string(),
-  "stripe_price_id": zod.string().max(usageSubscriptionTierPartialUpdateBodyStripePriceIdMax).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.')
-})
-
-export const usageSubscriptionTierPartialUpdateResponseResultStripePriceIdMax = 100;
-
-
-
-export const UsageSubscriptionTierPartialUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number().optional(),
-  "name": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "description": zod.string(),
-  "stripe_price_id": zod.string().max(usageSubscriptionTierPartialUpdateResponseResultStripePriceIdMax).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.')
-})
-})
-
-
-export const UsageSubscriptionTierDeleteParams = zod.object({
-  "subscription_id": zod.string()
-})
-
-
-
-
-export const UsageSubscriptionTierDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.string().min(1)
-})
-
-
-export const UsageSubscriptionTierReadParams = zod.object({
-  "subscription_id": zod.string()
-})
-
-export const usageSubscriptionTierReadResponseResultItemStripePriceIdMax = 100;
-
-
-
-export const UsageSubscriptionTierReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.number().optional(),
-  "name": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
-  "description": zod.string(),
-  "stripe_price_id": zod.string().max(usageSubscriptionTierReadResponseResultItemStripePriceIdMax).optional(),
-  "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.')
-}))
-})
-
-
-export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
-  "autoreload_enabled": zod.boolean(),
-  "autoreload_walletamount": zod.string(),
-  "autoreload_walletthreshold": zod.string()
-})
-
-
-
-
-export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({
-  "status": zod.enum(['success']),
-  "message": zod.string().min(1)
-})
-
-
-export const UsageUpdateBillingDetailsCreateBody = zod.object({
-  "name": zod.string().optional(),
-  "email": zod.string().email().optional(),
-  "company": zod.string().optional(),
-  "billing_address1": zod.string().optional(),
-  "billing_address2": zod.string().optional(),
-  "city": zod.string().optional(),
-  "state": zod.string().optional(),
-  "country": zod.string().optional(),
-  "postal_code": zod.string().optional(),
-  "tax_id": zod.string().optional()
-})
-
-
-
-
-export const UsageUpdateBillingDetailsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-export const usageUsageSummaryListQueryMonthMax = 12;
-
-
-
-export const UsageUsageSummaryListQueryParams = zod.object({
-  "month": zod.number().min(1).max(usageUsageSummaryListQueryMonthMax).optional(),
-  "year": zod.number().optional()
-})
-
-export const UsageUsageSummaryListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-export const UsageV2AddAddonCreateBody = zod.object({
-  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
-})
-
-
-
-
-
-export const UsageV2AddAddonCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "subscription_id": zod.string().min(1),
-  "plan": zod.string().min(1)
-})
-})
-
-
-/**
- * Reinstate a previously-scheduled add-on cancellation.
- */
-export const UsageV2AddAddonUpdateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2AddAddonUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-
-
-
-export const UsageV2AddAddonDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-export const UsageV2AddonCreateBody = zod.object({
-  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
-})
-
-
-
-
-
-export const UsageV2AddonCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "subscription_id": zod.string().min(1),
-  "plan": zod.string().min(1)
-})
-})
-
-
-/**
- * Reinstate a previously-scheduled add-on cancellation.
- */
-export const UsageV2AddonUpdateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2AddonUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-
-
-
-export const UsageV2AddonDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Returns platform fee + per-dimension costs + credits + total.
- * @summary Get current billing period cost breakdown for the billing page.
- */
-
-
-
-
-
-
-
-
-
-export const UsageV2BillingOverviewListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "org_id": zod.string().uuid().optional(),
-  "period": zod.string().min(1).optional(),
-  "plan": zod.string().min(1).optional(),
-  "platform_fee": zod.string().optional(),
-  "usage_total": zod.string().optional(),
-  "credits_applied": zod.string().optional(),
-  "subtotal": zod.string().optional(),
-  "tax": zod.string().optional(),
-  "total": zod.string().optional(),
-  "line_items": zod.array(zod.object({
-  "line_type": zod.string().min(1),
-  "dimension": zod.string().min(1).optional(),
-  "description": zod.string().min(1),
-  "quantity": zod.string(),
-  "unit": zod.string().optional(),
-  "unit_price": zod.string(),
-  "amount": zod.string(),
-  "tier_breakdown": zod.object({
-
-}).passthrough().optional(),
-  "credit_id": zod.number().optional()
-})).optional(),
-  "error": zod.string().min(1).optional(),
-  "pending_cancel": zod.boolean().optional(),
-  "cancel_at": zod.string().min(1).optional()
-})
-})
-
-
-/**
- * List or create usage budgets.
- */
-
-
-
-
-
-
-
-export const UsageV2BudgetsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "budgets": zod.array(zod.object({
-  "id": zod.number(),
-  "name": zod.string().min(1),
-  "scope": zod.string().min(1).optional(),
-  "threshold_value": zod.string(),
-  "action": zod.string().min(1),
-  "notify_emails": zod.array(zod.string().email().min(1)).optional(),
-  "is_active": zod.boolean().optional(),
-  "last_triggered_period": zod.string().min(1).optional(),
-  "last_triggered_at": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
-}))
-})
-})
-
-
-/**
- * List or create usage budgets.
- */
-
-
-
-
-
-export const UsageV2BudgetsCreateBody = zod.object({
-  "name": zod.string().min(1).optional(),
-  "scope": zod.string().min(1).optional(),
-  "threshold_value": zod.string().optional(),
-  "action": zod.enum(['notify', 'warn', 'pause']).optional(),
-  "notify_emails": zod.array(zod.string().email().min(1)).optional(),
-  "notify_slack_webhook": zod.string().url().optional(),
-  "is_active": zod.boolean().optional()
-})
-
-
-
-
-
-
-
-export const UsageV2BudgetsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number(),
-  "name": zod.string().min(1),
-  "scope": zod.string().min(1).optional(),
-  "threshold_value": zod.string().min(1),
-  "action": zod.string().min(1),
-  "is_active": zod.boolean().optional()
-})
-})
-
-
-/**
- * Update or delete a budget.
- */
-export const UsageV2BudgetsUpdateParams = zod.object({
-  "budget_id": zod.string()
-})
-
-
-
-
-
-
-export const UsageV2BudgetsUpdateBody = zod.object({
-  "name": zod.string().min(1).optional(),
-  "scope": zod.string().min(1).optional(),
-  "threshold_value": zod.string().optional(),
-  "action": zod.enum(['notify', 'warn', 'pause']).optional(),
-  "notify_emails": zod.array(zod.string().email().min(1)).optional(),
-  "notify_slack_webhook": zod.string().url().optional(),
-  "is_active": zod.boolean().optional()
-})
-
-
-
-
-
-
-
-export const UsageV2BudgetsUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "id": zod.number(),
-  "name": zod.string().min(1),
-  "scope": zod.string().min(1).optional(),
-  "threshold_value": zod.string().min(1),
-  "action": zod.string().min(1),
-  "is_active": zod.boolean().optional()
-})
-})
-
-
-/**
- * Update or delete a budget.
- */
-export const UsageV2BudgetsDeleteParams = zod.object({
-  "budget_id": zod.string()
-})
-
-export const UsageV2BudgetsDeleteBody = zod.object({
-
-}).passthrough()
-
-export const UsageV2BudgetsDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "deleted": zod.boolean()
-})
-})
-
-
-/**
- * Cancels any active Stripe subscription and resets plan to free.
-If user has an add-on, it must be removed first.
- * @summary Downgrade from PAYG to Free.
- */
-export const UsageV2DowngradeToFreeCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2DowngradeToFreeCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "plan": zod.string().min(1)
-})
-})
-
-
-/**
- * Get invoice history for the billing page.
- */
-
-
-
-
-export const UsageV2InvoicesListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "invoices": zod.array(zod.object({
-  "id": zod.string().uuid(),
-  "period_start": zod.string().date(),
-  "period_end": zod.string().date(),
-  "plan": zod.string().min(1),
-  "platform_fee": zod.string(),
-  "usage_total": zod.string(),
-  "credits_applied": zod.string(),
-  "subtotal": zod.string(),
-  "tax": zod.string(),
-  "total": zod.string(),
-  "status": zod.string().min(1),
-  "stripe_invoice_url": zod.string().url().optional(),
-  "stripe_pdf_url": zod.string().url().optional(),
-  "created_at": zod.string().datetime({"offset":true})
-}))
-})
-})
-
-
-/**
- * Get invoice detail with line items.
- */
-export const UsageV2InvoicesReadParams = zod.object({
-  "invoice_id": zod.string()
-})
-
-
-
-
-
-
-
-
-export const UsageV2InvoicesReadResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "invoice": zod.object({
-  "id": zod.string().uuid(),
-  "period_start": zod.string().date(),
-  "period_end": zod.string().date(),
-  "plan": zod.string().min(1),
-  "platform_fee": zod.number(),
-  "usage_total": zod.number(),
-  "credits_applied": zod.number(),
-  "subtotal": zod.number(),
-  "tax": zod.number(),
-  "total": zod.number(),
-  "status": zod.string().min(1),
-  "stripe_pdf_url": zod.string().url().optional()
-}),
-  "line_items": zod.array(zod.object({
-  "line_type": zod.string().min(1),
-  "dimension": zod.string().min(1).optional(),
-  "description": zod.string().min(1),
-  "quantity": zod.string(),
-  "unit": zod.string().optional(),
-  "unit_price": zod.string(),
-  "amount": zod.string(),
-  "tier_breakdown": zod.object({
-
-}).passthrough().optional(),
-  "credit_id": zod.number().optional()
-}))
-})
-})
-
-
-/**
- * Used by the frontend to show billing warnings/alerts.
- * @summary Get active notification banners for the org.
- */
-
-
-
-
-
-
-
-export const UsageV2NotificationsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "banners": zod.array(zod.object({
-  "id": zod.string().min(1),
-  "type": zod.string().min(1),
-  "message": zod.string().min(1),
-  "action": zod.object({
-  "label": zod.string().min(1),
-  "url": zod.string().min(1)
-}).optional(),
-  "dismissible": zod.boolean().optional()
-}))
-})
-})
-
-
-/**
- * List payment methods or create a Stripe Checkout session for adding a card.
- */
-
-
-
-export const UsageV2PaymentMethodsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.string().min(1),
-  "brand": zod.string().optional(),
-  "last4": zod.string().optional(),
-  "exp_month": zod.number().optional(),
-  "exp_year": zod.number().optional(),
-  "is_default": zod.boolean().optional()
-}))
-})
-
-
-/**
- * Manage a specific payment method.
- */
-export const UsageV2PaymentMethodsCreateParams = zod.object({
-  "pm_id": zod.string()
-})
-
-export const UsageV2PaymentMethodsCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2PaymentMethodsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Verifies the session, and if the customer has no default payment
-method yet, sets the newly-attached card as the default. Parity
-with UpgradeToPaygView.put so both card-collection flows produce
-the same end state.
- * @summary Confirm a completed Checkout setup session.
- */
-
-
-
-export const UsageV2PaymentMethodsUpdateBody = zod.object({
-  "session_id": zod.string().min(1)
-})
-
-
-
-
-export const UsageV2PaymentMethodsUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "payment_method_id": zod.string().min(1),
-  "set_as_default": zod.boolean()
-})
-})
-
-
-/**
- * List payment methods or create a Stripe Checkout session for adding a card.
- */
-
-
-
-export const UsageV2PaymentMethodsSetupIntentListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.array(zod.object({
-  "id": zod.string().min(1),
-  "brand": zod.string().optional(),
-  "last4": zod.string().optional(),
-  "exp_month": zod.number().optional(),
-  "exp_year": zod.number().optional(),
-  "is_default": zod.boolean().optional()
-}))
-})
-
-
-/**
- * List payment methods or create a Stripe Checkout session for adding a card.
- */
-export const UsageV2PaymentMethodsSetupIntentCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2PaymentMethodsSetupIntentCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "checkout_url": zod.string().url().min(1)
-})
-})
-
-
-/**
- * Verifies the session, and if the customer has no default payment
-method yet, sets the newly-attached card as the default. Parity
-with UpgradeToPaygView.put so both card-collection flows produce
-the same end state.
- * @summary Confirm a completed Checkout setup session.
- */
-
-
-
-export const UsageV2PaymentMethodsSetupIntentUpdateBody = zod.object({
-  "session_id": zod.string().min(1)
-})
-
-
-
-
-export const UsageV2PaymentMethodsSetupIntentUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "payment_method_id": zod.string().min(1),
-  "set_as_default": zod.boolean()
-})
-})
-
-
-/**
- * Manage a specific payment method.
- */
-export const UsageV2PaymentMethodsDeleteParams = zod.object({
-  "pm_id": zod.string()
-})
-
-
-
-
-export const UsageV2PaymentMethodsDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Manage a specific payment method.
- */
-export const UsageV2PaymentMethodsDefaultCreateParams = zod.object({
-  "pm_id": zod.string()
-})
-
-export const UsageV2PaymentMethodsDefaultCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2PaymentMethodsDefaultCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Manage a specific payment method.
- */
-export const UsageV2PaymentMethodsDefaultDeleteParams = zod.object({
-  "pm_id": zod.string()
-})
-
-
-
-
-export const UsageV2PaymentMethodsDefaultDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Returns 2 tiers + 3 add-ons with features, limits, pricing.
- * @summary Get plan comparison data for the pricing page.
- */
-
-
-
-
-
-
-
-
-
-
-
-
-export const UsageV2PlansAndAddonsListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "current_plan": zod.string().min(1),
-  "billing_interval": zod.string().min(1),
-  "tiers": zod.array(zod.object({
-  "key": zod.string().min(1),
-  "display_name": zod.string().min(1),
-  "platform_fee_monthly": zod.number(),
-  "is_current": zod.boolean(),
-  "features": zod.record(zod.string(), zod.object({
-
-}).passthrough())
-})),
-  "addons": zod.array(zod.object({
-  "key": zod.string().min(1),
-  "display_name": zod.string().min(1),
-  "platform_fee_monthly": zod.number(),
-  "is_current": zod.boolean(),
-  "features": zod.record(zod.string(), zod.object({
-
-}).passthrough())
-})),
-  "pricing": zod.record(zod.string(), zod.object({
-  "display_name": zod.string().min(1),
-  "display_unit": zod.string().min(1),
-  "tiers": zod.array(zod.object({
-  "up_to": zod.number().optional(),
-  "price_per_unit": zod.number()
-}))
-})),
-  "isCustomPricing": zod.boolean(),
-  "customDetails": zod.object({
-  "platform_fee": zod.number(),
-  "platform_fee_billing_cycle": zod.number(),
-  "per_charge_amount": zod.number(),
-  "contract_end_date": zod.string().min(1).optional(),
-  "features": zod.record(zod.string(), zod.object({
-
-}).passthrough()),
-  "pricing": zod.record(zod.string(), zod.object({
-
-}).passthrough())
-}).optional(),
-  "pending_cancel": zod.boolean(),
-  "cancel_at": zod.string().min(1).optional()
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-export const UsageV2ReinstateAddonCreateBody = zod.object({
-  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
-})
-
-
-
-
-
-export const UsageV2ReinstateAddonCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "subscription_id": zod.string().min(1),
-  "plan": zod.string().min(1)
-})
-})
-
-
-/**
- * Reinstate a previously-scheduled add-on cancellation.
- */
-export const UsageV2ReinstateAddonUpdateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2ReinstateAddonUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-
-
-
-export const UsageV2ReinstateAddonDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-export const UsageV2RemoveAddonCreateBody = zod.object({
-  "plan": zod.enum(['boost', 'scale', 'enterprise']).optional()
-})
-
-
-
-
-
-export const UsageV2RemoveAddonCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "subscription_id": zod.string().min(1),
-  "plan": zod.string().min(1)
-})
-})
-
-
-/**
- * Reinstate a previously-scheduled add-on cancellation.
- */
-export const UsageV2RemoveAddonUpdateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2RemoveAddonUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * Add or remove an add-on subscription.
- */
-
-
-
-export const UsageV2RemoveAddonDeleteResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "message": zod.string().min(1)
-})
-})
-
-
-/**
- * No auth — Stripe authenticates via signature header.
-APIView.as_view() auto-applies csrf_exempt.
- * @summary Handle Stripe webhook events.
- */
-
-
-
-
-export const UsageV2StripeWebhookCreateBody = zod.object({
-  "id": zod.string().min(1).optional(),
-  "type": zod.string().min(1).optional(),
-  "data": zod.record(zod.string(), zod.string()).optional()
-})
-
-
-
-
-export const UsageV2StripeWebhookCreateResponse = zod.object({
-  "status": zod.string().min(1),
-  "result": zod.object({
-  "event_type": zod.string().optional(),
-  "action": zod.string().optional(),
-  "status": zod.string().optional(),
-  "message": zod.string().optional()
-}).optional()
-})
-
-
-/**
- * Create a Stripe Checkout session in setup mode for card collection.
- */
-export const UsageV2UpgradeToPaygCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-
-export const UsageV2UpgradeToPaygCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "checkout_url": zod.string().url().min(1)
-})
-})
-
-
-/**
- * Confirm upgrade after Stripe Checkout succeeds.
- */
-
-
-
-export const UsageV2UpgradeToPaygUpdateBody = zod.object({
-  "session_id": zod.string().min(1)
-})
-
-
-
-
-export const UsageV2UpgradeToPaygUpdateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "plan": zod.string().min(1)
-})
-})
-
-
-/**
- * Returns per-dimension totals, free allowances, estimated costs,
-and projected month-end usage.
-
-Query params:
-    period: YYYY-MM (default: current month)
-    workspace_id: optional (filter by workspace)
- * @summary Get usage overview for the current billing period.
- */
-
-
-export const usageV2UsageOverviewListQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const usageV2UsageOverviewListQueryPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const UsageV2UsageOverviewListQueryParams = zod.object({
-  "period": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodRegExp).optional(),
-  "period_end": zod.string().min(1).regex(usageV2UsageOverviewListQueryPeriodEndRegExp).optional(),
-  "workspace_id": zod.string().uuid().optional()
-})
-
-
-
-
-
-
-
-
-
-
-
-
-export const UsageV2UsageOverviewListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "plan": zod.string().min(1),
-  "plan_display_name": zod.string().min(1),
-  "platform_fee": zod.number(),
-  "period": zod.string().min(1),
-  "billing_period_start": zod.string().min(1),
-  "billing_period_end": zod.string().min(1),
-  "total_estimated_cost": zod.number(),
-  "total_with_platform": zod.number(),
-  "dimensions": zod.array(zod.object({
-  "key": zod.string().min(1),
-  "display_name": zod.string().min(1),
-  "display_unit": zod.string().min(1),
-  "current_usage": zod.number(),
-  "current_usage_raw": zod.number(),
-  "free_allowance": zod.number(),
-  "projected_usage": zod.number(),
-  "estimated_cost": zod.number(),
-  "tier_breakdown": zod.array(zod.object({
-  "tier_start": zod.number().optional(),
-  "tier_end": zod.number().optional(),
-  "quantity": zod.number().optional(),
-  "rate": zod.number().optional(),
-  "cost": zod.number().optional()
-})).optional(),
-  "usage_pct": zod.number()
-})),
-  "pending_cancel": zod.boolean(),
-  "cancel_at": zod.string().min(1).optional()
-})
-})
-
-
-/**
- * Query params:
-    dimension: required (e.g., "storage", "ai_credits")
-    period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
- * @summary Get daily usage time-series for a dimension.
- */
-
-
-
-export const usageV2UsageTimeSeriesListQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const usageV2UsageTimeSeriesListQueryPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const UsageV2UsageTimeSeriesListQueryParams = zod.object({
-  "dimension": zod.string().min(1),
-  "period": zod.string().min(1).regex(usageV2UsageTimeSeriesListQueryPeriodRegExp).optional(),
-  "period_end": zod.string().min(1).regex(usageV2UsageTimeSeriesListQueryPeriodEndRegExp).optional()
-})
-
-
-
-
-
-
-
-export const UsageV2UsageTimeSeriesListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "dimension": zod.string().min(1),
-  "period": zod.string().min(1),
-  "period_end": zod.string().min(1),
-  "series": zod.array(zod.object({
-  "date": zod.string().min(1),
-  "usage": zod.number()
-}))
-})
-})
-
-
-/**
- * Query params:
-    dimension: required
-    period: YYYY-MM (default: current month)
-    period_end: YYYY-MM (optional; defaults to period for a single month)
- * @summary Get per-workspace usage breakdown for a dimension.
- */
-
-
-
-export const usageV2UsageWorkspaceBreakdownListQueryPeriodRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const usageV2UsageWorkspaceBreakdownListQueryPeriodEndRegExp = new RegExp('^\\d{4}-\\d{2}$');
-
-
-export const UsageV2UsageWorkspaceBreakdownListQueryParams = zod.object({
-  "dimension": zod.string().min(1),
-  "period": zod.string().min(1).regex(usageV2UsageWorkspaceBreakdownListQueryPeriodRegExp).optional(),
-  "period_end": zod.string().min(1).regex(usageV2UsageWorkspaceBreakdownListQueryPeriodEndRegExp).optional()
-})
-
-
-
-
-
-
-
-export const UsageV2UsageWorkspaceBreakdownListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "dimension": zod.string().min(1),
-  "period": zod.string().min(1),
-  "period_end": zod.string().min(1),
-  "workspaces": zod.array(zod.object({
-  "workspace_id": zod.string().uuid().optional(),
-  "workspace_name": zod.string().min(1),
-  "usage": zod.number()
-}))
-})
-})
-
-
-/**
- * No auth — Stripe authenticates via signature header.
-APIView.as_view() auto-applies csrf_exempt.
- * @summary Handle Stripe webhook events.
- */
-
-
-
-
-export const UsageWebhookCreateBody = zod.object({
-  "id": zod.string().min(1).optional(),
-  "type": zod.string().min(1).optional(),
-  "data": zod.record(zod.string(), zod.string()).optional()
-})
-
-
-
-
-export const UsageWebhookCreateResponse = zod.object({
-  "status": zod.string().min(1),
-  "result": zod.object({
-  "event_type": zod.string().optional(),
-  "action": zod.string().optional(),
-  "status": zod.string().optional(),
-  "message": zod.string().optional()
-}).optional()
-})
-
-
-export const usageWorkspaceEvalSummaryListQueryMonthMax = 12;
-
-
-
-export const UsageWorkspaceEvalSummaryListQueryParams = zod.object({
-  "month": zod.number().min(1).max(usageWorkspaceEvalSummaryListQueryMonthMax).optional(),
-  "year": zod.number().optional(),
-  "workspace_id": zod.string().uuid()
-})
-
-export const UsageWorkspaceEvalSummaryListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-export const usageWorkspaceUsageSummaryListQueryMonthMax = 12;
-
-
-
-export const UsageWorkspaceUsageSummaryListQueryParams = zod.object({
-  "month": zod.number().min(1).max(usageWorkspaceUsageSummaryListQueryMonthMax).optional(),
-  "year": zod.number().optional()
-})
-
-export const UsageWorkspaceUsageSummaryListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
-})
-
-
-
-
-export const v1EnterpriseHeartbeatsCreateBodyLicenseIdRegExp = new RegExp('^lic_[A-Za-z0-9_-]{1,60}$');
-export const v1EnterpriseHeartbeatsCreateBodyVersionDefault = ``;
-export const v1EnterpriseHeartbeatsCreateBodyVersionMax = 100;
-
-export const v1EnterpriseHeartbeatsCreateBodyDeploymentTypeDefault = ``;
-export const v1EnterpriseHeartbeatsCreateBodyDeploymentTypeMax = 50;
-
-
-
-export const v1EnterpriseHeartbeatsCreateBodyNonceRegExp = new RegExp('^[A-Za-z0-9_-]{16,64}$');
-export const v1EnterpriseHeartbeatsCreateBodySequenceMin = 0;
-
-export const v1EnterpriseHeartbeatsCreateBodyUsageDataDefault = {  };
-
-export const V1EnterpriseHeartbeatsCreateBody = zod.object({
-  "instance_id": zod.string().uuid(),
-  "license_id": zod.string().min(1).regex(v1EnterpriseHeartbeatsCreateBodyLicenseIdRegExp),
-  "version": zod.string().min(1).max(v1EnterpriseHeartbeatsCreateBodyVersionMax).default(v1EnterpriseHeartbeatsCreateBodyVersionDefault),
-  "deployment_type": zod.string().min(1).max(v1EnterpriseHeartbeatsCreateBodyDeploymentTypeMax).default(v1EnterpriseHeartbeatsCreateBodyDeploymentTypeDefault),
-  "timestamp": zod.string().datetime({"offset":true}),
-  "nonce": zod.string().min(1).regex(v1EnterpriseHeartbeatsCreateBodyNonceRegExp),
-  "sequence": zod.number().min(v1EnterpriseHeartbeatsCreateBodySequenceMin),
-  "usage_data": zod.record(zod.string(), zod.string()).default(v1EnterpriseHeartbeatsCreateBodyUsageDataDefault)
-})
-
-
-
-
-
-
-export const V1EnterpriseHeartbeatsCreateResponse = zod.object({
-  "status": zod.enum(['accepted', 'ignored', 'rejected']),
-  "reason": zod.string().min(1).optional(),
-  "grant_status": zod.string().min(1).optional(),
-  "expires_at": zod.string().datetime({"offset":true}).optional(),
-  "renewal_notice": zod.string().min(1).optional()
-})
-
-
-/**
  * Health check - always returns OK.
  */
 
@@ -46961,297 +44661,4 @@ export const V1EnterpriseHeartbeatsCreateResponse = zod.object({
 export const V1HealthListResponse = zod.object({
   "status": zod.enum(['healthy']),
   "service": zod.string().min(1)
-})
-
-
-export const v1InternalLicensesCreateBodyCustomerNameMax = 255;
-
-export const v1InternalLicensesCreateBodyCustomerIdDefault = ``;
-export const v1InternalLicensesCreateBodyCustomerIdMax = 64;
-
-export const v1InternalLicensesCreateBodyPrimaryContactEmailDefault = ``;
-
-export const v1InternalLicensesCreateBodyHubspotDealIdDefault = ``;
-export const v1InternalLicensesCreateBodyHubspotDealIdMax = 128;
-
-export const v1InternalLicensesCreateBodyBandMax = 64;
-
-
-export const v1InternalLicensesCreateBodyFeaturesDefault = [];
-export const v1InternalLicensesCreateBodyLimitsMinOne = -1;
-
-export const v1InternalLicensesCreateBodyLimitsDefault = {  };
-export const v1InternalLicensesCreateBodyMaxInstancesDefault = 1;
-
-export const v1InternalLicensesCreateBodyMinSoftwareVersionDefault = ``;
-export const v1InternalLicensesCreateBodyMinSoftwareVersionMax = 32;
-
-export const v1InternalLicensesCreateBodyGraceDaysDefault = 90;
-export const v1InternalLicensesCreateBodyGraceDaysMin = 0;
-
-
-
-export const V1InternalLicensesCreateBody = zod.object({
-  "customer_name": zod.string().min(1).max(v1InternalLicensesCreateBodyCustomerNameMax),
-  "customer_id": zod.string().min(1).max(v1InternalLicensesCreateBodyCustomerIdMax).default(v1InternalLicensesCreateBodyCustomerIdDefault),
-  "primary_contact_email": zod.string().email().min(1).default(v1InternalLicensesCreateBodyPrimaryContactEmailDefault),
-  "hubspot_deal_id": zod.string().min(1).max(v1InternalLicensesCreateBodyHubspotDealIdMax).default(v1InternalLicensesCreateBodyHubspotDealIdDefault),
-  "license_type": zod.enum(['production', 'trial']),
-  "band": zod.string().min(1).max(v1InternalLicensesCreateBodyBandMax),
-  "features": zod.array(zod.string().min(1)).default(v1InternalLicensesCreateBodyFeaturesDefault),
-  "limits": zod.record(zod.string(), zod.number().min(v1InternalLicensesCreateBodyLimitsMinOne)).default(v1InternalLicensesCreateBodyLimitsDefault),
-  "max_instances": zod.number().min(1).default(v1InternalLicensesCreateBodyMaxInstancesDefault),
-  "min_software_version": zod.string().min(1).max(v1InternalLicensesCreateBodyMinSoftwareVersionMax).default(v1InternalLicensesCreateBodyMinSoftwareVersionDefault),
-  "not_before": zod.string().datetime({"offset":true}).optional(),
-  "expires_at": zod.string().datetime({"offset":true}),
-  "grace_days": zod.number().min(v1InternalLicensesCreateBodyGraceDaysMin).default(v1InternalLicensesCreateBodyGraceDaysDefault)
-})
-
-
-export const V1InternalLicensesReadParams = zod.object({
-  "grant_id": zod.string()
-})
-
-
-export const V1InternalLicensesApproveCreateParams = zod.object({
-  "grant_id": zod.string()
-})
-
-export const V1InternalLicensesApproveCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-export const v1InternalLicensesApproveCreateResponseCustomerNameMax = 255;
-
-export const v1InternalLicensesApproveCreateResponseCustomerIdMax = 64;
-
-export const v1InternalLicensesApproveCreateResponsePrimaryContactEmailMax = 254;
-
-export const v1InternalLicensesApproveCreateResponseHubspotDealIdMax = 128;
-
-export const v1InternalLicensesApproveCreateResponseBandMax = 64;
-
-export const v1InternalLicensesApproveCreateResponseMaxInstancesMin = -2147483648;
-export const v1InternalLicensesApproveCreateResponseMaxInstancesMax = 2147483647;
-
-export const v1InternalLicensesApproveCreateResponseMinSoftwareVersionMax = 32;
-
-export const v1InternalLicensesApproveCreateResponseGraceDaysMin = -2147483648;
-export const v1InternalLicensesApproveCreateResponseGraceDaysMax = 2147483647;
-
-export const v1InternalLicensesApproveCreateResponseStatusReasonMax = 255;
-
-
-
-export const V1InternalLicensesApproveCreateResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "license_id": zod.string().min(1).optional(),
-  "key_id": zod.string().min(1).optional(),
-  "customer_name": zod.string().min(1).max(v1InternalLicensesApproveCreateResponseCustomerNameMax),
-  "customer_id": zod.string().max(v1InternalLicensesApproveCreateResponseCustomerIdMax).optional(),
-  "primary_contact_email": zod.string().email().max(v1InternalLicensesApproveCreateResponsePrimaryContactEmailMax).optional(),
-  "hubspot_deal_id": zod.string().max(v1InternalLicensesApproveCreateResponseHubspotDealIdMax).optional(),
-  "license_type": zod.enum(['production', 'trial']),
-  "band": zod.string().min(1).max(v1InternalLicensesApproveCreateResponseBandMax),
-  "features": zod.object({
-
-}).passthrough().optional(),
-  "limits": zod.object({
-
-}).passthrough().optional(),
-  "max_instances": zod.number().min(v1InternalLicensesApproveCreateResponseMaxInstancesMin).max(v1InternalLicensesApproveCreateResponseMaxInstancesMax).optional(),
-  "min_software_version": zod.string().max(v1InternalLicensesApproveCreateResponseMinSoftwareVersionMax).optional(),
-  "issued_at": zod.string().datetime({"offset":true}).optional(),
-  "not_before": zod.string().datetime({"offset":true}).optional(),
-  "expires_at": zod.string().datetime({"offset":true}).optional(),
-  "grace_days": zod.number().min(v1InternalLicensesApproveCreateResponseGraceDaysMin).max(v1InternalLicensesApproveCreateResponseGraceDaysMax).optional(),
-  "status": zod.enum(['draft', 'pending_approval', 'active', 'suspended', 'revoked', 'expired']).optional(),
-  "status_reason": zod.string().max(v1InternalLicensesApproveCreateResponseStatusReasonMax).optional(),
-  "status_changed_at": zod.string().datetime({"offset":true}).optional(),
-  "drafted_by": zod.string().uuid().optional(),
-  "approved_by": zod.string().uuid().optional(),
-  "approved_at": zod.string().datetime({"offset":true}).optional(),
-  "authorization_version": zod.number().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
-})
-
-
-export const V1InternalLicensesIssueCreateParams = zod.object({
-  "grant_id": zod.string()
-})
-
-export const V1InternalLicensesIssueCreateBody = zod.object({
-
-}).passthrough()
-
-
-
-export const v1InternalLicensesIssueCreateResponseGrantCustomerNameMax = 255;
-
-export const v1InternalLicensesIssueCreateResponseGrantCustomerIdMax = 64;
-
-export const v1InternalLicensesIssueCreateResponseGrantPrimaryContactEmailMax = 254;
-
-export const v1InternalLicensesIssueCreateResponseGrantHubspotDealIdMax = 128;
-
-export const v1InternalLicensesIssueCreateResponseGrantBandMax = 64;
-
-export const v1InternalLicensesIssueCreateResponseGrantMaxInstancesMin = -2147483648;
-export const v1InternalLicensesIssueCreateResponseGrantMaxInstancesMax = 2147483647;
-
-export const v1InternalLicensesIssueCreateResponseGrantMinSoftwareVersionMax = 32;
-
-export const v1InternalLicensesIssueCreateResponseGrantGraceDaysMin = -2147483648;
-export const v1InternalLicensesIssueCreateResponseGrantGraceDaysMax = 2147483647;
-
-export const v1InternalLicensesIssueCreateResponseGrantStatusReasonMax = 255;
-
-
-
-
-export const V1InternalLicensesIssueCreateResponse = zod.object({
-  "grant": zod.object({
-  "id": zod.string().uuid().optional(),
-  "license_id": zod.string().min(1).optional(),
-  "key_id": zod.string().min(1).optional(),
-  "customer_name": zod.string().min(1).max(v1InternalLicensesIssueCreateResponseGrantCustomerNameMax),
-  "customer_id": zod.string().max(v1InternalLicensesIssueCreateResponseGrantCustomerIdMax).optional(),
-  "primary_contact_email": zod.string().email().max(v1InternalLicensesIssueCreateResponseGrantPrimaryContactEmailMax).optional(),
-  "hubspot_deal_id": zod.string().max(v1InternalLicensesIssueCreateResponseGrantHubspotDealIdMax).optional(),
-  "license_type": zod.enum(['production', 'trial']),
-  "band": zod.string().min(1).max(v1InternalLicensesIssueCreateResponseGrantBandMax),
-  "features": zod.object({
-
-}).passthrough().optional(),
-  "limits": zod.object({
-
-}).passthrough().optional(),
-  "max_instances": zod.number().min(v1InternalLicensesIssueCreateResponseGrantMaxInstancesMin).max(v1InternalLicensesIssueCreateResponseGrantMaxInstancesMax).optional(),
-  "min_software_version": zod.string().max(v1InternalLicensesIssueCreateResponseGrantMinSoftwareVersionMax).optional(),
-  "issued_at": zod.string().datetime({"offset":true}).optional(),
-  "not_before": zod.string().datetime({"offset":true}).optional(),
-  "expires_at": zod.string().datetime({"offset":true}).optional(),
-  "grace_days": zod.number().min(v1InternalLicensesIssueCreateResponseGrantGraceDaysMin).max(v1InternalLicensesIssueCreateResponseGrantGraceDaysMax).optional(),
-  "status": zod.enum(['draft', 'pending_approval', 'active', 'suspended', 'revoked', 'expired']).optional(),
-  "status_reason": zod.string().max(v1InternalLicensesIssueCreateResponseGrantStatusReasonMax).optional(),
-  "status_changed_at": zod.string().datetime({"offset":true}).optional(),
-  "drafted_by": zod.string().uuid().optional(),
-  "approved_by": zod.string().uuid().optional(),
-  "approved_at": zod.string().datetime({"offset":true}).optional(),
-  "authorization_version": zod.number().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
-}),
-  "license_key": zod.string().min(1)
-})
-
-
-export const V1InternalLicensesStatusCreateParams = zod.object({
-  "grant_id": zod.string()
-})
-
-export const v1InternalLicensesStatusCreateBodyReasonDefault = ``;
-export const v1InternalLicensesStatusCreateBodyReasonMax = 255;
-
-
-
-export const V1InternalLicensesStatusCreateBody = zod.object({
-  "status": zod.enum(['active', 'suspended', 'revoked']),
-  "reason": zod.string().max(v1InternalLicensesStatusCreateBodyReasonMax).default(v1InternalLicensesStatusCreateBodyReasonDefault)
-})
-
-
-
-export const v1InternalLicensesStatusCreateResponseCustomerNameMax = 255;
-
-export const v1InternalLicensesStatusCreateResponseCustomerIdMax = 64;
-
-export const v1InternalLicensesStatusCreateResponsePrimaryContactEmailMax = 254;
-
-export const v1InternalLicensesStatusCreateResponseHubspotDealIdMax = 128;
-
-export const v1InternalLicensesStatusCreateResponseBandMax = 64;
-
-export const v1InternalLicensesStatusCreateResponseMaxInstancesMin = -2147483648;
-export const v1InternalLicensesStatusCreateResponseMaxInstancesMax = 2147483647;
-
-export const v1InternalLicensesStatusCreateResponseMinSoftwareVersionMax = 32;
-
-export const v1InternalLicensesStatusCreateResponseGraceDaysMin = -2147483648;
-export const v1InternalLicensesStatusCreateResponseGraceDaysMax = 2147483647;
-
-export const v1InternalLicensesStatusCreateResponseStatusReasonMax = 255;
-
-
-
-export const V1InternalLicensesStatusCreateResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "license_id": zod.string().min(1).optional(),
-  "key_id": zod.string().min(1).optional(),
-  "customer_name": zod.string().min(1).max(v1InternalLicensesStatusCreateResponseCustomerNameMax),
-  "customer_id": zod.string().max(v1InternalLicensesStatusCreateResponseCustomerIdMax).optional(),
-  "primary_contact_email": zod.string().email().max(v1InternalLicensesStatusCreateResponsePrimaryContactEmailMax).optional(),
-  "hubspot_deal_id": zod.string().max(v1InternalLicensesStatusCreateResponseHubspotDealIdMax).optional(),
-  "license_type": zod.enum(['production', 'trial']),
-  "band": zod.string().min(1).max(v1InternalLicensesStatusCreateResponseBandMax),
-  "features": zod.object({
-
-}).passthrough().optional(),
-  "limits": zod.object({
-
-}).passthrough().optional(),
-  "max_instances": zod.number().min(v1InternalLicensesStatusCreateResponseMaxInstancesMin).max(v1InternalLicensesStatusCreateResponseMaxInstancesMax).optional(),
-  "min_software_version": zod.string().max(v1InternalLicensesStatusCreateResponseMinSoftwareVersionMax).optional(),
-  "issued_at": zod.string().datetime({"offset":true}).optional(),
-  "not_before": zod.string().datetime({"offset":true}).optional(),
-  "expires_at": zod.string().datetime({"offset":true}).optional(),
-  "grace_days": zod.number().min(v1InternalLicensesStatusCreateResponseGraceDaysMin).max(v1InternalLicensesStatusCreateResponseGraceDaysMax).optional(),
-  "status": zod.enum(['draft', 'pending_approval', 'active', 'suspended', 'revoked', 'expired']).optional(),
-  "status_reason": zod.string().max(v1InternalLicensesStatusCreateResponseStatusReasonMax).optional(),
-  "status_changed_at": zod.string().datetime({"offset":true}).optional(),
-  "drafted_by": zod.string().uuid().optional(),
-  "approved_by": zod.string().uuid().optional(),
-  "approved_at": zod.string().datetime({"offset":true}).optional(),
-  "authorization_version": zod.number().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
-})
-
-
-export const v1SelfHostedActivationsCreateBodyVersionDefault = ``;
-export const v1SelfHostedActivationsCreateBodyVersionMax = 100;
-
-export const v1SelfHostedActivationsCreateBodyDeploymentTypeDefault = ``;
-export const v1SelfHostedActivationsCreateBodyDeploymentTypeMax = 50;
-
-
-
-export const v1SelfHostedActivationsCreateBodyLicenseKeyHashRegExp = new RegExp('^[0-9a-f]{64}$');
-
-
-export const V1SelfHostedActivationsCreateBody = zod.object({
-  "instance_id": zod.string().uuid(),
-  "version": zod.string().max(v1SelfHostedActivationsCreateBodyVersionMax).default(v1SelfHostedActivationsCreateBodyVersionDefault),
-  "deployment_type": zod.string().max(v1SelfHostedActivationsCreateBodyDeploymentTypeMax).default(v1SelfHostedActivationsCreateBodyDeploymentTypeDefault),
-  "license_key_hash": zod.string().min(1).regex(v1SelfHostedActivationsCreateBodyLicenseKeyHashRegExp).optional()
-})
-
-
-
-export const v1SelfHostedActivationsCreateResponseExpiresInMin = 0;
-
-
-
-
-
-export const V1SelfHostedActivationsCreateResponse = zod.object({
-  "gateway_url": zod.string().url().min(1),
-  "access_token": zod.string().min(1),
-  "expires_in": zod.number().min(v1SelfHostedActivationsCreateResponseExpiresInMin),
-  "allowed_services": zod.array(zod.string().min(1)),
-  "allowed_models": zod.array(zod.string().min(1)),
-  "scope": zod.enum(['oss', 'enterprise'])
 })

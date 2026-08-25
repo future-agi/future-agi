@@ -590,3 +590,53 @@ def rerun_evaluations_only(
         workspace_id=workspace_id,
         eval_only=True,
     )
+
+
+def start_hosted_harness_gateway_workflow(
+    job_id: str, endpoint_base_url: str, max_infrastructure_attempts: int
+) -> str:
+    return async_to_sync(_start_hosted_harness_gateway_workflow_async)(
+        job_id, endpoint_base_url, max_infrastructure_attempts
+    )
+
+
+async def _start_hosted_harness_gateway_workflow_async(
+    job_id: str, endpoint_base_url: str, max_infrastructure_attempts: int
+) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.hosted_harness_gateway import (
+        HostedHarnessGatewayInput,
+    )
+    from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+        HostedHarnessGatewayWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"hosted-harness-{job_id}"
+    await client.start_workflow(
+        HostedHarnessGatewayWorkflow.run,
+        HostedHarnessGatewayInput(
+            job_id=job_id,
+            endpoint_base_url=endpoint_base_url,
+            max_infrastructure_attempts=max_infrastructure_attempts,
+        ),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
+def cancel_hosted_harness_gateway_workflow(job_id: str) -> None:
+    async_to_sync(_cancel_hosted_harness_gateway_workflow_async)(job_id)
+
+
+async def _cancel_hosted_harness_gateway_workflow_async(job_id: str) -> None:
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"hosted-harness-{job_id}")
+    await handle.signal("cancel")

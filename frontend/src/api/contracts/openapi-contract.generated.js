@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 988,
+  "endpointCount": 921,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -18362,6 +18362,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "created_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "dataset_id": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "ordering": {
             "required": false,
             "schema": {
@@ -18525,6 +18543,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "created_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "dataset_id": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -21009,6 +21045,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "optimize_type": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -22511,6 +22559,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "name": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -22730,6 +22784,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "template_name": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "template_version": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -22797,6 +22869,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "template_name": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "template_version": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -23416,6 +23506,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "name": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -23629,6 +23737,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
+          "name": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "search": {
             "required": false,
             "schema": {
@@ -27351,6 +27477,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/simulate/api/harness-jobs/preflight/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_preflight",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessPreflight"
+        },
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessPreflight"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/simulate/api/harness-jobs/{id}/": {
       "get": {
         "operationId": "simulate_api_harness-jobs_read",
@@ -27377,6 +27522,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/HarnessJobAction"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_artifacts_artifact_manifest",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessManifest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessAcceptedResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": {
+      "put": {
+        "operationId": "simulate_api_harness_attempts_artifact_upload",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "type": "string",
+          "format": "binary"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessArtifactUploadResponse"
+          },
+          "201": {
+            "$ref": "#/definitions/HarnessArtifactUploadResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/events/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_events",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessEventBatch"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessEventBatchResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/results/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_results",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessResultReceipt"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessAcceptedResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/scenarios/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_scenarios",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessScenarioOperation"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessScenarioOperationResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -30040,44 +30284,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/ErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/telemetry/heartbeat/": {
-      "post": {
-        "operationId": "telemetry_heartbeat_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/DeploymentHeartbeat"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/DeploymentHeartbeatResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/telemetry/register/": {
-      "post": {
-        "operationId": "telemetry_register_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/DeploymentRegistration"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/DeploymentRegistrationResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36976,4413 +37182,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/usage/admin/custom-plan/": {
-      "get": {
-        "operationId": "usage_admin_custom-plan_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "organization_id": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "dimension": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminCustomPlanResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_admin_custom-plan_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AdminCustomPlanRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminCustomPlanResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_admin_custom-plan_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AdminCustomPlanRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminCustomPlanResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/admin/entitlements/": {
-      "get": {
-        "operationId": "usage_admin_entitlements_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "organization_id": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "feature": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminEntitlementsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_admin_entitlements_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AdminEntitlementMutationRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminEntitlementMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_admin_entitlements_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "organization_id": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "feature": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminEntitlementsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/admin/invoice/generate/": {
-      "post": {
-        "operationId": "usage_admin_invoice_generate_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AdminInvoiceRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminInvoiceGenerateResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/admin/invoice/preview/": {
-      "post": {
-        "operationId": "usage_admin_invoice_preview_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AdminInvoiceRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminInvoicePreviewResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/admin/pricing/": {
-      "get": {
-        "operationId": "usage_admin_pricing_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "organization_id": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "dimension": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminPricingListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_admin_pricing_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AdminPricingMutationRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminPricingMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_admin_pricing_delete",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "organization_id": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          "dimension": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AdminEntitlementsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/api-call-count/": {
-      "get": {
-        "operationId": "usage_api-call-count_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "year": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "month": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 12
-            }
-          },
-          "api_call_type": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/APICallCountResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/api-call-type/": {
-      "get": {
-        "operationId": "usage_api-call-type_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/APICallTypeListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/cancel-subscription/": {
-      "post": {
-        "operationId": "usage_cancel-subscription_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/create-auto-recharge-session/": {
-      "post": {
-        "operationId": "usage_create-auto-recharge-session_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/CheckoutSessionResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/create-billing-portal-session/": {
-      "post": {
-        "operationId": "usage_create-billing-portal-session_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/BillingPortalResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/create-checkout-session/": {
-      "post": {
-        "operationId": "usage_create-checkout-session_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/CheckoutSessionRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/CheckoutSessionResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/create-custom-payment-checkout-session/": {
-      "post": {
-        "operationId": "usage_create-custom-payment-checkout-session_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/CustomPaymentCheckoutRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/CheckoutSessionResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/download-invoice/": {
-      "post": {
-        "operationId": "usage_download-invoice_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/DownloadInvoiceRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/DownloadInvoiceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/get-auto-reload-settings/": {
-      "get": {
-        "operationId": "usage_get-auto-reload-settings_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AutoReloadSettingsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/get-billing-details/": {
-      "get": {
-        "operationId": "usage_get-billing-details_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationBillingLegacyResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/get-customer-invoices/": {
-      "get": {
-        "operationId": "usage_get-customer-invoices_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/CustomerInvoicesResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/get-last-four-digits/": {
-      "get": {
-        "operationId": "usage_get-last-four-digits_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/LastFourDigitsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/get-wallet-balance/": {
-      "get": {
-        "operationId": "usage_get-wallet-balance_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/WalletBalanceResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/get_latest_prices/": {
-      "get": {
-        "operationId": "usage_get_latest_prices_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingCalculationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/organization-billing/": {
-      "get": {
-        "operationId": "usage_organization-billing_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationBillingListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_organization-billing_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageOrganizationBilling"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationBillingDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/organization-billing/{billing_id}/": {
-      "get": {
-        "operationId": "usage_organization-billing_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationBillingListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_organization-billing_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageOrganizationBilling"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationBillingDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/organization-filter/": {
-      "get": {
-        "operationId": "usage_organization-filter_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/organization-subscription/": {
-      "get": {
-        "operationId": "usage_organization-subscription_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationSubscriptionListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_organization-subscription_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageOrganizationSubscriptionCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationSubscriptionMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_organization-subscription_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageOrganizationSubscriptionCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationSubscriptionMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_organization-subscription_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/organization-subscription/{organization_subscription_id}/": {
-      "get": {
-        "operationId": "usage_organization-subscription_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationSubscriptionListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_organization-subscription_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageOrganizationSubscriptionCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationSubscriptionMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_organization-subscription_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageOrganizationSubscriptionCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationSubscriptionMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_organization-subscription_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/organizations/": {
-      "get": {
-        "operationId": "usage_organizations_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/OrganizationListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/pricing-card-details/": {
-      "post": {
-        "operationId": "usage_pricing-card-details_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingCardDetailsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/pricing/": {
-      "get": {
-        "operationId": "usage_pricing_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_pricing_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsagePricingCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_pricing_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsagePricingCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingReadResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_pricing_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/pricing/{pricing_id}/": {
-      "get": {
-        "operationId": "usage_pricing_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_pricing_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsagePricingCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_pricing_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsagePricingCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PricingReadResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_pricing_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/rate-limits/": {
-      "get": {
-        "operationId": "usage_rate-limits_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/RateLimitListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_rate-limits_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageRateLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/RateLimitMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_rate-limits_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageRateLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/RateLimitDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_rate-limits_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/rate-limits/{rate_limit_id}/": {
-      "get": {
-        "operationId": "usage_rate-limits_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/RateLimitListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_rate-limits_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageRateLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/RateLimitMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_rate-limits_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageRateLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/RateLimitDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_rate-limits_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/resource-limits/": {
-      "get": {
-        "operationId": "usage_resource-limits_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceLimitListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_resource-limits_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageResourceLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceLimitMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_resource-limits_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageResourceLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceLimitDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_resource-limits_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/resource-limits/{resource_limit_id}/": {
-      "get": {
-        "operationId": "usage_resource-limits_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceLimitListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_resource-limits_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageResourceLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceLimitMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_resource-limits_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageResourceLimitCreate"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceLimitDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_resource-limits_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/resource-type/": {
-      "get": {
-        "operationId": "usage_resource-type_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ResourceTypeListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/subscription-plans/": {
-      "get": {
-        "operationId": "usage_subscription-plans_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionPlansResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/subscription-status/": {
-      "get": {
-        "operationId": "usage_subscription-status_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionStatusResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/subscription-tier/": {
-      "get": {
-        "operationId": "usage_subscription-tier_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionTierListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_subscription-tier_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageSubscriptionTier"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionTierDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_subscription-tier_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageSubscriptionTier"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionTierDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_subscription-tier_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/subscription-tier/{subscription_id}/": {
-      "get": {
-        "operationId": "usage_subscription-tier_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionTierListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_subscription-tier_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageSubscriptionTier"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionTierDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "usage_subscription-tier_partial_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageSubscriptionTier"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/SubscriptionTierDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_subscription-tier_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageStringResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/update-auto-reload-settings/": {
-      "post": {
-        "operationId": "usage_update-auto-reload-settings_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AutoReloadSettingsRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AutoReloadUpdateResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/update-billing-details/": {
-      "post": {
-        "operationId": "usage_update-billing-details_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UpdateOrganizationBillingRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UpdateBillingDetailsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/usage-summary/": {
-      "get": {
-        "operationId": "usage_usage-summary_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "month": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 12
-            }
-          },
-          "year": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageSummaryResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/add-addon/": {
-      "post": {
-        "operationId": "usage_v2_add-addon_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AddonRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AddonPostResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_add-addon_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_add-addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/addon/": {
-      "post": {
-        "operationId": "usage_v2_addon_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AddonRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AddonPostResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_addon_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/billing-overview/": {
-      "get": {
-        "operationId": "usage_v2_billing-overview_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageBillingOverviewResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/budgets/": {
-      "get": {
-        "operationId": "usage_v2_budgets_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageBudgetListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_v2_budgets_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/UsageBudgetMutationRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageBudgetMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/budgets/{budget_id}/": {
-      "put": {
-        "operationId": "usage_v2_budgets_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/UsageBudgetMutationRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageBudgetMutationResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_budgets_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageBudgetDeleteResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/downgrade-to-free/": {
-      "post": {
-        "operationId": "usage_v2_downgrade-to-free_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PlanResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/invoices/": {
-      "get": {
-        "operationId": "usage_v2_invoices_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageInvoiceListResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/invoices/{invoice_id}/": {
-      "get": {
-        "operationId": "usage_v2_invoices_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageInvoiceDetailResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/notifications/": {
-      "get": {
-        "operationId": "usage_v2_notifications_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageNotificationsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/payment-methods/": {
-      "get": {
-        "operationId": "usage_v2_payment-methods_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PaymentMethodsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_v2_payment-methods_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PaymentMethodCheckoutResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_payment-methods_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/SetupIntentConfirmRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PaymentMethodConfirmResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/payment-methods/setup-intent/": {
-      "get": {
-        "operationId": "usage_v2_payment-methods_setup-intent_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PaymentMethodsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "usage_v2_payment-methods_setup-intent_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PaymentMethodCheckoutResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_payment-methods_setup-intent_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/SetupIntentConfirmRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PaymentMethodConfirmResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/payment-methods/{pm_id}/": {
-      "post": {
-        "operationId": "usage_v2_payment-methods_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_payment-methods_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/payment-methods/{pm_id}/default/": {
-      "post": {
-        "operationId": "usage_v2_payment-methods_default_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_payment-methods_default_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/plans-and-addons/": {
-      "get": {
-        "operationId": "usage_v2_plans-and-addons_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsagePlansAndAddonsResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/reinstate-addon/": {
-      "post": {
-        "operationId": "usage_v2_reinstate-addon_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AddonRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AddonPostResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_reinstate-addon_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_reinstate-addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/remove-addon/": {
-      "post": {
-        "operationId": "usage_v2_remove-addon_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/AddonRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/AddonPostResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_remove-addon_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "usage_v2_remove-addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageMessageResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/stripe-webhook/": {
-      "post": {
-        "operationId": "usage_v2_stripe-webhook_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/StripeWebhookRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/StripeWebhookResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/upgrade-to-payg/": {
-      "post": {
-        "operationId": "usage_v2_upgrade-to-payg_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UsageEmptyRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UpgradeToPaygPostResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "usage_v2_upgrade-to-payg_update",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/UpgradeToPaygConfirmRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/PlanResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/usage-overview/": {
-      "get": {
-        "operationId": "usage_v2_usage-overview_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "period": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "period_end": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "workspace_id": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageOverviewResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/usage-time-series/": {
-      "get": {
-        "operationId": "usage_v2_usage-time-series_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "dimension": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "period": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "period_end": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageTimeSeriesResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/v2/usage-workspace-breakdown/": {
-      "get": {
-        "operationId": "usage_v2_usage-workspace-breakdown_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "dimension": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "period": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "period_end": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageWorkspaceBreakdownResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/webhook/": {
-      "post": {
-        "operationId": "usage_webhook_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/StripeWebhookRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/StripeWebhookResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/workspace-eval-summary/": {
-      "get": {
-        "operationId": "usage_workspace-eval-summary_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "month": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 12
-            }
-          },
-          "year": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "workspace_id": {
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageSummaryResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/usage/workspace-usage-summary/": {
-      "get": {
-        "operationId": "usage_workspace-usage-summary_list",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": null,
-        "queryParameters": {
-          "month": {
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 12
-            }
-          },
-          "year": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/UsageSummaryResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "401": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "402": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "403": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "404": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/UsageErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/enterprise/heartbeats": {
-      "post": {
-        "operationId": "v1_enterprise_heartbeats_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/Heartbeat"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/EnterpriseHeartbeatResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/v1/health": {
       "get": {
         "operationId": "v1_health_list",
@@ -41396,115 +37195,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/internal/licenses": {
-      "post": {
-        "operationId": "v1_internal_licenses_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/CreateGrant"
-        },
-        "queryParameters": {},
-        "responses": {
-          "201": {
-            "$ref": "#/definitions/LicenseGrant"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/internal/licenses/{grant_id}": {
-      "get": {
-        "operationId": "v1_internal_licenses_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/internal/licenses/{grant_id}/approve": {
-      "post": {
-        "operationId": "v1_internal_licenses_approve_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/LicenseActionRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/LicenseGrant"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/internal/licenses/{grant_id}/issue": {
-      "post": {
-        "operationId": "v1_internal_licenses_issue_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/LicenseActionRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/IssuedLicenseResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/internal/licenses/{grant_id}/status": {
-      "post": {
-        "operationId": "v1_internal_licenses_status_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/UpdateStatus"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/LicenseGrant"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/self-hosted/activations": {
-      "post": {
-        "operationId": "v1_self-hosted_activations_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/ActivationRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/ActivationResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -41775,6 +37465,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Call summary",
           "type": "string"
         },
+        "result_digest": {
+          "title": "Result digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        },
+        "artifact_manifest_digest": {
+          "title": "Artifact manifest digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        },
         "transcript": {
           "type": "array",
           "items": {
@@ -41884,41 +37586,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/ALKSimulateStatusUpdateOutcome"
-        }
-      }
-    },
-    "APICallCountResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/APICallCountResult"
-        }
-      }
-    },
-    "APICallTypeListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageAPICallType"
-          }
         }
       }
     },
@@ -42374,89 +38041,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "ActivationRequest": {
-      "required": [
-        "instance_id"
-      ],
-      "type": "object",
-      "properties": {
-        "instance_id": {
-          "title": "Instance id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "version": {
-          "title": "Version",
-          "type": "string",
-          "default": "",
-          "maxLength": 100
-        },
-        "deployment_type": {
-          "title": "Deployment type",
-          "type": "string",
-          "default": "",
-          "maxLength": 50
-        },
-        "license_key_hash": {
-          "title": "License key hash",
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$",
-          "minLength": 1
-        }
-      }
-    },
-    "ActivationResponse": {
-      "required": [
-        "gateway_url",
-        "access_token",
-        "expires_in",
-        "allowed_services",
-        "allowed_models",
-        "scope"
-      ],
-      "type": "object",
-      "properties": {
-        "gateway_url": {
-          "title": "Gateway url",
-          "type": "string",
-          "format": "uri",
-          "minLength": 1
-        },
-        "access_token": {
-          "title": "Access token",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "expires_in": {
-          "title": "Expires in",
-          "type": "integer",
-          "minimum": 0
-        },
-        "allowed_services": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "allowed_models": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "scope": {
-          "title": "Scope",
-          "type": "string",
-          "enum": [
-            "oss",
-            "enterprise"
-          ]
-        }
-      }
-    },
     "AddAccess": {
       "required": [
         "emails"
@@ -42674,302 +38258,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/AdditionalOrganizationCreateResult"
-        }
-      }
-    },
-    "AddonPostResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/AddonPostResult"
-        }
-      }
-    },
-    "AddonRequest": {
-      "type": "object",
-      "properties": {
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "enum": [
-            "boost",
-            "scale",
-            "enterprise"
-          ]
-        }
-      }
-    },
-    "AdminCustomPlanRequest": {
-      "required": [
-        "organization_id"
-      ],
-      "type": "object",
-      "properties": {
-        "organization_id": {
-          "title": "Organization id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "string",
-          "format": "decimal"
-        },
-        "platform_fee_billing_cycle": {
-          "title": "Platform fee billing cycle",
-          "type": "integer",
-          "minimum": 1
-        },
-        "contract_end_date": {
-          "title": "Contract end date",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "start_date": {
-          "title": "Start date",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "entitlements": {
-          "title": "Entitlements",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
-        },
-        "pricing": {
-          "title": "Pricing",
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "$ref": "#/definitions/AdminCustomPricingTier"
-            }
-          }
-        },
-        "create_stripe_subscription": {
-          "title": "Create stripe subscription",
-          "type": "boolean"
-        }
-      }
-    },
-    "AdminCustomPlanResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "title": "Result",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          }
-        }
-      }
-    },
-    "AdminEntitlementMutationRequest": {
-      "required": [
-        "organization_id",
-        "feature"
-      ],
-      "type": "object",
-      "properties": {
-        "organization_id": {
-          "title": "Organization id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "feature": {
-          "title": "Feature",
-          "type": "string",
-          "minLength": 1
-        },
-        "value_int": {
-          "title": "Value int",
-          "type": "integer"
-        },
-        "value_bool": {
-          "title": "Value bool",
-          "type": "boolean"
-        }
-      }
-    },
-    "AdminEntitlementMutationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/AdminEntitlementMutationResult"
-        }
-      }
-    },
-    "AdminEntitlementsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "title": "Result",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          }
-        }
-      }
-    },
-    "AdminInvoiceGenerateResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/AdminInvoiceGenerateResult"
-        }
-      }
-    },
-    "AdminInvoicePreviewResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/AdminInvoicePreviewResult"
-        }
-      }
-    },
-    "AdminInvoiceRequest": {
-      "required": [
-        "organization_id",
-        "period"
-      ],
-      "type": "object",
-      "properties": {
-        "organization_id": {
-          "title": "Organization id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "period": {
-          "title": "Period",
-          "type": "string",
-          "pattern": "^\\d{4}-\\d{2}$",
-          "minLength": 1
-        }
-      }
-    },
-    "AdminPricingListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/AdminPricingListResult"
-        }
-      }
-    },
-    "AdminPricingMutationRequest": {
-      "required": [
-        "organization_id",
-        "dimension",
-        "tier_start",
-        "price_per_unit"
-      ],
-      "type": "object",
-      "properties": {
-        "organization_id": {
-          "title": "Organization id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "minLength": 1
-        },
-        "tier_start": {
-          "title": "Tier start",
-          "type": "string",
-          "format": "decimal"
-        },
-        "tier_end": {
-          "title": "Tier end",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "price_per_unit": {
-          "title": "Price per unit",
-          "type": "string",
-          "format": "decimal"
-        },
-        "display_unit": {
-          "title": "Display unit",
-          "type": "string"
-        }
-      }
-    },
-    "AdminPricingMutationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/AdminPricingMutationResult"
         }
       }
     },
@@ -47543,68 +42831,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "AutoReloadSettingsRequest": {
-      "required": [
-        "autoreload_enabled",
-        "autoreload_walletamount",
-        "autoreload_walletthreshold"
-      ],
-      "type": "object",
-      "properties": {
-        "autoreload_enabled": {
-          "title": "Autoreload enabled",
-          "type": "boolean"
-        },
-        "autoreload_walletamount": {
-          "title": "Autoreload walletamount",
-          "type": "string",
-          "format": "decimal"
-        },
-        "autoreload_walletthreshold": {
-          "title": "Autoreload walletthreshold",
-          "type": "string",
-          "format": "decimal"
-        }
-      }
-    },
-    "AutoReloadSettingsResponse": {
-      "required": [
-        "status",
-        "data"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "data": {
-          "$ref": "#/definitions/AutoReloadSettingsData"
-        }
-      }
-    },
-    "AutoReloadUpdateResponse": {
-      "required": [
-        "status",
-        "message"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "success"
-          ]
-        },
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "AutomationRule": {
       "required": [
         "name",
@@ -47753,20 +42979,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/BaseColumnsResponseResult"
-        }
-      }
-    },
-    "BillingPortalResponse": {
-      "required": [
-        "url"
-      ],
-      "type": "object",
-      "properties": {
-        "url": {
-          "title": "Url",
-          "type": "string",
-          "format": "uri",
-          "minLength": 1
         }
       }
     },
@@ -49214,39 +44426,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "CheckoutSessionRequest": {
-      "type": "object",
-      "properties": {
-        "subscription_type": {
-          "title": "Subscription type",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "CheckoutSessionResponse": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/CheckoutSessionResult"
-        },
-        "session_id": {
-          "title": "Session id",
-          "type": "string",
-          "minLength": 1
-        },
-        "url": {
-          "title": "Url",
-          "type": "string",
-          "format": "uri",
-          "minLength": 1
-        }
-      }
-    },
     "ClassifyColumnRequest": {
       "required": [
         "column_id",
@@ -50379,105 +45558,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "CreateGrant": {
-      "required": [
-        "customer_name",
-        "license_type",
-        "band",
-        "expires_at"
-      ],
-      "type": "object",
-      "properties": {
-        "customer_name": {
-          "title": "Customer name",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "customer_id": {
-          "title": "Customer id",
-          "type": "string",
-          "default": "",
-          "maxLength": 64,
-          "minLength": 1
-        },
-        "primary_contact_email": {
-          "title": "Primary contact email",
-          "type": "string",
-          "format": "email",
-          "default": "",
-          "minLength": 1
-        },
-        "hubspot_deal_id": {
-          "title": "Hubspot deal id",
-          "type": "string",
-          "default": "",
-          "maxLength": 128,
-          "minLength": 1
-        },
-        "license_type": {
-          "title": "License type",
-          "type": "string",
-          "enum": [
-            "production",
-            "trial"
-          ]
-        },
-        "band": {
-          "title": "Band",
-          "type": "string",
-          "maxLength": 64,
-          "minLength": 1
-        },
-        "features": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "default": []
-        },
-        "limits": {
-          "title": "Limits",
-          "type": "object",
-          "additionalProperties": {
-            "type": "integer",
-            "minimum": -1
-          },
-          "default": {}
-        },
-        "max_instances": {
-          "title": "Max instances",
-          "type": "integer",
-          "default": 1,
-          "minimum": 1
-        },
-        "min_software_version": {
-          "title": "Min software version",
-          "type": "string",
-          "default": "",
-          "maxLength": 32,
-          "minLength": 1
-        },
-        "not_before": {
-          "title": "Not before",
-          "type": "string",
-          "format": "date-time",
-          "x-nullable": true
-        },
-        "expires_at": {
-          "title": "Expires at",
-          "type": "string",
-          "format": "date-time"
-        },
-        "grace_days": {
-          "title": "Grace days",
-          "type": "integer",
-          "default": 90,
-          "minimum": 0
-        }
-      }
-    },
     "CreateLinearIssue": {
       "required": [
         "team_id"
@@ -51374,35 +46454,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "prompts": {
           "title": "Prompts",
           "type": "object"
-        }
-      }
-    },
-    "CustomPaymentCheckoutRequest": {
-      "required": [
-        "amount"
-      ],
-      "type": "object",
-      "properties": {
-        "amount": {
-          "title": "Amount",
-          "type": "string",
-          "format": "decimal"
-        }
-      }
-    },
-    "CustomerInvoicesResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/CustomerInvoicesResult"
         }
       }
     },
@@ -52816,162 +47867,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "DeploymentHeartbeat": {
-      "required": [
-        "instance_id",
-        "version",
-        "window_start",
-        "window_end",
-        "active_users_count",
-        "traces_count",
-        "spans_count",
-        "projects_count",
-        "eval_logger_count",
-        "model_hub_evaluations_count",
-        "dataset_eval_runs_count",
-        "total_evaluations_count",
-        "simulation_runs_count",
-        "simulation_calls_count",
-        "experiments_count",
-        "gateway_requests_count",
-        "datasets_count"
-      ],
-      "type": "object",
-      "properties": {
-        "schema_version": {
-          "title": "Schema version",
-          "type": "integer",
-          "default": 1
-        },
-        "instance_id": {
-          "title": "Instance id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "version": {
-          "title": "Version",
-          "type": "string",
-          "maxLength": 100,
-          "minLength": 1
-        },
-        "window_start": {
-          "title": "Window start",
-          "type": "string",
-          "format": "date-time"
-        },
-        "window_end": {
-          "title": "Window end",
-          "type": "string",
-          "format": "date-time"
-        },
-        "active_users_count": {
-          "title": "Active users count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "traces_count": {
-          "title": "Traces count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "spans_count": {
-          "title": "Spans count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "projects_count": {
-          "title": "Projects count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "eval_logger_count": {
-          "title": "Eval logger count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "model_hub_evaluations_count": {
-          "title": "Model hub evaluations count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "dataset_eval_runs_count": {
-          "title": "Dataset eval runs count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "total_evaluations_count": {
-          "title": "Total evaluations count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "simulation_runs_count": {
-          "title": "Simulation runs count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "simulation_calls_count": {
-          "title": "Simulation calls count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "experiments_count": {
-          "title": "Experiments count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "gateway_requests_count": {
-          "title": "Gateway requests count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "datasets_count": {
-          "title": "Datasets count",
-          "type": "integer",
-          "maximum": 9223372036854776000,
-          "minimum": 0,
-          "x-nullable": true
-        }
-      }
-    },
-    "DeploymentHeartbeatResponse": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "ok"
-          ]
-        }
-      }
-    },
     "DeploymentInfoResponse": {
       "required": [
         "result"
@@ -52985,77 +47880,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/DeploymentInfoResult"
-        }
-      }
-    },
-    "DeploymentRegistration": {
-      "required": [
-        "instance_id",
-        "version",
-        "deployment_type",
-        "timestamp",
-        "telemetry_disabled"
-      ],
-      "type": "object",
-      "properties": {
-        "schema_version": {
-          "title": "Schema version",
-          "type": "integer",
-          "default": 1
-        },
-        "instance_id": {
-          "title": "Instance id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "version": {
-          "title": "Version",
-          "type": "string",
-          "maxLength": 100,
-          "minLength": 1
-        },
-        "deployment_type": {
-          "title": "Deployment type",
-          "type": "string",
-          "maxLength": 50,
-          "minLength": 1
-        },
-        "timestamp": {
-          "title": "Timestamp",
-          "type": "string",
-          "format": "date-time"
-        },
-        "telemetry_disabled": {
-          "title": "Telemetry disabled",
-          "type": "boolean"
-        },
-        "users": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/TelemetryUser"
-          },
-          "default": []
-        }
-      }
-    },
-    "DeploymentRegistrationResponse": {
-      "required": [
-        "status",
-        "instance_secret"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "ok"
-          ]
-        },
-        "instance_secret": {
-          "title": "Instance secret",
-          "type": "string",
-          "minLength": 1
         }
       }
     },
@@ -53237,35 +48061,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "comment": {
           "title": "Comment",
           "type": "string"
-        }
-      }
-    },
-    "DownloadInvoiceRequest": {
-      "required": [
-        "invoice_id"
-      ],
-      "type": "object",
-      "properties": {
-        "invoice_id": {
-          "title": "Invoice id",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "DownloadInvoiceResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/DownloadInvoiceResult"
         }
       }
     },
@@ -53467,43 +48262,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "type": "object",
       "properties": {},
       "additionalProperties": false
-    },
-    "EnterpriseHeartbeatResponse": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "accepted",
-            "ignored",
-            "rejected"
-          ]
-        },
-        "reason": {
-          "title": "Reason",
-          "type": "string",
-          "minLength": 1
-        },
-        "grant_status": {
-          "title": "Grant status",
-          "type": "string",
-          "minLength": 1
-        },
-        "expires_at": {
-          "title": "Expires at",
-          "type": "string",
-          "format": "date-time"
-        },
-        "renewal_notice": {
-          "title": "Renewal notice",
-          "type": "string",
-          "minLength": 1
-        }
-      }
     },
     "ErrorResponse": {
       "type": "object",
@@ -58173,34 +52931,128 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "HarnessAcceptedResponse": {
+      "required": [
+        "accepted",
+        "duplicate"
+      ],
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "duplicate": {
+          "title": "Duplicate",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarnessArtifactUploadResponse": {
+      "required": [
+        "artifact_id",
+        "duplicate"
+      ],
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact id",
+          "type": "string",
+          "minLength": 1
+        },
+        "duplicate": {
+          "title": "Duplicate",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarnessEventBatch": {
+      "required": [
+        "schema_version",
+        "events"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-event.v1"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessEvent"
+          }
+        }
+      }
+    },
+    "HarnessEventBatchResponse": {
+      "required": [
+        "acked_through_sequence",
+        "rejected"
+      ],
+      "type": "object",
+      "properties": {
+        "acked_through_sequence": {
+          "title": "Acked through sequence",
+          "type": "integer"
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessEventRejection"
+          }
+        }
+      }
+    },
     "HarnessJobAction": {
       "type": "object",
       "properties": {
         "reason": {
           "title": "Reason",
-          "description": "Optional operator-provided reason for the action.",
           "type": "string",
-          "maxLength": 500
+          "enum": [
+            "user_canceled",
+            "ttl_exceeded"
+          ],
+          "default": "user_canceled"
         }
       }
     },
     "HarnessJobCreate": {
       "required": [
-        "source_path"
+        "source",
+        "agent",
+        "artifacts"
       ],
       "type": "object",
       "properties": {
-        "source_path": {
-          "title": "Source path",
+        "schema_version": {
+          "title": "Schema version",
           "type": "string",
-          "maxLength": 4096,
-          "minLength": 1
+          "enum": [
+            "futureagi.harness-job.v1"
+          ],
+          "default": "futureagi.harness-job.v1"
+        },
+        "run_id": {
+          "title": "Run id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "source": {
+          "$ref": "#/definitions/HarnessSource"
+        },
+        "agent": {
+          "$ref": "#/definitions/HarnessAgent"
         },
         "scenario_count": {
           "title": "Scenario count",
           "type": "integer",
           "default": 10,
-          "maximum": 100,
+          "maximum": 10,
           "minimum": 1
         },
         "seed": {
@@ -58208,35 +53060,280 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "x-nullable": true
         },
-        "agent_name": {
-          "title": "Agent name",
+        "runtime": {
+          "$ref": "#/definitions/HarnessRuntime"
+        },
+        "security": {
+          "$ref": "#/definitions/HarnessSecurity"
+        },
+        "retry": {
+          "$ref": "#/definitions/HarnessRetry"
+        },
+        "artifacts": {
+          "$ref": "#/definitions/HarnessArtifact"
+        },
+        "platform_run_id": {
+          "title": "Platform run id",
           "type": "string",
-          "maxLength": 255
-        },
-        "connector": {
-          "title": "Connector",
-          "type": "string",
-          "default": "auto",
-          "maxLength": 128,
-          "minLength": 1
-        },
-        "connector_config": {
-          "title": "Connector config",
-          "type": "object",
-          "default": {}
-        },
-        "secret_refs": {
-          "title": "Secret refs",
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/definitions/SecretReference"
-          },
-          "default": {}
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
         },
         "metadata": {
           "title": "Metadata",
           "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
           "default": {}
+        }
+      }
+    },
+    "HarnessManifest": {
+      "required": [
+        "schema_version",
+        "job_id",
+        "attempt_id",
+        "attempt_number",
+        "entries",
+        "complete",
+        "digest"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-manifest.v1"
+          ]
+        },
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "title": "Attempt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_number": {
+          "title": "Attempt number",
+          "type": "integer",
+          "minimum": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessManifestEntry"
+          }
+        },
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessPreflight": {
+      "required": [
+        "source",
+        "agent",
+        "artifacts"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-job.v1"
+          ],
+          "default": "futureagi.harness-job.v1"
+        },
+        "run_id": {
+          "title": "Run id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "source": {
+          "$ref": "#/definitions/HarnessSource"
+        },
+        "agent": {
+          "$ref": "#/definitions/HarnessAgent"
+        },
+        "scenario_count": {
+          "title": "Scenario count",
+          "type": "integer",
+          "default": 10,
+          "maximum": 10,
+          "minimum": 1
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "runtime": {
+          "$ref": "#/definitions/HarnessRuntime"
+        },
+        "security": {
+          "$ref": "#/definitions/HarnessSecurity"
+        },
+        "retry": {
+          "$ref": "#/definitions/HarnessRetry"
+        },
+        "artifacts": {
+          "$ref": "#/definitions/HarnessArtifact"
+        },
+        "platform_run_id": {
+          "title": "Platform run id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": {}
+        }
+      }
+    },
+    "HarnessResultReceipt": {
+      "required": [
+        "schema_version",
+        "job_id",
+        "attempt_id",
+        "attempt_number",
+        "scenario_key",
+        "scenario_id",
+        "scenario_attempt",
+        "world_index",
+        "status",
+        "sub_goals",
+        "evaluations",
+        "call",
+        "failure",
+        "digest"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-result.v1"
+          ]
+        },
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "title": "Attempt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_number": {
+          "title": "Attempt number",
+          "type": "integer",
+          "minimum": 1
+        },
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scenario_attempt": {
+          "title": "Scenario attempt",
+          "type": "integer",
+          "maximum": 2,
+          "minimum": 1
+        },
+        "world_index": {
+          "title": "World index",
+          "type": "integer",
+          "maximum": 7,
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "errored",
+            "skipped"
+          ]
+        },
+        "sub_goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessSubGoal"
+          }
+        },
+        "evaluations": {
+          "title": "Evaluations",
+          "type": "object"
+        },
+        "call": {
+          "$ref": "#/definitions/HarnessCall"
+        },
+        "failure": {
+          "$ref": "#/definitions/HarnessFailure"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessScenarioOperation": {
+      "required": [
+        "operation"
+      ],
+      "type": "object",
+      "properties": {
+        "operation": {
+          "title": "Operation",
+          "type": "string",
+          "enum": [
+            "provision",
+            "begin"
+          ]
+        }
+      }
+    },
+    "HarnessScenarioOperationResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "#/definitions/HarnessScenarioOperationResult"
         }
       }
     },
@@ -58255,68 +53352,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Result",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "Heartbeat": {
-      "required": [
-        "instance_id",
-        "license_id",
-        "timestamp",
-        "nonce",
-        "sequence"
-      ],
-      "type": "object",
-      "properties": {
-        "instance_id": {
-          "title": "Instance id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "license_id": {
-          "title": "License id",
-          "type": "string",
-          "pattern": "^lic_[A-Za-z0-9_-]{1,60}$",
-          "minLength": 1
-        },
-        "version": {
-          "title": "Version",
-          "type": "string",
-          "default": "",
-          "maxLength": 100,
-          "minLength": 1
-        },
-        "deployment_type": {
-          "title": "Deployment type",
-          "type": "string",
-          "default": "",
-          "maxLength": 50,
-          "minLength": 1
-        },
-        "timestamp": {
-          "title": "Timestamp",
-          "type": "string",
-          "format": "date-time"
-        },
-        "nonce": {
-          "title": "Nonce",
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{16,64}$",
-          "minLength": 1
-        },
-        "sequence": {
-          "title": "Sequence",
-          "type": "integer",
-          "minimum": 0
-        },
-        "usage_data": {
-          "title": "Usage data",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
-          "default": {}
         }
       }
     },
@@ -59053,23 +54088,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "IssuedLicenseResponse": {
-      "required": [
-        "grant",
-        "license_key"
-      ],
-      "type": "object",
-      "properties": {
-        "grant": {
-          "$ref": "#/definitions/LicenseGrant"
-        },
-        "license_key": {
-          "title": "License key",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "KnowledgeBase": {
       "required": [
         "name",
@@ -59296,22 +54314,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "meta": {
           "$ref": "#/definitions/LangfuseTracesMeta"
-        }
-      }
-    },
-    "LastFourDigitsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/LastFourDigitsResult"
         }
       }
     },
@@ -59579,181 +54581,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/LegacyKnowledgeBaseTableResult"
-        }
-      }
-    },
-    "LicenseActionRequest": {
-      "type": "object",
-      "properties": {}
-    },
-    "LicenseGrant": {
-      "required": [
-        "customer_name",
-        "license_type",
-        "band"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
-        "license_id": {
-          "title": "License id",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "key_id": {
-          "title": "Key id",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "customer_name": {
-          "title": "Customer name",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "customer_id": {
-          "title": "Customer id",
-          "type": "string",
-          "maxLength": 64
-        },
-        "primary_contact_email": {
-          "title": "Primary contact email",
-          "type": "string",
-          "format": "email",
-          "maxLength": 254
-        },
-        "hubspot_deal_id": {
-          "title": "Hubspot deal id",
-          "type": "string",
-          "maxLength": 128
-        },
-        "license_type": {
-          "title": "License type",
-          "type": "string",
-          "enum": [
-            "production",
-            "trial"
-          ]
-        },
-        "band": {
-          "title": "Band",
-          "type": "string",
-          "maxLength": 64,
-          "minLength": 1
-        },
-        "features": {
-          "title": "Features",
-          "type": "object"
-        },
-        "limits": {
-          "title": "Limits",
-          "type": "object"
-        },
-        "max_instances": {
-          "title": "Max instances",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": -2147483648
-        },
-        "min_software_version": {
-          "title": "Min software version",
-          "type": "string",
-          "maxLength": 32
-        },
-        "issued_at": {
-          "title": "Issued at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true,
-          "x-nullable": true
-        },
-        "not_before": {
-          "title": "Not before",
-          "type": "string",
-          "format": "date-time",
-          "x-nullable": true
-        },
-        "expires_at": {
-          "title": "Expires at",
-          "type": "string",
-          "format": "date-time",
-          "x-nullable": true
-        },
-        "grace_days": {
-          "title": "Grace days",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": -2147483648
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "draft",
-            "pending_approval",
-            "active",
-            "suspended",
-            "revoked",
-            "expired"
-          ],
-          "readOnly": true
-        },
-        "status_reason": {
-          "title": "Status reason",
-          "type": "string",
-          "maxLength": 255
-        },
-        "status_changed_at": {
-          "title": "Status changed at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true,
-          "x-nullable": true
-        },
-        "drafted_by": {
-          "title": "Drafted by",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true,
-          "x-nullable": true
-        },
-        "approved_by": {
-          "title": "Approved by",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true,
-          "x-nullable": true
-        },
-        "approved_at": {
-          "title": "Approved at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true,
-          "x-nullable": true
-        },
-        "authorization_version": {
-          "title": "Authorization version",
-          "type": "integer",
-          "readOnly": true
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true
-        },
-        "updated_at": {
-          "title": "Updated at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true
         }
       }
     },
@@ -63132,58 +57959,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "OrganizationBillingDetailResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageOrganizationBilling"
-        }
-      }
-    },
-    "OrganizationBillingLegacyResponse": {
-      "required": [
-        "status",
-        "billing_info"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "billing_info": {
-          "$ref": "#/definitions/BillingInfo"
-        }
-      }
-    },
-    "OrganizationBillingListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageOrganizationBilling"
-          }
-        }
-      }
-    },
     "OrganizationCreateRequest": {
       "required": [
         "name"
@@ -63214,25 +57989,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/OrganizationCreateResult"
-        }
-      }
-    },
-    "OrganizationListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageOrganization"
-          }
         }
       }
     },
@@ -63274,41 +58030,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/OrganizationSelectionListResult"
-        }
-      }
-    },
-    "OrganizationSubscriptionListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageOrganizationSubscription"
-          }
-        }
-      }
-    },
-    "OrganizationSubscriptionMutationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageOrganizationSubscriptionCreate"
         }
       }
     },
@@ -63637,57 +58358,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "maxLength": 128,
           "minLength": 8
-        }
-      }
-    },
-    "PaymentMethodCheckoutResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UpgradeToPaygPostResult"
-        }
-      }
-    },
-    "PaymentMethodConfirmResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/PaymentMethodConfirmResult"
-        }
-      }
-    },
-    "PaymentMethodsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/PaymentMethod"
-          }
         }
       }
     },
@@ -64890,22 +59560,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "PlanResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/PlanResult"
-        }
-      }
-    },
     "PreviewAnnotationsRequest": {
       "required": [
         "dataset_id"
@@ -65072,93 +59726,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "integer",
             "minimum": 0
           }
-        }
-      }
-    },
-    "PricingCalculationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "title": "Result",
-          "type": "object",
-          "additionalProperties": {
-            "type": "number"
-          }
-        }
-      }
-    },
-    "PricingCardDetailsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/PricingCardDetailsResult"
-        }
-      }
-    },
-    "PricingDetailResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsagePricingCreate"
-        }
-      }
-    },
-    "PricingListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsagePricingCreate"
-          }
-        }
-      }
-    },
-    "PricingReadResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsagePricing"
         }
       }
     },
@@ -66952,57 +61519,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "RateLimitDetailResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageRateLimit"
-        }
-      }
-    },
-    "RateLimitListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageRateLimit"
-          }
-        }
-      }
-    },
-    "RateLimitMutationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageRateLimitCreate"
-        }
-      }
-    },
     "RecoveryCodesRegenerate": {
       "type": "object",
       "properties": {
@@ -67312,76 +61828,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Row id",
           "type": "string",
           "format": "uuid"
-        }
-      }
-    },
-    "ResourceLimitDetailResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageResourceLimit"
-        }
-      }
-    },
-    "ResourceLimitListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageResourceLimit"
-          }
-        }
-      }
-    },
-    "ResourceLimitMutationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageResourceLimitCreate"
-        }
-      }
-    },
-    "ResourceTypeListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageResourceType"
-          }
         }
       }
     },
@@ -69828,19 +64274,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "SetupIntentConfirmRequest": {
-      "required": [
-        "session_id"
-      ],
-      "type": "object",
-      "properties": {
-        "session_id": {
-          "title": "Session id",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "ShadowResultsWebhookRequest": {
       "type": "object",
       "properties": {
@@ -70775,45 +65208,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "StripeWebhookRequest": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "minLength": 1
-        },
-        "type": {
-          "title": "Type",
-          "type": "string",
-          "minLength": 1
-        },
-        "data": {
-          "title": "Data",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          }
-        }
-      }
-    },
-    "StripeWebhookResponse": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "result": {
-          "$ref": "#/definitions/StripeWebhookResult"
-        }
-      }
-    },
     "SubmitAnnotations": {
       "required": [
         "annotations"
@@ -70835,73 +65229,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Item notes",
           "type": "string",
           "x-nullable": true
-        }
-      }
-    },
-    "SubscriptionPlansResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/SubscriptionPlansResult"
-        }
-      }
-    },
-    "SubscriptionStatusResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/SubscriptionStatusResult"
-        }
-      }
-    },
-    "SubscriptionTierDetailResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageSubscriptionTier"
-        }
-      }
-    },
-    "SubscriptionTierListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageSubscriptionTier"
-          }
         }
       }
     },
@@ -72803,22 +67130,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UpdateBillingDetailsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UpdateBillingDetailsResult"
-        }
-      }
-    },
     "UpdateColumnConfig": {
       "required": [
         "eval_id"
@@ -72985,62 +67296,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UpdateOrganizationBillingRequest": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "x-nullable": true
-        },
-        "email": {
-          "title": "Email",
-          "type": "string",
-          "format": "email",
-          "x-nullable": true
-        },
-        "company": {
-          "title": "Company",
-          "type": "string",
-          "x-nullable": true
-        },
-        "billing_address1": {
-          "title": "Billing address1",
-          "type": "string",
-          "x-nullable": true
-        },
-        "billing_address2": {
-          "title": "Billing address2",
-          "type": "string",
-          "x-nullable": true
-        },
-        "city": {
-          "title": "City",
-          "type": "string",
-          "x-nullable": true
-        },
-        "state": {
-          "title": "State",
-          "type": "string",
-          "x-nullable": true
-        },
-        "country": {
-          "title": "Country",
-          "type": "string",
-          "x-nullable": true
-        },
-        "postal_code": {
-          "title": "Postal code",
-          "type": "string",
-          "x-nullable": true
-        },
-        "tax_id": {
-          "title": "Tax id",
-          "type": "string",
-          "x-nullable": true
-        }
-      }
-    },
     "UpdatePort": {
       "required": [
         "display_name"
@@ -73121,29 +67376,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UpdateStatus": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "active",
-            "suspended",
-            "revoked"
-          ]
-        },
-        "reason": {
-          "title": "Reason",
-          "type": "string",
-          "default": "",
-          "maxLength": 255
-        }
-      }
-    },
     "UpdateUser": {
       "required": [
         "user_id"
@@ -73178,35 +67410,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "workspace_member",
             "workspace_viewer"
           ]
-        }
-      }
-    },
-    "UpgradeToPaygConfirmRequest": {
-      "required": [
-        "session_id"
-      ],
-      "type": "object",
-      "properties": {
-        "session_id": {
-          "title": "Session id",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "UpgradeToPaygPostResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UpgradeToPaygPostResult"
         }
       }
     },
@@ -73260,697 +67463,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/UploadedFileResult"
           }
-        }
-      }
-    },
-    "UsageBillingOverviewResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageBillingOverviewResult"
-        }
-      }
-    },
-    "UsageBudgetDeleteResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageBudgetDeleteResult"
-        }
-      }
-    },
-    "UsageBudgetListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageBudgetListResult"
-        }
-      }
-    },
-    "UsageBudgetMutationRequest": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "minLength": 1
-        },
-        "scope": {
-          "title": "Scope",
-          "type": "string",
-          "minLength": 1
-        },
-        "threshold_value": {
-          "title": "Threshold value",
-          "type": "string",
-          "format": "decimal"
-        },
-        "action": {
-          "title": "Action",
-          "type": "string",
-          "enum": [
-            "notify",
-            "warn",
-            "pause"
-          ]
-        },
-        "notify_emails": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "format": "email",
-            "minLength": 1
-          }
-        },
-        "notify_slack_webhook": {
-          "title": "Notify slack webhook",
-          "type": "string",
-          "format": "uri",
-          "x-nullable": true
-        },
-        "is_active": {
-          "title": "Is active",
-          "type": "boolean"
-        }
-      }
-    },
-    "UsageBudgetMutationResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageBudgetMutationResult"
-        }
-      }
-    },
-    "UsageEmptyRequest": {
-      "type": "object",
-      "properties": {}
-    },
-    "UsageErrorResponse": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "title": "Result",
-          "type": "string",
-          "x-nullable": true
-        },
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "x-nullable": true
-        },
-        "error": {
-          "title": "Error",
-          "type": "string",
-          "x-nullable": true
-        },
-        "detail": {
-          "title": "Detail",
-          "type": "string",
-          "x-nullable": true
-        },
-        "details": {
-          "title": "Details",
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
-      }
-    },
-    "UsageInvoiceDetailResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageInvoiceDetailResult"
-        }
-      }
-    },
-    "UsageInvoiceListResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageInvoiceListResult"
-        }
-      }
-    },
-    "UsageMessageResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageMessageResult"
-        }
-      }
-    },
-    "UsageNotificationsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageNotificationsResult"
-        }
-      }
-    },
-    "UsageOrganizationBilling": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
-        "billing_contact_name": {
-          "title": "Billing contact name",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "billing_contact_email": {
-          "title": "Billing contact email",
-          "type": "string",
-          "format": "email",
-          "maxLength": 254,
-          "x-nullable": true
-        },
-        "company": {
-          "title": "Company",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "billing_address1": {
-          "title": "Billing address1",
-          "type": "string",
-          "maxLength": 255,
-          "x-nullable": true
-        },
-        "billing_address2": {
-          "title": "Billing address2",
-          "type": "string",
-          "maxLength": 255,
-          "x-nullable": true
-        },
-        "city": {
-          "title": "City",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "state": {
-          "title": "State",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "country": {
-          "title": "Country",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "postal_code": {
-          "title": "Postal code",
-          "type": "string",
-          "maxLength": 20,
-          "x-nullable": true
-        },
-        "tax_id": {
-          "title": "Tax id",
-          "type": "string",
-          "maxLength": 50,
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageOrganizationSubscriptionCreate": {
-      "required": [
-        "organization",
-        "subscription_tier"
-      ],
-      "type": "object",
-      "properties": {
-        "next_renewal_date": {
-          "title": "Next renewal date",
-          "description": "Next due date for renewal.",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "subscription_price": {
-          "title": "Subscription price",
-          "description": "Price of the subscription.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "subscription_future_tier": {
-          "title": "Subscription future tier",
-          "type": "string",
-          "enum": [
-            "free",
-            "basic",
-            "basic_yearly",
-            "custom"
-          ],
-          "x-nullable": true
-        },
-        "subscription_future_start_date": {
-          "title": "Subscription future start date",
-          "description": "Next due date for renewal.",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "subscription_future_price": {
-          "title": "Subscription future price",
-          "description": "Price of the future subscription.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "active",
-            "past_due",
-            "unpaid",
-            "canceled",
-            "inactive"
-          ]
-        },
-        "wallet_refill_amount": {
-          "title": "Wallet refill amount",
-          "description": "Amount to refill the wallet every month.",
-          "type": "string",
-          "format": "decimal"
-        },
-        "wallet_balance": {
-          "title": "Wallet balance",
-          "type": "string",
-          "format": "decimal"
-        },
-        "stripe_customer_id_test": {
-          "title": "Stripe customer id test",
-          "description": "Stripe customer ID for test mode. NULL values are allowed.",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "stripe_customer_id_live": {
-          "title": "Stripe customer id live",
-          "description": "Stripe customer ID for live mode. NULL values are allowed.",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "auto_recharge_enabled": {
-          "title": "Auto recharge enabled",
-          "type": "boolean"
-        },
-        "auto_recharge_amount": {
-          "title": "Auto recharge amount",
-          "description": "Amount to refill the wallet every month.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "auto_recharge_threshold": {
-          "title": "Auto recharge threshold",
-          "description": "Threshold to trigger auto recharge.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "payment_method_id": {
-          "title": "Payment method id",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "custom_subscription_id": {
-          "title": "Custom subscription id",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid"
-        },
-        "subscription_tier": {
-          "title": "Subscription tier",
-          "type": "integer"
-        }
-      }
-    },
-    "UsageOverviewResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageOverviewResult"
-        }
-      }
-    },
-    "UsagePlansAndAddonsResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsagePlansAndAddonsResult"
-        }
-      }
-    },
-    "UsagePricingCreate": {
-      "required": [
-        "api_call_type",
-        "price_per_call"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "api_call_type": {
-          "title": "Api call type",
-          "type": "integer"
-        },
-        "price_per_call": {
-          "title": "Price per call",
-          "type": "string",
-          "format": "decimal"
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageRateLimitCreate": {
-      "required": [
-        "api_call_type",
-        "subscription_tier"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "api_call_type": {
-          "title": "Api call type",
-          "type": "integer"
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        },
-        "minute_limit": {
-          "title": "Minute limit",
-          "description": "Max calls per minute",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "hour_limit": {
-          "title": "Hour limit",
-          "description": "Max calls per hour",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "day_limit": {
-          "title": "Day limit",
-          "description": "Max calls per day",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "month_limit": {
-          "title": "Month limit",
-          "description": "Max calls per month",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "subscription_tier": {
-          "title": "Subscription tier",
-          "type": "integer"
-        }
-      }
-    },
-    "UsageResourceLimitCreate": {
-      "required": [
-        "resource_type",
-        "subscription_tier",
-        "limit"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "resource_type": {
-          "title": "Resource type",
-          "type": "integer"
-        },
-        "subscription_tier": {
-          "title": "Subscription tier",
-          "type": "integer"
-        },
-        "limit": {
-          "title": "Limit",
-          "description": "Limit for the resource",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageStringResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "title": "Result",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "UsageSubscriptionTier": {
-      "required": [
-        "description"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "enum": [
-            "free",
-            "basic",
-            "basic_yearly",
-            "custom"
-          ],
-          "readOnly": true
-        },
-        "description": {
-          "title": "Description",
-          "type": "string"
-        },
-        "stripe_price_id": {
-          "title": "Stripe price id",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "wallet_refill_amount": {
-          "title": "Wallet refill amount",
-          "description": "Amount to refill the wallet every month.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageSummaryResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "title": "Result",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          }
-        }
-      }
-    },
-    "UsageTimeSeriesResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageTimeSeriesResult"
-        }
-      }
-    },
-    "UsageWorkspaceBreakdownResponse": {
-      "required": [
-        "status",
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/UsageWorkspaceBreakdownResult"
         }
       }
     },
@@ -75548,19 +69060,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "WalletBalanceResponse": {
-      "required": [
-        "wallet_balance"
-      ],
-      "type": "object",
-      "properties": {
-        "wallet_balance": {
-          "title": "Wallet balance",
-          "type": "string",
-          "format": "decimal"
-        }
-      }
-    },
     "WebAuthnCredential": {
       "required": [
         "id",
@@ -76373,76 +69872,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "APICallCountResult": {
-      "required": [
-        "data"
-      ],
-      "type": "object",
-      "properties": {
-        "data": {
-          "title": "Data",
-          "type": "object",
-          "additionalProperties": {
-            "type": "integer"
-          }
-        }
-      }
-    },
-    "UsageAPICallType": {
-      "required": [
-        "name"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "enum": [
-            "prompt_bench",
-            "dataset_protect",
-            "dataset_protect_flash",
-            "turing_large_evaluator",
-            "turing_small_evaluator",
-            "turing_flash_evaluator",
-            "protect_evaluator",
-            "protect_flash_evaluator",
-            "code_evaluator",
-            "user_add",
-            "observe_add",
-            "prototype_add",
-            "dataset_add",
-            "row_add",
-            "knowledge_base",
-            "synthetic_data_generation",
-            "error_localizer",
-            "auto_annotation",
-            "dataset_evaluation",
-            "experiment_evaluation",
-            "optimisation_evaluation",
-            "eval_explanation",
-            "dataset_run_prompt",
-            "dataset_optimization",
-            "dataset_experiment",
-            "voice_call",
-            "text_call",
-            "wallet_refund",
-            "wallet_refill",
-            "wallet_auto_recharge",
-            "wallet_add_funds",
-            "trace_error_analysis"
-          ]
-        },
-        "description": {
-          "title": "Description",
-          "type": "string"
-        }
-      }
-    },
     "APIKeyBulkItem": {
       "required": [
         "id",
@@ -77113,258 +70542,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Message",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "AddonPostResult": {
-      "required": [
-        "subscription_id",
-        "plan"
-      ],
-      "type": "object",
-      "properties": {
-        "subscription_id": {
-          "title": "Subscription id",
-          "type": "string",
-          "minLength": 1
-        },
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "AdminCustomPricingTier": {
-      "required": [
-        "tier_start",
-        "price_per_unit"
-      ],
-      "type": "object",
-      "properties": {
-        "tier_start": {
-          "title": "Tier start",
-          "type": "string",
-          "format": "decimal"
-        },
-        "tier_end": {
-          "title": "Tier end",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "price_per_unit": {
-          "title": "Price per unit",
-          "type": "string",
-          "format": "decimal"
-        },
-        "display_unit": {
-          "title": "Display unit",
-          "type": "string"
-        }
-      }
-    },
-    "AdminEntitlementMutationResult": {
-      "required": [
-        "id",
-        "feature",
-        "created"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "integer"
-        },
-        "feature": {
-          "title": "Feature",
-          "type": "string",
-          "minLength": 1
-        },
-        "created": {
-          "title": "Created",
-          "type": "boolean"
-        },
-        "value_int": {
-          "title": "Value int",
-          "type": "integer",
-          "x-nullable": true
-        },
-        "value_bool": {
-          "title": "Value bool",
-          "type": "boolean",
-          "x-nullable": true
-        }
-      }
-    },
-    "AdminInvoiceGenerateResult": {
-      "required": [
-        "created",
-        "skipped",
-        "errors"
-      ],
-      "type": "object",
-      "properties": {
-        "created": {
-          "title": "Created",
-          "type": "integer"
-        },
-        "skipped": {
-          "title": "Skipped",
-          "type": "integer"
-        },
-        "errors": {
-          "title": "Errors",
-          "type": "integer"
-        },
-        "invoice_id": {
-          "title": "Invoice id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "total": {
-          "title": "Total",
-          "type": "string",
-          "minLength": 1
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "period_start": {
-          "title": "Period start",
-          "type": "string",
-          "format": "date"
-        },
-        "period_end": {
-          "title": "Period end",
-          "type": "string",
-          "format": "date"
-        },
-        "line_items_count": {
-          "title": "Line items count",
-          "type": "integer"
-        }
-      }
-    },
-    "AdminInvoicePreviewResult": {
-      "required": [
-        "org_id",
-        "period",
-        "plan",
-        "backfill_ran",
-        "usage_summary_count",
-        "invoice_exists",
-        "platform_fee",
-        "usage_total",
-        "credits_applied",
-        "subtotal",
-        "tax",
-        "total",
-        "line_items"
-      ],
-      "type": "object",
-      "properties": {
-        "org_id": {
-          "title": "Org id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "period": {
-          "title": "Period",
-          "type": "string",
-          "minLength": 1
-        },
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        },
-        "backfill_ran": {
-          "title": "Backfill ran",
-          "type": "boolean"
-        },
-        "usage_summary_count": {
-          "title": "Usage summary count",
-          "type": "integer"
-        },
-        "invoice_exists": {
-          "title": "Invoice exists",
-          "type": "boolean"
-        },
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "string",
-          "minLength": 1
-        },
-        "usage_total": {
-          "title": "Usage total",
-          "type": "string",
-          "minLength": 1
-        },
-        "credits_applied": {
-          "title": "Credits applied",
-          "type": "string",
-          "minLength": 1
-        },
-        "subtotal": {
-          "title": "Subtotal",
-          "type": "string",
-          "minLength": 1
-        },
-        "tax": {
-          "title": "Tax",
-          "type": "string",
-          "minLength": 1
-        },
-        "total": {
-          "title": "Total",
-          "type": "string",
-          "minLength": 1
-        },
-        "line_items": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/AdminInvoiceLineItem"
-          }
-        }
-      }
-    },
-    "AdminPricingListResult": {
-      "required": [
-        "pricing"
-      ],
-      "type": "object",
-      "properties": {
-        "pricing": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/AdminPricingTier"
-          }
-        }
-      }
-    },
-    "AdminPricingMutationResult": {
-      "required": [
-        "id",
-        "dimension",
-        "created"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "integer"
-        },
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "minLength": 1
-        },
-        "created": {
-          "title": "Created",
-          "type": "boolean"
         }
       }
     },
@@ -78071,30 +71248,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "cap": {
           "title": "Cap",
           "type": "integer"
-        }
-      }
-    },
-    "AutoReloadSettingsData": {
-      "required": [
-        "autoreload_enabled",
-        "autoreload_wallet_amount",
-        "autoreload_wallet_threshold"
-      ],
-      "type": "object",
-      "properties": {
-        "autoreload_enabled": {
-          "title": "Autoreload enabled",
-          "type": "boolean"
-        },
-        "autoreload_wallet_amount": {
-          "title": "Autoreload wallet amount",
-          "type": "string",
-          "format": "decimal"
-        },
-        "autoreload_wallet_threshold": {
-          "title": "Autoreload wallet threshold",
-          "type": "string",
-          "format": "decimal"
         }
       }
     },
@@ -79075,32 +72228,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "CheckoutSessionResult": {
-      "type": "object",
-      "properties": {
-        "session_id": {
-          "title": "Session id",
-          "type": "string",
-          "minLength": 1
-        },
-        "url": {
-          "title": "Url",
-          "type": "string",
-          "format": "uri",
-          "minLength": 1
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "ColumnConfigResult": {
       "required": [
         "name"
@@ -80011,25 +73138,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Evaluation type",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "CustomerInvoicesResult": {
-      "required": [
-        "invoices",
-        "total"
-      ],
-      "type": "object",
-      "properties": {
-        "invoices": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/CustomerInvoice"
-          }
-        },
-        "total": {
-          "title": "Total",
-          "type": "integer"
         }
       }
     },
@@ -81167,28 +74275,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "TelemetryUser": {
-      "required": [
-        "email",
-        "domain"
-      ],
-      "type": "object",
-      "properties": {
-        "email": {
-          "title": "Email",
-          "type": "string",
-          "format": "email",
-          "maxLength": 254,
-          "minLength": 1
-        },
-        "domain": {
-          "title": "Domain",
-          "type": "string",
-          "maxLength": 253,
-          "minLength": 1
-        }
-      }
-    },
     "DerivedVariableDetail": {
       "type": "object",
       "properties": {
@@ -81218,20 +74304,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "is_json": {
           "title": "Is json",
           "type": "boolean"
-        }
-      }
-    },
-    "DownloadInvoiceResult": {
-      "required": [
-        "invoice_pdf_url"
-      ],
-      "type": "object",
-      "properties": {
-        "invoice_pdf_url": {
-          "title": "Invoice pdf url",
-          "type": "string",
-          "format": "uri",
-          "minLength": 1
         }
       }
     },
@@ -84333,38 +77405,574 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "SecretReference": {
+    "HarnessEvent": {
       "required": [
-        "manager",
-        "key",
-        "purpose"
+        "event_id",
+        "job_id",
+        "attempt_id",
+        "attempt_number",
+        "sequence",
+        "emitted_at",
+        "stage",
+        "type",
+        "payload",
+        "digest"
       ],
       "type": "object",
       "properties": {
-        "manager": {
-          "title": "Manager",
+        "event_id": {
+          "title": "Event id",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "minLength": 1
+        },
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "title": "Attempt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_number": {
+          "title": "Attempt number",
+          "type": "integer",
+          "minimum": 1
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer",
+          "minimum": 1
+        },
+        "emitted_at": {
+          "title": "Emitted at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "stage": {
+          "title": "Stage",
           "type": "string",
           "maxLength": 64,
           "minLength": 1
         },
-        "key": {
-          "title": "Key",
+        "type": {
+          "title": "Type",
           "type": "string",
-          "maxLength": 255,
+          "maxLength": 64,
           "minLength": 1
         },
-        "version": {
-          "title": "Version",
+        "payload": {
+          "title": "Payload",
+          "type": "object"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessEventRejection": {
+      "required": [
+        "event_id",
+        "sequence",
+        "code",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "title": "Event id",
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessAgent": {
+      "required": [
+        "connector"
+      ],
+      "type": "object",
+      "properties": {
+        "connector": {
+          "title": "Connector",
+          "type": "string",
+          "enum": [
+            "livekit",
+            "vapi",
+            "retell",
+            "auto"
+          ]
+        },
+        "config": {
+          "title": "Config",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": {}
+        },
+        "secret_refs": {
+          "title": "Secret refs",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SecretReference"
+          },
+          "default": {}
+        }
+      }
+    },
+    "HarnessArtifact": {
+      "required": [
+        "level"
+      ],
+      "type": "object",
+      "properties": {
+        "level": {
+          "title": "Level",
+          "type": "string",
+          "enum": [
+            "metadata-only",
+            "traces",
+            "traces-and-recordings",
+            "full"
+          ]
+        },
+        "retention_days": {
+          "title": "Retention days",
+          "type": "integer",
+          "default": 30,
+          "maximum": 3650,
+          "minimum": 1
+        },
+        "allow_bundle_download": {
+          "title": "Allow bundle download",
+          "type": "boolean",
+          "default": false
+        },
+        "max_artifact_bytes": {
+          "title": "Max artifact bytes",
+          "type": "integer",
+          "default": 1073741824,
+          "minimum": 0
+        }
+      }
+    },
+    "HarnessRetry": {
+      "type": "object",
+      "properties": {
+        "max_infrastructure_attempts": {
+          "title": "Max infrastructure attempts",
+          "type": "integer",
+          "default": 2,
+          "maximum": 5,
+          "minimum": 1
+        },
+        "initial_backoff_seconds": {
+          "title": "Initial backoff seconds",
+          "type": "number",
+          "default": 1,
+          "maximum": 60,
+          "minimum": 0
+        },
+        "max_backoff_seconds": {
+          "title": "Max backoff seconds",
+          "type": "number",
+          "default": 15,
+          "maximum": 300,
+          "minimum": 0
+        },
+        "retryable_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "infrastructure",
+              "connectivity",
+              "platform_sync"
+            ]
+          },
+          "default": [
+            "infrastructure",
+            "connectivity"
+          ]
+        }
+      },
+      "default": {
+        "max_infrastructure_attempts": 2,
+        "initial_backoff_seconds": 1,
+        "max_backoff_seconds": 15,
+        "retryable_domains": [
+          "infrastructure",
+          "connectivity"
+        ]
+      }
+    },
+    "HarnessRuntime": {
+      "type": "object",
+      "properties": {
+        "isolation": {
+          "title": "Isolation",
+          "type": "string",
+          "enum": [
+            "dedicated_vm"
+          ],
+          "default": "dedicated_vm"
+        },
+        "cpu_units": {
+          "title": "Cpu units",
+          "type": "integer",
+          "default": 4,
+          "minimum": 1
+        },
+        "memory_mb": {
+          "title": "Memory mb",
+          "type": "integer",
+          "default": 8192,
+          "minimum": 1024
+        },
+        "parallelism": {
+          "title": "Parallelism",
+          "type": "integer",
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1
+        },
+        "concurrency_weight": {
+          "title": "Concurrency weight",
+          "type": "integer",
+          "default": 1,
+          "maximum": 10,
+          "minimum": 1
+        },
+        "max_duration_seconds": {
+          "title": "Max duration seconds",
+          "type": "integer",
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 60
+        },
+        "network_policy": {
+          "title": "Network policy",
+          "type": "string",
+          "enum": [
+            "live"
+          ],
+          "default": "live"
+        }
+      },
+      "default": {
+        "isolation": "dedicated_vm",
+        "cpu_units": 4,
+        "memory_mb": 8192,
+        "parallelism": 1,
+        "concurrency_weight": 1,
+        "max_duration_seconds": 3600,
+        "network_policy": "live"
+      }
+    },
+    "HarnessSecurity": {
+      "type": "object",
+      "properties": {
+        "untrusted_source": {
+          "title": "Untrusted source",
+          "type": "boolean",
+          "default": true
+        },
+        "read_only_source": {
+          "title": "Read only source",
+          "type": "boolean",
+          "default": true
+        },
+        "allow_privileged": {
+          "title": "Allow privileged",
+          "type": "boolean",
+          "default": false
+        },
+        "allow_host_runtime_control": {
+          "title": "Allow host runtime control",
+          "type": "boolean",
+          "default": false
+        },
+        "allowed_egress_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:[A-Za-z0-9-]+\\.)*[A-Za-z0-9-]+$",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "default": {
+        "untrusted_source": true,
+        "read_only_source": true,
+        "allow_privileged": false,
+        "allow_host_runtime_control": false,
+        "allowed_egress_domains": []
+      }
+    },
+    "HarnessSource": {
+      "required": [
+        "kind"
+      ],
+      "type": "object",
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "enum": [
+            "github",
+            "archive",
+            "remote"
+          ]
+        },
+        "repository": {
+          "title": "Repository",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "commit_sha": {
+          "title": "Commit sha",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "installation_id": {
+          "title": "Installation id",
           "type": "string",
           "maxLength": 255,
           "minLength": 1,
           "x-nullable": true
         },
-        "purpose": {
-          "title": "Purpose",
+        "archive_artifact_id": {
+          "title": "Archive artifact id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string",
+          "format": "uri",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "visibility": {
+          "title": "Visibility",
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ],
+          "default": "public"
+        }
+      }
+    },
+    "HarnessManifestEntry": {
+      "required": [
+        "artifact_id",
+        "kind",
+        "size"
+      ],
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact id",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 1
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer",
+          "minimum": 0
+        },
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        }
+      }
+    },
+    "HarnessCall": {
+      "required": [
+        "started_at",
+        "ended_at",
+        "duration_ms",
+        "turns"
+      ],
+      "type": "object",
+      "properties": {
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "ended_at": {
+          "title": "Ended at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "title": "Duration ms",
+          "type": "integer",
+          "minimum": 0
+        },
+        "turns": {
+          "title": "Turns",
+          "type": "integer",
+          "minimum": 0
+        },
+        "transcript_artifact": {
+          "title": "Transcript artifact",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "recording_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "x-nullable": true
+    },
+    "HarnessFailure": {
+      "required": [
+        "domain",
+        "stage",
+        "code",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "domain": {
+          "title": "Domain",
+          "type": "string",
+          "enum": [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "platform_sync"
+          ]
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "code": {
+          "title": "Code",
           "type": "string",
           "maxLength": 128,
           "minLength": 1
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        }
+      },
+      "x-nullable": true
+    },
+    "HarnessSubGoal": {
+      "required": [
+        "name",
+        "held",
+        "judged"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "held": {
+          "title": "Held",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "judged": {
+          "title": "Judged",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarnessScenarioOperationResult": {
+      "required": [
+        "scenarios"
+      ],
+      "type": "object",
+      "properties": {
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessScenarioRegistrationResponse"
+          }
         }
       }
     },
@@ -84786,19 +78394,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_pages": {
           "title": "Total pages",
           "type": "integer"
-        }
-      }
-    },
-    "LastFourDigitsResult": {
-      "required": [
-        "last4"
-      ],
-      "type": "object",
-      "properties": {
-        "last4": {
-          "title": "Last4",
-          "type": "string",
-          "x-nullable": true
         }
       }
     },
@@ -86659,62 +80254,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "BillingInfo": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "x-nullable": true
-        },
-        "email": {
-          "title": "Email",
-          "type": "string",
-          "format": "email",
-          "x-nullable": true
-        },
-        "company": {
-          "title": "Company",
-          "type": "string",
-          "x-nullable": true
-        },
-        "billing_address1": {
-          "title": "Billing address1",
-          "type": "string",
-          "x-nullable": true
-        },
-        "billing_address2": {
-          "title": "Billing address2",
-          "type": "string",
-          "x-nullable": true
-        },
-        "city": {
-          "title": "City",
-          "type": "string",
-          "x-nullable": true
-        },
-        "state": {
-          "title": "State",
-          "type": "string",
-          "x-nullable": true
-        },
-        "country": {
-          "title": "Country",
-          "type": "string",
-          "x-nullable": true
-        },
-        "postal_code": {
-          "title": "Postal code",
-          "type": "string",
-          "x-nullable": true
-        },
-        "tax_id": {
-          "title": "Tax id",
-          "type": "string",
-          "x-nullable": true
-        }
-      }
-    },
     "OrganizationCreateResult": {
       "required": [
         "organization_id",
@@ -86741,26 +80280,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "message": {
           "title": "Message",
           "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "UsageOrganization": {
-      "required": [
-        "name"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "maxLength": 255,
           "minLength": 1
         }
       }
@@ -86798,146 +80317,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_count": {
           "title": "Total count",
           "type": "integer"
-        }
-      }
-    },
-    "UsageOrganizationSubscription": {
-      "required": [
-        "organization"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid"
-        },
-        "subscription_tier": {
-          "title": "Subscription tier",
-          "type": "string",
-          "readOnly": true
-        },
-        "custom_subscription_id": {
-          "title": "Custom subscription id",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "active",
-            "past_due",
-            "unpaid",
-            "canceled",
-            "inactive"
-          ]
-        },
-        "subscription_price": {
-          "title": "Subscription price",
-          "description": "Price of the subscription.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "wallet_balance": {
-          "title": "Wallet balance",
-          "type": "string",
-          "format": "decimal"
-        },
-        "wallet_refill_amount": {
-          "title": "Wallet refill amount",
-          "description": "Amount to refill the wallet every month.",
-          "type": "string",
-          "format": "decimal"
-        },
-        "next_renewal_date": {
-          "title": "Next renewal date",
-          "description": "Next due date for renewal.",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "subscription_future_tier": {
-          "title": "Subscription future tier",
-          "type": "string",
-          "enum": [
-            "free",
-            "basic",
-            "basic_yearly",
-            "custom"
-          ],
-          "x-nullable": true
-        },
-        "subscription_future_start_date": {
-          "title": "Subscription future start date",
-          "description": "Next due date for renewal.",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "subscription_future_price": {
-          "title": "Subscription future price",
-          "description": "Price of the future subscription.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "stripe_customer_id_test": {
-          "title": "Stripe customer id test",
-          "description": "Stripe customer ID for test mode. NULL values are allowed.",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "stripe_customer_id_live": {
-          "title": "Stripe customer id live",
-          "description": "Stripe customer ID for live mode. NULL values are allowed.",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "auto_recharge_enabled": {
-          "title": "Auto recharge enabled",
-          "type": "boolean"
-        },
-        "auto_recharge_amount": {
-          "title": "Auto recharge amount",
-          "description": "Amount to refill the wallet every month.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "auto_recharge_threshold": {
-          "title": "Auto recharge threshold",
-          "description": "Threshold to trigger auto recharge.",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "payment_method_id": {
-          "title": "Payment method id",
-          "type": "string",
-          "maxLength": 100,
-          "x-nullable": true
-        },
-        "last_refill_date": {
-          "title": "Last refill date",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "last_refill_amount": {
-          "title": "Last refill amount",
-          "description": "Amount of the last refill.",
-          "type": "string",
-          "format": "decimal"
         }
       }
     },
@@ -87196,75 +80575,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UpgradeToPaygPostResult": {
-      "required": [
-        "checkout_url"
-      ],
-      "type": "object",
-      "properties": {
-        "checkout_url": {
-          "title": "Checkout url",
-          "type": "string",
-          "format": "uri",
-          "minLength": 1
-        }
-      }
-    },
-    "PaymentMethodConfirmResult": {
-      "required": [
-        "payment_method_id",
-        "set_as_default"
-      ],
-      "type": "object",
-      "properties": {
-        "payment_method_id": {
-          "title": "Payment method id",
-          "type": "string",
-          "minLength": 1
-        },
-        "set_as_default": {
-          "title": "Set as default",
-          "type": "boolean"
-        }
-      }
-    },
-    "PaymentMethod": {
-      "required": [
-        "id"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "minLength": 1
-        },
-        "brand": {
-          "title": "Brand",
-          "type": "string",
-          "x-nullable": true
-        },
-        "last4": {
-          "title": "Last4",
-          "type": "string",
-          "x-nullable": true
-        },
-        "exp_month": {
-          "title": "Exp month",
-          "type": "integer",
-          "x-nullable": true
-        },
-        "exp_year": {
-          "title": "Exp year",
-          "type": "integer",
-          "x-nullable": true
-        },
-        "is_default": {
-          "title": "Is default",
-          "type": "boolean"
-        }
-      }
-    },
     "PerformanceDataset": {
       "required": [
         "environment",
@@ -87500,19 +80810,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "PlanResult": {
-      "required": [
-        "plan"
-      ],
-      "type": "object",
-      "properties": {
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "PreviewAnnotationsResult": {
       "required": [
         "row_id",
@@ -87557,62 +80854,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sample_size": {
           "title": "Sample size",
           "type": "integer"
-        }
-      }
-    },
-    "PricingCardDetailsResult": {
-      "required": [
-        "business_monthly_price",
-        "business_yearly_price",
-        "discount_percentage"
-      ],
-      "type": "object",
-      "properties": {
-        "business_monthly_price": {
-          "title": "Business monthly price",
-          "type": "number"
-        },
-        "business_yearly_price": {
-          "title": "Business yearly price",
-          "type": "number"
-        },
-        "discount_percentage": {
-          "title": "Discount percentage",
-          "type": "integer"
-        },
-        "custom_price": {
-          "title": "Custom price",
-          "type": "number",
-          "x-nullable": true
-        }
-      }
-    },
-    "UsagePricing": {
-      "required": [
-        "price_per_call"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "api_call_type": {
-          "title": "Api call type",
-          "type": "string",
-          "readOnly": true
-        },
-        "price_per_call": {
-          "title": "Price per call",
-          "type": "string",
-          "format": "decimal"
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
         }
       }
     },
@@ -88628,64 +81869,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UsageRateLimit": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "api_call_type": {
-          "title": "Api call type",
-          "type": "string",
-          "readOnly": true
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        },
-        "minute_limit": {
-          "title": "Minute limit",
-          "description": "Max calls per minute",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "hour_limit": {
-          "title": "Hour limit",
-          "description": "Max calls per hour",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "day_limit": {
-          "title": "Day limit",
-          "description": "Max calls per day",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "month_limit": {
-          "title": "Month limit",
-          "description": "Max calls per month",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0,
-          "x-nullable": true
-        },
-        "subscription_tier": {
-          "title": "Subscription tier",
-          "type": "string",
-          "readOnly": true
-        }
-      }
-    },
     "AgentDefinitionNested": {
       "required": [
         "agent_name",
@@ -88870,75 +82053,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Workspace",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "UsageResourceLimit": {
-      "required": [
-        "limit"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "resource_type": {
-          "title": "Resource type",
-          "type": "string",
-          "readOnly": true
-        },
-        "subscription_tier": {
-          "title": "Subscription tier",
-          "type": "string",
-          "readOnly": true
-        },
-        "limit": {
-          "title": "Limit",
-          "description": "Limit for the resource",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageResourceType": {
-      "required": [
-        "name"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "ID",
-          "type": "integer",
-          "readOnly": true
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "enum": [
-            "project",
-            "dataset",
-            "logs",
-            "rows",
-            "columns",
-            "users",
-            "traces",
-            "observe",
-            "prototypes",
-            "knowledge_base"
-          ]
-        },
-        "description": {
-          "title": "Description",
-          "type": "string"
         }
       }
     },
@@ -90938,27 +84052,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "StripeWebhookResult": {
-      "type": "object",
-      "properties": {
-        "event_type": {
-          "title": "Event type",
-          "type": "string"
-        },
-        "action": {
-          "title": "Action",
-          "type": "string"
-        },
-        "status": {
-          "title": "Status",
-          "type": "string"
-        },
-        "message": {
-          "title": "Message",
-          "type": "string"
-        }
-      }
-    },
     "SubmitAnnotationEntry": {
       "required": [
         "label_id",
@@ -90978,82 +84071,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "notes": {
           "title": "Notes",
           "type": "string"
-        }
-      }
-    },
-    "SubscriptionPlansResult": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "success",
-            "error"
-          ]
-        },
-        "data": {
-          "title": "Data",
-          "type": "object"
-        },
-        "current_subscription": {
-          "title": "Current subscription",
-          "type": "string",
-          "minLength": 1
-        },
-        "message": {
-          "title": "Message",
-          "type": "string"
-        }
-      }
-    },
-    "SubscriptionStatusResult": {
-      "type": "object",
-      "properties": {
-        "next_renewal_date": {
-          "title": "Next renewal date",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "subscription_status": {
-          "title": "Subscription status",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "tier": {
-          "title": "Tier",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "subscription_price": {
-          "title": "Subscription price",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "subscription_future_tier": {
-          "title": "Subscription future tier",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "subscription_future_start_date": {
-          "title": "Subscription future start date",
-          "type": "string",
-          "format": "date",
-          "x-nullable": true
-        },
-        "subscription_future_price": {
-          "title": "Subscription future price",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
         }
       }
     },
@@ -91975,19 +84992,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UpdateBillingDetailsResult": {
-      "required": [
-        "message"
-      ],
-      "type": "object",
-      "properties": {
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
     "UploadedFileResult": {
       "type": "object",
       "properties": {
@@ -92004,395 +85008,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "error": {
           "title": "Error",
           "type": "string"
-        }
-      }
-    },
-    "UsageBillingOverviewResult": {
-      "type": "object",
-      "properties": {
-        "org_id": {
-          "title": "Org id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "period": {
-          "title": "Period",
-          "type": "string",
-          "minLength": 1
-        },
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        },
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "string",
-          "format": "decimal"
-        },
-        "usage_total": {
-          "title": "Usage total",
-          "type": "string",
-          "format": "decimal"
-        },
-        "credits_applied": {
-          "title": "Credits applied",
-          "type": "string",
-          "format": "decimal"
-        },
-        "subtotal": {
-          "title": "Subtotal",
-          "type": "string",
-          "format": "decimal"
-        },
-        "tax": {
-          "title": "Tax",
-          "type": "string",
-          "format": "decimal"
-        },
-        "total": {
-          "title": "Total",
-          "type": "string",
-          "format": "decimal"
-        },
-        "line_items": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageInvoiceLineItem"
-          }
-        },
-        "error": {
-          "title": "Error",
-          "type": "string",
-          "minLength": 1
-        },
-        "pending_cancel": {
-          "title": "Pending cancel",
-          "type": "boolean"
-        },
-        "cancel_at": {
-          "title": "Cancel at",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageBudgetDeleteResult": {
-      "required": [
-        "deleted"
-      ],
-      "type": "object",
-      "properties": {
-        "deleted": {
-          "title": "Deleted",
-          "type": "boolean"
-        }
-      }
-    },
-    "UsageBudgetListResult": {
-      "required": [
-        "budgets"
-      ],
-      "type": "object",
-      "properties": {
-        "budgets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageBudget"
-          }
-        }
-      }
-    },
-    "UsageBudgetMutationResult": {
-      "required": [
-        "id",
-        "name",
-        "threshold_value",
-        "action"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "integer"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "minLength": 1
-        },
-        "scope": {
-          "title": "Scope",
-          "type": "string",
-          "minLength": 1
-        },
-        "threshold_value": {
-          "title": "Threshold value",
-          "type": "string",
-          "minLength": 1
-        },
-        "action": {
-          "title": "Action",
-          "type": "string",
-          "minLength": 1
-        },
-        "is_active": {
-          "title": "Is active",
-          "type": "boolean"
-        }
-      }
-    },
-    "UsageInvoiceDetailResult": {
-      "required": [
-        "invoice",
-        "line_items"
-      ],
-      "type": "object",
-      "properties": {
-        "invoice": {
-          "$ref": "#/definitions/UsageInvoiceDetail"
-        },
-        "line_items": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageInvoiceLineItem"
-          }
-        }
-      }
-    },
-    "UsageInvoiceListResult": {
-      "required": [
-        "invoices"
-      ],
-      "type": "object",
-      "properties": {
-        "invoices": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageInvoiceSummary"
-          }
-        }
-      }
-    },
-    "UsageMessageResult": {
-      "required": [
-        "message"
-      ],
-      "type": "object",
-      "properties": {
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "UsageNotificationsResult": {
-      "required": [
-        "banners"
-      ],
-      "type": "object",
-      "properties": {
-        "banners": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageNotificationBanner"
-          }
-        }
-      }
-    },
-    "UsageOverviewResult": {
-      "required": [
-        "plan",
-        "plan_display_name",
-        "platform_fee",
-        "period",
-        "billing_period_start",
-        "billing_period_end",
-        "total_estimated_cost",
-        "total_with_platform",
-        "dimensions",
-        "pending_cancel"
-      ],
-      "type": "object",
-      "properties": {
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        },
-        "plan_display_name": {
-          "title": "Plan display name",
-          "type": "string",
-          "minLength": 1
-        },
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "number"
-        },
-        "period": {
-          "title": "Period",
-          "type": "string",
-          "minLength": 1
-        },
-        "billing_period_start": {
-          "title": "Billing period start",
-          "type": "string",
-          "minLength": 1
-        },
-        "billing_period_end": {
-          "title": "Billing period end",
-          "type": "string",
-          "minLength": 1
-        },
-        "total_estimated_cost": {
-          "title": "Total estimated cost",
-          "type": "number"
-        },
-        "total_with_platform": {
-          "title": "Total with platform",
-          "type": "number"
-        },
-        "dimensions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageOverviewDimension"
-          }
-        },
-        "pending_cancel": {
-          "title": "Pending cancel",
-          "type": "boolean"
-        },
-        "cancel_at": {
-          "title": "Cancel at",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        }
-      }
-    },
-    "UsagePlansAndAddonsResult": {
-      "required": [
-        "current_plan",
-        "billing_interval",
-        "tiers",
-        "addons",
-        "pricing",
-        "isCustomPricing",
-        "pending_cancel"
-      ],
-      "type": "object",
-      "properties": {
-        "current_plan": {
-          "title": "Current plan",
-          "type": "string",
-          "minLength": 1
-        },
-        "billing_interval": {
-          "title": "Billing interval",
-          "type": "string",
-          "minLength": 1
-        },
-        "tiers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsagePlanOption"
-          }
-        },
-        "addons": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsagePlanOption"
-          }
-        },
-        "pricing": {
-          "title": "Pricing",
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/definitions/UsagePricingDimension"
-          }
-        },
-        "isCustomPricing": {
-          "title": "Iscustompricing",
-          "type": "boolean"
-        },
-        "customDetails": {
-          "$ref": "#/definitions/UsageCustomPlanDetails"
-        },
-        "pending_cancel": {
-          "title": "Pending cancel",
-          "type": "boolean"
-        },
-        "cancel_at": {
-          "title": "Cancel at",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageTimeSeriesResult": {
-      "required": [
-        "dimension",
-        "period",
-        "period_end",
-        "series"
-      ],
-      "type": "object",
-      "properties": {
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "minLength": 1
-        },
-        "period": {
-          "title": "Period",
-          "type": "string",
-          "minLength": 1
-        },
-        "period_end": {
-          "title": "Period end",
-          "type": "string",
-          "minLength": 1
-        },
-        "series": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageTimeSeriesPoint"
-          }
-        }
-      }
-    },
-    "UsageWorkspaceBreakdownResult": {
-      "required": [
-        "dimension",
-        "period",
-        "period_end",
-        "workspaces"
-      ],
-      "type": "object",
-      "properties": {
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "minLength": 1
-        },
-        "period": {
-          "title": "Period",
-          "type": "string",
-          "minLength": 1
-        },
-        "period_end": {
-          "title": "Period end",
-          "type": "string",
-          "minLength": 1
-        },
-        "workspaces": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageWorkspaceBreakdownItem"
-          }
         }
       }
     },
@@ -93201,96 +85816,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "AdminInvoiceLineItem": {
-      "required": [
-        "line_type",
-        "description",
-        "quantity",
-        "unit_price",
-        "amount"
-      ],
-      "type": "object",
-      "properties": {
-        "line_type": {
-          "title": "Line type",
-          "type": "string",
-          "minLength": 1
-        },
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "x-nullable": true
-        },
-        "description": {
-          "title": "Description",
-          "type": "string",
-          "minLength": 1
-        },
-        "quantity": {
-          "title": "Quantity",
-          "type": "string",
-          "minLength": 1
-        },
-        "unit": {
-          "title": "Unit",
-          "type": "string"
-        },
-        "unit_price": {
-          "title": "Unit price",
-          "type": "string",
-          "minLength": 1
-        },
-        "amount": {
-          "title": "Amount",
-          "type": "string",
-          "minLength": 1
-        },
-        "tier_breakdown": {
-          "title": "Tier breakdown",
-          "type": "object",
-          "x-nullable": true
-        }
-      }
-    },
-    "AdminPricingTier": {
-      "required": [
-        "dimension",
-        "tier_start",
-        "price_per_unit"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "integer"
-        },
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "minLength": 1
-        },
-        "tier_start": {
-          "title": "Tier start",
-          "type": "string",
-          "format": "decimal"
-        },
-        "tier_end": {
-          "title": "Tier end",
-          "type": "string",
-          "format": "decimal",
-          "x-nullable": true
-        },
-        "price_per_unit": {
-          "title": "Price per unit",
-          "type": "string",
-          "format": "decimal"
-        },
-        "display_unit": {
-          "title": "Display unit",
-          "type": "string"
-        }
-      }
-    },
     "AgentPromptOptimiserGraphEvaluation": {
       "type": "object",
       "properties": {
@@ -94031,48 +86556,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/MessageContentItem"
           }
-        }
-      }
-    },
-    "CustomerInvoice": {
-      "required": [
-        "date",
-        "id",
-        "is_invoice_available",
-        "amount",
-        "payment_type"
-      ],
-      "type": "object",
-      "properties": {
-        "date": {
-          "title": "Date",
-          "type": "string",
-          "minLength": 1
-        },
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "minLength": 1
-        },
-        "is_invoice_available": {
-          "title": "Is invoice available",
-          "type": "boolean"
-        },
-        "amount": {
-          "title": "Amount",
-          "type": "string",
-          "minLength": 1
-        },
-        "receipt_url": {
-          "title": "Receipt url",
-          "type": "string",
-          "format": "uri",
-          "x-nullable": true
-        },
-        "payment_type": {
-          "title": "Payment type",
-          "type": "string",
-          "minLength": 1
         }
       }
     },
@@ -97232,6 +89715,68 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SecretReference": {
+      "required": [
+        "manager",
+        "key",
+        "purpose"
+      ],
+      "type": "object",
+      "properties": {
+        "manager": {
+          "title": "Manager",
+          "type": "string",
+          "enum": [
+            "platform-vault"
+          ]
+        },
+        "key": {
+          "title": "Key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "version": {
+          "title": "Version",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string",
+          "enum": [
+            "target_provider",
+            "source_checkout"
+          ]
+        }
+      }
+    },
+    "HarnessScenarioRegistrationResponse": {
+      "required": [
+        "scenario_key",
+        "scenario_id"
+      ],
+      "type": "object",
+      "properties": {
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "call_execution_id": {
+          "title": "Call execution id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
     "HuggingFaceDatasetDetail": {
       "required": [
         "id",
@@ -100194,533 +92739,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "UsageInvoiceLineItem": {
-      "required": [
-        "line_type",
-        "description",
-        "quantity",
-        "unit_price",
-        "amount"
-      ],
-      "type": "object",
-      "properties": {
-        "line_type": {
-          "title": "Line type",
-          "type": "string",
-          "minLength": 1
-        },
-        "dimension": {
-          "title": "Dimension",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "description": {
-          "title": "Description",
-          "type": "string",
-          "minLength": 1
-        },
-        "quantity": {
-          "title": "Quantity",
-          "type": "string",
-          "format": "decimal"
-        },
-        "unit": {
-          "title": "Unit",
-          "type": "string"
-        },
-        "unit_price": {
-          "title": "Unit price",
-          "type": "string",
-          "format": "decimal"
-        },
-        "amount": {
-          "title": "Amount",
-          "type": "string",
-          "format": "decimal"
-        },
-        "tier_breakdown": {
-          "title": "Tier breakdown",
-          "type": "object",
-          "x-nullable": true
-        },
-        "credit_id": {
-          "title": "Credit id",
-          "type": "integer"
-        }
-      }
-    },
-    "UsageBudget": {
-      "required": [
-        "id",
-        "name",
-        "threshold_value",
-        "action"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "integer"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "minLength": 1
-        },
-        "scope": {
-          "title": "Scope",
-          "type": "string",
-          "minLength": 1
-        },
-        "threshold_value": {
-          "title": "Threshold value",
-          "type": "string",
-          "format": "decimal"
-        },
-        "action": {
-          "title": "Action",
-          "type": "string",
-          "minLength": 1
-        },
-        "notify_emails": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "format": "email",
-            "minLength": 1
-          }
-        },
-        "is_active": {
-          "title": "Is active",
-          "type": "boolean"
-        },
-        "last_triggered_period": {
-          "title": "Last triggered period",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "last_triggered_at": {
-          "title": "Last triggered at",
-          "type": "string",
-          "format": "date-time",
-          "x-nullable": true
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "UsageInvoiceDetail": {
-      "required": [
-        "id",
-        "period_start",
-        "period_end",
-        "plan",
-        "platform_fee",
-        "usage_total",
-        "credits_applied",
-        "subtotal",
-        "tax",
-        "total",
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "period_start": {
-          "title": "Period start",
-          "type": "string",
-          "format": "date"
-        },
-        "period_end": {
-          "title": "Period end",
-          "type": "string",
-          "format": "date"
-        },
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        },
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "number"
-        },
-        "usage_total": {
-          "title": "Usage total",
-          "type": "number"
-        },
-        "credits_applied": {
-          "title": "Credits applied",
-          "type": "number"
-        },
-        "subtotal": {
-          "title": "Subtotal",
-          "type": "number"
-        },
-        "tax": {
-          "title": "Tax",
-          "type": "number"
-        },
-        "total": {
-          "title": "Total",
-          "type": "number"
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "stripe_pdf_url": {
-          "title": "Stripe pdf url",
-          "type": "string",
-          "format": "uri",
-          "x-nullable": true
-        }
-      }
-    },
-    "UsageInvoiceSummary": {
-      "required": [
-        "id",
-        "period_start",
-        "period_end",
-        "plan",
-        "platform_fee",
-        "usage_total",
-        "credits_applied",
-        "subtotal",
-        "tax",
-        "total",
-        "status",
-        "created_at"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "period_start": {
-          "title": "Period start",
-          "type": "string",
-          "format": "date"
-        },
-        "period_end": {
-          "title": "Period end",
-          "type": "string",
-          "format": "date"
-        },
-        "plan": {
-          "title": "Plan",
-          "type": "string",
-          "minLength": 1
-        },
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "string",
-          "format": "decimal"
-        },
-        "usage_total": {
-          "title": "Usage total",
-          "type": "string",
-          "format": "decimal"
-        },
-        "credits_applied": {
-          "title": "Credits applied",
-          "type": "string",
-          "format": "decimal"
-        },
-        "subtotal": {
-          "title": "Subtotal",
-          "type": "string",
-          "format": "decimal"
-        },
-        "tax": {
-          "title": "Tax",
-          "type": "string",
-          "format": "decimal"
-        },
-        "total": {
-          "title": "Total",
-          "type": "string",
-          "format": "decimal"
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "stripe_invoice_url": {
-          "title": "Stripe invoice url",
-          "type": "string",
-          "format": "uri",
-          "x-nullable": true
-        },
-        "stripe_pdf_url": {
-          "title": "Stripe pdf url",
-          "type": "string",
-          "format": "uri",
-          "x-nullable": true
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string",
-          "format": "date-time"
-        }
-      }
-    },
-    "UsageNotificationBanner": {
-      "required": [
-        "id",
-        "type",
-        "message"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "minLength": 1
-        },
-        "type": {
-          "title": "Type",
-          "type": "string",
-          "minLength": 1
-        },
-        "message": {
-          "title": "Message",
-          "type": "string",
-          "minLength": 1
-        },
-        "action": {
-          "$ref": "#/definitions/UsageNotificationAction"
-        },
-        "dismissible": {
-          "title": "Dismissible",
-          "type": "boolean"
-        }
-      }
-    },
-    "UsageOverviewDimension": {
-      "required": [
-        "key",
-        "display_name",
-        "display_unit",
-        "current_usage",
-        "current_usage_raw",
-        "free_allowance",
-        "projected_usage",
-        "estimated_cost",
-        "usage_pct"
-      ],
-      "type": "object",
-      "properties": {
-        "key": {
-          "title": "Key",
-          "type": "string",
-          "minLength": 1
-        },
-        "display_name": {
-          "title": "Display name",
-          "type": "string",
-          "minLength": 1
-        },
-        "display_unit": {
-          "title": "Display unit",
-          "type": "string",
-          "minLength": 1
-        },
-        "current_usage": {
-          "title": "Current usage",
-          "type": "number"
-        },
-        "current_usage_raw": {
-          "title": "Current usage raw",
-          "type": "number"
-        },
-        "free_allowance": {
-          "title": "Free allowance",
-          "type": "number"
-        },
-        "projected_usage": {
-          "title": "Projected usage",
-          "type": "number"
-        },
-        "estimated_cost": {
-          "title": "Estimated cost",
-          "type": "number"
-        },
-        "tier_breakdown": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsageTierBreakdown"
-          }
-        },
-        "usage_pct": {
-          "title": "Usage pct",
-          "type": "number"
-        }
-      }
-    },
-    "UsageCustomPlanDetails": {
-      "required": [
-        "platform_fee",
-        "platform_fee_billing_cycle",
-        "per_charge_amount",
-        "features",
-        "pricing"
-      ],
-      "type": "object",
-      "properties": {
-        "platform_fee": {
-          "title": "Platform fee",
-          "type": "number"
-        },
-        "platform_fee_billing_cycle": {
-          "title": "Platform fee billing cycle",
-          "type": "integer"
-        },
-        "per_charge_amount": {
-          "title": "Per charge amount",
-          "type": "number"
-        },
-        "contract_end_date": {
-          "title": "Contract end date",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "features": {
-          "title": "Features",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
-        },
-        "pricing": {
-          "title": "Pricing",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
-        }
-      },
-      "x-nullable": true
-    },
-    "UsagePlanOption": {
-      "required": [
-        "key",
-        "display_name",
-        "platform_fee_monthly",
-        "is_current",
-        "features"
-      ],
-      "type": "object",
-      "properties": {
-        "key": {
-          "title": "Key",
-          "type": "string",
-          "minLength": 1
-        },
-        "display_name": {
-          "title": "Display name",
-          "type": "string",
-          "minLength": 1
-        },
-        "platform_fee_monthly": {
-          "title": "Platform fee monthly",
-          "type": "number"
-        },
-        "is_current": {
-          "title": "Is current",
-          "type": "boolean"
-        },
-        "features": {
-          "title": "Features",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
-        }
-      }
-    },
-    "UsagePricingDimension": {
-      "required": [
-        "display_name",
-        "display_unit",
-        "tiers"
-      ],
-      "type": "object",
-      "properties": {
-        "display_name": {
-          "title": "Display name",
-          "type": "string",
-          "minLength": 1
-        },
-        "display_unit": {
-          "title": "Display unit",
-          "type": "string",
-          "minLength": 1
-        },
-        "tiers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/UsagePricingTier"
-          }
-        }
-      }
-    },
-    "UsageTimeSeriesPoint": {
-      "required": [
-        "date",
-        "usage"
-      ],
-      "type": "object",
-      "properties": {
-        "date": {
-          "title": "Date",
-          "type": "string",
-          "minLength": 1
-        },
-        "usage": {
-          "title": "Usage",
-          "type": "number"
-        }
-      }
-    },
-    "UsageWorkspaceBreakdownItem": {
-      "required": [
-        "workspace_name",
-        "usage"
-      ],
-      "type": "object",
-      "properties": {
-        "workspace_id": {
-          "title": "Workspace id",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        },
-        "workspace_name": {
-          "title": "Workspace name",
-          "type": "string",
-          "minLength": 1
-        },
-        "usage": {
-          "title": "Usage",
-          "type": "number"
-        }
-      }
-    },
     "UserOnboardingData": {
       "required": [
         "role",
@@ -101953,68 +93971,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Role",
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "UsageNotificationAction": {
-      "required": [
-        "label",
-        "url"
-      ],
-      "type": "object",
-      "properties": {
-        "label": {
-          "title": "Label",
-          "type": "string",
-          "minLength": 1
-        },
-        "url": {
-          "title": "Url",
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    },
-    "UsageTierBreakdown": {
-      "type": "object",
-      "properties": {
-        "tier_start": {
-          "title": "Tier start",
-          "type": "number"
-        },
-        "tier_end": {
-          "title": "Tier end",
-          "type": "number",
-          "x-nullable": true
-        },
-        "quantity": {
-          "title": "Quantity",
-          "type": "number"
-        },
-        "rate": {
-          "title": "Rate",
-          "type": "number"
-        },
-        "cost": {
-          "title": "Cost",
-          "type": "number"
-        }
-      }
-    },
-    "UsagePricingTier": {
-      "required": [
-        "price_per_unit"
-      ],
-      "type": "object",
-      "properties": {
-        "up_to": {
-          "title": "Up to",
-          "type": "number",
-          "x-nullable": true
-        },
-        "price_per_unit": {
-          "title": "Price per unit",
-          "type": "number"
         }
       }
     },

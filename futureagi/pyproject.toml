@@ -41,6 +41,7 @@ dependencies = [
     "qdrant-client",
     "weaviate-client",
     "stripe",
+    "daytona==0.207.0",
     # Community-maintained set of throwaway-inbox domains, used by
     # accounts.utils.is_work_email to reject disposable signups.
     "disposable-email-domains==0.0.239",

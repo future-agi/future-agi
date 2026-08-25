@@ -643,6 +643,25 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
+# Hosted ALK sandbox gateway
+HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+ALK_HOSTED_SOURCE_MAX_BYTES = int(
+    os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
+)
+ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+    domain.strip()
+    for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
+    if domain.strip()
+]
+DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
+DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
+DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
+DAYTONA_ORGANIZATION_ID = os.getenv("DAYTONA_ORGANIZATION_ID") or None
+ALK_DAYTONA_SNAPSHOT = os.getenv("ALK_DAYTONA_SNAPSHOT", "")
+ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")

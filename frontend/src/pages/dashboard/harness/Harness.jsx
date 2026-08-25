@@ -52,8 +52,6 @@ function eventMessage(event) {
 }
 
 export default function Harness() {
-  const [sourceMode, setSourceMode] = useState("local");
-  const [sourcePath, setSourcePath] = useState("");
   const [githubRepository, setGithubRepository] = useState("");
   const [githubRef, setGithubRef] = useState("main");
   const [githubVisibility, setGithubVisibility] = useState("public");
@@ -105,18 +103,16 @@ export default function Harness() {
     return () => window.clearInterval(timer);
   }, [current?.job?.job_id, current?.status?.stage]);
 
-  const sourcePayload = () => {
-    if (sourceMode === "local") return { source_path: sourcePath.trim() };
-    return {
-      github_repository: githubRepository.trim(),
-      github_ref: githubRef.trim() || undefined,
-      github_visibility: githubVisibility,
-      github_installation_id:
-        githubVisibility === "private"
-          ? githubInstallationId.trim() || undefined
-          : undefined,
-    };
-  };
+  const sourcePayload = () => ({
+    kind: "github",
+    repository: githubRepository.trim(),
+    ref: githubRef.trim() || undefined,
+    visibility: githubVisibility,
+    installation_id:
+      githubVisibility === "private"
+        ? githubInstallationId.trim() || undefined
+        : undefined,
+  });
 
   const configuredSecretRefs = () =>
     Object.fromEntries(
@@ -125,22 +121,59 @@ export default function Harness() {
         .map(([environmentName, key]) => [
           environmentName,
           {
-            manager: "futureagi",
+            manager: "platform-vault",
             key: key.trim(),
-            purpose: `Provide ${environmentName} to the isolated agent runtime`,
+            purpose: "target_provider",
           },
         ]),
     );
+
+  const jobPayload = () => ({
+    schema_version: "futureagi.harness-job.v1",
+    source: sourcePayload(),
+    agent: {
+      connector: "auto",
+      config: configurationValues,
+      secret_refs: configuredSecretRefs(),
+    },
+    scenario_count: Number(scenarioCount),
+    seed: null,
+    runtime: {
+      isolation: "dedicated_vm",
+      cpu_units: 4,
+      memory_mb: 8192,
+      parallelism: 1,
+      concurrency_weight: 1,
+      max_duration_seconds: 3600,
+      network_policy: "live",
+    },
+    security: {
+      untrusted_source: true,
+      read_only_source: true,
+      allow_privileged: false,
+      allow_host_runtime_control: false,
+      allowed_egress_domains: [],
+    },
+    retry: {
+      max_infrastructure_attempts: 2,
+      initial_backoff_seconds: 1,
+      max_backoff_seconds: 15,
+      retryable_domains: ["infrastructure", "connectivity"],
+    },
+    artifacts: {
+      level: "full",
+      retention_days: 30,
+      allow_bundle_download: true,
+      max_artifact_bytes: 1073741824,
+    },
+    metadata: { agent_name: githubRepository.trim() },
+  });
 
   const inspect = async () => {
     setChecking(true);
     setError("");
     try {
-      const value = await preflightHarnessJob({
-        ...sourcePayload(),
-        secret_refs: configuredSecretRefs(),
-        connector_config: configurationValues,
-      });
+      const value = await preflightHarnessJob(jobPayload());
       setPreflight(value);
     } catch (requestError) {
       setError(requestError?.response?.data?.detail || requestError.message);
@@ -153,13 +186,7 @@ export default function Harness() {
     setSubmitting(true);
     setError("");
     try {
-      const value = await createHarnessJob({
-        ...sourcePayload(),
-        scenario_count: Number(scenarioCount),
-        connector: "auto",
-        secret_refs: configuredSecretRefs(),
-        connector_config: configurationValues,
-      });
+      const value = await createHarnessJob(jobPayload());
       setCurrent(value);
       setJobs((existing) => [value, ...existing]);
     } catch (requestError) {
@@ -209,10 +236,8 @@ export default function Harness() {
   const requiredInputCount =
     missingRequirements.length + unsatisfiedChoices.length;
   const hasSource =
-    sourceMode === "local"
-      ? Boolean(sourcePath.trim())
-      : Boolean(githubRepository.trim()) &&
-        (githubVisibility === "public" || Boolean(githubInstallationId.trim()));
+    Boolean(githubRepository.trim()) &&
+    (githubVisibility === "public" || Boolean(githubInstallationId.trim()));
   const progress = current
     ? current.status.stage === "completed"
       ? 100
@@ -296,77 +321,47 @@ export default function Harness() {
               alignItems="center"
             >
               <TextField
-                select
+                fullWidth
                 size="small"
-                label="Source"
-                value={sourceMode}
+                label="GitHub repository"
+                placeholder="owner/repository"
+                value={githubRepository}
                 onChange={(event) => {
-                  setSourceMode(event.target.value);
+                  setGithubRepository(event.target.value);
                   setPreflight(null);
                 }}
-                sx={{ minWidth: 130 }}
+              />
+              <TextField
+                size="small"
+                label="Ref"
+                value={githubRef}
+                onChange={(event) => setGithubRef(event.target.value)}
+                sx={{ width: 140 }}
+              />
+              <TextField
+                select
+                size="small"
+                label="Visibility"
+                value={githubVisibility}
+                onChange={(event) => {
+                  setGithubVisibility(event.target.value);
+                  setPreflight(null);
+                }}
+                sx={{ minWidth: 120 }}
               >
-                <MenuItem value="local">Local folder</MenuItem>
-                <MenuItem value="github">GitHub</MenuItem>
+                <MenuItem value="public">Public</MenuItem>
+                <MenuItem value="private">Private</MenuItem>
               </TextField>
-              {sourceMode === "local" ? (
+              {githubVisibility === "private" && (
                 <TextField
-                  fullWidth
                   size="small"
-                  label="Local agent folder"
-                  placeholder="/absolute/path/to/agent"
-                  value={sourcePath}
-                  onChange={(event) => {
-                    setSourcePath(event.target.value);
-                    setPreflight(null);
-                  }}
+                  label="GitHub App installation ID"
+                  value={githubInstallationId}
+                  onChange={(event) =>
+                    setGithubInstallationId(event.target.value)
+                  }
+                  sx={{ minWidth: 230 }}
                 />
-              ) : (
-                <>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="GitHub repository"
-                    placeholder="owner/repository or GitHub URL"
-                    value={githubRepository}
-                    onChange={(event) => {
-                      setGithubRepository(event.target.value);
-                      setPreflight(null);
-                    }}
-                  />
-                  <TextField
-                    size="small"
-                    label="Ref"
-                    value={githubRef}
-                    onChange={(event) => setGithubRef(event.target.value)}
-                    sx={{ width: 140 }}
-                  />
-                  <TextField
-                    select
-                    size="small"
-                    label="Visibility"
-                    value={githubVisibility}
-                    onChange={(event) => {
-                      setGithubVisibility(event.target.value);
-                      setPreflight(null);
-                    }}
-                    sx={{ minWidth: 120 }}
-                  >
-                    <MenuItem value="public">Public</MenuItem>
-                    <MenuItem value="private">Private</MenuItem>
-                  </TextField>
-                  {githubVisibility === "private" && (
-                    <TextField
-                      size="small"
-                      label="GitHub App installation ID"
-                      value={githubInstallationId}
-                      onChange={(event) =>
-                        setGithubInstallationId(event.target.value)
-                      }
-                      sx={{ minWidth: 230 }}
-                    />
-                  )}
-                </>
               )}
               <TextField
                 size="small"
