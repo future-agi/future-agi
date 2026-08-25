@@ -78,6 +78,11 @@ export const annotationQueueEndpoints = {
   exportToDataset: (id) =>
     apiPath("/model-hub/annotation-queues/{id}/export-to-dataset/", { id }),
   export: (id) => apiPath("/model-hub/annotation-queues/{id}/export/", { id }),
+  exportJob: (id, jobId) =>
+    apiPath("/model-hub/annotation-queues/{id}/export-jobs/{jobId}/", {
+      id,
+      jobId,
+    }),
   progress: (id) =>
     apiPath("/model-hub/annotation-queues/{id}/progress/", { id }),
   automationRules: (queueId) =>
@@ -1422,27 +1427,109 @@ export const useExportToDataset = () => {
   });
 };
 
+// A queue over the sync cap answers 202 with a job id instead of the file: the
+// export is built on a worker. Both download paths below poll that job and then
+// hand the user the stored file.
+const EXPORT_POLL_INTERVAL_MS = 2000;
+const EXPORT_POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
+export const isScheduledExport = (response) =>
+  response?.status === 202 || !!extractData(response, {})?.job_id;
+
+const sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+export const waitForExportJob = async (
+  axiosInstance,
+  queueId,
+  jobId,
+  { signal } = {},
+) => {
+  const deadline = Date.now() + EXPORT_POLL_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("Export cancelled");
+
+    // eslint-disable-next-line no-await-in-loop
+    const response = await axiosInstance.get(
+      annotationQueueEndpoints.exportJob(queueId, jobId),
+    );
+    const job = extractData(response, {});
+
+    if (job?.status === "succeeded" && job?.file_url) return job;
+    // The job carries the real reason, so the user sees that instead of a
+    // generic download failure.
+    if (job?.status === "failed") {
+      throw new Error(job?.error || "Export failed");
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(EXPORT_POLL_INTERVAL_MS);
+  }
+
+  throw new Error("Export is taking longer than expected. Try again shortly.");
+};
+
+export const triggerBrowserDownload = (href, filename, { newTab } = {}) => {
+  const link = document.createElement("a");
+  link.href = href;
+  if (filename) link.download = filename;
+  // Only for the stored file, which lives on another origin where `download`
+  // may be ignored — opening a tab keeps it reachable. A local blob URL must
+  // NOT get this, or the browser shows the file instead of saving it.
+  if (newTab) {
+    link.target = "_blank";
+    link.rel = "noopener";
+  }
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+};
+
 export const useDownloadAnnotationQueueExport = () => {
   return useMutation({
-    mutationFn: ({ queueId, status }) =>
-      axios.get(annotationQueueEndpoints.export(queueId), {
-        params: {
-          export_format: "json",
-          ...(status ? { status } : {}),
+    mutationFn: async ({ queueId, status }) => {
+      const response = await axios.get(
+        annotationQueueEndpoints.export(queueId),
+        {
+          params: {
+            export_format: "json",
+            ...(status ? { status } : {}),
+          },
         },
-      }),
-    onSuccess: (response, variables) => {
-      const payload = extractData(response, []);
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      );
+
+      if (isScheduledExport(response)) {
+        const { job_id: jobId } = extractData(response, {});
+        enqueueSnackbar(
+          "This queue is large, so we're preparing the file. The download starts when it's ready.",
+          { variant: "info" },
+        );
+        const job = await waitForExportJob(axios, queueId, jobId);
+        return { stored: job };
+      }
+
+      return { payload: extractData(response, []) };
+    },
+    onSuccess: (result, variables) => {
+      if (result.stored) {
+        triggerBrowserDownload(
+          result.stored.file_url,
+          result.stored.file_name ||
+            `annotation-queue-${variables.queueId}.json`,
+          { newTab: true },
+        );
+        enqueueSnackbar("Annotation export ready", { variant: "success" });
+        return;
+      }
+
+      const blob = new Blob([JSON.stringify(result.payload, null, 2)], {
         type: "application/json",
       });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `annotation-queue-${variables.queueId}.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      triggerBrowserDownload(url, `annotation-queue-${variables.queueId}.json`);
       URL.revokeObjectURL(url);
       enqueueSnackbar("Annotation export downloaded", { variant: "success" });
     },

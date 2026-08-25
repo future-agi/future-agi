@@ -2,8 +2,8 @@
 
 Regression guard for the export endpoint that timed out at the gateway: the
 dataset-row cell read must be batched (one ``row_id__in`` query, not a per-item
-N+1), and an oversize queue must be rejected up front instead of materializing
-and resolving the whole queue synchronously.
+N+1), and an oversize queue must be handed to the background export up front
+instead of materializing and resolving the whole queue synchronously.
 """
 
 from __future__ import annotations
@@ -19,12 +19,14 @@ from rest_framework import status
 
 from model_hub.models.annotation_queues import (
     FULL_ACCESS_QUEUE_ROLES,
+    AnnotationExportJob,
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     QueueItem,
 )
 from model_hub.models.choices import (
+    AnnotationExportJobStatus,
     AnnotationQueueStatusChoices,
     AnnotatorRole,
     DatasetSourceChoices,
@@ -175,25 +177,70 @@ def test_export_csv_batches_dataset_cells(auth_client, organization, workspace, 
 
 @pytest.mark.django_db
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=2)
-def test_export_rejects_oversize_queue_before_resolving(
+def test_export_oversize_schedules_background_job_before_resolving(
     auth_client, organization, workspace, user
 ):
     seed = _build_dataset_queue(
         organization=organization, workspace=workspace, user=user, n_rows=3
     )
-    with CaptureQueriesContext(connection) as cap:
+    with mock.patch(
+        "tfc.temporal.drop_in.runner.start_activity_sync",
+        return_value="wf-json",
+    ) as start:
+        with CaptureQueriesContext(connection) as cap:
+            resp = auth_client.get(
+                EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+            )
+
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    # Handed off up front: no cell resolution happened in the request.
+    assert _cell_queries(cap) == []
+
+    job = AnnotationExportJob.objects.get(pk=resp.data["job_id"])
+    assert job.queue_id == seed["queue"].id
+    assert job.export_format == "json"
+    assert job.status == AnnotationExportJobStatus.PENDING.value
+    assert job.workflow_id == "wf-json"
+    assert start.call_args.kwargs["activity_name"] == "export_annotation_queue_async"
+    assert start.call_args.kwargs["kwargs"] == {"job_id": str(job.id)}
+
+    # CSV takes the same branch (it is decided before the format branch).
+    with mock.patch(
+        "tfc.temporal.drop_in.runner.start_activity_sync",
+        return_value="wf-csv",
+    ):
+        resp_csv = auth_client.get(
+            EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=csv"
+        )
+    assert resp_csv.status_code == status.HTTP_202_ACCEPTED
+    assert (
+        AnnotationExportJob.objects.get(pk=resp_csv.data["job_id"]).export_format
+        == "csv"
+    )
+
+
+@pytest.mark.django_db
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=2)
+def test_export_schedule_failure_is_recorded_on_the_job(
+    auth_client, organization, workspace, user
+):
+    """A scheduling failure must leave a readable reason, not a pending row."""
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=3
+    )
+    with mock.patch(
+        "tfc.temporal.drop_in.runner.start_activity_sync",
+        side_effect=RuntimeError("temporal unreachable"),
+    ):
         resp = auth_client.get(
             EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
         )
-    assert resp.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-    # Rejected up front: no cell resolution happened.
-    assert _cell_queries(cap) == []
 
-    # CSV hits the same guard (it is checked before the format branch).
-    resp_csv = auth_client.get(
-        EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=csv"
-    )
-    assert resp_csv.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    job = AnnotationExportJob.objects.filter(queue=seed["queue"]).latest("created_at")
+    assert job.status == AnnotationExportJobStatus.FAILED.value
+    assert "temporal unreachable" in job.error
+    assert job.finished_at is not None
 
 
 @pytest.mark.django_db

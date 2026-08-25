@@ -39,6 +39,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "model_hub.tasks.prompt_template_optimizer",
     "model_hub.tasks.develop_dataset",
     "model_hub.tasks.annotation_automation",
+    "model_hub.tasks.annotation_export",
     # model_hub views
     "model_hub.views.run_prompt",
     "model_hub.views.experiment_runner",

@@ -18,7 +18,9 @@ import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import {
   annotationQueueEndpoints,
+  triggerBrowserDownload,
   useQueueAnalytics,
+  waitForExportJob,
 } from "src/api/annotation-queues/annotation-queues";
 import { fDateTime } from "src/utils/format-time";
 
@@ -261,6 +263,30 @@ export default function QueueAnalyticsTab({ queueId }) {
         annotationQueueEndpoints.export(queueId),
         { params: { export_format: format }, responseType: "blob" },
       );
+
+      // A queue over the sync cap answers 202 with a job id instead of the
+      // file. The request asked for a blob, so that JSON arrives as a Blob and
+      // has to be read before it can be told apart from an actual export.
+      if (response.status === 202) {
+        const scheduled = JSON.parse(await response.data.text());
+        const { enqueueSnackbar } = await import("notistack");
+        enqueueSnackbar(
+          scheduled?.result?.message ||
+            scheduled?.message ||
+            "This queue is large, so we're preparing the file.",
+          { variant: "info" },
+        );
+        const jobId = scheduled?.result?.job_id || scheduled?.job_id;
+        const job = await waitForExportJob(axiosInstance, queueId, jobId);
+        triggerBrowserDownload(
+          job.file_url,
+          job.file_name || `queue-export.${format}`,
+          { newTab: true },
+        );
+        enqueueSnackbar("Export ready", { variant: "success" });
+        return;
+      }
+
       const blob = new Blob([response.data]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -274,8 +300,8 @@ export default function QueueAnalyticsTab({ queueId }) {
       const { enqueueSnackbar } = await import("notistack");
       let message = "Export failed";
       // The request uses responseType:"blob", so an error body arrives as a Blob —
-      // read and parse it to surface the server's actionable message (e.g. the 413
-      // export_too_large cap) instead of a generic failure.
+      // read and parse it to surface the server's actionable message instead of
+      // a generic failure.
       try {
         const data = err?.response?.data;
         const parsed = data instanceof Blob ? JSON.parse(await data.text()) : data;
