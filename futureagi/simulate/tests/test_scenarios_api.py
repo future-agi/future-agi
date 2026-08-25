@@ -12,6 +12,7 @@ Tests cover:
 - AddScenarioColumnsView: POST /simulate/scenarios/<uuid>/add-columns/
 """
 
+import json
 import uuid
 from unittest.mock import patch
 
@@ -452,6 +453,70 @@ class TestScenariosListView:
         data = response.json()
         assert len(data["results"]) == 10
         assert data["count"] >= 15
+
+    def test_list_scenarios_selected_scenarios_pinned_to_top(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        agent_definition,
+        simulator_agent,
+        dataset,
+        scenario,
+    ):
+        """A scenario passed in selected_scenarios sorts first even if older."""
+        newer_scenario = Scenarios.objects.create(
+            name="Newer Scenario",
+            description="Created after `scenario`",
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get(
+            "/simulate/scenarios/",
+            {"selected_scenarios": json.dumps([str(scenario.id)])},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        results = response.json()["results"]
+        result_ids = [r["id"] for r in results]
+        assert result_ids.index(str(scenario.id)) < result_ids.index(
+            str(newer_scenario.id)
+        )
+
+    def test_list_scenarios_selected_scenarios_invalid_json(
+        self, auth_client, scenario
+    ):
+        """Malformed JSON in selected_scenarios returns a typed 400."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": "not-json"}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "selected_scenarios" in response.json()["details"]
+
+    def test_list_scenarios_selected_scenarios_not_a_list(self, auth_client, scenario):
+        """A JSON object (not array) in selected_scenarios returns a typed 400."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": json.dumps({"id": "x"})}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "selected_scenarios" in response.json()["details"]
+
+    def test_list_scenarios_selected_scenarios_invalid_uuid(self, auth_client, scenario):
+        """A non-UUID entry in selected_scenarios returns a typed 400."""
+        response = auth_client.get(
+            "/simulate/scenarios/", {"selected_scenarios": json.dumps(["not-a-uuid"])}
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "selected_scenarios" in response.json()["details"]
 
 
 # ============================================================================

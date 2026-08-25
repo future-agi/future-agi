@@ -30,6 +30,24 @@ class ColumnDefinitionSerializer(StrictInputSerializer):
         return value.strip()
 
 
+def _parse_uuid_list(value):
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise serializers.ValidationError(
+            "Must be a valid JSON array of scenario UUIDs."
+        ) from exc
+    if not isinstance(parsed, list):
+        raise serializers.ValidationError("Must be a JSON array.")
+    validated_ids = []
+    for item in parsed:
+        try:
+            validated_ids.append(uuid.UUID(str(item)))
+        except (ValueError, AttributeError) as exc:
+            raise serializers.ValidationError(f"Invalid UUID: {item}") from exc
+    return validated_ids
+
+
 class ScenarioFilterSerializer(serializers.Serializer):
     """Validates GET /scenarios/ query parameters."""
 
@@ -38,6 +56,17 @@ class ScenarioFilterSerializer(serializers.Serializer):
     agent_type = serializers.CharField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1)
+    selected_scenarios = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="JSON array of scenario UUIDs to surface at the top of the list.",
+    )
+
+    def validate_selected_scenarios(self, value):
+        if not value:
+            return []
+        return _parse_uuid_list(value)
 
 
 class ScenarioMultiDatasetFilterSerializer(serializers.Serializer):
@@ -51,21 +80,7 @@ class ScenarioMultiDatasetFilterSerializer(serializers.Serializer):
     )
 
     def validate_scenarios(self, value):
-        try:
-            parsed = json.loads(value)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise serializers.ValidationError(
-                "Must be a valid JSON array of scenario UUIDs."
-            ) from exc
-        if not isinstance(parsed, list):
-            raise serializers.ValidationError("Must be a JSON array.")
-        validated_ids = []
-        for item in parsed:
-            try:
-                validated_ids.append(uuid.UUID(str(item)))
-            except (ValueError, AttributeError) as exc:
-                raise serializers.ValidationError(f"Invalid UUID: {item}") from exc
-        return validated_ids
+        return _parse_uuid_list(value)
 
 
 class ScenarioCreateRequestSerializer(serializers.Serializer):
