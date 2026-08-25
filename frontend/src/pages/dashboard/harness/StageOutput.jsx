@@ -127,7 +127,11 @@ export default function StageOutput({ output }) {
         {output.kind === "scenarios" && (
           <Stack spacing={1}>
             {(Array.isArray(data) ? data : []).map((scenario) => (
-              <Paper key={scenario.name} variant="outlined" sx={{ p: 1.25 }}>
+              <Paper
+                key={scenario.name}
+                variant="outlined"
+                sx={{ p: 1.25, bgcolor: "background.default" }}
+              >
                 <Typography variant="subtitle2">
                   {readable(scenario.name)}
                 </Typography>
