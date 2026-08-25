@@ -583,7 +583,7 @@ export default function HarnessDetail() {
             {/* Corrections are queued, not applied instantly — the runner picks them up at the
                 next stage boundary, so this is only offered while a run can still act on one. */}
             {!isTerminal && (
-              <Paper variant="outlined" sx={{ mt: 2.5, p: 1.5 }}>
+              <Paper variant="outlined" sx={{ mt: 2.5, p: 1.5, bgcolor: "background.default" }}>
                 <Stack spacing={1}>
                   <Box>
                     <Typography variant="subtitle2">Change this run</Typography>
@@ -641,7 +641,11 @@ export default function HarnessDetail() {
                   Changes requested
                 </Typography>
                 {adjustments.map((item) => (
-                  <Paper key={item.adjustment_id} variant="outlined" sx={{ p: 1.25 }}>
+                  <Paper
+                    key={item.adjustment_id}
+                    variant="outlined"
+                    sx={{ p: 1.25, bgcolor: "background.default" }}
+                  >
                     <Stack direction="row" spacing={1} alignItems="flex-start">
                       <Iconify
                         icon={
@@ -704,8 +708,10 @@ export default function HarnessDetail() {
                   "& .MuiTab-root": {
                     minHeight: 38,
                     minWidth: "auto",
-                    px: 0,
-                    "&:not(:last-of-type)": { mr: 2.5 },
+                    // The indicator spans the tab's own width, so with no horizontal padding
+                    // it stopped dead at the label. Padding gives it something to span.
+                    px: 1.25,
+                    "&:not(:last-of-type)": { mr: 1 },
                   },
                 }}
               >
@@ -723,8 +729,16 @@ export default function HarnessDetail() {
                         />
                       ) : undefined
                     }
-                    iconPosition="end"
-                    sx={{ textTransform: "none", gap: 0.75 }}
+                    // Leading, and tight against the label: the tick marks the tab, so it
+                    // reads as part of the name rather than a badge trailing after it.
+                    iconPosition="start"
+                    sx={{
+                      textTransform: "none",
+                      // MUI gives the icon wrapper its own 8px margin, which stacks on top
+                      // of the gap. Zero it so the spacing is this one value.
+                      gap: 0.5,
+                      "& .MuiTab-iconWrapper": { m: 0 },
+                    }}
                   />
                 ))}
               </Tabs>
@@ -747,7 +761,10 @@ export default function HarnessDetail() {
               ) : (
               <Stack spacing={1.5}>
                 {current.credentials && (
-                  <Paper variant="outlined" sx={{ p: 1.5 }}>
+                  <Paper
+                    variant="outlined"
+                    sx={{ p: 1.5, bgcolor: "background.default" }}
+                  >
                     <Typography variant="subtitle2">
                       Runtime preflight
                     </Typography>
@@ -766,7 +783,7 @@ export default function HarnessDetail() {
                   <Paper
                     key={event.event_id}
                     variant="outlined"
-                    sx={{ p: 1.5 }}
+                    sx={{ p: 1.5, bgcolor: "background.default" }}
                   >
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="caption" color="accent.brand">

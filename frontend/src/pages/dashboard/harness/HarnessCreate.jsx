@@ -767,6 +767,12 @@ export default function HarnessCreate() {
                       ))}
                     </Stack>
                   )}
+                  {Object.entries(secretFileUploads).map(([name, file]) => (
+                    <Alert key={name} severity="success" variant="outlined">
+                      {name}: {file.name} uploaded · mounted per run, never
+                      written to the job
+                    </Alert>
+                  ))}
                   {environmentError && (
                     <Alert severity="error" variant="outlined">
                       {environmentError}
@@ -830,11 +836,6 @@ export default function HarnessCreate() {
                         Will package {preflight.packaging.selected_path}
                       </Alert>
                     )}
-                    {Object.entries(secretFileUploads).map(([name, file]) => (
-                      <Alert key={name} severity="success" variant="outlined">
-                        {name}: {file.name} uploaded · mounted per run
-                      </Alert>
-                    ))}
                     {unsatisfiedChoices.map((choice) => (
                       <Alert key={choice.id} severity="info" variant="outlined">
                         {choice.purpose}: choose{" "}

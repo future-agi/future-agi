@@ -26,6 +26,13 @@ export default function StageOutput({ output }) {
       // Scenarios can be long; the others are short enough to read at a glance.
       defaultExpanded={output.kind !== "scenarios"}
       disableGutters
+      // The theme leaves a collapsed accordion transparent and paints it only once
+      // expanded, so the two states sit on different surfaces. Pin both to the darker
+      // surface (default is #0a0a0a against paper's #111111 in dark mode).
+      sx={{
+        bgcolor: "background.default",
+        "&.Mui-expanded": { bgcolor: "background.default" },
+      }}
     >
       <AccordionSummary
         expandIcon={<Iconify icon="eva:arrow-ios-downward-fill" width={18} />}
