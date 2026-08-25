@@ -35,20 +35,21 @@ async def launch_hosted_harness_job(
 async def poll_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
-    from simulate.models import HostedHarnessAttempt
+    from simulate.models import HostedHarnessAttempt, HostedHarnessJob
     from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
 
-    def _poll() -> tuple[bool, str]:
+    def _poll() -> tuple[bool, str, bool]:
         attempt = HostedHarnessAttempt.no_workspace_objects.select_related(
             "job", "job__organization"
         ).get(id=input.attempt_id)
         job = DaytonaHostedGateway().reconcile_completed(attempt)
         if job is None:
-            return False, attempt.job.state
-        return True, job.state
+            return False, attempt.job.state, False
+        retryable = job.state == HostedHarnessJob.State.RETRY_WAIT
+        return (not retryable), job.state, retryable
 
-    done, state = await _run_db(_poll)
-    return HostedHarnessPollOutput(done=done, state=state)
+    done, state, retryable = await _run_db(_poll)
+    return HostedHarnessPollOutput(done=done, state=state, retryable=retryable)
 
 
 @activity.defn(name="cancel_hosted_harness_attempt")

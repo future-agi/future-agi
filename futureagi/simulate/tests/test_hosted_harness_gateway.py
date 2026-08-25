@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from simulate.models import HostedHarnessAttempt
+from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.hosted_harness import create_hosted_job
 from simulate.services.hosted_harness_gateway import (
     DaytonaHostedGateway,
@@ -194,7 +194,11 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/run/futureagi/entrypoint-command-id",
     }
     assert client.sandbox.process.sessions == ["alk-harness"]
-    assert client.params.network_block_all is True
+    # Egress domains present -> allowlist-only egress: block_all is False and the
+    # domain_allow_list is the deny-by-default. block_all True is mutually
+    # exclusive with an allow-list in Daytona (verified live), so the allow-list
+    # itself enforces the boundary.
+    assert client.params.network_block_all is False
     assert set(client.params.domain_allow_list.split(",")) == {
         "agent.example.com",
         "ingest.example.com",
@@ -239,3 +243,105 @@ def test_cancel_writes_reason_signals_guest_and_holds_before_delete(
     assert any(
         "pkill -TERM" in command for command in client.sandbox.process.exec_calls
     )
+
+
+@pytest.mark.django_db
+def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="retry-gateway")
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+
+    # Attempt 1 crashes (exit 2): infrastructure failure, 1 < 2 -> RETRY_WAIT.
+    with acquire:
+        attempt1 = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    assert attempt1.attempt_number == 1
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 2, "logs": "boom"})
+    assert gateway.reconcile_completed(attempt1).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+
+    # Relaunch a fresh attempt; register_attempt supersedes attempt 1.
+    with acquire:
+        attempt2 = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    assert attempt2.attempt_number == 2
+    # Attempt 2 crashes again: budget spent (2 not < 2) -> terminal FAILED.
+    assert gateway.reconcile_completed(attempt2).state == HostedHarnessJob.State.FAILED
+
+
+@pytest.mark.django_db
+def test_reconcile_exit3_and_exit0_never_retry(organization, monkeypatch):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="noretry-gateway")
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+
+    # Exit 3 (fenced/superseded): never retried.
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 3, "logs": ""})
+    assert gateway.reconcile_completed(attempt).state != (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    assert captured["retry_pending"] is False
+
+    # Exit 0 (terminal reached / verdict delivered): never retried.
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 0, "logs": ""})
+    assert gateway.reconcile_completed(attempt).state != (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    assert captured["retry_pending"] is False

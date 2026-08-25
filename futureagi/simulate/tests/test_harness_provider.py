@@ -142,7 +142,13 @@ def test_daytona_create_starts_gateway_workflow(user):
 
     class _Job:
         id = "11111111-1111-1111-1111-111111111111"
-        payload = {"retry": {"max_infrastructure_attempts": 2}}
+        payload = {
+            "retry": {
+                "max_infrastructure_attempts": 2,
+                "initial_backoff_seconds": 1,
+                "max_backoff_seconds": 15,
+            }
+        }
 
     serialized = {"job": {"job_id": str(_Job.id)}, "status": {"state": "queued"}}
     with patch(

@@ -57,10 +57,10 @@ HOSTED_ENGINE_CATALOG = {
 HOSTED_RUNTIME_CATALOG = {
     "python": ["3.11", "3.12"],
     "node": ["20", "22"],
-    "binaries": ["git", "ffmpeg", "docker", "docker-compose"],
+    "binaries": ["git", "ffmpeg"],
 }
 _ENTRYPOINT_SESSION = "alk-harness"
-_ENTRYPOINT_COMMAND_ID_FILE = "/work/.harness/entrypoint-command-id"
+_ENTRYPOINT_COMMAND_ID_FILE = "/run/futureagi/entrypoint-command-id"
 
 
 class GitHubAppTokenProvider:
@@ -372,11 +372,6 @@ class DaytonaHostedGateway:
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
-            sandbox.process.exec(
-                "install -d -o svc-control -g svc-control -m 0700 "
-                "/work /work/.harness",
-                timeout=30,
-            )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
@@ -384,21 +379,21 @@ class DaytonaHostedGateway:
             )
             sandbox.fs.upload_file(
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
-                "/work/.harness/secrets.json",
+                "/run/futureagi/secrets.json",
             )
             sandbox.fs.upload_file(
                 json.dumps(
                     capability.document, sort_keys=True, separators=(",", ":")
                 ).encode(),
-                "/work/.harness/capabilities.json",
+                "/run/futureagi/capabilities.json",
             )
             prepared = sandbox.process.exec(
                 "tar -xzf /work/source.tar.gz -C /work && "
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source && "
                 "chmod -R a-w /work/source && "
-                "chmod 0600 /work/job.json /work/.harness/secrets.json "
-                "/work/.harness/capabilities.json",
+                "chmod 0600 /work/job.json /run/futureagi/secrets.json "
+                "/run/futureagi/capabilities.json",
                 timeout=120,
             )
             if prepared.exit_code:
@@ -508,7 +503,7 @@ class DaytonaHostedGateway:
             )
         sandbox.fs.upload_file(
             json.dumps({"reason": reason}, separators=(",", ":")).encode(),
-            "/work/.harness/cancel.json",
+            "/run/futureagi/cancel.json",
         )
         sandbox.process.exec(
             "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
@@ -523,6 +518,16 @@ class DaytonaHostedGateway:
         self._delete_and_record(attempt)
         return HostedHarnessJob.no_workspace_objects.get(id=job.id)
 
+    def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
+        # An infrastructure/connectivity failure is worth a fresh attempt while
+        # the domain is retryable and the whole-job attempt budget remains
+        # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
+        # (superseded) never reach here.
+        retry = attempt.job.payload.get("retry", {})
+        return domain in retry.get(
+            "retryable_domains", []
+        ) and attempt.attempt_number < retry.get("max_infrastructure_attempts", 1)
+
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
@@ -531,6 +536,7 @@ class DaytonaHostedGateway:
         try:
             observation = self.inspect(attempt)
         except DaytonaNotFoundError:
+            retry_pending = False
             if not attempt.terminal_event_received:
                 attempt.terminal_stage = "failed"
                 attempt.terminal_failure = {
@@ -548,10 +554,12 @@ class DaytonaHostedGateway:
                         "updated_at",
                     ]
                 )
+                retry_pending = self._should_retry(attempt, "infrastructure")
             return record_cleanup(
                 attempt.id,
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
+                retry_pending=retry_pending,
                 details={"provider": "daytona", "already_absent": True},
             )
         exit_code = observation["exit_code"]
@@ -559,9 +567,37 @@ class DaytonaHostedGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
+        retry_pending = False
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
+        elif exit_code == 4:
+            # Spine v1.14 exit 4: terminal state reached, but the terminal
+            # event could not be delivered (events channel died or the platform
+            # rejected the final drain). Still an infrastructure failure — and
+            # retryable once P1 lands — but labelled distinctly so operators
+            # don't read an undeliverable-evidence exit as a guest crash.
+            attempt.terminal_stage = "failed"
+            attempt.terminal_failure = {
+                "domain": "infrastructure",
+                "stage": "finalizing",
+                "code": "evidence_undeliverable",
+                "message": (
+                    "guest reached terminal state but could not deliver "
+                    "the terminal event"
+                ),
+                "details": {"guest_log_tail": observation.get("logs", "")},
+            }
+            attempt.state = HostedHarnessAttempt.State.FAILED
+            attempt.save(
+                update_fields=[
+                    "terminal_stage",
+                    "terminal_failure",
+                    "state",
+                    "updated_at",
+                ]
+            )
+            retry_pending = self._should_retry(attempt, "infrastructure")
         elif exit_code != 0 and not attempt.terminal_event_received:
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
@@ -580,6 +616,7 @@ class DaytonaHostedGateway:
                     "updated_at",
                 ]
             )
+            retry_pending = self._should_retry(attempt, "infrastructure")
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -600,9 +637,11 @@ class DaytonaHostedGateway:
                     "updated_at",
                 ]
             )
-        return self._delete_and_record(attempt)
+        return self._delete_and_record(attempt, retry_pending=retry_pending)
 
-    def _delete_and_record(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
+    def _delete_and_record(
+        self, attempt: HostedHarnessAttempt, *, retry_pending: bool = False
+    ) -> HostedHarnessJob:
         from daytona import DaytonaNotFoundError
 
         try:
@@ -621,6 +660,7 @@ class DaytonaHostedGateway:
             attempt.id,
             provider_ref=str(attempt.provider_ref),
             verified_absent=absent,
+            retry_pending=retry_pending,
             details={"provider": "daytona", "deleted_at": timezone.now().isoformat()},
         )
 

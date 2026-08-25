@@ -69,6 +69,7 @@ def canonical_json_bytes(value: object) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -376,6 +377,7 @@ def record_cleanup(
     *,
     provider_ref: str,
     verified_absent: bool,
+    retry_pending: bool = False,
     details: dict[str, Any] | None = None,
 ) -> HostedHarnessJob:
     if not verified_absent:
@@ -414,6 +416,10 @@ def record_cleanup(
             id=attempt.job_id
         )
         if attempt.attempt_number < job.current_attempt_number:
+            return job
+        if retry_pending:
+            job.state = HostedHarnessJob.State.RETRY_WAIT
+            job.save(update_fields=["state", "updated_at"])
             return job
         if attempt.terminal_stage == "completed":
             job.state = HostedHarnessJob.State.COMPLETED

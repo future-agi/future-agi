@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import math
+
 from rest_framework import serializers
 
 _SHA256 = r"^sha256:[0-9a-f]{64}$"
+
+
+def _reject_non_finite(value: float) -> None:
+    # FloatField min/max never reject NaN/inf: every comparison with NaN is
+    # False, so a `score: NaN` slips past bounds and canonicalizes into
+    # non-RFC-8259 bytes. Fail it explicitly.
+    if not math.isfinite(value):
+        raise serializers.ValidationError("must be a finite number")
 
 
 class HarnessEventSerializer(serializers.Serializer):
@@ -33,7 +43,9 @@ class HarnessSubGoalSerializer(serializers.Serializer):
 class HarnessMetricEvaluationSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     kind = serializers.ChoiceField(choices=("metric",))
-    score = serializers.FloatField(min_value=0.0, max_value=1.0)
+    score = serializers.FloatField(
+        min_value=0.0, max_value=1.0, validators=[_reject_non_finite]
+    )
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 

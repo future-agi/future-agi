@@ -113,10 +113,13 @@ class DaytonaHarnessProvider:
             base_url = getattr(
                 settings, "HARNESS_PUBLIC_BASE_URL", ""
             ) or request.build_absolute_uri("/").rstrip("/")
+            retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
                 str(job.id),
                 base_url,
-                job.payload["retry"]["max_infrastructure_attempts"],
+                retry_cfg["max_infrastructure_attempts"],
+                retry_cfg["initial_backoff_seconds"],
+                retry_cfg["max_backoff_seconds"],
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

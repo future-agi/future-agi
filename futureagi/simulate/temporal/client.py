@@ -593,15 +593,27 @@ def rerun_evaluations_only(
 
 
 def start_hosted_harness_gateway_workflow(
-    job_id: str, endpoint_base_url: str, max_infrastructure_attempts: int
+    job_id: str,
+    endpoint_base_url: str,
+    max_infrastructure_attempts: int,
+    initial_backoff_seconds: float,
+    max_backoff_seconds: float,
 ) -> str:
     return async_to_sync(_start_hosted_harness_gateway_workflow_async)(
-        job_id, endpoint_base_url, max_infrastructure_attempts
+        job_id,
+        endpoint_base_url,
+        max_infrastructure_attempts,
+        initial_backoff_seconds,
+        max_backoff_seconds,
     )
 
 
 async def _start_hosted_harness_gateway_workflow_async(
-    job_id: str, endpoint_base_url: str, max_infrastructure_attempts: int
+    job_id: str,
+    endpoint_base_url: str,
+    max_infrastructure_attempts: int,
+    initial_backoff_seconds: float,
+    max_backoff_seconds: float,
 ) -> str:
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
@@ -621,6 +633,8 @@ async def _start_hosted_harness_gateway_workflow_async(
             job_id=job_id,
             endpoint_base_url=endpoint_base_url,
             max_infrastructure_attempts=max_infrastructure_attempts,
+            initial_backoff_seconds=initial_backoff_seconds,
+            max_backoff_seconds=max_backoff_seconds,
         ),
         id=workflow_id,
         task_queue=QUEUE_RUNNER,

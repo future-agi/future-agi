@@ -312,7 +312,7 @@ def test_public_job_api_persists_before_scheduling(user):
     client.force_authenticate(user=user)
     payload = _payload()
     with patch(
-        "simulate.views.harness_job.start_hosted_harness_gateway_workflow",
+        "simulate.temporal.client.start_hosted_harness_gateway_workflow",
         return_value="hosted-harness-job",
     ):
         response = client.post(

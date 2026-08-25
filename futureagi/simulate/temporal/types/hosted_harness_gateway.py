@@ -6,6 +6,8 @@ class HostedHarnessGatewayInput:
     job_id: str
     endpoint_base_url: str
     max_infrastructure_attempts: int
+    initial_backoff_seconds: float
+    max_backoff_seconds: float
 
 
 @dataclass(frozen=True)
@@ -28,3 +30,4 @@ class HostedHarnessLaunchOutput:
 class HostedHarnessPollOutput:
     done: bool
     state: str
+    retryable: bool = False
