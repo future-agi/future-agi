@@ -38,6 +38,22 @@ const CompositeResultView = ({ compositeResult }) => {
     failed_children: failedChildren,
   } = compositeResult || {};
 
+  // Every field here comes from a stored JSON payload, so a partial or older
+  // snapshot must degrade rather than throw.
+  const childList = Array.isArray(children) ? children : [];
+  const countBy = (status) =>
+    childList.filter((child) => child?.status === status).length;
+  const totalCount = Number.isFinite(totalChildren)
+    ? totalChildren
+    : childList.length;
+  const completedCount = Number.isFinite(completedChildren)
+    ? completedChildren
+    : countBy("completed");
+  const failedCount = Number.isFinite(failedChildren)
+    ? failedChildren
+    : countBy("failed");
+  const hasAggregateScore = typeof aggregateScore === "number";
+
   return (
     <Box sx={{ p: 1.5 }}>
       {/* Header: aggregate score (if enabled) + counts */}
@@ -52,7 +68,7 @@ const CompositeResultView = ({ compositeResult }) => {
         }}
       >
         <Box>
-          {aggregationEnabled && aggregateScore != null ? (
+          {aggregationEnabled && hasAggregateScore ? (
             <>
               <Typography variant="caption" color="text.secondary">
                 Aggregate Score (
@@ -91,13 +107,13 @@ const CompositeResultView = ({ compositeResult }) => {
         <Stack direction="row" spacing={1}>
           <Chip
             size="small"
-            label={`${completedChildren}/${totalChildren} completed`}
+            label={`${completedCount}/${totalCount} completed`}
             color="default"
           />
-          {failedChildren > 0 && (
+          {failedCount > 0 && (
             <Chip
               size="small"
-              label={`${failedChildren} failed`}
+              label={`${failedCount} failed`}
               color="error"
             />
           )}
@@ -115,11 +131,13 @@ const CompositeResultView = ({ compositeResult }) => {
         Child Evaluations
       </Typography>
       <Stack spacing={1}>
-        {children.map((child) => {
-          const statusColor = child.status === "failed" ? "error" : "default";
+        {childList.map((child, idx) => {
+          const statusColor = child?.status === "failed" ? "error" : "default";
+          const order = Number.isFinite(child?.order) ? child.order : idx;
+          const hasScore = typeof child?.score === "number";
           return (
             <Box
-              key={child.child_id}
+              key={child?.child_id ?? idx}
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
@@ -133,7 +151,7 @@ const CompositeResultView = ({ compositeResult }) => {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 1,
-                  mb: child.reason || child.error ? 0.75 : 0,
+                  mb: child?.reason || child?.error ? 0.75 : 0,
                 }}
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -145,12 +163,13 @@ const CompositeResultView = ({ compositeResult }) => {
                       minWidth: 20,
                     }}
                   >
-                    #{child.order + 1}
+                    #{order + 1}
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {child.child_name}
+                    {child?.child_name || "Child"}
                   </Typography>
-                  {child.weight != null && child.weight !== 1 && (
+                  {typeof child?.weight === "number" &&
+                    child.weight !== 1 && (
                     <Chip
                       size="small"
                       label={`w: ${child.weight}`}
@@ -160,7 +179,7 @@ const CompositeResultView = ({ compositeResult }) => {
                   )}
                 </Box>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                  {child.score != null && (
+                  {hasScore && (
                     <Chip
                       size="small"
                       label={child.score.toFixed(3)}
@@ -170,7 +189,7 @@ const CompositeResultView = ({ compositeResult }) => {
                       }}
                     />
                   )}
-                  {child.output != null && child.score == null && (
+                  {child?.output != null && !hasScore && (
                     <Chip
                       size="small"
                       label={getLabel(child.output)}
@@ -179,13 +198,13 @@ const CompositeResultView = ({ compositeResult }) => {
                   )}
                   <Chip
                     size="small"
-                    label={child.status}
+                    label={child?.status || "unknown"}
                     color={statusColor}
                     sx={{ textTransform: "capitalize" }}
                   />
                 </Box>
               </Box>
-              {child.reason && (
+              {child?.reason && (
                 <Box
                   sx={{
                     mt: 0.5,
@@ -195,13 +214,13 @@ const CompositeResultView = ({ compositeResult }) => {
                   <CellMarkdown fontSize={11} text={child.reason} />
                 </Box>
               )}
-              {child.error && (
+              {child?.error && (
                 <Typography
                   variant="caption"
                   color="error"
                   sx={{ display: "block", mt: 0.5 }}
                 >
-                  Error: {child.error}
+                  Error: {String(child.error)}
                 </Typography>
               )}
             </Box>
