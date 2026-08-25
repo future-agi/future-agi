@@ -95,6 +95,81 @@ export const canceledProgress = (events = []) => {
   return { doneStages: done, stoppedAt };
 };
 
+// How many stages the run has finished. The current stage is not one of them, so this is the
+// index — and a completed run has finished all of them.
+export const completedStageCount = (status, events = []) => {
+  if (status?.stage === "completed") return stages.length;
+  // "failed" and "canceled" are not members of the stage list, so indexing on them reports
+  // nothing finished — even though the stepper knows better. Use the same anchors it does.
+  if (status?.stage === "failed") {
+    const failedIndex = stages.indexOf(status?.failure?.stage);
+    return failedIndex < 0 ? 0 : failedIndex;
+  }
+  if (status?.stage === "canceled") {
+    const { stoppedAt } = canceledProgress(events);
+    return stoppedAt < 0 ? 0 : stoppedAt;
+  }
+  const index = stages.indexOf(status?.stage);
+  return index < 0 ? 0 : index;
+};
+
+const eventMillis = (event) => {
+  const at = new Date(event?.wall_time ?? "").getTime();
+  return Number.isNaN(at) ? null : at;
+};
+
+// Wall-clock time the run has been going. There is no started_at on the job, so the first
+// event is the earliest moment we can prove; a run with no events yet is unmeasurable.
+export const runElapsed = (events = [], now = Date.now(), isTerminal = false) => {
+  const stamps = events.map(eventMillis).filter((at) => at !== null);
+  if (!stamps.length) return null;
+  const first = Math.min(...stamps);
+  const end = isTerminal ? Math.max(...stamps) : now;
+  return Math.max(0, end - first);
+};
+
+// Time spent in the stage the run is in — but only six of the fifteen stages emit events, so
+// this is null for the rest. Callers must omit the line rather than render a zero, which would
+// read as "instant" when it means "not reported".
+export const stageElapsed = (status, events = [], now = Date.now()) => {
+  const group = Object.entries(EVENT_STAGE_GROUPS).find(
+    ([, members]) => members[0] === status?.stage,
+  );
+  if (!group) return null;
+  const started = events
+    .filter(
+      (event) =>
+        event?.payload?.stage === group[0] &&
+        event?.type?.endsWith(".started"),
+    )
+    .map(eventMillis)
+    .filter((at) => at !== null);
+  if (!started.length) return null;
+  return Math.max(0, now - Math.max(...started));
+};
+
+// Compact and stable: a stage timer that reflows the column every time it crosses a digit is
+// worse than one that does not.
+export const shortDuration = (ms) => {
+  if (ms === null || ms === undefined) return null;
+  const total = Math.floor(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ${minutes % 60}m`;
+  }
+  return minutes ? `${minutes}m ${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+};
+
+// Run ids are "harness-<uuid>" — 44 characters that nobody reads and everybody copies. Show
+// the prefix plus the uuid's first group, which is enough to tell two runs apart on screen,
+// and leave the full value to the copy button beside it.
+export const shortRunId = (runId = "") => {
+  const parts = String(runId).split("-");
+  return parts.length > 2 ? `${parts[0]}-${parts[1]}` : String(runId);
+};
+
 // Four visual states for the run checklist.
 export const STAGE_STATE = {
   DONE: "done",

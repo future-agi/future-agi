@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Alert, Box, Button, Stack, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { Helmet } from "react-helmet-async";
@@ -10,6 +10,7 @@ import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import CustomTooltip from "src/components/tooltip";
 import SvgColor from "src/components/svg-color";
 import { useDebounce } from "src/hooks/use-debounce";
 import { listHarnessJobs } from "src/api/harness/harness";
@@ -147,11 +148,17 @@ export default function HarnessList() {
               </Typography>
             );
           return (
-            <Tooltip title={label.absolute} placement="top" arrow>
+            <CustomTooltip
+              show
+              arrow
+              size="small"
+              title={label.absolute}
+              placement="top"
+            >
               <Typography variant="body2" color="text.secondary" noWrap>
                 {label.relative}
               </Typography>
-            </Tooltip>
+            </CustomTooltip>
           );
         },
       },

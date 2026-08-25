@@ -5,6 +5,7 @@ import {
   Button,
   CircularProgress,
   Divider,
+  IconButton,
   LinearProgress,
   Paper,
   Stack,
@@ -17,6 +18,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import CustomTooltip from "src/components/tooltip";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import {
@@ -27,9 +29,14 @@ import {
 import { paths } from "src/routes/paths";
 
 import {
+  completedStageCount,
   errorMessage,
   eventTime,
+  runElapsed,
+  shortDuration,
+  shortRunId,
   STAGE_STATE,
+  stageElapsed,
   stageState,
   eventMessage,
   jobProgress,
@@ -46,6 +53,8 @@ export default function HarnessDetail() {
   const [clock, setClock] = useState(Date.now());
   const [cancelError, setCancelError] = useState("");
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [stagesOpen, setStagesOpen] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
 
   const {
     data: current,
@@ -108,6 +117,19 @@ export default function HarnessDetail() {
   const progress = jobProgress(status);
   const isTerminal = terminalStages.has(status?.stage);
 
+  // Only the finished prefix folds away, so the stage a run failed or stopped on is never
+  // hidden by collapsing — it is the first row still on screen.
+  const doneCount = completedStageCount(status, current?.events);
+  const collapsible = doneCount > 0;
+  const visibleStages =
+    !collapsible || stagesOpen
+      ? stages
+      : stages.slice(doneCount);
+  const elapsedLabel = shortDuration(
+    runElapsed(current?.events, clock, isTerminal),
+  );
+  const stageLabel = shortDuration(stageElapsed(status, current?.events, clock));
+
   // The live seconds counter is a heartbeat: it says the run is still being watched. Once
   // the run is terminal there is nothing left to watch, so the tick stops and the label
   // settles into a plain relative time rather than counting up forever.
@@ -136,6 +158,19 @@ export default function HarnessDetail() {
       return true;
     });
   }, [current?.events]);
+
+  const copyRunId = async () => {
+    const runId = current?.job?.run_id;
+    if (!runId) return;
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopiedId(true);
+      window.setTimeout(() => setCopiedId(false), 1500);
+    } catch {
+      // Clipboard access can be refused; the full id is still on the tooltip.
+      setCopiedId(false);
+    }
+  };
 
   const goToCreate = () => navigate(paths.dashboard.simulate.harness.new);
 
@@ -306,7 +341,9 @@ export default function HarnessDetail() {
             display: "grid",
             gridTemplateColumns: {
               xs: "minmax(0, 1fr)",
-              md: "minmax(340px, 0.8fr) minmax(520px, 1.6fr)",
+              // A fr-based left column grew to a third of a wide viewport around ~200px of
+              // content, which is what read as skewed. Fixed width; the feed takes the slack.
+              md: "264px minmax(0, 1fr)",
             },
           }}
         >
@@ -321,9 +358,30 @@ export default function HarnessDetail() {
             <Typography variant="h6">
               {current.job?.metadata?.agent_name}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {current.job?.run_id}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              <Typography variant="caption" color="text.secondary" noWrap>
+                {shortRunId(current.job?.run_id)}
+              </Typography>
+              <CustomTooltip
+                show
+                arrow
+                size="small"
+                title={copiedId ? "Copied" : current.job?.run_id || ""}
+              >
+                <IconButton
+                  size="small"
+                  aria-label="Copy run id"
+                  onClick={copyRunId}
+                  sx={{ p: 0.25 }}
+                >
+                  <Iconify
+                    icon={copiedId ? "solar:check-read-linear" : "solar:copy-linear"}
+                    width={14}
+                    color={copiedId ? "accent.pass" : "text.secondary"}
+                  />
+                </IconButton>
+              </CustomTooltip>
+            </Stack>
             <LinearProgress
               variant="determinate"
               value={progress}
@@ -334,17 +392,66 @@ export default function HarnessDetail() {
               <Typography variant="caption" color="text.secondary">
                 {status?.completed_scenarios || 0} /{" "}
                 {status?.total_scenarios || current.job?.scenario_count || 0}{" "}
-                scenarios complete
+                scenarios
               </Typography>
-              <Typography variant="caption" color="text.primary">
-                {updatedLabel} · attempt {status?.attempt || 1}
-              </Typography>
+              {elapsedLabel && (
+                <Typography variant="caption" color="text.secondary">
+                  {elapsedLabel}
+                </Typography>
+              )}
             </Stack>
+            {/* While a run is live the elapsed time above and "updated Ns ago" tick from the
+                same moment and read as the same number. Only once it is terminal do they mean
+                different things: how long it took, and when it finished. */}
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+              {isTerminal ? `${updatedLabel} · ` : ""}attempt{" "}
+              {status?.attempt || 1}
+            </Typography>
             <Divider sx={{ my: 2 }} />
-            <Stack spacing={1.2}>
-              {stages.map((stage, index) => {
+
+            {/* Finished stages fold away: on a completed run the full list is fifteen ticks
+                carrying no information. A run that ended badly always stays expanded. */}
+            {collapsible && (
+              <Button
+                fullWidth
+                color="inherit"
+                onClick={() => setStagesOpen((open) => !open)}
+                aria-expanded={stagesOpen}
+                endIcon={
+                  <Iconify
+                    icon={stagesOpen ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
+                    width={18}
+                  />
+                }
+                sx={{
+                  justifyContent: "flex-start",
+                  gap: 1,
+                  px: 1.25,
+                  py: 0.875,
+                  mb: 1.25,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "6px",
+                  textTransform: "none",
+                  "& .MuiButton-endIcon": { ml: "auto" },
+                }}
+              >
+                <Iconify icon="solar:check-circle-bold" color="accent.pass" width={18} />
+                <Typography variant="body2" color="text.secondary">
+                  {doneCount} {doneCount === 1 ? "stage" : "stages"} complete
+                </Typography>
+              </Button>
+            )}
+
+            <Stack
+              spacing={1.1}
+              sx={{ pl: collapsible ? "11px" : 0 }}
+            >
+              {visibleStages.map((stage) => {
+                const index = stages.indexOf(stage);
                 const state = stageState(status, index, current?.events);
                 const muted = state === STAGE_STATE.PENDING;
+                const isCurrent = state === STAGE_STATE.ACTIVE;
                 // accent.* are the mode-aware status tokens; success.main/error.main are
                 // tuned for light only and fail contrast on the dark surface.
                 const glyph = {
@@ -360,7 +467,6 @@ export default function HarnessDetail() {
                     icon: "solar:close-circle-bold",
                     color: "accent.fail",
                   },
-                  // A cancel is not a fault, so it reads neutral rather than red.
                   [STAGE_STATE.STOPPED]: {
                     icon: "solar:pause-circle-bold",
                     color: "text.secondary",
@@ -375,28 +481,39 @@ export default function HarnessDetail() {
                     key={stage}
                     direction="row"
                     spacing={1.2}
-                    alignItems="center"
+                    alignItems="flex-start"
                   >
                     <Iconify
                       icon={glyph.icon}
                       color={glyph.color}
-                      sx={{ opacity: muted ? 0.6 : 1 }}
+                      width={18}
+                      sx={{ opacity: muted ? 0.6 : 1, mt: "1px", flexShrink: 0 }}
                     />
-                    <Typography
-                      color={
-                        state === STAGE_STATE.FAILED
-                          ? "accent.fail"
-                          : muted
-                            ? "text.secondary"
-                            : "text.primary"
-                      }
-                      sx={{
-                        opacity: muted ? 0.6 : 1,
-                        fontWeight: state === STAGE_STATE.ACTIVE ? 600 : 400,
-                      }}
-                    >
-                      {readable(stage)}
-                    </Typography>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography
+                        variant="body2"
+                        color={
+                          state === STAGE_STATE.FAILED
+                            ? "accent.fail"
+                            : muted
+                              ? "text.secondary"
+                              : "text.primary"
+                        }
+                        sx={{
+                          opacity: muted ? 0.6 : 1,
+                          fontWeight: isCurrent ? 600 : 400,
+                        }}
+                      >
+                        {readable(stage)}
+                      </Typography>
+                      {/* Only six of the fifteen stages emit an event, so this is absent more
+                          often than not. Omitted rather than zeroed: 0s would read as instant. */}
+                      {isCurrent && stageLabel && (
+                        <Typography variant="caption" color="text.secondary">
+                          {stageLabel}
+                        </Typography>
+                      )}
+                    </Box>
                   </Stack>
                 );
               })}

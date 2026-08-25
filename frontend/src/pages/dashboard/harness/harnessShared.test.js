@@ -6,9 +6,14 @@ import {
   jobProgress,
   readable,
   canceledProgress,
+  completedStageCount,
   errorMessage,
   eventTime,
+  runElapsed,
+  shortDuration,
+  shortRunId,
   STAGE_STATE,
+  stageElapsed,
   stageState,
   stageStatus,
   stages,
@@ -274,5 +279,122 @@ describe("errorMessage", () => {
   it("never returns an empty string", () => {
     expect(errorMessage({})).toBe("Something went wrong");
     expect(errorMessage(undefined)).toBe("Something went wrong");
+  });
+});
+
+describe("completedStageCount", () => {
+  it("does not count the stage the run is still in", () => {
+    expect(completedStageCount({ stage: "queued" })).toBe(0);
+    expect(completedStageCount({ stage: "running" })).toBe(
+      stages.indexOf("running"),
+    );
+  });
+
+  it("counts everything once the run completes", () => {
+    expect(completedStageCount({ stage: "completed" })).toBe(stages.length);
+  });
+
+  // "failed"/"canceled" are not in the stage list, so indexing on them would report nothing
+  // finished while the stepper shows otherwise. These must agree.
+  it("counts what a failed run got through, from failure.stage", () => {
+    const status = {
+      stage: "failed",
+      failure: { stage: "validating_environment" },
+    };
+    expect(completedStageCount(status)).toBe(
+      stages.indexOf("validating_environment"),
+    );
+  });
+
+  it("counts what a canceled run got through, from its events", () => {
+    const events = [
+      { type: "harness.stage.started", payload: { stage: "understand" } },
+    ];
+    expect(completedStageCount({ stage: "canceled" }, events)).toBe(
+      stages.indexOf("understanding_agent"),
+    );
+  });
+
+  it("claims nothing when there is no anchor", () => {
+    expect(completedStageCount({ stage: "canceled" }, [])).toBe(0);
+    expect(completedStageCount({ stage: "failed", failure: null })).toBe(0);
+    expect(completedStageCount(undefined)).toBe(0);
+  });
+});
+
+describe("runElapsed", () => {
+  const at = (iso) => ({ wall_time: iso });
+
+  it("measures from the first event to now while the run is live", () => {
+    const events = [at("2026-08-25T11:13:56Z"), at("2026-08-25T11:15:56Z")];
+    const now = new Date("2026-08-25T11:23:56Z").getTime();
+    expect(runElapsed(events, now, false)).toBe(10 * 60 * 1000);
+  });
+
+  it("measures between first and last once terminal", () => {
+    const events = [at("2026-08-25T11:13:56Z"), at("2026-08-25T11:29:39Z")];
+    expect(runElapsed(events, Date.now(), true)).toBe(15 * 60 * 1000 + 43000);
+  });
+
+  // A queued job has emitted nothing, so there is no start to measure from.
+  it("is unmeasurable with no usable events", () => {
+    expect(runElapsed([], Date.now(), false)).toBeNull();
+    expect(runElapsed([{ wall_time: "nonsense" }], Date.now(), false)).toBeNull();
+  });
+});
+
+describe("stageElapsed", () => {
+  const started = (stage, iso) => ({
+    type: "harness.stage.started",
+    payload: { stage },
+    wall_time: iso,
+  });
+
+  it("times a stage the runner actually reports", () => {
+    const now = new Date("2026-08-25T11:59:36Z").getTime();
+    const events = [started("calls", "2026-08-25T11:55:45Z")];
+    expect(stageElapsed({ stage: "connecting_agent" }, events, now)).toBe(
+      3 * 60 * 1000 + 51000,
+    );
+  });
+
+  // Nine of the fifteen stages never emit an event. Returning null lets the caller omit the
+  // line; a zero would read as "instant" when it means "not reported".
+  it("returns null for a stage the runner never emits", () => {
+    const events = [started("calls", "2026-08-25T11:55:45Z")];
+    expect(stageElapsed({ stage: "grading" }, events, Date.now())).toBeNull();
+    expect(stageElapsed({ stage: "validating_scenarios" }, events, Date.now())).toBeNull();
+  });
+
+  it("returns null when the stage has not started yet", () => {
+    expect(stageElapsed({ stage: "understanding_agent" }, [], Date.now())).toBeNull();
+  });
+});
+
+describe("shortDuration", () => {
+  it("formats compactly and pads seconds so the width does not jump", () => {
+    expect(shortDuration(9000)).toBe("9s");
+    expect(shortDuration(63000)).toBe("1m 03s");
+    expect(shortDuration(15 * 60 * 1000 + 43000)).toBe("15m 43s");
+    expect(shortDuration(3 * 60 * 60 * 1000 + 4 * 60 * 1000)).toBe("3h 4m");
+  });
+
+  it("renders nothing when there is nothing to measure", () => {
+    expect(shortDuration(null)).toBeNull();
+    expect(shortDuration(undefined)).toBeNull();
+  });
+});
+
+describe("shortRunId", () => {
+  it("keeps the prefix and the first uuid group", () => {
+    expect(shortRunId("harness-2d60ba74-6ba2-4744-b0b7-d011ab52017b")).toBe(
+      "harness-2d60ba74",
+    );
+  });
+
+  it("leaves anything that is not shaped like one alone", () => {
+    expect(shortRunId("harness")).toBe("harness");
+    expect(shortRunId("")).toBe("");
+    expect(shortRunId(undefined)).toBe("");
   });
 });
