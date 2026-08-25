@@ -142,8 +142,26 @@ class HarnessJobActionSerializer(serializers.Serializer):
     )
 
 
+class HarnessJobAdjustmentSerializer(serializers.Serializer):
+    instruction = serializers.CharField(
+        min_length=1,
+        max_length=2000,
+        trim_whitespace=True,
+        help_text="A user correction to apply at the next safe harness stage boundary.",
+    )
+    client_request_id = serializers.CharField(
+        max_length=128, required=False, allow_blank=False
+    )
+
+
 class HarnessSourceUploadResponseSerializer(serializers.Serializer):
     source_id = serializers.UUIDField()
     name = serializers.CharField()
     file_count = serializers.IntegerField()
     total_bytes = serializers.IntegerField()
+
+
+class HarnessSecretFileUploadResponseSerializer(serializers.Serializer):
+    environment_name = serializers.RegexField(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    secret_ref = SecretReferenceSerializer()
+    size = serializers.IntegerField(min_value=1)

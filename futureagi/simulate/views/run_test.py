@@ -790,6 +790,37 @@ class RunTestExecutionView(APIView):
             if gate_response is not None:
                 return gate_response
 
+            # A repository-backed ALK run owns its complete environment lifecycle. Running it
+            # again from the simulation header must therefore return to the saved harness job;
+            # the generic hosted runner can execute calls, but cannot recreate/reset that job's
+            # Compose/process environment or seeded world.
+            repository_execution = _latest_repository_harness_execution(run_test)
+            if repository_execution is not None:
+                if set(map(str, final_scenario_ids)) != set(
+                    map(str, repository_execution.scenario_ids or [])
+                ):
+                    return self.gm.bad_request(
+                        "Repository harness reruns currently require the complete saved scenario "
+                        "suite so the recreated environment and seeded worlds remain aligned."
+                    )
+                queued = _dispatch_repository_harness_rerun(
+                    repository_execution, environment_values={}
+                )
+                return Response(
+                    {
+                        "message": (
+                            "Saved harness environment restart and full simulation rerun queued"
+                        ),
+                        "execution_id": str(repository_execution.id),
+                        "run_test_id": str(run_test.id),
+                        "status": queued.get("status", {}).get("stage", "queued"),
+                        "total_scenarios": len(final_scenario_ids),
+                        "total_calls": 0,
+                        "scenario_ids": [str(value) for value in final_scenario_ids],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
             # Route to the hosted runner (released SDK) when enabled and the run
             # is eligible; otherwise fall through to the native Temporal/Celery
             # paths. Default off — existing flows are unaffected.
@@ -6380,19 +6411,36 @@ def _repository_harness_job_id(test_execution) -> str | None:
     return match.group(1) if match else None
 
 
+def _latest_repository_harness_execution(run_test):
+    """Return the newest execution belonging to a saved repository harness job."""
+
+    for execution in run_test.executions.order_by("-started_at"):
+        if _repository_harness_job_id(execution):
+            return execution
+    return None
+
+
 def _dispatch_repository_harness_rerun(
     test_execution, *, environment_values: dict[str, str]
 ) -> dict:
+    from simulate.services.harness_credentials import credentials_for_rerun
     from simulate.services.harness_sandbox import HarnessSandboxClient
 
     job_id = _repository_harness_job_id(test_execution)
     if not job_id:
         raise ValueError("execution has no saved repository harness job")
-    return HarnessSandboxClient().rerun(
+    client = HarnessSandboxClient()
+    saved_environment, secret_refs = credentials_for_rerun(
+        job_id,
+        organization=test_execution.run_test.organization,
+        client=client,
+        environment_overrides=environment_values,
+    )
+    return client.rerun(
         job_id,
         {
-            "environment_values": environment_values,
-            "secret_refs": {},
+            "environment_values": saved_environment,
+            "secret_refs": secret_refs,
             "only": [],
         },
     )
@@ -7174,6 +7222,59 @@ class TestExecutionRerunView(APIView):
                     "No test executions found that can be rerun. "
                     "Executions in pending, running, or cancelling status cannot be rerun."
                 )
+
+            # The simulation-grid rerun action is a second UI route to the same operation as
+            # "Run test" above. Keep repository jobs on their saved ALK lifecycle instead of
+            # clearing their rows and dispatching the connector-only Temporal workflow.
+            if rerun_type == "call_and_eval":
+                repository_executions = [
+                    execution
+                    for execution in test_executions.order_by("-started_at")
+                    if _repository_harness_job_id(execution)
+                ]
+                if repository_executions:
+                    source_execution = repository_executions[0]
+                    try:
+                        queued = _dispatch_repository_harness_rerun(
+                            source_execution, environment_values={}
+                        )
+                    except Exception as dispatch_error:
+                        logger.exception(
+                            "repository_harness_bulk_rerun_dispatch_failed",
+                            test_execution_id=str(source_execution.id),
+                            harness_job_id=_repository_harness_job_id(source_execution),
+                        )
+                        return self._gm.bad_request(
+                            "Saved harness environment could not be restarted: "
+                            f"{dispatch_error}"
+                        )
+                    execution_ids = [
+                        str(execution.id) for execution in repository_executions
+                    ]
+                    return Response(
+                        {
+                            "message": (
+                                "Saved harness environment restart and full simulation rerun queued"
+                            ),
+                            "run_test_id": str(run_test_id),
+                            "rerun_type": rerun_type,
+                            "total_test_executions": len(execution_ids),
+                            "results": [
+                                {
+                                    "test_execution_id": str(source_execution.id),
+                                    "success_count": len(execution_ids),
+                                    "failure_count": 0,
+                                    "successful_reruns": execution_ids,
+                                    "failed_reruns": [],
+                                    "dispatch_error": None,
+                                    "harness_status": queued.get("status", {}),
+                                }
+                            ],
+                            "overall_success_count": len(execution_ids),
+                            "overall_failure_count": 0,
+                        },
+                        status=status.HTTP_200_OK,
+                    )
 
             from simulate.temporal.client import rerun_call_executions
 

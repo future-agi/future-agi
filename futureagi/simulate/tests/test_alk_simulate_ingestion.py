@@ -178,7 +178,12 @@ class TestProvisionRunTest:
             auth_client,
             name="sdk-e2e",
             personas=[
-                {"name": "Sam", "situation": "refund please", "outcome": "refunded"}
+                {
+                    "name": "Sam",
+                    "scenario_name": "Resolve a late refund",
+                    "situation": "refund please",
+                    "outcome": "refunded",
+                }
             ],
         )
         assert resp.status_code == 200, resp.content
@@ -192,6 +197,8 @@ class TestProvisionRunTest:
         )
         assert run_test.scenarios.count() == 1
         scenario = Scenarios.objects.get(id=result["scenario_ids"][0])
+        assert scenario.name == "Resolve a late refund"
+        assert not scenario.name.startswith(run_test.name)
         assert scenario.status == StatusType.COMPLETED.value
         assert scenario.metadata["persona"]["name"] == "Sam"
 
@@ -351,6 +358,49 @@ class TestStartTestExecution:
         )
         assert resp.status_code == 404
         assert resp.json()["status"] is False
+
+    def test_scenario_selectors_preserve_runner_order_for_saved_run(
+        self, auth_client, run_test, scenario
+    ):
+        scenario.metadata = {
+            "origin": "alk_sdk_ingestion",
+            "persona": {"scenario_key": "case-a", "persona": {"name": "A"}},
+        }
+        scenario.save(update_fields=["metadata"])
+        second = Scenarios.objects.create(
+            name="Second saved case",
+            source="second",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            agent_definition=run_test.agent_definition,
+            status=StatusType.COMPLETED.value,
+            metadata={
+                "origin": "alk_sdk_ingestion",
+                "persona": {
+                    "scenario_key": "case-b",
+                    "persona": {"name": "B"},
+                },
+            },
+        )
+        run_test.scenarios.add(second)
+
+        resp = auth_client.post(
+            f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+            {
+                "scenario_selectors": [
+                    {"scenario_key": "case-b", "persona_name": "B"},
+                    {"scenario_key": "case-a", "persona_name": "A"},
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.content
+        assert resp.json()["result"]["scenario_ids"] == [
+            str(second.id),
+            str(scenario.id),
+        ]
 
     def test_scenario_not_on_run_test_returns_400(self, auth_client, run_test):
         other = "11111111-1111-4111-8111-111111111111"

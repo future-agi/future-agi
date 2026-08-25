@@ -365,7 +365,12 @@ def provision_alk_sim_run_test(
             persona = dict(persona or {})
             persona_name = (persona.get("name") or f"persona-{idx + 1}").strip()
             situation = (persona.get("situation") or "").strip()
-            scenario_name = f"{name} · {persona_name}"[:255]
+            # The run-test title already supplies the agent/run context. Repeating it on every
+            # scenario made a two-call suite render as several nearly identical UUID-prefixed
+            # rows. ALK sends the behavior being tested separately from the persona identity.
+            scenario_name = (
+                persona.get("scenario_name") or situation or persona_name
+            ).strip()[:255]
             # A real 1-row dataset (persona/situation/outcome) makes the scenario
             # render with persona rows AND lets the simulator prompt's
             # {{persona}}/{{situation}} placeholders resolve — without it the
@@ -469,6 +474,7 @@ def create_alk_sim_test_execution(
     run_test: RunTest,
     *,
     scenario_ids: list[str] | None = None,
+    scenario_selectors: list[dict[str, str]] | None = None,
     simulator_agent: SimulatorAgent | None = None,
     harness_job_id: str | None = None,
 ) -> TestExecution:
@@ -490,6 +496,34 @@ def create_alk_sim_test_execution(
             raise ALKSimulateIngestionError(
                 f"Scenarios not attached to this run test: {sorted(missing)}"
             )
+    elif scenario_selectors:
+        attached = list(run_test.scenarios.filter(deleted=False))
+        chosen = []
+        used: set[str] = set()
+        for selector in scenario_selectors:
+            scenario_key = str(selector.get("scenario_key") or "").strip()
+            persona_name = str(selector.get("persona_name") or "").strip()
+            exact = []
+            fallback = []
+            for scenario in attached:
+                if str(scenario.id) in used:
+                    continue
+                persona = (scenario.metadata or {}).get("persona") or {}
+                if str(persona.get("scenario_key") or "") == scenario_key:
+                    exact.append(scenario)
+                identity = persona.get("persona") or {}
+                stored_name = str(identity.get("name") or persona.get("name") or "")
+                if persona_name and stored_name == persona_name:
+                    fallback.append(scenario)
+            matches = exact or fallback
+            if len(matches) != 1:
+                label = scenario_key or persona_name or "<empty>"
+                raise ALKSimulateIngestionError(
+                    f"Scenario selector {label!r} matched {len(matches)} saved scenarios"
+                )
+            selected = matches[0]
+            chosen.append(str(selected.id))
+            used.add(str(selected.id))
     else:
         chosen = [str(sid) for sid in active_scenario_ids]
 

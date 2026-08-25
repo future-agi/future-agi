@@ -72,6 +72,27 @@ class HarnessSandboxClient:
             timeout=(5, 300),
         )
 
+    def upload_secret_file(self, uploaded: Any, environment_name: str) -> dict[str, Any]:
+        """Transfer a credential file directly to the execution provider.
+
+        The platform does not deserialize, log or place its contents in a JSON payload. The
+        provider returns an opaque reference that can be attached to one harness job.
+        """
+        return self._request(
+            "POST",
+            "/v1/secret-files",
+            files={
+                "file": (
+                    "credential",
+                    uploaded.file,
+                    getattr(uploaded, "content_type", None)
+                    or "application/octet-stream",
+                )
+            },
+            data={"environment_name": environment_name},
+            timeout=(5, 60),
+        )
+
     def get(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/jobs/{job_id}")
 
@@ -80,6 +101,9 @@ class HarnessSandboxClient:
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/v1/jobs/{job_id}/cancel")
+
+    def adjust(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/v1/jobs/{job_id}/adjust", json=payload)
 
     def _request(
         self,

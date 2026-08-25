@@ -49497,6 +49497,48 @@
                 }
             ]
         },
+        "/simulate/api/harness-jobs/{id}/adjust/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_adjust",
+                "description": "Control-plane facade over the configured ALK sandbox provider.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobAdjustment"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobAdjustment"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/{id}/cancel/": {
             "post": {
                 "operationId": "simulate_api_harness-jobs_cancel",
@@ -114372,6 +114414,27 @@
                 "total_bytes": {
                     "title": "Total bytes",
                     "type": "integer"
+                }
+            }
+        },
+        "HarnessJobAdjustment": {
+            "required": [
+                "instruction"
+            ],
+            "type": "object",
+            "properties": {
+                "instruction": {
+                    "title": "Instruction",
+                    "description": "A user correction to apply at the next safe harness stage boundary.",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "minLength": 1
+                },
+                "client_request_id": {
+                    "title": "Client request id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
                 }
             }
         },
