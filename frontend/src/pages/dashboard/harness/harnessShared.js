@@ -36,55 +36,63 @@ export const eventTime = (value) => {
 };
 
 // ALK reports events against a coarser vocabulary than the checklist shows: one "environment"
-// event covers four UI stages. Map each event stage to the UI stage its group STARTS at, so a
-// group that merely started is never credited with finishing its later stages.
-const EVENT_STAGE_GROUP_START = {
-  understand: "understanding_agent",
-  environment: "generating_environment",
-  scenarios: "generating_scenarios",
-  calls: "connecting_agent",
-  uploading_artifacts: "uploading_artifacts",
-  cleaning_up: "cleaning_up",
-  completed: "completed",
+// event covers four UI stages. Six stages (building/validating environment, generating data,
+// validating scenarios, connecting agent, grading) are never emitted at all, so they can only
+// be credited through the group they belong to.
+const EVENT_STAGE_GROUPS = {
+  understand: ["understanding_agent"],
+  environment: [
+    "generating_environment",
+    "building_environment",
+    "validating_environment",
+    "generating_data",
+  ],
+  scenarios: ["generating_scenarios", "validating_scenarios"],
+  calls: ["connecting_agent", "running", "grading"],
+  cleaning_up: ["cleaning_up"],
+  uploading_artifacts: ["uploading_artifacts"],
+  completed: ["completed"],
 };
 
-const groupStartIndexes = () =>
-  Object.values(EVENT_STAGE_GROUP_START)
-    .map((stage) => stages.indexOf(stage))
-    .filter((index) => index >= 0)
-    .sort((a, b) => a - b);
+// Stages that always precede any emitted event: reaching any stage at all means the job was
+// queued and its source acquired, though neither is ever reported.
+const IMPLIED_STAGES = ["queued", "acquiring_source"];
 
-// A cancel names no stage, unlike a failure. Reconstruct how far the run got from the events
-// instead: everything before the reached group is done, and the group's first stage is where it
-// stopped. Returns { doneThrough, stoppedAt }, both -1 when there is nothing to anchor on.
+// A cancel names no stage, unlike a failure, so reconstruct how far the run got from its
+// events. Credit is given only for groups actually observed completing — never inferred from
+// a stage's position in the list, because the runner does not emit in list order (it emits
+// cleaning_up before uploading_artifacts, the reverse of the declared enum).
 export const canceledProgress = (events = []) => {
-  let reached = -1;
-  let finished = false;
+  const done = new Set();
+  const completedGroups = new Set();
+  let lastStarted = null;
+  let sawAny = false;
+
   events.forEach((event) => {
-    const stage = event?.payload?.stage;
-    const mapped = EVENT_STAGE_GROUP_START[stage];
-    if (!mapped) return;
-    const index = stages.indexOf(mapped);
-    if (index < 0 || index < reached) return;
-    const completed = event?.type?.endsWith(".completed");
-    if (index > reached) {
-      reached = index;
-      finished = completed;
-    } else if (completed) {
-      finished = true;
+    const group = event?.payload?.stage;
+    if (!EVENT_STAGE_GROUPS[group]) return;
+    sawAny = true;
+    if (event?.type?.endsWith(".completed")) {
+      completedGroups.add(group);
+    } else if (event?.type?.endsWith(".started")) {
+      lastStarted = group;
     }
   });
 
-  if (reached < 0) return { doneThrough: -1, stoppedAt: -1 };
-  if (!finished) return { doneThrough: reached - 1, stoppedAt: reached };
+  if (!sawAny) return { doneStages: done, stoppedAt: -1 };
 
-  // The group finished, so every stage up to the next group's start is done.
-  const next = groupStartIndexes().find((index) => index > reached);
-  const end = (next === undefined ? stages.length : next) - 1;
-  return {
-    doneThrough: end,
-    stoppedAt: end + 1 < stages.length ? end + 1 : -1,
-  };
+  IMPLIED_STAGES.forEach((stage) => done.add(stage));
+  completedGroups.forEach((group) => {
+    EVENT_STAGE_GROUPS[group].forEach((stage) => done.add(stage));
+  });
+
+  // The run stopped inside the last group that started and never reported completing.
+  const stalled =
+    lastStarted && !completedGroups.has(lastStarted) ? lastStarted : null;
+  const stoppedAt = stalled ? stages.indexOf(EVENT_STAGE_GROUPS[stalled][0]) : -1;
+  if (stoppedAt >= 0) done.delete(stages[stoppedAt]);
+
+  return { doneStages: done, stoppedAt };
 };
 
 // Four visual states for the run checklist.
@@ -117,10 +125,9 @@ export const stageState = (status, index, events = []) => {
   }
 
   if (stage === "canceled") {
-    const { doneThrough, stoppedAt } = canceledProgress(events);
-    if (doneThrough < 0 && stoppedAt < 0) return STAGE_STATE.PENDING;
-    if (index <= doneThrough) return STAGE_STATE.DONE;
+    const { doneStages, stoppedAt } = canceledProgress(events);
     if (index === stoppedAt) return STAGE_STATE.STOPPED;
+    if (doneStages.has(stages[index])) return STAGE_STATE.DONE;
     return STAGE_STATE.PENDING;
   }
 
@@ -186,5 +193,16 @@ export const jobProgress = (status) => {
   return Math.max(2, ((Math.max(index, 0) + 0.5) / stages.length) * 100);
 };
 
-export const errorMessage = (error) =>
-  error?.response?.data?.detail || error?.message || "Something went wrong";
+// The axios interceptor rejects with a FLAT object — {...response.data, statusCode} — so
+// there is no `.response` to read through. Harness views return a bare {"detail": "..."},
+// while the platform envelope carries both detail and message, so detail comes first.
+export const errorMessage = (error) => {
+  const detail = error?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  // DRF field errors arrive as {field: ["message"]} rather than a string.
+  if (detail && typeof detail === "object") {
+    const first = Object.values(detail).flat().find(Boolean);
+    if (typeof first === "string") return first;
+  }
+  return error?.message || "Something went wrong";
+};

@@ -95,8 +95,9 @@ export default function HarnessDetail() {
       // eslint-disable-next-line no-console
       console.error("Cancel run failed", {
         jobId,
-        status: requestError?.response?.status,
-        data: requestError?.response?.data,
+        statusCode: requestError?.statusCode,
+        code: requestError?.code,
+        detail: requestError?.detail,
         message: requestError?.message,
       });
       setCancelError(errorMessage(requestError));

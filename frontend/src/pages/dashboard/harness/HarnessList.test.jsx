@@ -102,8 +102,12 @@ describe("HarnessList", () => {
   });
 
   it("surfaces a failing list request instead of an empty table", async () => {
+    // The interceptor flattens response.data onto the rejection, so this is the shape
+    // the client actually produces. Mocking {response:{data:...}} passes while testing
+    // a path that cannot happen.
     listHarnessJobs.mockRejectedValue({
-      response: { data: { detail: "Harness sandbox is unavailable" } },
+      detail: "Harness sandbox is unavailable",
+      statusCode: 503,
     });
     renderList();
 

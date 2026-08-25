@@ -6,6 +6,7 @@ import {
   jobProgress,
   readable,
   canceledProgress,
+  errorMessage,
   eventTime,
   STAGE_STATE,
   stageState,
@@ -149,31 +150,48 @@ describe("canceledProgress", () => {
   });
 
   it("credits nothing when there are no events", () => {
-    expect(canceledProgress([])).toEqual({ doneThrough: -1, stoppedAt: -1 });
+    const { doneStages, stoppedAt } = canceledProgress([]);
+    expect(doneStages.size).toBe(0);
+    expect(stoppedAt).toBe(-1);
   });
 
-  it("stops at the group that had only started", () => {
-    const { doneThrough, stoppedAt } = canceledProgress([started("understand")]);
+  it("stops in the group that started and never completed", () => {
+    const { doneStages, stoppedAt } = canceledProgress([started("understand")]);
     expect(stages[stoppedAt]).toBe("understanding_agent");
-    expect(stages[doneThrough]).toBe("acquiring_source");
+    expect(doneStages.has("queued")).toBe(true);
+    expect(doneStages.has("acquiring_source")).toBe(true);
+    expect(doneStages.has("understanding_agent")).toBe(false);
   });
 
-  it("credits a whole group once it completed", () => {
-    // "environment" covers four UI stages; completing it finishes all of them.
-    const { doneThrough, stoppedAt } = canceledProgress([
-      started("understand"),
-      completed("understand"),
+  it("credits every stage of a group that completed", () => {
+    const { doneStages } = canceledProgress([
       started("environment"),
       completed("environment"),
     ]);
-    expect(stages[doneThrough]).toBe("generating_data");
-    expect(stages[stoppedAt]).toBe("generating_scenarios");
+    ["generating_environment", "building_environment", "validating_environment", "generating_data"].forEach(
+      (stage) => expect(doneStages.has(stage)).toBe(true),
+    );
   });
 
-  it("never credits later stages of a group that only started", () => {
-    const { doneThrough } = canceledProgress([started("environment")]);
-    // building/validating/generating_data must NOT be marked done.
-    expect(stages[doneThrough]).toBe("understanding_agent");
+  it("never credits a group that only started", () => {
+    const { doneStages } = canceledProgress([started("environment")]);
+    ["building_environment", "validating_environment", "generating_data"].forEach(
+      (stage) => expect(doneStages.has(stage)).toBe(false),
+    );
+  });
+
+  // The runner emits cleaning_up BEFORE uploading_artifacts, the reverse of the declared
+  // stage order. Deriving progress from list position credited artifact upload that had
+  // not happened, and dropped the later event entirely.
+  it("handles the runner emitting stages out of list order", () => {
+    const { doneStages, stoppedAt } = canceledProgress([
+      started("cleaning_up"),
+      completed("cleaning_up"),
+      started("uploading_artifacts"),
+    ]);
+    expect(doneStages.has("cleaning_up")).toBe(true);
+    expect(doneStages.has("uploading_artifacts")).toBe(false);
+    expect(stages[stoppedAt]).toBe("uploading_artifacts");
   });
 });
 
@@ -220,5 +238,41 @@ describe("eventTime", () => {
     expect(eventTime(undefined)).toBe("");
     expect(eventTime("")).toBe("");
     expect(eventTime("not-a-date")).toBe("");
+  });
+});
+
+describe("errorMessage", () => {
+  // The axios interceptor spreads response.data flat and adds statusCode; it never
+  // produces a nested .response, so reading through one silently loses every message.
+  it("reads a bare detail, which is what the harness views return", () => {
+    expect(errorMessage({ detail: "job not found", statusCode: 404 })).toBe(
+      "job not found",
+    );
+  });
+
+  it("prefers detail on the platform envelope", () => {
+    expect(
+      errorMessage({
+        status: false,
+        detail: "Authentication credentials were not provided.",
+        message: "Authentication credentials were not provided.",
+        statusCode: 401,
+      }),
+    ).toBe("Authentication credentials were not provided.");
+  });
+
+  it("unwraps DRF field errors", () => {
+    expect(errorMessage({ detail: { source_id: ["This field is required."] } })).toBe(
+      "This field is required.",
+    );
+  });
+
+  it("falls back to message when there was no response at all", () => {
+    expect(errorMessage({ message: "Network Error" })).toBe("Network Error");
+  });
+
+  it("never returns an empty string", () => {
+    expect(errorMessage({})).toBe("Something went wrong");
+    expect(errorMessage(undefined)).toBe("Something went wrong");
   });
 });
