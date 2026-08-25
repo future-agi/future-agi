@@ -215,7 +215,17 @@ export const stageState = (status, index, events = []) => {
   return STAGE_STATE.PENDING;
 };
 
+// Stage names as a person would say them. `readable` de-snake-cases anything not listed,
+// which is right for field names but produces "Running" and "Grading" for stages that are
+// really "Running scenarios" and "Grading results".
+const STAGE_LABELS = {
+  acquiring_source: "Preparing source",
+  running: "Running scenarios",
+  grading: "Grading results",
+};
+
 export const readable = (value = "") =>
+  STAGE_LABELS[value] ||
   value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
 
 // StatusChip infers its state from the string it is given, and "completed" matches
@@ -254,8 +264,13 @@ export function eventMessage(event) {
   const payload = event.payload || {};
   if (payload.detail) return String(payload.detail);
   if (payload.message) return String(payload.message);
-  if (payload.stage)
-    return `${readable(payload.stage)} ${readable(event.type)}`;
+  if (payload.stage) {
+    // "Calls completed" reads better than "Calls Harness.stage.completed".
+    if (event.type?.endsWith(".started")) return `${readable(payload.stage)} started`;
+    if (event.type?.endsWith(".completed")) return `${readable(payload.stage)} completed`;
+    if (event.type?.endsWith(".failed")) return `${readable(payload.stage)} failed`;
+    return `${readable(payload.stage)} updated`;
+  }
   return readable(event.type || "Progress updated");
 }
 

@@ -93,9 +93,10 @@ describe("HarnessDetail run checklist", () => {
     renderDetail();
 
     expect(await screen.findByText("10 stages complete")).toBeInTheDocument();
-    // "Running" is also the status chip, so the stage row makes it the second occurrence.
-    expect(screen.getAllByText("Running").length).toBeGreaterThan(1);
-    expect(screen.getByText("Grading")).toBeInTheDocument();
+    // The stage list and the status chip both render the stage, now labelled
+    // "Running scenarios" rather than the bare field name.
+    expect(screen.getAllByText("Running scenarios").length).toBeGreaterThan(1);
+    expect(screen.getByText("Grading results")).toBeInTheDocument();
     // Everything before the current stage is behind the summary row.
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
   });

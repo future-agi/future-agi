@@ -7,8 +7,11 @@ import {
   Divider,
   IconButton,
   LinearProgress,
+  TextField,
   Paper,
   Stack,
+  Tab,
+  Tabs,
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,9 +22,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import CustomTooltip from "src/components/tooltip";
+
+import StageOutput from "./StageOutput";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import {
+  adjustHarnessJob,
   cancelHarnessJob,
   getHarnessJob,
   listHarnessJobs,
@@ -46,6 +52,13 @@ import {
   terminalStages,
 } from "./harnessShared";
 
+const DETAIL_TABS = [
+  { value: "contract", label: "Contract" },
+  { value: "environment", label: "Environment" },
+  { value: "scenarios", label: "Scenarios" },
+  { value: "runs", label: "Runs" },
+];
+
 export default function HarnessDetail() {
   const { jobId } = useParams();
   const navigate = useNavigate();
@@ -55,6 +68,9 @@ export default function HarnessDetail() {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [stagesOpen, setStagesOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+  const [detailTab, setDetailTab] = useState("contract");
+  const [adjustment, setAdjustment] = useState("");
+  const [adjustError, setAdjustError] = useState("");
 
   const {
     data: current,
@@ -113,6 +129,35 @@ export default function HarnessDetail() {
     },
   });
 
+  const { mutate: adjust, isPending: adjusting } = useMutation({
+    mutationFn: () => {
+      const instruction = adjustment.trim();
+      if (!jobId || !instruction) throw new Error("Nothing to send.");
+      // client_request_id is optional; window.crypto.randomUUID is undefined on an
+      // insecure origin, so the key is omitted rather than sent as undefined.
+      const requestId = window.crypto?.randomUUID?.();
+      return adjustHarnessJob(jobId, {
+        instruction,
+        ...(requestId ? { client_request_id: requestId } : {}),
+      });
+    },
+    onMutate: () => setAdjustError(""),
+    onSuccess: (value) => {
+      queryClient.setQueryData(["harness-job", jobId], value);
+      setAdjustment("");
+    },
+    onError: (requestError) => {
+      // eslint-disable-next-line no-console
+      console.error("Adjust run failed", {
+        jobId,
+        statusCode: requestError?.statusCode,
+        detail: requestError?.detail,
+        message: requestError?.message,
+      });
+      setAdjustError(errorMessage(requestError));
+    },
+  });
+
   const status = current?.status;
   const progress = jobProgress(status);
   const isTerminal = terminalStages.has(status?.stage);
@@ -129,6 +174,22 @@ export default function HarnessDetail() {
     runElapsed(current?.events, clock, isTerminal),
   );
   const stageLabel = shortDuration(stageElapsed(status, current?.events, clock));
+
+  // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
+  // disappears: anything that is not a named tab lands there alongside the activity feed.
+  const adjustments = current?.adjustments || [];
+  const stageOutputs = current?.stage_outputs || [];
+  const selectedOutputs = stageOutputs.filter((output) =>
+    detailTab === "runs"
+      ? !["contract", "environment", "scenarios"].includes(output.kind)
+      : output.kind === detailTab,
+  );
+  const outputCounts = stageOutputs.reduce((counts, output) => {
+    const key = ["contract", "environment", "scenarios"].includes(output.kind)
+      ? output.kind
+      : "runs";
+    return { ...counts, [key]: (counts[key] || 0) + 1 };
+  }, {});
 
   // The live seconds counter is a heartbeat: it says the run is still being watched. Once
   // the run is terminal there is nothing left to watch, so the tick stops and the label
@@ -518,6 +579,96 @@ export default function HarnessDetail() {
                 );
               })}
             </Stack>
+
+            {/* Corrections are queued, not applied instantly — the runner picks them up at the
+                next stage boundary, so this is only offered while a run can still act on one. */}
+            {!isTerminal && (
+              <Paper variant="outlined" sx={{ mt: 2.5, p: 1.5 }}>
+                <Stack spacing={1}>
+                  <Box>
+                    <Typography variant="subtitle2">Change this run</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Applied at the next safe stage boundary.
+                    </Typography>
+                  </Box>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    multiline
+                    minRows={2}
+                    maxRows={5}
+                    placeholder="Add scenarios covering payment failures"
+                    value={adjustment}
+                    onChange={(event) => setAdjustment(event.target.value)}
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter")
+                        adjust();
+                    }}
+                  />
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    disabled={adjusting || !adjustment.trim()}
+                    onClick={() => adjust()}
+                    startIcon={
+                      adjusting ? (
+                        <CircularProgress size={14} color="inherit" />
+                      ) : (
+                        <Iconify icon="solar:pen-new-square-linear" width={16} />
+                      )
+                    }
+                  >
+                    {adjusting ? "Sending…" : "Send change"}
+                  </Button>
+                  {adjustError && (
+                    <Alert
+                      severity="error"
+                      variant="outlined"
+                      onClose={() => setAdjustError("")}
+                    >
+                      {adjustError}
+                    </Alert>
+                  )}
+                </Stack>
+              </Paper>
+            )}
+
+            {Boolean(adjustments.length) && (
+              <Stack spacing={1} sx={{ mt: 2 }}>
+                <Typography variant="overline" color="text.secondary">
+                  Changes requested
+                </Typography>
+                {adjustments.map((item) => (
+                  <Paper key={item.adjustment_id} variant="outlined" sx={{ p: 1.25 }}>
+                    <Stack direction="row" spacing={1} alignItems="flex-start">
+                      <Iconify
+                        icon={
+                          item.status === "applied"
+                            ? "solar:check-circle-bold"
+                            : "solar:clock-circle-linear"
+                        }
+                        color={
+                          item.status === "applied" ? "accent.pass" : "accent.info"
+                        }
+                        width={16}
+                        sx={{ mt: "2px", flexShrink: 0 }}
+                      />
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2">{item.instruction}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {item.status}
+                          {item.target_stage
+                            ? ` · at ${readable(item.target_stage)}`
+                            : ""}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  </Paper>
+                ))}
+              </Stack>
+            )}
           </Box>
 
           <Box
@@ -532,17 +683,68 @@ export default function HarnessDetail() {
               sx={{
                 px: 2,
                 pt: 2,
-                pb: 1,
+                // No bottom padding: the tab indicator has to land ON the divider, not float
+                // above it. MUI draws the indicator at the bottom edge of the Tabs.
+                pb: 0,
                 flexShrink: 0,
                 borderBottom: 1,
                 borderColor: "divider",
               }}
             >
-              <Typography variant="overline" color="text.secondary">
-                Live harness activity
-              </Typography>
+              <Tabs
+                value={detailTab}
+                onChange={(_, value) => setDetailTab(value)}
+                variant="scrollable"
+                scrollButtons={false}
+                sx={{
+                  minHeight: 38,
+                  // The theme gives every tab a 40px right margin at sm+
+                  // (theme/overrides/components/tabs.js), which spreads four short labels
+                  // across the whole column. Override that rather than adding a gap on top.
+                  "& .MuiTab-root": {
+                    minHeight: 38,
+                    minWidth: "auto",
+                    px: 0,
+                    "&:not(:last-of-type)": { mr: 2.5 },
+                  },
+                }}
+              >
+                {DETAIL_TABS.map((tab) => (
+                  <Tab
+                    key={tab.value}
+                    value={tab.value}
+                    label={tab.label}
+                    icon={
+                      outputCounts[tab.value] ? (
+                        <Iconify
+                          icon="solar:check-circle-bold"
+                          color="accent.pass"
+                          width={15}
+                        />
+                      ) : undefined
+                    }
+                    iconPosition="end"
+                    sx={{ textTransform: "none", gap: 0.75 }}
+                  />
+                ))}
+              </Tabs>
             </Box>
             <Box sx={{ px: 2, py: 1.5, overflow: "auto", minHeight: 0 }}>
+              {detailTab !== "runs" ? (
+                <Stack spacing={1.5}>
+                  {selectedOutputs.length ? (
+                    selectedOutputs.map((output) => (
+                      <StageOutput key={output.id} output={output} />
+                    ))
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      {isTerminal
+                        ? "The runner produced nothing for this stage."
+                        : "This appears once the runner reaches this stage."}
+                    </Typography>
+                  )}
+                </Stack>
+              ) : (
               <Stack spacing={1.5}>
                 {current.credentials && (
                   <Paper variant="outlined" sx={{ p: 1.5 }}>
@@ -608,6 +810,7 @@ export default function HarnessDetail() {
                   </Stack>
                 )}
               </Stack>
+              )}
             </Box>
           </Box>
         </Box>
