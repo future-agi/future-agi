@@ -147,3 +147,9 @@ class HarnessSourceUploadResponseSerializer(serializers.Serializer):
     name = serializers.CharField()
     file_count = serializers.IntegerField()
     total_bytes = serializers.IntegerField()
+
+
+class HarnessSecretFileUploadResponseSerializer(serializers.Serializer):
+    environment_name = serializers.RegexField(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    secret_ref = SecretReferenceSerializer()
+    size = serializers.IntegerField(min_value=1)
