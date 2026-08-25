@@ -170,3 +170,79 @@ def test_daytona_create_starts_gateway_workflow(user):
     assert response.json() == serialized
     assert create.call_args.kwargs["idempotency_key"] == "key-1"
     assert start.call_args.args[0] == str(_Job.id)
+
+
+@pytest.mark.django_db
+def test_secret_file_upload_returns_only_opaque_reference(user):
+    # Kept endpoint (base): credential files never echo their contents; the
+    # response and the stored row hold only an opaque, encrypted reference.
+    client = APIClient()
+    client.force_authenticate(user=user)
+    raw = b'{"type":"service_account","private_key":"must-not-be-echoed"}'
+    response = client.post(
+        "/simulate/api/harness-jobs/secret-files/",
+        {
+            "file": SimpleUploadedFile(
+                "customer-google.json", raw, content_type="application/json"
+            ),
+            "environment_name": "GOOGLE_APPLICATION_CREDENTIALS",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    assert result["environment_name"] == "GOOGLE_APPLICATION_CREDENTIALS"
+    assert result["size"] == len(raw)
+    assert result["secret_ref"]["manager"] == "harness_environment_file"
+    assert result["secret_ref"]["key"]
+    assert raw.decode() not in response.content.decode()
+
+    from simulate.models import HarnessCredentialFile
+
+    record = HarnessCredentialFile.objects.get(id=result["secret_ref"]["key"])
+    assert raw.decode() not in record.encrypted_content
+    assert record.get_content() == raw
+
+
+@pytest.mark.django_db
+def test_harness_job_adjustment_is_validated_and_forwarded(user):
+    # Kept endpoint (base): a validated adjustment is forwarded to the sandbox
+    # client verbatim.
+    client = APIClient()
+    client.force_authenticate(user=user)
+    expected = {
+        "job": {"job_id": "job-1"},
+        "status": {"stage": "generating_scenarios"},
+        "adjustments": [{"status": "pending"}],
+    }
+    payload = {
+        "instruction": "Add 10 more scenarios covering payment failures",
+        "client_request_id": "browser-1",
+    }
+
+    with patch(
+        "simulate.views.harness_job.HarnessSandboxClient.adjust",
+        return_value=expected,
+    ) as adjust:
+        response = client.post(
+            "/simulate/api/harness-jobs/job-1/adjust/", payload, format="json"
+        )
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    adjust.assert_called_once_with("job-1", payload)
+
+
+@pytest.mark.django_db
+def test_harness_job_adjustment_rejects_empty_instruction(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/job-1/adjust/",
+        {"instruction": "   "},
+        format="json",
+    )
+
+    assert response.status_code == 400
