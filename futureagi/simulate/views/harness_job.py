@@ -8,6 +8,7 @@ from rest_framework.response import Response
 
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
+    HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
     HarnessSecretFileUploadResponseSerializer,
@@ -235,6 +236,21 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def cancel(self, request, pk=None):
         try:
             return Response(self._client().cancel(str(pk)))
+        except HarnessSandboxRejected as exc:
+            return Response({"detail": str(exc)}, status=exc.status_code)
+        except HarnessSandboxUnavailable as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+    @validated_request(
+        request_serializer=HarnessJobAdjustmentSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def adjust(self, request, pk=None):
+        try:
+            return Response(self._client().adjust(str(pk), request.validated_data))
         except HarnessSandboxRejected as exc:
             return Response({"detail": str(exc)}, status=exc.status_code)
         except HarnessSandboxUnavailable as exc:

@@ -102,6 +102,9 @@ class HarnessSandboxClient:
     def cancel(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/v1/jobs/{job_id}/cancel")
 
+    def adjust(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/v1/jobs/{job_id}/adjust", json=payload)
+
     def _request(
         self,
         method: str,

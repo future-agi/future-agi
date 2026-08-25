@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 990,
+  "endpointCount": 991,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -2281,11 +2281,17 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/preflight/": [
         "post"
       ],
+      "/simulate/api/harness-jobs/secret-files/": [
+        "post"
+      ],
       "/simulate/api/harness-jobs/sources/": [
         "post"
       ],
       "/simulate/api/harness-jobs/{id}/": [
         "get"
+      ],
+      "/simulate/api/harness-jobs/{id}/adjust/": [
+        "post"
       ],
       "/simulate/api/harness-jobs/{id}/cancel/": [
         "post"
@@ -5610,11 +5616,17 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/preflight/": [
     "post"
   ],
+  "/simulate/api/harness-jobs/secret-files/": [
+    "post"
+  ],
   "/simulate/api/harness-jobs/sources/": [
     "post"
   ],
   "/simulate/api/harness-jobs/{id}/": [
     "get"
+  ],
+  "/simulate/api/harness-jobs/{id}/adjust/": [
+    "post"
   ],
   "/simulate/api/harness-jobs/{id}/cancel/": [
     "post"
