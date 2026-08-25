@@ -4,6 +4,7 @@ import { render, screen } from "src/utils/test-utils";
 import WidgetChart from "../WidgetChart";
 import WidgetPieCharts from "../WidgetPieCharts";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "../constants";
+import { buildBreakdownColorMap } from "../seriesColors";
 
 const h = vi.hoisted(() => ({
   query: { data: null, isPending: false, isError: false, mutate: vi.fn() },
@@ -19,6 +20,17 @@ vi.mock("react-apexcharts", () => ({
       data-testid={`apex-${props.type}`}
       data-series={JSON.stringify(props.series)}
       data-labels={JSON.stringify(props.options?.labels ?? null)}
+      data-colors={JSON.stringify(props.options?.colors ?? null)}
+    />
+  ),
+}));
+
+vi.mock("../ChartLegend", () => ({
+  default: (props) => (
+    <div
+      data-testid="chart-legend"
+      data-items={JSON.stringify(props.items ?? [])}
+      data-colors={JSON.stringify(props.colors ?? [])}
     />
   ),
 }));
@@ -389,5 +401,84 @@ describe("WidgetPieCharts — nothing to draw in any metric", () => {
     expect(
       screen.getByText(/Nothing to chart for this metric/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("WidgetChart — breakdown colors reach Apex and the legend", () => {
+  const pt = (value, hour = 0) => ({
+    timestamp: `2026-07-09T0${hour}:00:00Z`,
+    value,
+  });
+
+  const lineWidget = {
+    id: "w-line",
+    query_config: {
+      metrics: [
+        { name: "Requests", aggregation: "avg" },
+        { name: "Errors", aggregation: "avg" },
+      ],
+      breakdowns: [{ name: "service" }],
+    },
+    chart_config: { chart_type: "line" },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = {
+      data: {
+        result: {
+          metrics: [
+            {
+              name: "Requests",
+              aggregation: "avg",
+              series: [
+                { name: "api-gateway", data: [pt(10), pt(20, 1)] },
+                { name: "web-frontend", data: [pt(30), pt(40, 1)] },
+              ],
+            },
+            {
+              name: "Errors",
+              aggregation: "avg",
+              series: [
+                { name: "api-gateway", data: [pt(1), pt(2, 1)] },
+                { name: "web-frontend", data: [pt(3), pt(4, 1)] },
+              ],
+            },
+          ],
+        },
+      },
+    };
+  });
+
+  it("feeds Apex and ChartLegend the same breakdown-aware colors", () => {
+    render(<WidgetChart widget={lineWidget} globalDateRange={null} />);
+
+    const names = [
+      "Requests / api-gateway (avg)",
+      "Requests / web-frontend (avg)",
+      "Errors / api-gateway (avg)",
+      "Errors / web-frontend (avg)",
+    ];
+    const expected = buildBreakdownColorMap(
+      [
+        { name: names[0], breakdownName: "api-gateway", metricIndex: 0 },
+        { name: names[1], breakdownName: "web-frontend", metricIndex: 0 },
+        { name: names[2], breakdownName: "api-gateway", metricIndex: 1 },
+        { name: names[3], breakdownName: "web-frontend", metricIndex: 1 },
+      ],
+      { isDark: false },
+    );
+    const expectedColors = names.map((name) => expected[name]);
+
+    const apexColors = JSON.parse(
+      screen.getByTestId("apex-line").getAttribute("data-colors"),
+    );
+    expect(apexColors).toEqual(expectedColors);
+
+    const legend = screen.getByTestId("chart-legend");
+    expect(JSON.parse(legend.getAttribute("data-items"))).toEqual(names);
+    expect(JSON.parse(legend.getAttribute("data-colors"))).toEqual(apexColors);
   });
 });
