@@ -226,6 +226,24 @@ class TestProvisionRunTest:
         call = CallExecution.objects.get(id=call_ids[0])
         assert call.simulation_call_type == CallExecution.SimulationCallType.VOICE
 
+    def test_provision_accepts_alk_chat_alias_as_text(self, auth_client):
+        resp = self._provision(
+            auth_client,
+            name="sdk-chat-e2e",
+            modality="chat",
+            personas=[{"name": "Mina", "situation": "check account status"}],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert (
+            run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.TEXT
+        )
+
+        _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.simulation_call_type == CallExecution.SimulationCallType.TEXT
+
     def test_provisioned_run_test_batches_one_call_per_persona(self, auth_client):
         resp = self._provision(
             auth_client,

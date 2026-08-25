@@ -65,6 +65,11 @@ services:
       ALK_SANDBOX_SOURCE_ROOTS: ${ALK_HOST_WORKSPACE_ROOT:?set ALK_HOST_WORKSPACE_ROOT to the directory containing agent repositories}
       ALK_SANDBOX_PATH_MAP: ${ALK_HOST_WORKSPACE_ROOT}=${ALK_HOST_WORKSPACE_ROOT}
       ALK_SANDBOX_UPLOAD_ROOT: ${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-uploads
+      # A local developer laptop runs the full platform and Docker workloads together. Keep
+      # hosted-validation jobs sequential by default so two simultaneous voice/model stacks do
+      # not starve the sandbox status API or Docker daemon. Hosted deployments override this
+      # according to their per-sandbox resource envelope.
+      ALK_SANDBOX_MAX_CONCURRENCY: ${ALK_SANDBOX_MAX_CONCURRENCY:-1}
       ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-claude-sonnet-4-6}
       CLOUD_ML_REGION: ${CLOUD_ML_REGION:-global}
       # The sandbox reports canonical run events/results to the platform. Keep
