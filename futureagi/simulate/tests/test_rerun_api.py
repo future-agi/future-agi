@@ -395,6 +395,8 @@ class TestCallExecutionRerunView:
 class TestRepositoryRunAgainView:
     """The simulation header and grid must share the repository lifecycle."""
 
+    URL_TEMPLATE = "/simulate/test-executions/{}/rerun-calls/"
+
     @patch("simulate.views.run_test._voice_sim_gate_response", return_value=None)
     @patch(
         "simulate.services.harness_credentials.credentials_for_rerun",
