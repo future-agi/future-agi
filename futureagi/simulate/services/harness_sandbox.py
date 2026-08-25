@@ -75,6 +75,9 @@ class HarnessSandboxClient:
     def get(self, job_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/jobs/{job_id}")
 
+    def rerun(self, job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/v1/jobs/{job_id}/rerun", json=payload)
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         return self._request("POST", f"/v1/jobs/{job_id}/cancel")
 

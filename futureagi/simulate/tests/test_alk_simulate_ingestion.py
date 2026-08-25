@@ -18,11 +18,13 @@ from unittest.mock import patch
 import pytest
 
 from model_hub.models.choices import StatusType
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     RunTest,
     Scenarios,
     SimulatorAgent,
+    SimulateEvalConfig,
 )
 from simulate.models.test_execution import (
     CallExecution,
@@ -225,6 +227,24 @@ class TestProvisionRunTest:
         _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
         call = CallExecution.objects.get(id=call_ids[0])
         assert call.simulation_call_type == CallExecution.SimulationCallType.VOICE
+
+    def test_provision_accepts_alk_chat_alias_as_text(self, auth_client):
+        resp = self._provision(
+            auth_client,
+            name="sdk-chat-e2e",
+            modality="chat",
+            personas=[{"name": "Mina", "situation": "check account status"}],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert (
+            run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.TEXT
+        )
+
+        _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.simulation_call_type == CallExecution.SimulationCallType.TEXT
 
     def test_provisioned_run_test_batches_one_call_per_persona(self, auth_client):
         resp = self._provision(
@@ -649,11 +669,74 @@ class TestResultIngest:
         execution = SimTestExecution.objects.get(id=test_execution_id)
         assert call.call_metadata["eval_started"] is True
         assert call.call_metadata["eval_completed"] is True
+        assert len(call.eval_outputs) == 1
+        direct_result = next(iter(call.eval_outputs.values()))
+        assert direct_result == {
+            "name": "ride_booked",
+            "output": "Failed",
+            "output_type": "Pass/Fail",
+            "reason": "",
+            "status": "completed",
+            "source": "harness",
+            "kind": "checkpoint",
+            "platform_template": "",
+        }
         assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
         assert execution.completed_at is not None
         assert execution.total_calls == 1
         assert execution.completed_calls == 1
         assert execution.failed_calls == 0
+
+    def test_platform_judgement_is_linked_to_run_eval_config_and_output(
+        self, auth_client, run_test
+    ):
+        template = EvalTemplate.objects.create(
+            name="alk-platform-check",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            owner="user",
+            eval_type="llm",
+            output_type_normalized="pass_fail",
+        )
+        _, call_ids = _start_and_batch(auth_client, run_test)
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [
+                        {
+                            "name": "response_wording",
+                            "kind": "eval",
+                            "passed": True,
+                            "reason": "matched the required response",
+                            "platform_template": template.name,
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        config = SimulateEvalConfig.objects.get(
+            run_test=run_test,
+            eval_template=template,
+            name="response_wording",
+        )
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.eval_outputs[str(config.id)] == {
+            "name": "response_wording",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "reason": "matched the required response",
+            "status": "completed",
+            "source": "harness",
+            "kind": "eval",
+            "platform_template": template.name,
+        }
 
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
@@ -2007,6 +2090,7 @@ class TestAlkVoiceCsatScoring:
 
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 8.0
+        assert call.call_metadata["csat_status"] == "completed"
         # eval-derived overall_score must not be clobbered
         assert call.overall_score == 3.0
 
@@ -2026,6 +2110,7 @@ class TestAlkVoiceCsatScoring:
         scorer.assert_not_called()
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 6.0
+        assert call.call_metadata["csat_status"] == "completed"
 
     def test_seeds_overall_score_when_unset(self, auth_client, run_test):
         from simulate.tasks import alk_sim
@@ -2042,6 +2127,23 @@ class TestAlkVoiceCsatScoring:
         call.refresh_from_db()
         assert call.conversation_metrics_data["csat_score"] == 7.0
         assert call.overall_score == 7.0
+        assert call.call_metadata["csat_status"] == "completed"
+
+    def test_failed_scorer_is_durable_and_retryable(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=None),
+            pytest.raises(RuntimeError, match="returned no result"),
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "failed"
+        assert "returned no result" in call.call_metadata["csat_error"]
+        assert not (call.conversation_metrics_data or {}).get("csat_score")
 
 
 def test_alk_sim_task_module_registered_for_worker():
