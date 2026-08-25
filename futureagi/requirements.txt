@@ -462,8 +462,10 @@ httpx-sse==0.4.1
     # via
     #   langchain-community
     #   mcp
-httpx-ws==0.9.0
-    # via daytona
+httpx-ws==0.7.2
+    # via
+    #   core-backend (pyproject.toml)
+    #   daytona
 huggingface-hub==0.33.1
     # via
     #   datasets
@@ -1429,6 +1431,7 @@ uritemplate==4.2.0
     # via drf-yasg
 urllib3==2.7.0
     # via
+    #   core-backend (pyproject.toml)
     #   botocore
     #   clickhouse-connect
     #   daytona

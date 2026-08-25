@@ -60,7 +60,7 @@ HOSTED_RUNTIME_CATALOG = {
     "binaries": ["git", "ffmpeg", "docker", "docker-compose"],
 }
 _ENTRYPOINT_SESSION = "alk-harness"
-_ENTRYPOINT_COMMAND_ID_FILE = "/run/futureagi/entrypoint-command-id"
+_ENTRYPOINT_COMMAND_ID_FILE = "/work/.harness/entrypoint-command-id"
 
 
 class GitHubAppTokenProvider:
@@ -361,7 +361,7 @@ class DaytonaHostedGateway:
                         "futureagi.job": str(job.id),
                         "futureagi.attempt": str(attempt.id),
                     },
-                    network_block_all=True,
+                    network_block_all=not allowed_domains,
                     domain_allow_list=",".join(sorted(allowed_domains)) or None,
                     ephemeral=True,
                     ttl_minutes=ttl_minutes,
@@ -374,7 +374,7 @@ class DaytonaHostedGateway:
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
             sandbox.process.exec(
                 "install -d -o svc-control -g svc-control -m 0700 "
-                "/work /work/artifacts /run/futureagi",
+                "/work /work/.harness",
                 timeout=30,
             )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
@@ -384,21 +384,21 @@ class DaytonaHostedGateway:
             )
             sandbox.fs.upload_file(
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
-                "/run/futureagi/secrets.json",
+                "/work/.harness/secrets.json",
             )
             sandbox.fs.upload_file(
                 json.dumps(
                     capability.document, sort_keys=True, separators=(",", ":")
                 ).encode(),
-                "/run/futureagi/capabilities.json",
+                "/work/.harness/capabilities.json",
             )
             prepared = sandbox.process.exec(
                 "tar -xzf /work/source.tar.gz -C /work && "
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source && "
                 "chmod -R a-w /work/source && "
-                "chmod 0600 /work/job.json /run/futureagi/secrets.json "
-                "/run/futureagi/capabilities.json",
+                "chmod 0600 /work/job.json /work/.harness/secrets.json "
+                "/work/.harness/capabilities.json",
                 timeout=120,
             )
             if prepared.exit_code:
@@ -461,10 +461,27 @@ class DaytonaHostedGateway:
             sandbox.fs.download_file(_ENTRYPOINT_COMMAND_ID_FILE).decode().strip()
         )
         command = sandbox.process.get_session_command(_ENTRYPOINT_SESSION, command_id)
-        return {
+        observation: dict[str, Any] = {
             "exit_code": command.exit_code,
             "status": getattr(command, "status", None),
+            "logs": "",
         }
+        if command.exit_code is not None:
+            # Capture the guest's combined stdout/stderr before the sandbox is
+            # torn down, so crashes are diagnosable without keeping sandboxes.
+            try:
+                logs = sandbox.process.get_session_command_logs(
+                    _ENTRYPOINT_SESSION, command_id
+                )
+                text = getattr(logs, "output", None) or "\n".join(
+                    part
+                    for part in (getattr(logs, "stdout", ""), getattr(logs, "stderr", ""))
+                    if part
+                )
+                observation["logs"] = (text or "")[-8000:]
+            except Exception:  # noqa: BLE001
+                observation["logs"] = ""
+        return observation
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from daytona import DaytonaNotFoundError
@@ -491,7 +508,7 @@ class DaytonaHostedGateway:
             )
         sandbox.fs.upload_file(
             json.dumps({"reason": reason}, separators=(",", ":")).encode(),
-            "/run/futureagi/cancel.json",
+            "/work/.harness/cancel.json",
         )
         sandbox.process.exec(
             "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
@@ -552,6 +569,7 @@ class DaytonaHostedGateway:
                 "stage": "running",
                 "code": "guest_crashed",
                 "message": f"guest entrypoint exited {exit_code}",
+                "details": {"guest_log_tail": observation.get("logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -571,6 +589,7 @@ class DaytonaHostedGateway:
                 "stage": "uploading_artifacts",
                 "code": "terminal_delivery_incomplete",
                 "message": "guest exited without an acknowledged terminal stream",
+                "details": {"guest_log_tail": observation.get("logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(

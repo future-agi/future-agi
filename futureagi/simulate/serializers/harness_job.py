@@ -193,6 +193,12 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     metadata = serializers.DictField(default=dict)
 
     def validate(self, attrs):
+        # ``default=dict`` stores a literal ``{}`` for omitted nested objects,
+        # which skips the child field defaults. Re-run the child serializer so
+        # runtime/security/retry always carry their full defaults.
+        for name in ("runtime", "security", "retry"):
+            if not attrs.get(name):
+                attrs[name] = self.fields[name].run_validation({})
         runtime = attrs["runtime"]
         connector = attrs["agent"]["connector"]
         if connector in {"livekit", "vapi", "retell", "auto"} and (
