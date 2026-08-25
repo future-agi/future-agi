@@ -3,6 +3,20 @@ from __future__ import annotations
 from rest_framework import serializers
 
 
+RUNNER_RESERVED_ENVIRONMENT = {
+    "DOCKER_HOST",
+    "FI_API_KEY",
+    "FI_BASE_URL",
+    "FI_SECRET_KEY",
+    "HARNESS_PLATFORM_API_KEY",
+    "HARNESS_PLATFORM_SECRET_KEY",
+    "HARNESS_PLATFORM_URL",
+    "HOME",
+    "PATH",
+    "PYTHONPATH",
+}
+
+
 class SecretReferenceSerializer(serializers.Serializer):
     manager = serializers.ChoiceField(choices=("platform-vault",))
     key = serializers.CharField(max_length=255)
@@ -46,6 +60,10 @@ class HarnessSourceSerializer(serializers.Serializer):
         elif kind == "remote" and not attrs.get("endpoint"):
             raise serializers.ValidationError(
                 {"endpoint": "required for remote sources"}
+            )
+        if set(attrs.get("environment_values", {})) & set(attrs.get("secret_refs", {})):
+            raise serializers.ValidationError(
+                "an environment variable cannot be both uploaded and a secret reference"
             )
         return attrs
 
@@ -198,3 +216,8 @@ class HarnessJobActionSerializer(serializers.Serializer):
 
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):
     pass
+class HarnessSourceUploadResponseSerializer(serializers.Serializer):
+    source_id = serializers.UUIDField()
+    name = serializers.CharField()
+    file_count = serializers.IntegerField()
+    total_bytes = serializers.IntegerField()

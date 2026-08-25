@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -30,6 +31,8 @@ from simulate.services.hosted_harness import (
     register_attempt,
     request_cancellation,
 )
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
+from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 HOSTED_ENGINE_CATALOG = {
     "postgres": {
@@ -148,6 +151,8 @@ class HostedSourceAcquirer:
         source = job.payload["source"]
         if source["kind"] == "remote":
             return _empty_source_archive(), ""
+        if source["kind"] == "archive":
+            return _load_source_archive(job), ""
         if source["kind"] != "github":
             raise HostedHarnessError(
                 "archive_source_not_configured",
@@ -609,3 +614,98 @@ def _empty_source_archive() -> bytes:
         info.mode = 0o555
         tar.addfile(info)
     return archive.getvalue()
+
+
+def _source_object_key(organization_id, source_id: str) -> str:
+    return f"harness-sources/{organization_id}/{source_id}.tar.gz"
+
+
+def _safe_source_member(raw_path: str) -> str:
+    """Return a repo-relative POSIX path, rejecting traversal/absolute paths."""
+    candidate = str(raw_path).strip().lstrip("/")
+    if not candidate or ".." in candidate.split("/") or candidate.startswith("/"):
+        raise HostedHarnessError(
+            "source_path_invalid",
+            f"invalid source path: {raw_path!r}",
+            status_code=400,
+        )
+    return candidate
+
+
+def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:
+    """Pack an uploaded folder into a `source/`-rooted tar.gz in object storage.
+
+    Returns the descriptor the caller echoes to the client. The resulting
+    `source_id` is used later as `source.archive_artifact_id` and resolved by
+    `HostedSourceAcquirer` for `source.kind == "archive"`.
+    """
+    source_id = str(uuid.uuid4())
+    archive = io.BytesIO()
+    total = 0
+    seen: set[str] = set()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        for uploaded, raw_path in zip(files, paths, strict=True):
+            relative = _safe_source_member(raw_path)
+            if relative in seen:
+                raise HostedHarnessError(
+                    "source_path_duplicate",
+                    f"duplicate source path: {relative}",
+                    status_code=400,
+                )
+            seen.add(relative)
+            data = uploaded.read()
+            total += len(data)
+            info = tarfile.TarInfo(f"source/{relative}")
+            info.size = len(data)
+            info.mode = 0o755 if data[:2] == b"#!" else 0o644
+            tar.addfile(info, io.BytesIO(data))
+    body = archive.getvalue()
+    max_bytes = getattr(settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024)
+    if len(body) > max_bytes:
+        raise HostedHarnessError(
+            "source_archive_too_large",
+            "compressed source exceeds the hosted source limit",
+            status_code=413,
+        )
+    client = get_storage_client()
+    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=_source_object_key(organization.id, source_id),
+        data=io.BytesIO(body),
+        length=len(body),
+        content_type="application/gzip",
+    )
+    return {
+        "source_id": source_id,
+        "name": (name or "uploaded-agent")[:255],
+        "file_count": len(files),
+        "total_bytes": total,
+    }
+
+
+def _load_source_archive(job: HostedHarnessJob) -> bytes:
+    source_id = str(job.payload["source"].get("archive_artifact_id") or "")
+    if not source_id:
+        raise HostedHarnessError(
+            "archive_artifact_missing",
+            "archive source requires archive_artifact_id",
+            status_code=422,
+        )
+    key = _source_object_key(job.organization_id, source_id)
+    response = None
+    try:
+        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
+        return response.read()
+    except HostedHarnessError:
+        raise
+    except Exception as exc:
+        raise HostedHarnessError(
+            "archive_source_not_found",
+            "uploaded source archive was not found",
+            status_code=422,
+        ) from exc
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()

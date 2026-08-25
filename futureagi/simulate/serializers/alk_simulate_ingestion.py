@@ -207,7 +207,7 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
 
     name = serializers.CharField(max_length=255)
     modality = serializers.ChoiceField(
-        choices=("text", "voice"), required=False, default="text"
+        choices=("text", "chat", "voice"), required=False, default="text"
     )
     description = serializers.CharField(required=False, allow_blank=True)
     personas = ALKSimulateProvisionPersonaSerializer(many=True, required=False)
@@ -218,6 +218,11 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
     def validate(self, attrs):
+        # ALK contracts call conversational text agents "chat" while the
+        # platform's persisted AgentDefinition vocabulary calls them "text".
+        # Accept both at this boundary and keep one canonical stored value.
+        if attrs.get("modality") == "chat":
+            attrs["modality"] = "text"
         has_personas = bool(attrs.get("personas"))
         has_scenarios = bool(attrs.get("scenario_ids"))
         if has_personas == has_scenarios:

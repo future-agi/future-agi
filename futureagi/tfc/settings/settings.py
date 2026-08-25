@@ -645,6 +645,11 @@ INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
 # Hosted ALK sandbox gateway
 HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
+# Execution backend for hosted harness jobs: "daytona" (platform drives the
+# Daytona sandbox) or "sandbox" (proxy to an out-of-process ALK sandbox server).
+HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "daytona")
+ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
+ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
