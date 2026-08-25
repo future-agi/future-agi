@@ -82,7 +82,7 @@ class FilterCase:
 # ---------- SYSTEM_METRIC leaves (per filter_type × filter_op) ---------------
 
 _DATETIME_GAP = "parse_time_range supports gt/lt/between only"
-_AGG_GAP = "session/trace aggregate HAVING supports comparison ops only"
+_AGG_GAP = "in/not_in not a valid number filter_op (serializer rejects → 400)"
 
 
 def _sm_number_leaves():
@@ -793,9 +793,9 @@ def _global_annotator_leaves(annotator_user_id: str):
 
 
 def _session_aggregate_leaves():
-    # Session aggregates sum over ROOT spans (session_list restricts the inner
-    # scan to parent_span_id IS NULL). HAVING supports only comparison ops;
-    # between/in/nulls compile to 0=1 → contract_gap.
+    # Session aggregates sum over ROOT spans (parent_span_id IS NULL). HAVING
+    # supports comparison, between/not_between and null ops; in/not_in stay gaps
+    # (serializer rejects them for number filter_type).
     sess = {"only_targets": ("sessions",)}
     gap = {"only_targets": ("sessions",), "contract_gap": _AGG_GAP}
 
@@ -816,19 +816,20 @@ def _session_aggregate_leaves():
         ("total_tokens", "equals", 20, lambda g: tokens(g) == 20, sess),
         ("traces_count", "equals", 3, lambda g: traces(g) == 3, sess),
         ("traces_count", "greater_than", 2, lambda g: traces(g) > 2, sess),
-        # gaps
-        ("total_cost", "between", [0.04, 0.2], lambda g: 0.04 <= cost(g) <= 0.2, gap),
+        # between/not_between + null ops now handled in session HAVING.
+        ("total_cost", "between", [0.04, 0.2], lambda g: 0.04 <= cost(g) <= 0.2, sess),
         (
             "total_cost",
             "not_between",
             [0.04, 0.2],
             lambda g: not (0.04 <= cost(g) <= 0.2),
-            gap,
+            sess,
         ),
+        ("total_tokens", "is_not_null", None, lambda g: True, sess),
+        ("total_tokens", "is_null", None, lambda g: False, sess),
+        # gaps: serializer rejects in/not_in for number type (400s).
         ("traces_count", "in", [3], lambda g: traces(g) in (3,), gap),
         ("traces_count", "not_in", [3], lambda g: traces(g) not in (3,), gap),
-        ("total_tokens", "is_not_null", None, lambda g: True, gap),
-        ("total_tokens", "is_null", None, lambda g: False, sess),
     ]
     return [
         (

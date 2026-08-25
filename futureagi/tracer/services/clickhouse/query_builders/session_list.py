@@ -305,6 +305,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         Returns:
             A ``(query_string, params)`` tuple returning a single count.
         """
+        # Bind the time window even if build() hasn't run, so this method is
+        # self-contained (its SQL references %(start_date)s/%(end_date)s).
+        if self.start_date is None:
+            self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
         if not self.has_having_filters():
             return self._build_simple_count_query()
         return self._build_aggregated_count_query()
@@ -351,10 +357,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         )
         extra_where, extra_params = fb.translate(span_filters)
 
-        params = dict(self.params)
-        params.update(extra_params)
 
         having_clauses = self._build_having_clauses()
+
+        params = dict(self.params)
+        params.update(extra_params)
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
@@ -785,9 +792,31 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         ){where_clause}"""
 
     def _build_having_clauses(self) -> str:
-        """Build HAVING clause fragments for aggregate-level filters."""
+        """Build HAVING fragments for aggregate/message filters.
+
+        These columns only exist post-GROUP BY, so the set of operators handled
+        must track ClickHouseFilterBuilder (the WHERE-side builder). Case-folding
+        is not mirrored: message equals/in are case-sensitive exact matches (the
+        value picker returns exact strings) while contains/starts/ends use ILIKE.
+        """
         conditions: list[str] = []
-        param_counter = 900  # Use high numbers to avoid conflicts
+        param_counter = 900  # `having_` prefix guards collisions; 900 is cosmetic
+
+        def _next_param() -> str:
+            nonlocal param_counter
+            param_counter += 1
+            return f"having_{param_counter}"
+
+        def _in_clause(ch_col: str, filter_op: str, filter_value: Any) -> str:
+            """IN/NOT IN with empty-set semantics: `in []` → none, `not_in []` → all."""
+            values = filter_value if isinstance(filter_value, list) else [filter_value]
+            values = [v for v in values if v is not None]
+            if not values:
+                return "0 = 1" if filter_op == "in" else "1 = 1"
+            param_name = _next_param()
+            self.params[param_name] = tuple(values)
+            sql_op = "IN" if filter_op == "in" else "NOT IN"
+            return f"{ch_col} {sql_op} %({param_name})s"
 
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
@@ -812,6 +841,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                         else f"({ch_col} IS NOT NULL AND {ch_col} != '')"
                     )
                     continue
+                # Multi-select picker sends in/not_in with exact message strings.
+                if filter_op in ("in", "not_in"):
+                    conditions.append(_in_clause(ch_col, filter_op, filter_value))
+                    continue
                 text_op = {
                     "equals": "=",
                     "not_equals": "!=",
@@ -823,8 +856,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 if text_op is None:
                     conditions.append("0 = 1")
                     continue
-                param_counter += 1
-                param_name = f"having_{param_counter}"
+                param_name = _next_param()
                 if filter_op in ("contains", "not_contains"):
                     filter_value = f"%{filter_value}%"
                 elif filter_op == "starts_with":
@@ -833,6 +865,29 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     filter_value = f"%{filter_value}"
                 self.params[param_name] = filter_value
                 conditions.append(f"{ch_col} {text_op} %({param_name})s")
+                continue
+
+            # Numeric aggregate columns.
+            if filter_op in ("is_null", "is_not_null"):
+                conditions.append(
+                    f"{ch_col} IS NULL"
+                    if filter_op == "is_null"
+                    else f"{ch_col} IS NOT NULL"
+                )
+                continue
+            # serializer rejects number in/not_in (400); kept for WHERE-side parity.
+            if filter_op in ("in", "not_in"):
+                conditions.append(_in_clause(ch_col, filter_op, filter_value))
+                continue
+            if filter_op in ("between", "not_between"):
+                if not isinstance(filter_value, list) or len(filter_value) != 2:
+                    conditions.append("0 = 1")
+                    continue
+                lo, hi = _next_param(), _next_param()
+                self.params[lo] = filter_value[0]
+                self.params[hi] = filter_value[1]
+                sql_op = "BETWEEN" if filter_op == "between" else "NOT BETWEEN"
+                conditions.append(f"{ch_col} {sql_op} %({lo})s AND %({hi})s")
                 continue
 
             op_map = {
@@ -848,8 +903,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 conditions.append("0 = 1")
                 continue
 
-            param_counter += 1
-            param_name = f"having_{param_counter}"
+            param_name = _next_param()
             self.params[param_name] = filter_value
             conditions.append(f"{ch_col} {op} %({param_name})s")
 
