@@ -232,6 +232,7 @@ class ALKSimulateIngestionViewSet(ViewSet):
                 run_test,
                 scenario_ids=payload.get("scenario_ids") or None,
                 simulator_agent=simulator_agent,
+                harness_job_id=payload.get("harness_job_id"),
             )
         except ALKSimulateIngestionError as e:
             return self.gm.bad_request(str(e))
