@@ -27,11 +27,17 @@ import {
   createHarnessJob,
   listHarnessJobs,
   preflightHarnessJob,
+  uploadHarnessSecretFile,
   uploadHarnessSource,
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
 
 import { parseDotEnv } from "./dotenv";
+import {
+  credentialValue,
+  mergePastedCredentials,
+  updateCredential,
+} from "./credentialValues";
 import { errorMessage, readable, stages } from "./harnessShared";
 import { prepareSourceFolder } from "./sourceUpload";
 
@@ -144,6 +150,14 @@ export default function HarnessCreate() {
   const [githubInstallationId, setGithubInstallationId] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
   const [preflight, setPreflight] = useState(null);
+  // A changed input does not invalidate what preflight already told us — it just means the
+  // answer may be out of date. Hiding the panel loses the findings the user was reading.
+  const [preflightDirty, setPreflightDirty] = useState(false);
+  // A credential FILE cannot travel as an environment value. It is uploaded on its own and
+  // referenced by an opaque handle, so the contents never reach a job body, log or artifact.
+  const [secretFileRefs, setSecretFileRefs] = useState({});
+  const [secretFileUploads, setSecretFileUploads] = useState({});
+  const [uploadingSecretFile, setUploadingSecretFile] = useState(false);
   const [configurationValues, setConfigurationValues] = useState({});
   const [environmentValues, setEnvironmentValues] = useState({});
   const [environmentText, setEnvironmentText] = useState("");
@@ -155,7 +169,7 @@ export default function HarnessCreate() {
   // Switching source invalidates a preflight taken against the other one.
   const selectSource = (mode) => {
     setSourceMode(mode);
-    setPreflight(null);
+    setPreflightDirty(Boolean(preflight));
   };
 
   const sourcePayload = () => {
@@ -171,17 +185,56 @@ export default function HarnessCreate() {
     };
   };
 
+  const uploadCredentialFile = async (environmentName, file) => {
+    if (!file) return;
+    setUploadingSecretFile(true);
+    setEnvironmentError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("environment_name", environmentName);
+      const uploaded = await uploadHarnessSecretFile(formData);
+      setSecretFileRefs((existing) => ({
+        ...existing,
+        [environmentName]: uploaded.secret_ref,
+      }));
+      setSecretFileUploads((existing) => ({
+        ...existing,
+        [environmentName]: { name: file.name, size: uploaded.size },
+      }));
+      // A pasted path and an uploaded file are mutually exclusive for the same variable.
+      setEnvironmentValues((existing) => {
+        const next = { ...existing };
+        delete next[environmentName];
+        return next;
+      });
+      setConfigurationValues((existing) => {
+        const next = { ...existing };
+        delete next[environmentName];
+        return next;
+      });
+      setPreflightDirty(Boolean(preflight));
+    } catch (requestError) {
+      setEnvironmentError(errorMessage(requestError));
+    } finally {
+      setUploadingSecretFile(false);
+    }
+  };
+
+  const checkPayload = () => ({
+    ...sourcePayload(),
+    secret_refs: secretFileRefs,
+    connector_config: configurationValues,
+    environment_values: environmentValues,
+  });
+
   const inspect = async () => {
     setChecking(true);
     setError("");
     try {
-      const value = await preflightHarnessJob({
-        ...sourcePayload(),
-        secret_refs: {},
-        connector_config: configurationValues,
-        environment_values: environmentValues,
-      });
+      const value = await preflightHarnessJob(checkPayload());
       setPreflight(value);
+      setPreflightDirty(false);
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -193,13 +246,20 @@ export default function HarnessCreate() {
     setSubmitting(true);
     setError("");
     try {
+      const checked = await preflightHarnessJob(checkPayload());
+      setPreflight(checked);
+      setPreflightDirty(false);
+      if (!checked?.ready_to_submit) {
+        setError(
+          "The runner is not ready to start this run. Review the readiness panel below.",
+        );
+        setSubmitting(false);
+        return;
+      }
       const value = await createHarnessJob({
-        ...sourcePayload(),
+        ...checkPayload(),
         scenario_count: Number(scenarioCount),
         connector: "auto",
-        secret_refs: {},
-        connector_config: configurationValues,
-        environment_values: environmentValues,
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));
@@ -212,10 +272,16 @@ export default function HarnessCreate() {
   const loadEnvironment = (text) => {
     try {
       const values = parseDotEnv(text);
-      setEnvironmentValues(values);
-      setEnvironmentText("");
+      // Merge, never replace: a paste should not silently discard values typed by hand.
+      const merged = mergePastedCredentials(
+        environmentValues,
+        configurationValues,
+        values,
+      );
+      setEnvironmentValues(merged.environmentValues);
+      setConfigurationValues(merged.configurationValues);
       setEnvironmentError("");
-      setPreflight(null);
+      setPreflightDirty(Boolean(preflight));
     } catch (parseError) {
       setEnvironmentError(parseError.message);
     }
@@ -237,7 +303,7 @@ export default function HarnessCreate() {
     event.target.value = "";
     if (!selected.length) return;
     setError("");
-    setPreflight(null);
+    setPreflightDirty(Boolean(preflight));
     setUploadedSource(null);
     let prepared;
     try {
@@ -284,10 +350,12 @@ export default function HarnessCreate() {
       (item) => item.environment_name === name,
     );
     if (requirement?.status !== "missing") return true;
-    if (requirement?.kind === "secret")
-      return Boolean(String(environmentValues[name] || "").trim());
-    if (Object.hasOwn(environmentValues, name)) return true;
-    return Boolean(String(configurationValues[name] || "").trim());
+    if (secretFileRefs[name]) return true;
+    return Boolean(
+      String(
+        credentialValue(environmentValues, configurationValues, name) || "",
+      ).trim(),
+    );
   };
   const unsatisfiedChoices = credentialChoices.filter(
     (choice) =>
@@ -519,7 +587,7 @@ export default function HarnessCreate() {
                         value={githubRepository}
                         onChange={(event) => {
                           setGithubRepository(event.target.value);
-                          setPreflight(null);
+                          setPreflightDirty(Boolean(preflight));
                         }}
                       />
                       <Box
@@ -542,7 +610,7 @@ export default function HarnessCreate() {
                           value={githubVisibility}
                           onChange={(event) => {
                             setGithubVisibility(event.target.value);
-                            setPreflight(null);
+                            setPreflightDirty(Boolean(preflight));
                           }}
                         >
                           <MenuItem value="public">Public</MenuItem>
@@ -639,12 +707,43 @@ export default function HarnessCreate() {
                     >
                       Use values
                     </Button>
+                    <Button
+                      component="label"
+                      variant="outlined"
+                      disabled={uploadingSecretFile}
+                      startIcon={
+                        uploadingSecretFile ? (
+                          <CircularProgress size={16} />
+                        ) : (
+                          <Iconify icon="solar:upload-minimalistic-linear" />
+                        )
+                      }
+                      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                    >
+                      Upload credential file
+                      <Box
+                        component="input"
+                        type="file"
+                        accept="application/json,.json"
+                        onChange={(event) =>
+                          uploadCredentialFile(
+                            "GOOGLE_APPLICATION_CREDENTIALS",
+                            event.target.files?.[0],
+                          )
+                        }
+                        sx={{ display: "none" }}
+                      />
+                    </Button>
                     {Object.keys(environmentValues).length > 0 && (
                       <Button
                         color="inherit"
                         onClick={() => {
                           setEnvironmentValues({});
-                          setPreflight(null);
+                          setConfigurationValues({});
+                          setSecretFileRefs({});
+                          setSecretFileUploads({});
+                          setEnvironmentText("");
+                          setPreflightDirty(Boolean(preflight));
                         }}
                       >
                         Clear
@@ -682,14 +781,20 @@ export default function HarnessCreate() {
                     <Stack direction="row" spacing={1} alignItems="center">
                       <StatusChip
                         status={
-                          requirementsConfigured
-                            ? STATUS_TYPES.PASS
-                            : STATUS_TYPES.RUNNING
+                          // Stale beats ready: a result from before the last edit should not
+                          // claim the run is good to go.
+                          preflightDirty
+                            ? null
+                            : requirementsConfigured
+                              ? STATUS_TYPES.PASS
+                              : STATUS_TYPES.RUNNING
                         }
                         label={
-                          requirementsConfigured
-                            ? "Preflight ready"
-                            : `${requiredInputCount} credential choice${requiredInputCount === 1 ? "" : "s"} needed`
+                          preflightDirty
+                            ? "Something changed — check again"
+                            : requirementsConfigured
+                              ? "Ready to run"
+                              : `${requiredInputCount} credential choice${requiredInputCount === 1 ? "" : "s"} needed`
                         }
                       />
                       <Typography variant="caption" color="text.secondary">
@@ -700,6 +805,36 @@ export default function HarnessCreate() {
                         ).join(", ") || "connector discovered after checkout"}
                       </Typography>
                     </Stack>
+                    {(preflight.packaging?.notes || []).map((note) => (
+                      <Alert key={note} severity="warning" variant="outlined">
+                        {note}
+                      </Alert>
+                    ))}
+                    {(preflight.packaging?.candidates || [])
+                      .flatMap((candidate) =>
+                        (candidate.findings || [])
+                          .filter((finding) => finding.blocking)
+                          .map((finding) => ({ ...finding, path: candidate.path })),
+                      )
+                      .map((finding) => (
+                        <Alert
+                          key={`${finding.path}-${finding.code}`}
+                          severity="error"
+                          variant="outlined"
+                        >
+                          {finding.path}: {finding.message}
+                        </Alert>
+                      ))}
+                    {preflight.packaging?.selected_path && (
+                      <Alert severity="success" variant="outlined">
+                        Will package {preflight.packaging.selected_path}
+                      </Alert>
+                    )}
+                    {Object.entries(secretFileUploads).map(([name, file]) => (
+                      <Alert key={name} severity="success" variant="outlined">
+                        {name}: {file.name} uploaded · mounted per run
+                      </Alert>
+                    ))}
                     {unsatisfiedChoices.map((choice) => (
                       <Alert key={choice.id} severity="info" variant="outlined">
                         {choice.purpose}: choose{" "}
@@ -734,21 +869,27 @@ export default function HarnessCreate() {
                                 : "Configuration value"
                             }
                             type={item.kind === "secret" ? "password" : "text"}
-                            value={
-                              item.kind === "secret"
-                                ? environmentValues[item.environment_name] || ""
-                                : configurationValues[item.environment_name] ||
-                                  ""
-                            }
+                            // One logical value per variable. Reading and writing through the
+                            // helpers keeps it out of both maps at once, which is what left a
+                            // stale entry showing after a paste.
+                            value={credentialValue(
+                              environmentValues,
+                              configurationValues,
+                              item.environment_name,
+                            )}
                             onChange={(event) => {
-                              const setter =
-                                item.kind === "secret"
-                                  ? setEnvironmentValues
-                                  : setConfigurationValues;
-                              setter((existing) => ({
-                                ...existing,
-                                [item.environment_name]: event.target.value,
-                              }));
+                              const next = updateCredential(
+                                environmentValues,
+                                configurationValues,
+                                {
+                                  name: item.environment_name,
+                                  value: event.target.value,
+                                  kind: item.kind,
+                                },
+                              );
+                              setEnvironmentValues(next.environmentValues);
+                              setConfigurationValues(next.configurationValues);
+                              setPreflightDirty(Boolean(preflight));
                             }}
                             helperText={
                               item.kind === "secret"
