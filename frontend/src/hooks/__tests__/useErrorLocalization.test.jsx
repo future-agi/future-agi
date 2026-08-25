@@ -32,7 +32,7 @@ describe("useErrorLocalizationAvailable (TH-7177)", () => {
     expect(result.current).toBe(false);
   });
 
-  it("is unavailable on self-hosted EE", () => {
+  it("is available on licensed self-hosted EE", () => {
     Object.assign(deployment, {
       mode: "ee",
       isCloud: false,
@@ -40,10 +40,10 @@ describe("useErrorLocalizationAvailable (TH-7177)", () => {
       isEE: true,
     });
     const { result } = renderHook(() => useErrorLocalizationAvailable());
-    expect(result.current).toBe(false);
+    expect(result.current).toBe(true);
   });
 
-  it("fails closed while deployment info is still loading (isCloud falsy)", () => {
+  it("fails closed while deployment info is still loading (no mode confirmed)", () => {
     Object.assign(deployment, {
       mode: "oss",
       isCloud: undefined,

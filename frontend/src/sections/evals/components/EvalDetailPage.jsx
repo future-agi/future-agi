@@ -137,7 +137,7 @@ const EvalDetailPage = () => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
-  // TH-7177: Error Localization is cloud-only; off-cloud the control is
+  // TH-7177: Error Localization is unavailable on OSS; there the control is
   // hidden entirely instead of rendering something that cannot run.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed the default model raw and
@@ -1708,7 +1708,7 @@ const EvalDetailPage = () => {
                     />
                   ))}
 
-                {/* Error Localization — cloud-only (TH-7177) */}
+                {/* Error Localization — hidden on OSS (TH-7177) */}
                 {errorLocalizerAvailable &&
                   !isComposite &&
                   evalType !== "code" && (

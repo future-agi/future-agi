@@ -127,7 +127,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
-  // TH-7177: Error Localization is cloud-only; off-cloud the control is
+  // TH-7177: Error Localization is unavailable on OSS; there the control is
   // hidden entirely instead of rendering something that cannot run.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed) — seed the model default raw and
@@ -1729,7 +1729,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 />
               )}
 
-              {/* Error Localization (cloud-only per TH-7177; single-eval concern,
+              {/* Error Localization (hidden on OSS per TH-7177; single-eval concern,
                   LLM/Agent only — code evals don't produce the model traces
                   the feature introspects). */}
               {errorLocalizerAvailable &&

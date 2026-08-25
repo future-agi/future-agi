@@ -118,7 +118,7 @@ export default function EvaluationMappingFormContent({
 }) {
   const [_, setSearchParams] = useSearchParams();
   const theme = useTheme();
-  // TH-7177: Error Localization is cloud-only; hide the control off-cloud.
+  // TH-7177: Error Localization is unavailable on OSS; hide the control there.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   const navigate = useNavigate();
   const model = useWatch({

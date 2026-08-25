@@ -236,9 +236,9 @@ describe("EvalPickerConfigFull — error localization gating (TH-7177)", () => {
     expect(screen.queryByText("Error Localization")).toBeNull();
   });
 
-  it("hides the Error Localization checkbox on self-hosted EE", () => {
+  it("shows the Error Localization checkbox on licensed self-hosted EE", () => {
     Object.assign(deploymentMode, { mode: "ee", isCloud: false, isEE: true });
     renderConfigFull();
-    expect(screen.queryByText("Error Localization")).toBeNull();
+    expect(screen.getByText("Error Localization")).toBeTruthy();
   });
 });
