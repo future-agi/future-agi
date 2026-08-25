@@ -49,6 +49,7 @@ import {
   MIN_WIDGET_HEIGHT,
   DEFAULT_WIDGET_HEIGHT,
   DATE_CHIP_SX,
+  DESCRIPTION_TOOLTIP_SX,
 } from "./constants";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -57,6 +58,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import useIsTruncated from "./hooks/useIsTruncated";
 import {
   DndContext,
   DragOverlay,
@@ -450,6 +452,7 @@ function DraggableWidgetCard({
     data: { widget },
     disabled: isReadOnly,
   });
+  const [descRef, isDescTruncated] = useIsTruncated(widget.description);
 
   const widgetHeight =
     rowHeight ||
@@ -497,76 +500,107 @@ function DraggableWidgetCard({
             overflow: "hidden",
           }}
         >
-          {/* Header row — entire bar is the drag activator */}
+          {/* Header — title row plus description; the block is the drag activator */}
           <div
             {...(isReadOnly ? {} : { ...attributes, ...listeners })}
             style={{
               display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
+              flexDirection: "column",
               marginBottom: 4,
-              minHeight: 24,
               cursor: isReadOnly ? "default" : "grab",
             }}
           >
-            {!isReadOnly && (
-              <Iconify
-                icon="mdi:drag"
-                width={16}
-                sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
-              />
-            )}
-
-            <Typography
-              variant="subtitle2"
-              fontWeight="fontWeightSemiBold"
-              noWrap
-              sx={{
-                flex: 1,
-                cursor: "pointer",
-                "&:hover": { textDecoration: "underline" },
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                minHeight: 24,
               }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() =>
-                navigate(
-                  `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                )
-              }
             >
-              {widget.name}
-            </Typography>
+              {!isReadOnly && (
+                <Iconify
+                  icon="mdi:drag"
+                  width={16}
+                  sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
+                />
+              )}
 
-            {/* Actions */}
-            {!isReadOnly && (
-              <Stack
-                className="widget-actions"
-                direction="row"
-                spacing={0}
+              <Typography
+                variant="subtitle2"
+                fontWeight="fontWeightSemiBold"
+                noWrap
+                sx={{
+                  flex: 1,
+                  cursor: "pointer",
+                  "&:hover": { textDecoration: "underline" },
+                }}
                 onPointerDown={(e) => e.stopPropagation()}
-                sx={{ opacity: 0, transition: "opacity 0.15s" }}
+                onClick={() =>
+                  navigate(
+                    `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                  )
+                }
               >
-                <Tooltip title="Edit">
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      navigate(
-                        `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                      )
-                    }
-                  >
-                    <Iconify icon="mdi:pencil-outline" width={16} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="More">
-                  <IconButton
-                    size="small"
-                    aria-label="Widget options"
-                    onClick={(e) => onMenuOpen(e, widget)}
-                  >
-                    <Iconify icon="mdi:dots-vertical" width={16} />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
+                {widget.name}
+              </Typography>
+
+              {/* Actions */}
+              {!isReadOnly && (
+                <Stack
+                  className="widget-actions"
+                  direction="row"
+                  spacing={0}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  sx={{ opacity: 0, transition: "opacity 0.15s" }}
+                >
+                  <Tooltip title="Edit">
+                    <IconButton
+                      size="small"
+                      onClick={() =>
+                        navigate(
+                          `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                        )
+                      }
+                    >
+                      <Iconify icon="mdi:pencil-outline" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="More">
+                    <IconButton
+                      size="small"
+                      aria-label="Widget options"
+                      onClick={(e) => onMenuOpen(e, widget)}
+                    >
+                      <Iconify icon="mdi:dots-vertical" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              )}
+            </div>
+
+            {widget.description && (
+              <CustomTooltip
+                show={isDescTruncated}
+                title={widget.description}
+                size="small"
+                placement="bottom-start"
+                slotProps={{ tooltip: { sx: DESCRIPTION_TOOLTIP_SX } }}
+              >
+                <Typography
+                  ref={descRef}
+                  variant="caption"
+                  noWrap
+                  sx={{
+                    color: "text.secondary",
+                    pl: isReadOnly ? 0 : "20px",
+                    pr: 1,
+                    mt: 0.25,
+                  }}
+                >
+                  {widget.description}
+                </Typography>
+              </CustomTooltip>
             )}
           </div>
 
@@ -1025,9 +1059,7 @@ export default function DashboardDetailView() {
   // --- Render ---
 
   if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "60vh" }} />;
   }
 
   if (!dashboard) {
@@ -1203,6 +1235,7 @@ export default function DashboardDetailView() {
               fontWeight: 700,
               color: "text.primary",
               lineHeight: 1.3,
+              wordBreak: "break-word",
             },
           }}
         />
@@ -1218,6 +1251,8 @@ export default function DashboardDetailView() {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
               fontSize: "14px",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
             },
           }}
         />

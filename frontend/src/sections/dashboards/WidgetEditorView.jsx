@@ -35,7 +35,6 @@ import {
   Typography,
   useTheme,
   InputAdornment,
-  InputBase,
   CircularProgress,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -65,6 +64,8 @@ import FilterValueLabel, {
 import { useSnackbar } from "src/components/snackbar";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import WidgetDescriptionPopover from "./WidgetDescriptionPopover";
+import useIsTruncated from "./hooks/useIsTruncated";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
@@ -96,6 +97,7 @@ import {
   ALL_AGGREGATIONS,
   PERCENTILE_OPTIONS,
   DATE_PRESETS,
+  DESCRIPTION_TOOLTIP_SX,
 } from "./constants";
 
 const escapeCsvField = (field) => {
@@ -1105,7 +1107,9 @@ export default function WidgetEditorView() {
   const [chartName, setChartName] = useState("");
   const [chartDescription, setChartDescription] = useState("");
   const [editingName, setEditingName] = useState(false);
-  const [editingDesc, setEditingDesc] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
+  const descSlotRef = useRef(null);
+  const [descRef, isDescTruncated] = useIsTruncated(chartDescription);
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
@@ -2072,7 +2076,7 @@ export default function WidgetEditorView() {
     // rejects unknown fields.
     const data = {
       name: chartName.trim() || "Untitled widget",
-      description: chartDescription,
+      description: chartDescription.trim(),
       query_config: buildQueryConfig(),
       chart_config: {
         chart_type: chartType,
@@ -2906,29 +2910,91 @@ export default function WidgetEditorView() {
           </Typography>
         )}
 
-        {/* Inline editable description */}
-        <InputBase
+        {/* Description — a capped preview in the bar; the full text is read
+            and edited in a popover, so the bar can't be blown out by length. */}
+        <Box ref={descSlotRef} sx={{ display: "flex", minWidth: 0 }}>
+          {chartDescription ? (
+            <CustomTooltip
+              show={isDescTruncated}
+              title={chartDescription}
+              size="small"
+              placement="bottom-start"
+              slotProps={{ tooltip: { sx: DESCRIPTION_TOOLTIP_SX } }}
+            >
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={0.5}
+                role={isReadOnly ? undefined : "button"}
+                tabIndex={isReadOnly ? undefined : 0}
+                aria-label={isReadOnly ? undefined : "Edit description"}
+                onClick={() => !isReadOnly && setDescOpen(true)}
+                onKeyDown={(e) => {
+                  if (isReadOnly) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setDescOpen(true);
+                  }
+                }}
+                sx={{
+                  minWidth: 0,
+                  maxWidth: 260,
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: 1,
+                  color: "text.secondary",
+                  cursor: isReadOnly ? "default" : "pointer",
+                  transition: "background-color 0.15s, color 0.15s",
+                  "&:hover": isReadOnly
+                    ? undefined
+                    : { bgcolor: "action.hover", color: "text.primary" },
+                  "&:focus-visible": {
+                    outline: "2px solid",
+                    outlineColor: "primary.main",
+                    outlineOffset: 2,
+                  },
+                }}
+              >
+                <Iconify
+                  icon="mdi:text-box-outline"
+                  width={14}
+                  sx={{ flexShrink: 0 }}
+                />
+                <Typography
+                  ref={descRef}
+                  noWrap
+                  sx={{ fontSize: "13px", minWidth: 0 }}
+                >
+                  {chartDescription}
+                </Typography>
+              </Stack>
+            </CustomTooltip>
+          ) : (
+            !isReadOnly && (
+              <Button
+                size="small"
+                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                onClick={() => setDescOpen(true)}
+                sx={{
+                  flexShrink: 0,
+                  fontSize: "13px",
+                  fontWeight: 400,
+                  color: "text.disabled",
+                  "&:hover": { color: "text.secondary" },
+                }}
+              >
+                Add description
+              </Button>
+            )
+          )}
+        </Box>
+
+        <WidgetDescriptionPopover
+          open={descOpen}
+          anchorEl={descSlotRef.current}
           value={chartDescription}
-          onChange={(e) => setChartDescription(e.target.value)}
-          onClick={() => !isReadOnly && !editingDesc && setEditingDesc(true)}
-          onBlur={() => setEditingDesc(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") setEditingDesc(false);
-          }}
-          readOnly={isReadOnly || !editingDesc}
-          autoFocus={editingDesc}
-          placeholder="+ Add desc..."
-          sx={{
-            minWidth: 140,
-            maxWidth: 200,
-            fontSize: "13px",
-            color: chartDescription ? "text.secondary" : "text.disabled",
-            cursor: isReadOnly ? "default" : editingDesc ? "text" : "pointer",
-            "&:hover": { color: "text.secondary" },
-            "& .MuiInputBase-input": {
-              padding: 0,
-            },
-          }}
+          onChange={setChartDescription}
+          onClose={() => setDescOpen(false)}
         />
 
         {/* Spacer */}
