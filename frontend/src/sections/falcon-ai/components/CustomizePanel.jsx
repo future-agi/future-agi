@@ -1670,7 +1670,10 @@ function ConnectorDetailPanel({
   });
   const readOnlyTools = tools.filter((t) => !interactiveTools.includes(t));
 
-  const isToolEnabled = (tool) => enabledNames.includes(tool.name);
+  const isToolEnabled = (tool) => {
+    if (enabledNames.length === 0 && tool.enabled !== false) return true;
+    return enabledNames.includes(tool.name) || tool.enabled === true;
+  };
 
   return (
     <Box
