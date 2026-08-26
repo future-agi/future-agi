@@ -25,7 +25,12 @@ from django.conf import settings
 from rest_framework import status
 from rest_framework.response import Response
 
-from simulate.models import HostedHarnessJob
+from simulate.models import (
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+    HostedHarnessStageOutput,
+)
 
 
 def get_harness_provider():
@@ -40,6 +45,26 @@ def _organization(request):
     return getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
+
+
+def _validate_secret_refs_daytona(secret_refs: dict) -> None:
+    """Reject secret_refs the Daytona resolver cannot materialize.
+
+    platform-vault target_provider refs keep working.  Any other manager
+    (including harness_environment_file) returns a typed error rather than
+    silently accepting something the resolver will fail on inside the sandbox.
+    """
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    for alias, ref in secret_refs.items():
+        manager = ref.get("manager", "")
+        if manager != "platform-vault":
+            raise HostedHarnessError(
+                "secret_manager_unsupported",
+                f"secret manager {manager!r} for alias {alias!r} is not supported "
+                f"by the daytona provider; use platform-vault target_provider refs",
+                status_code=422,
+            )
 
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
@@ -58,12 +83,55 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             }
             for event in reversed(recent)
         ]
+    # Stage outputs — persisted authoritative snapshots from verified bundle.
+    stage_outputs_qs = HostedHarnessStageOutput.no_workspace_objects.filter(
+        job=job
+    ).order_by("created_at")[:20]
+    stage_outputs = [
+        {
+            "id": str(so.id),
+            "title": so.title,
+            "summary": so.summary,
+            "kind": so.kind,
+            "data": so.data,
+        }
+        for so in stage_outputs_qs
+    ]
+    # Scenarios — bounded to job.scenario_count.
+    scenario_regs = list(
+        HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        .select_related("scenario")
+        .order_by("created_at")[: job.scenario_count]
+    )
+    scenarios = [
+        {
+            "scenario_key": reg.scenario_key,
+            "scenario_id": str(reg.scenario_id),
+            "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
+            "instruction": (
+                getattr(reg.scenario, "prompt", None) or ""
+            ) if reg.scenario else None,
+            "use_case": (
+                getattr(reg.scenario, "use_case", None) or ""
+            ) if reg.scenario else None,
+            "call_execution_id": str(reg.call_execution_id) if reg.call_execution_id else None,
+            "status": _scenario_status(reg),
+        }
+        for reg in scenario_regs
+    ]
+    # Receipts — bounded.
+    receipt_qs = HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job
+    ).order_by("created_at")[: job.scenario_count]
+    receipts = [r.body for r in receipt_qs]
     return {
         "job": {
             "job_id": str(job.id),
             "run_id": str(job.run_id),
             "source": job.payload["source"],
             "metadata": job.payload.get("metadata", {}),
+            "run_test_id": str(job.run_test_id) if job.run_test_id else None,
+            "test_execution_id": str(job.test_execution_id) if job.test_execution_id else None,
         },
         "status": {
             "state": job.state,
@@ -77,7 +145,20 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "failure": job.failure,
         },
         "events": events,
+        "stage_outputs": stage_outputs,
+        "scenarios": scenarios,
+        "receipts": receipts,
     }
+
+
+def _scenario_status(reg: HostedHarnessScenario) -> str | None:
+    """Derive a human-readable status for a scenario registration."""
+    if not reg.call_execution_id:
+        return "registered"
+    receipt = HostedHarnessReceipt.no_workspace_objects.filter(
+        job_id=reg.job_id, scenario_id=reg.id
+    ).values_list("status", flat=True).first()
+    return receipt or "running"
 
 
 class DaytonaHarnessProvider:
@@ -90,6 +171,7 @@ class DaytonaHarnessProvider:
             HostedHarnessError,
             create_hosted_job,
         )
+        from simulate.services.hosted_harness_gateway import _validate_egress_domains
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
         organization = _organization(request)
@@ -104,6 +186,14 @@ class DaytonaHarnessProvider:
                 {"detail": "Idempotency-Key header is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Validate egress and secret refs at admission.
+        try:
+            _validate_egress_domains(
+                request.validated_data["security"]["allowed_egress_domains"]
+            )
+            _validate_secret_refs_daytona(request.validated_data["agent"]["secret_refs"])
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
         try:
             job, _ = create_hosted_job(
                 organization,
@@ -138,12 +228,18 @@ class DaytonaHarnessProvider:
         return Response([serialize_job(job) for job in jobs])
 
     def preflight(self, request) -> Response:
+        from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import (
             HOSTED_ENGINE_CATALOG,
             HOSTED_RUNTIME_CATALOG,
+            _validate_egress_domains,
         )
 
         payload = request.validated_data
+        try:
+            _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
         runtime = payload["runtime"]
         return Response(
             {

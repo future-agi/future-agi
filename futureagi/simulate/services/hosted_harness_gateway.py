@@ -297,6 +297,140 @@ class PlatformSecretResolver:
         return resolved
 
 
+_MAX_EGRESS_DOMAINS = 20
+# RFC 1918 / loopback / link-local prefixes that must never appear in egress.
+_PRIVATE_HOST_PATTERNS = re.compile(
+    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost$)"
+)
+
+
+def _validate_egress_domains(domains: list[str]) -> None:
+    """Reject egress lists exceeding cap or containing private/invalid hosts."""
+    if len(domains) > _MAX_EGRESS_DOMAINS:
+        raise HostedHarnessError(
+            "egress_domain_limit_exceeded",
+            f"at most {_MAX_EGRESS_DOMAINS} egress domains allowed, got {len(domains)}",
+            status_code=400,
+        )
+    for domain in domains:
+        if _PRIVATE_HOST_PATTERNS.match(domain):
+            raise HostedHarnessError(
+                "egress_domain_private",
+                f"private/reserved host {domain!r} is not allowed in egress",
+                status_code=400,
+            )
+
+
+def _persist_bundle_stage_outputs(
+    job: HostedHarnessJob, manifest: dict,
+) -> None:
+    """Persist authoritative contract/environment/scenario snapshots from verified bundle."""
+    from simulate.models import HostedHarnessStageOutput
+
+    existing = set(
+        HostedHarnessStageOutput.no_workspace_objects.filter(job=job)
+        .values_list("kind", flat=True)
+    )
+    outputs: list[HostedHarnessStageOutput] = []
+    # Contract stage output — from contract.json referenced in manifest.files.
+    if "contract" not in existing:
+        contract_data = _load_bundle_file(manifest, "contract.json", job)
+        if contract_data is not None:
+            outputs.append(HostedHarnessStageOutput(
+                job=job,
+                title="Contract",
+                summary=contract_data.get("one_liner", "") if isinstance(contract_data, dict) else "",
+                kind="contract",
+                data=contract_data,
+            ))
+    # Environment stage output — bundle runtime/capabilities/seed.
+    if "environment" not in existing:
+        processes = manifest.get("processes") or []
+        capabilities = manifest.get("capabilities") or {}
+        outputs.append(HostedHarnessStageOutput(
+            job=job,
+            title="Environment",
+            summary=manifest.get("name", ""),
+            kind="environment",
+            data={
+                "services": [
+                    process.get("name")
+                    for process in processes
+                    if isinstance(process, dict) and process.get("name")
+                ],
+                "project": manifest.get("name", ""),
+                "managed": True,
+                "overrides": {
+                    capability.get("configuration_name", slug): capability.get("protocol", "")
+                    for slug, capability in capabilities.items()
+                    if isinstance(capability, dict)
+                },
+                "runtime": manifest.get("runtime"),
+                "processes": processes,
+                "capabilities": capabilities,
+                "seed": manifest.get("seed"),
+                "readiness": manifest.get("readiness"),
+            },
+        ))
+    # Scenarios stage output — from scenarios/ directories.
+    if "scenarios" not in existing:
+        scenario_docs = _load_bundle_scenarios(manifest, job)
+        if scenario_docs:
+            scenario_data = [
+                {
+                    **doc,
+                    "name": doc.get("name") or doc.get("scenario_key"),
+                    "use_case": doc.get("use_case") or doc.get("tests") or "",
+                }
+                for doc in scenario_docs
+            ]
+            outputs.append(HostedHarnessStageOutput(
+                job=job,
+                title="Scenarios",
+                summary=f"{len(scenario_data)} pre-authored scenarios",
+                kind="scenarios",
+                data=scenario_data,
+            ))
+    if outputs:
+        HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
+
+
+def _load_bundle_file(manifest: dict, relative_path: str, job: HostedHarnessJob):
+    """Load a JSON file from the resolved bundle directory."""
+    base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
+    if not base:
+        return None
+    source = (job.payload or {}).get("source") or {}
+    repo = source.get("repository") or ""
+    if not repo:
+        return None
+    file_path = Path(base) / repo.replace("/", "__") / relative_path
+    if not file_path.is_file():
+        return None
+    return json.loads(file_path.read_text(encoding="utf-8"))
+
+
+def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
+    """Load scenario.json files from bundle directories."""
+    base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
+    if not base:
+        return []
+    source = (job.payload or {}).get("source") or {}
+    repo = source.get("repository") or ""
+    if not repo:
+        return []
+    bundle_dir = Path(base) / repo.replace("/", "__")
+    scenarios_dir = bundle_dir / "scenarios"
+    if not scenarios_dir.is_dir():
+        return []
+    results = []
+    for scenario_path in sorted(scenarios_dir.iterdir()):
+        scenario_json = scenario_path / "scenario.json"
+        if scenario_json.is_file():
+            results.append(json.loads(scenario_json.read_text(encoding="utf-8")))
+    return results
+
+
 class DaytonaHostedGateway:
     def __init__(self) -> None:
         from daytona import Daytona, DaytonaConfig
@@ -335,6 +469,12 @@ class DaytonaHostedGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        # Verify and acquire bundle before sandbox creation.
+        bundle_archive, bundle_manifest = _bundle_archive_for(job)
+        if bundle_manifest is not None:
+            bundle_digest = bundle_manifest.get("digest") or ""
+            job.bundle_digest = bundle_digest
+            job.save(update_fields=["bundle_digest", "updated_at"])
         secrets_map = PlatformSecretResolver().resolve(job)
         capability = register_attempt(
             job.id,
@@ -343,6 +483,15 @@ class DaytonaHostedGateway:
             snapshot_digest=self.snapshot_digest or None,
         )
         attempt = capability.attempt
+        # Record provenance digests on the attempt.
+        if commit_sha:
+            attempt.source_digest = f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
+        if bundle_manifest:
+            attempt.bundle_digest = bundle_manifest.get("digest") or ""
+        attempt.save(update_fields=["source_digest", "bundle_digest", "updated_at"])
+        # Persist authoritative stage outputs from verified bundle.
+        if bundle_manifest is not None:
+            _persist_bundle_stage_outputs(job, bundle_manifest)
         ttl_seconds = payload["runtime"]["max_duration_seconds"] + 120
         ttl_minutes = max(1, (ttl_seconds + 59) // 60)
         platform_host = urlparse(endpoint_base_url).hostname
@@ -350,6 +499,8 @@ class DaytonaHostedGateway:
         allowed_domains.update(payload["security"]["allowed_egress_domains"])
         if platform_host:
             allowed_domains.add(platform_host)
+        # Egress union validation: cap at 20 user-supplied domains.
+        _validate_egress_domains(payload["security"]["allowed_egress_domains"])
         sandbox = None
         try:
             sandbox = self.client.create(
@@ -387,7 +538,6 @@ class DaytonaHostedGateway:
                 ).encode(),
                 "/run/futureagi/capabilities.json",
             )
-            bundle_archive = _bundle_archive_for(job)
             if bundle_archive is not None:
                 sandbox.fs.upload_file(bundle_archive, "/work/bundle.tar.gz")
             prepared = sandbox.process.exec(
@@ -695,30 +845,70 @@ def _safe_source_member(raw_path: str) -> str:
         )
     return candidate
 
-def _bundle_archive_for(job: HostedHarnessJob) -> bytes | None:
-    """Resolve a pre-authored environment-bundle.v2 for this job's source, gzipped for /work/bundle.
+def _bundle_archive_for(job: HostedHarnessJob) -> tuple[bytes | None, dict | None]:
+    """Resolve and verify a pre-authored environment-bundle.v2 for this job's source.
 
-    Stopgap delivery until in-sandbox bundle authoring lands: a bundle lives at
-    ``ALK_HOSTED_BUNDLE_DIR/<owner>__<repo>/`` (manifest.json + db/ + scenarios/). Returns the
-    tar.gz of that directory's contents, or None when no store is configured or no bundle is
-    registered for the source (the guest then fails at bundle_manifest_missing, unchanged).
+    Returns (tar.gz bytes, manifest dict) or (None, None). Verifies:
+    - Bundle presence (manifest.json exists)
+    - provenance.repository matches source.repository
+    - provenance.commit matches source.commit_sha (if provided)
+    - file hashes in manifest match actual files
     """
+    import hashlib as _hashlib
+
     base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
     if not base:
-        return None
+        return None, None
     source = (job.payload or {}).get("source") or {}
     repo = source.get("repository") or ""
     if not repo:
-        return None
+        return None, None
     bundle_dir = Path(base) / repo.replace("/", "__")
-    if not (bundle_dir / "manifest.json").is_file():
-        return None
+    manifest_path = bundle_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None, None
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # Verify provenance
+    provenance = manifest.get("provenance") or {}
+    prov_repo = provenance.get("repository") or ""
+    if prov_repo and prov_repo != repo:
+        raise HostedHarnessError(
+            "bundle_provenance_repository_mismatch",
+            f"bundle provenance repository {prov_repo!r} does not match "
+            f"source repository {repo!r}",
+            status_code=409,
+        )
+    prov_commit = provenance.get("commit") or ""
+    source_commit = source.get("commit_sha") or ""
+    if prov_commit and source_commit and prov_commit != source_commit:
+        raise HostedHarnessError(
+            "bundle_provenance_commit_mismatch",
+            f"bundle provenance commit {prov_commit[:12]} does not match "
+            f"source commit {source_commit[:12]}",
+            status_code=409,
+        )
+    # Verify file hashes
+    for entry in manifest.get("files") or []:
+        file_path = bundle_dir / entry["path"]
+        if not file_path.is_file():
+            raise HostedHarnessError(
+                "bundle_file_missing",
+                f"bundle file {entry['path']} declared in manifest is missing",
+                status_code=422,
+            )
+        actual_hash = _hashlib.sha256(file_path.read_bytes()).hexdigest()
+        if actual_hash != entry["sha256"]:
+            raise HostedHarnessError(
+                "bundle_file_hash_mismatch",
+                f"bundle file {entry['path']} hash mismatch",
+                status_code=409,
+            )
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w:gz") as tar:
         for path in sorted(bundle_dir.rglob("*")):
             if path.is_file():
                 tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
-    return archive.getvalue()
+    return archive.getvalue(), manifest
 
 
 

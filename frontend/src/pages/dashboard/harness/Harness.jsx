@@ -36,6 +36,11 @@ import {
 import { parseDotEnv } from "./dotenv";
 import { prepareSourceFolder } from "./sourceUpload";
 import {
+  buildJobPayload,
+  MAX_SCENARIO_COUNT,
+  unsupportedCredentialWarnings,
+} from "./requestMapper";
+import {
   credentialCount,
   credentialValue,
   mergePastedCredentials,
@@ -338,31 +343,23 @@ export default function Harness() {
     if (activeTab) setDetailTab(activeTab);
   }, [current?.job?.job_id, current?.status?.stage]);
 
-  const sourcePayload = () => {
-    if (sourceMode === "upload")
-      return { source_id: uploadedSource?.source_id };
-    return {
-      github_repository: githubRepository.trim(),
-      github_visibility: githubVisibility,
-      github_installation_id:
-        githubVisibility === "private"
-          ? githubInstallationId.trim() || undefined
-          : undefined,
-    };
-  };
-
-  const preflightPayload = () => ({
-    ...sourcePayload(),
-    secret_refs: secretFileRefs,
-    connector_config: configurationValues,
-    environment_values: environmentValues,
-  });
+  const jobPayload = () =>
+    buildJobPayload({
+      sourceMode,
+      uploadedSource,
+      githubRepository,
+      githubVisibility,
+      githubInstallationId,
+      scenarioCount,
+      configurationValues,
+      secretFileRefs,
+    });
 
   const inspect = async () => {
     setChecking(true);
     setError("");
     try {
-      const value = await preflightHarnessJob(preflightPayload());
+      const value = await preflightHarnessJob(jobPayload());
       setPreflight(value);
       setPreflightDirty(false);
       return value;
@@ -378,7 +375,7 @@ export default function Harness() {
     setSubmitting(true);
     setError("");
     try {
-      const checked = await preflightHarnessJob(preflightPayload());
+      const checked = await preflightHarnessJob(jobPayload());
       setPreflight(checked);
       setPreflightDirty(false);
       if (!checked.ready_to_submit) {
@@ -387,14 +384,7 @@ export default function Harness() {
         );
         return;
       }
-      const value = await createHarnessJob({
-        ...sourcePayload(),
-        scenario_count: Number(scenarioCount),
-        connector: "auto",
-        secret_refs: secretFileRefs,
-        connector_config: configurationValues,
-        environment_values: environmentValues,
-      });
+      const value = await createHarnessJob(jobPayload());
       setCurrent(value);
       setJobs((existing) => [value, ...existing]);
       setDetailTab("contract");
@@ -514,7 +504,7 @@ export default function Harness() {
   const validScenarioCount =
     Number.isInteger(Number(scenarioCount)) &&
     Number(scenarioCount) >= 1 &&
-    Number(scenarioCount) <= 100;
+    Number(scenarioCount) <= MAX_SCENARIO_COUNT;
   const loadedCredentialCount =
     credentialCount(environmentValues, configurationValues) +
     Object.keys(secretFileRefs).length;
@@ -561,6 +551,12 @@ export default function Harness() {
     }),
     {},
   );
+  const credentialWarnings = unsupportedCredentialWarnings({
+    environmentValues,
+    secretFileRefs,
+  });
+  const scenarioRows = current?.scenarios || [];
+  const receiptRows = current?.receipts || [];
 
   const loadPastedEnvironment = () => {
     try {
@@ -851,9 +847,9 @@ export default function Harness() {
                 type="number"
                 value={scenarioCount}
                 onChange={(event) => setScenarioCount(event.target.value)}
-                inputProps={{ min: 1, max: 100 }}
+                inputProps={{ min: 1, max: MAX_SCENARIO_COUNT }}
                 error={!validScenarioCount}
-                helperText={!validScenarioCount ? "Use 1–100" : undefined}
+                helperText={!validScenarioCount ? `Use 1\u2013${MAX_SCENARIO_COUNT}` : undefined}
                 sx={{ width: 120 }}
               />
               <Button
@@ -1050,6 +1046,23 @@ export default function Harness() {
                 </Typography>
                 {environmentError && (
                   <Alert severity="error">{environmentError}</Alert>
+                )}
+                {credentialWarnings.length > 0 && (
+                  <Alert severity="warning">
+                    <Typography variant="subtitle2" gutterBottom>
+                      Some credentials cannot be sent with this run
+                    </Typography>
+                    {credentialWarnings.map((warning) => (
+                      <Typography
+                        key={warning.names.join(",")}
+                        variant="body2"
+                        sx={{ mt: 0.5 }}
+                      >
+                        <strong>{warning.names.join(", ")}</strong>:{" "}
+                        {warning.reason}
+                      </Typography>
+                    ))}
+                  </Alert>
                 )}
               </Stack>
             </Paper>
@@ -1459,7 +1472,67 @@ export default function Harness() {
                       {selectedOutputs.map((output) => (
                         <StageOutput key={output.id} output={output} />
                       ))}
-                      {!selectedOutputs.length && (
+                      {detailTab === "scenarios" && scenarioRows.length > 0 && (
+                        <Stack spacing={1}>
+                          <Typography variant="subtitle2">
+                            Registered scenarios ({scenarioRows.length})
+                          </Typography>
+                          {scenarioRows.map((scenario) => (
+                            <Paper
+                              key={scenario.scenario_key || scenario.scenario_id}
+                              variant="outlined"
+                              sx={{ p: 1.25 }}
+                            >
+                              <Stack
+                                direction="row"
+                                justifyContent="space-between"
+                                alignItems="center"
+                              >
+                                <Typography variant="subtitle2">
+                                  {readable(scenario.name)}
+                                </Typography>
+                                {scenario.status && (
+                                  <Chip
+                                    size="small"
+                                    label={readable(scenario.status)}
+                                    color={
+                                      scenario.status === "completed"
+                                        ? "success"
+                                        : scenario.status === "failed"
+                                          ? "error"
+                                          : "default"
+                                    }
+                                  />
+                                )}
+                              </Stack>
+                              {scenario.instruction && (
+                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                  {scenario.instruction}
+                                </Typography>
+                              )}
+                              {scenario.use_case && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                >
+                                  {scenario.use_case}
+                                </Typography>
+                              )}
+                              {scenario.call_execution_id && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: "block", mt: 0.25 }}
+                                >
+                                  Call: {scenario.call_execution_id}
+                                </Typography>
+                              )}
+                            </Paper>
+                          ))}
+                        </Stack>
+                      )}
+                      {!selectedOutputs.length &&
+                        !(detailTab === "scenarios" && scenarioRows.length > 0) && (
                         <Paper
                           variant="outlined"
                           sx={{
@@ -1469,16 +1542,23 @@ export default function Harness() {
                           }}
                         >
                           <Iconify
-                            icon="solar:hourglass-line-linear"
+                            icon={
+                              terminalStages.has(current.status.stage)
+                                ? "solar:close-circle-linear"
+                                : "solar:hourglass-line-linear"
+                            }
                             width={32}
                             color="text.disabled"
                           />
                           <Typography variant="subtitle2" mt={1}>
-                            Not available yet
+                            {terminalStages.has(current.status.stage)
+                              ? `No ${detailTab} data`
+                              : "Not available yet"}
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
-                            This view fills in automatically when the related
-                            stage completes.
+                            {terminalStages.has(current.status.stage)
+                              ? `The run finished without producing ${detailTab} output.`
+                              : "This view fills in automatically when the related stage completes."}
                           </Typography>
                         </Paper>
                       )}
@@ -1574,6 +1654,119 @@ export default function Harness() {
                         <StageOutput key={output.id} output={output} />
                       ))}
 
+                      {receiptRows.length > 0 && (
+                        <Box>
+                          <Typography variant="subtitle2" mb={1}>
+                            Call receipts ({receiptRows.length})
+                          </Typography>
+                          <Stack spacing={1}>
+                            {receiptRows.map((receipt, index) => (
+                              <Paper
+                                key={receipt.receipt_id || receipt.scenario_key || index}
+                                variant="outlined"
+                                sx={{ p: 1.25 }}
+                              >
+                                <Stack
+                                  direction="row"
+                                  justifyContent="space-between"
+                                  alignItems="center"
+                                >
+                                  <Typography variant="subtitle2">
+                                    {receipt.scenario_name ||
+                                      readable(receipt.scenario_key || `Scenario ${index + 1}`)}
+                                  </Typography>
+                                  {receipt.status && (
+                                    <Chip
+                                      size="small"
+                                      label={readable(receipt.status)}
+                                      color={
+                                        receipt.status === "completed" || receipt.status === "graded"
+                                          ? "success"
+                                          : receipt.status === "failed"
+                                            ? "error"
+                                            : "default"
+                                      }
+                                    />
+                                  )}
+                                </Stack>
+                                {receipt.call && (
+                                  <Stack spacing={0.5} sx={{ mt: 0.75 }}>
+                                    {receipt.call.duration_seconds != null && (
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                      >
+                                        Duration:{" "}
+                                        {receipt.call.duration_seconds.toFixed(1)}s
+                                      </Typography>
+                                    )}
+                                    {receipt.call.transcript_artifact && (
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                      >
+                                        Transcript: {receipt.call.transcript_artifact}
+                                      </Typography>
+                                    )}
+                                    {(receipt.call.recording_artifacts || []).length > 0 && (
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                      >
+                                        {receipt.call.recording_artifacts.length} recording
+                                        {receipt.call.recording_artifacts.length > 1 ? "s" : ""}
+                                      </Typography>
+                                    )}
+                                  </Stack>
+                                )}
+                                {receipt.evaluation && (
+                                  <Stack spacing={0.5} sx={{ mt: 0.75 }}>
+                                    <Typography variant="body2">
+                                      Score: {receipt.evaluation.score ?? "pending"}
+                                    </Typography>
+                                    {receipt.evaluation.summary && (
+                                      <Typography
+                                        variant="caption"
+                                        color="text.secondary"
+                                      >
+                                        {receipt.evaluation.summary}
+                                      </Typography>
+                                    )}
+                                  </Stack>
+                                )}
+                                {!receipt.call && !receipt.evaluation && (
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ mt: 0.5 }}
+                                  >
+                                    Receipt recorded; detailed results pending.
+                                  </Typography>
+                                )}
+                              </Paper>
+                            ))}
+                          </Stack>
+                        </Box>
+                      )}
+
+                      {(current.job.run_test_id || current.job.test_execution_id) && (
+                        <Paper variant="outlined" sx={{ p: 1.5, bgcolor: "action.hover" }}>
+                          <Typography variant="subtitle2">Run identifiers</Typography>
+                          <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+                            {current.job.run_test_id && (
+                              <Typography variant="caption" color="text.secondary">
+                                RunTest: {current.job.run_test_id}
+                              </Typography>
+                            )}
+                            {current.job.test_execution_id && (
+                              <Typography variant="caption" color="text.secondary">
+                                TestExecution: {current.job.test_execution_id}
+                              </Typography>
+                            )}
+                          </Stack>
+                        </Paper>
+                      )}
+
                       {current.credentials && (
                         <Paper variant="outlined" sx={{ p: 1.5 }}>
                           <Typography variant="subtitle2">
@@ -1644,9 +1837,9 @@ export default function Harness() {
                                       color="text.secondary"
                                       sx={{ whiteSpace: "nowrap" }}
                                     >
-                                      {event.wall_time
+                                      {event.emitted_at
                                         ? new Date(
-                                            event.wall_time,
+                                            event.emitted_at,
                                           ).toLocaleTimeString()
                                         : ""}
                                     </Typography>

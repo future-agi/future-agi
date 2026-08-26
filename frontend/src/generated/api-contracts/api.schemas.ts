@@ -16033,6 +16033,20 @@ export interface HarnessSourceUploadResponseApi {
   total_bytes: number;
 }
 
+export interface HarnessJobAdjustmentApi {
+  /**
+     * A user correction to apply at the next safe harness stage boundary.
+     * @minLength 1
+     * @maxLength 2000
+     */
+  instruction: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  client_request_id?: string;
+}
+
 export interface HarnessJobActionApi {
   /**
      * Optional operator-provided reason for the action.

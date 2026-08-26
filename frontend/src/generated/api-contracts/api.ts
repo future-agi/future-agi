@@ -548,6 +548,7 @@ import type {
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
   HarnessJobActionApi,
+  HarnessJobAdjustmentApi,
   HarnessJobCreateApi,
   HarnessPreflightApi,
   HarnessSourceUploadResponseApi,
@@ -53127,6 +53128,51 @@ export const simulateApiHarnessJobsRead = async (id: string, options?: RequestIn
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsAdjustResponse201 = {
+  data: HarnessJobAdjustmentApi
+  status: 201
+}
+
+export type simulateApiHarnessJobsAdjustResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type simulateApiHarnessJobsAdjustResponseSuccess = (simulateApiHarnessJobsAdjustResponse201) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsAdjustResponseError = (simulateApiHarnessJobsAdjustResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsAdjustResponse = (simulateApiHarnessJobsAdjustResponseSuccess | simulateApiHarnessJobsAdjustResponseError)
+
+export const getSimulateApiHarnessJobsAdjustUrl = (id: string,) => {
+
+
+
+
+  return `/simulate/api/harness-jobs/${id}/adjust/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsAdjust = async (id: string,
+    harnessJobAdjustmentApi: HarnessJobAdjustmentApi, options?: RequestInit): Promise<simulateApiHarnessJobsAdjustResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsAdjustResponse>(getSimulateApiHarnessJobsAdjustUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      harnessJobAdjustmentApi,)
   }
 );}
 
