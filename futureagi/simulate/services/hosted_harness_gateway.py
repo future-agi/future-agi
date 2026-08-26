@@ -393,7 +393,7 @@ class DaytonaHostedGateway:
                 CreateSandboxFromSnapshotParams(
                     snapshot=self.snapshot,
                     language="python",
-                    os_user="svc-control",
+                    os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
                     labels={
                         "futureagi.job": str(job.id),
                         "futureagi.attempt": str(attempt.id),
@@ -424,7 +424,12 @@ class DaytonaHostedGateway:
                 ).encode(),
                 "/run/futureagi/capabilities.json",
             )
+            bundle_archive = _bundle_archive_for(job)
+            if bundle_archive is not None:
+                sandbox.fs.upload_file(bundle_archive, "/work/bundle.tar.gz")
             prepared = sandbox.process.exec(
+                "if [ -f /work/bundle.tar.gz ]; then mkdir -p /work/bundle && "
+                "tar -xzf /work/bundle.tar.gz -C /work/bundle && rm /work/bundle.tar.gz; fi && "
                 "tar -xzf /work/source.tar.gz -C /work && "
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source && "
@@ -726,6 +731,32 @@ def _safe_source_member(raw_path: str) -> str:
             status_code=400,
         )
     return candidate
+
+def _bundle_archive_for(job: HostedHarnessJob) -> bytes | None:
+    """Resolve a pre-authored environment-bundle.v2 for this job's source, gzipped for /work/bundle.
+
+    Stopgap delivery until in-sandbox bundle authoring lands: a bundle lives at
+    ``ALK_HOSTED_BUNDLE_DIR/<owner>__<repo>/`` (manifest.json + db/ + scenarios/). Returns the
+    tar.gz of that directory's contents, or None when no store is configured or no bundle is
+    registered for the source (the guest then fails at bundle_manifest_missing, unchanged).
+    """
+    base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
+    if not base:
+        return None
+    source = (job.payload or {}).get("source") or {}
+    repo = source.get("repository") or ""
+    if not repo:
+        return None
+    bundle_dir = Path(base) / repo.replace("/", "__")
+    if not (bundle_dir / "manifest.json").is_file():
+        return None
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        for path in sorted(bundle_dir.rglob("*")):
+            if path.is_file():
+                tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
+    return archive.getvalue()
+
 
 
 def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:

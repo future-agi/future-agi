@@ -663,6 +663,13 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
 ]
+# The OS user the hosted entrypoint runs as inside the sandbox. Must be "root" for the process
+# provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
+# (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
+ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
+# A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
+ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
