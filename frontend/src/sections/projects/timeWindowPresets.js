@@ -1,11 +1,11 @@
 import {
+  addDays,
   format,
   isValid,
   parseISO,
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
+  startOfDay,
   sub,
+  subDays,
 } from "date-fns";
 import { fDate, fDateTime } from "src/utils/format-time";
 
@@ -60,15 +60,19 @@ export const presetToToken = (title) => TOKEN_BY_TITLE[title] || "custom";
 
 export const tokenToPreset = (token) => TITLE_BY_TOKEN[token] || null;
 
+// Every bound is derived from `now` so a caller can compute a window without
+// the global clock; defaulting it keeps the live behaviour identical.
 export function presetToRange(key, now = new Date()) {
-  if (key === "Today") return [startOfToday(), startOfTomorrow()];
-  if (key === "Yesterday") return [startOfYesterday(), startOfToday()];
+  const dayStart = startOfDay(now);
+  const nextDayStart = addDays(dayStart, 1);
+  if (key === "Today") return [dayStart, nextDayStart];
+  if (key === "Yesterday") return [subDays(dayStart, 1), dayStart];
   if (key === "30 mins" || key === "6 hrs") {
     return [sub(now, DURATIONS[key]), now];
   }
   const duration = DURATIONS[key];
   if (!duration) return null;
-  return [sub(now, duration), startOfTomorrow()];
+  return [sub(now, duration), nextDayStart];
 }
 
 // Presets end at startOfTomorrow so the query covers all of today; showing that

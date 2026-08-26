@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { format } from "date-fns";
 import {
   TIME_PERIOD_OPTIONS,
   presetToRange,
@@ -49,6 +50,40 @@ describe("presetToRange", () => {
       const [from, to] = presetToRange(title);
       expect(from.getTime()).toBeLessThan(to.getTime());
     }
+  });
+
+  // The whole point of the parameter is to compute a window without touching
+  // the global clock. Honouring it for the start but not the end produced a
+  // range spanning from the given instant to the real today.
+  describe("with an explicit now", () => {
+    const NOW = new Date("2020-01-15T10:00:00");
+
+    it("anchors Today and Yesterday to the given day", () => {
+      const [tFrom, tTo] = presetToRange("Today", NOW);
+      expect(format(tFrom, "yyyy-MM-dd HH:mm")).toBe("2020-01-15 00:00");
+      expect(format(tTo, "yyyy-MM-dd HH:mm")).toBe("2020-01-16 00:00");
+
+      const [yFrom, yTo] = presetToRange("Yesterday", NOW);
+      expect(format(yFrom, "yyyy-MM-dd HH:mm")).toBe("2020-01-14 00:00");
+      expect(format(yTo, "yyyy-MM-dd HH:mm")).toBe("2020-01-15 00:00");
+    });
+
+    it("ends the duration presets on the day after the given day", () => {
+      for (const { title } of TIME_PERIOD_OPTIONS) {
+        const [, to] = presetToRange(title, NOW);
+        expect(to.getFullYear()).toBe(2020);
+      }
+    });
+
+    it("keeps every preset's span the length it claims", () => {
+      const days = (title) => {
+        const [from, to] = presetToRange(title, NOW);
+        return (to.getTime() - from.getTime()) / 86400000;
+      };
+      expect(days("7D")).toBeGreaterThan(7);
+      expect(days("7D")).toBeLessThan(9);
+      expect(days("12M")).toBeLessThan(370);
+    });
   });
 });
 
