@@ -2036,7 +2036,7 @@ describe("voice-call property search aliases", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("resets a browsed category when property search starts", () => {
+  it("keeps the browsed category when property search starts", () => {
     const { anchorEl } = renderPanel({
       properties: [
         ...properties,
@@ -2056,11 +2056,6 @@ describe("voice-call property search aliases", () => {
       target: { value: "call_id" },
     });
 
-    expect(
-      document.querySelector('[data-filter-property-option="call_id"]'),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("Attributes"));
     expect(
       document.querySelector('[data-filter-property-option="call_id"]'),
     ).not.toBeInTheDocument();

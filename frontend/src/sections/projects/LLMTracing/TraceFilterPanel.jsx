@@ -875,9 +875,8 @@ export function filterPropertiesForPicker({
   const rawQuery = String(search || "").trim();
   const query = normalizePropertySearchText(search);
   let list = properties || [];
-  // Typing a new search resets the picker to All. If the user then chooses a
-  // category, that explicit choice must remain authoritative while the text
-  // is present; otherwise System rows leak into Attributes (and vice versa).
+  // Category selection remains authoritative while users refine a search;
+  // otherwise System rows leak into Attributes (and vice versa).
   if (hasCategorySidebar && category !== "all") {
     list = list.filter((property) => property.category === category);
   }
@@ -2107,11 +2106,7 @@ function PropertyPicker({
               fullWidth
               placeholder="Search properties..."
               value={search}
-              onChange={(e) => {
-                const nextSearch = e.target.value;
-                setSearch(nextSearch);
-                if (nextSearch.trim()) setCategory("all");
-              }}
+              onChange={(e) => setSearch(e.target.value)}
               autoFocus
               InputProps={{
                 startAdornment: (
