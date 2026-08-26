@@ -3,6 +3,7 @@ from django.db.models import QuerySet
 from rest_framework.request import Request
 
 DEFAULT_PAGE_SIZE = 10
+MAX_PAGE_SIZE = 100
 
 
 def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]:
@@ -19,7 +20,13 @@ def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]
             (default 1) and ``page_size`` (default 10).
     """
     page_number = int(request.query_params.get("page_number", 1))
-    page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    try:
+        page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    # Bound the client-controlled page size so a single request cannot force
+    # the whole table into one response (#2304).
+    page_size = max(1, min(page_size, MAX_PAGE_SIZE))
 
     paginator = Paginator(queryset, page_size)
     page = paginator.get_page(page_number)
