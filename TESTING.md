@@ -85,7 +85,7 @@ If `--no-verify` becomes habitual, the hook is wrong — open an issue instead.
 
 ## CI (GitHub Actions)
 
-Today, CI covers the frontend; backend CI is on the roadmap. Workflows in [`.github/workflows/`](.github/workflows):
+Today, CI covers both the frontend and the backend (pytest, sharded). Workflows in [`.github/workflows/`](.github/workflows):
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
@@ -94,6 +94,7 @@ Today, CI covers the frontend; backend CI is on the roadmap. Workflows in [`.git
 | `frontend-main.yml` | push to `main` | Full suite with coverage + production build |
 | `frontend-deploy-*.yaml` | manual or on main | Environment-specific deploys (EU, GCP, prod, dev CDN) |
 | `frontend-auto-approve-hotfix.yml` | hotfix PRs | Auto-approval routing for verified hotfix branches |
+| `backend-ci.yml` | push to `dev`/`main` + PRs into `dev`/`main` | Sharded pytest backend test suite |
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
 
@@ -151,7 +152,6 @@ pytest discovers them automatically. Use `make test-shell` to drop into the test
 
 ## What we're still missing
 
-- Backend CI (pytest in Actions, parallel to the frontend workflows)
 - Playwright E2E for critical user journeys
 - Visual regression testing (Chromatic or Percy)
 - Accessibility testing (axe-core in CI)
