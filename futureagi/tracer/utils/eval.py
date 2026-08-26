@@ -1935,6 +1935,7 @@ def evaluate_observation_span(
     observation_span_id=None,
     custom_eval_config_id=None,
     feedback_id=None,
+    delete_previous=True,
 ):
     if not observation_span_id or not custom_eval_config_id:
         raise ValueError(
@@ -1955,10 +1956,13 @@ def evaluate_observation_span(
             f"ObservationSpan with id {observation_span_id} does not exist."
         ) from None
 
-    # mark all previous eval_logger as deleted
-    EvalLogger.objects.filter(
-        observation_span=observation_span, custom_eval_config=custom_eval_config
-    ).update(deleted=True, deleted_at=timezone.now())
+    # ``delete_previous=False`` is used by the feedback-driven recalculate
+    # path: the caller keeps the old result alive until the recompute
+    # succeeds, then soft-deletes it (replacement, not a blind pre-delete).
+    if delete_previous:
+        EvalLogger.objects.filter(
+            observation_span=observation_span, custom_eval_config=custom_eval_config
+        ).update(deleted=True, deleted_at=timezone.now())
 
     try:
         run_params = _process_mapping(
@@ -2035,6 +2039,8 @@ def evaluate_observation_span_observe(
     custom_eval_config_id=None,
     eval_task_id=None,
     feedback_id=None,
+    delete_previous=True,
+    force=False,
 ):
     if not observation_span_id or not custom_eval_config_id:
         raise ValueError(
@@ -2054,25 +2060,36 @@ def evaluate_observation_span_observe(
             f"ObservationSpan with id {observation_span_id} does not exist."
         ) from None
 
-    if EvalLogger.objects.filter(
-        observation_span_id=observation_span_id,
-        custom_eval_config_id=custom_eval_config_id,
-        eval_task_id=eval_task_id,
-    ).exists():
+    if (
+        not force
+        and EvalLogger.objects.filter(
+            observation_span_id=observation_span_id,
+            custom_eval_config_id=custom_eval_config_id,
+            eval_task_id=eval_task_id,
+        ).exists()
+    ):
         # ``EvalLogger.objects`` is BaseModelManager — soft-deleted rows are
         # already excluded, so an explicit ``deleted=False`` would be a
         # tautology.
+        # The ``force`` opt-out is used by the feedback-driven recalculate
+        # path: there the caller already holds a live result row (with this
+        # same eval_task_id) and wants a genuine recompute rather than the
+        # batch-eval-task idempotency guard firing and silently no-op'ing.
         logger.info(
             f"EvalLogger with observation_span_id {observation_span_id} and custom_eval_config_id {custom_eval_config_id} already exists for eval task {eval_task_id}."
         )
         return
 
-    # mark all previous eval_logger as deleted
-    EvalLogger.objects.filter(
-        observation_span=observation_span,
-        custom_eval_config=custom_eval_config,
-        eval_task_id=eval_task_id,
-    ).update(deleted=True, deleted_at=timezone.now())
+    # ``delete_previous=False`` is used by the feedback-driven recalculate
+    # path: the caller keeps the old result alive until the recompute
+    # succeeds, then soft-deletes it (replacement, not a blind pre-delete).
+    if delete_previous:
+        # mark all previous eval_logger as deleted
+        EvalLogger.objects.filter(
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
+        ).update(deleted=True, deleted_at=timezone.now())
 
     try:
         run_params = _process_mapping(

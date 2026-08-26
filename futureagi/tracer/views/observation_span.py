@@ -1300,6 +1300,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 pass  ### This is coz we are using mapping_fields fxn in utils
 
             elif action_type == "recalculate":
+                # Capture the current (live) result but DO NOT delete it yet.
+                # The recompute runs first; only on success do we soft-delete
+                # the old row so a failed recompute leaves the prior result
+                # intact (replacement, never a blind pre-delete).
                 try:
                     eval_logger = EvalLogger.objects.get(
                         observation_span=observation_span,
@@ -1307,10 +1311,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         deleted=False,
                     )
                     task_id = eval_logger.eval_task_id
-
-                    eval_logger.deleted = True
-                    eval_logger.deleted_at = timezone.now()
-                    eval_logger.save(update_fields=["deleted", "deleted_at"])
                 except EvalLogger.DoesNotExist:
                     raise Exception("No eval associated with this span")  # noqa: B904
 
@@ -1324,21 +1324,32 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
                 if observation_span.project_version:
+                    # evaluate_observation_span takes (observation_span_id,
+                    # custom_eval_config_id, feedback_id) — no eval_task_id; the
+                    # experiment path is a feedback-driven single-span
+                    # recompute, not an EvalTask batch run.
                     status = evaluate_observation_span(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                        observation_span_id=str(observation_span.id),
+                        custom_eval_config_id=str(custom_eval_config.id),
+                        feedback_id=feedback_id,
+                        delete_previous=False,
                     )
                 else:
                     status = evaluate_observation_span_observe(
-                        str(observation_span.id),
-                        str(custom_eval_config.id),
-                        task_id,
-                        feedback_id,
+                        observation_span_id=str(observation_span.id),
+                        custom_eval_config_id=str(custom_eval_config.id),
+                        eval_task_id=task_id,
+                        feedback_id=feedback_id,
+                        delete_previous=False,
+                        force=True,
                     )
 
                 if status:
+                    # Recompute succeeded — the new EvalLogger row is the live
+                    # one, so soft-delete the previous result now.
+                    eval_logger.deleted = True
+                    eval_logger.deleted_at = timezone.now()
+                    eval_logger.save(update_fields=["deleted", "deleted_at"])
                     count = 1
                     failed = 0
                 else:
