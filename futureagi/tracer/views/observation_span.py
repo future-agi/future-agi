@@ -1353,8 +1353,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     count = 1
                     failed = 0
                 else:
-                    failed = 1
-                    count = 0
+                    # The recompute returned a handled failure (a swallowed
+                    # ValueError from input validation, or a generic engine
+                    # exception inside the eval function). Surface it as an
+                    # error rather than masking it as a 200 with count=0 — doing
+                    # so would be the same class of silent failure this branch
+                    # was written to eliminate. The prior result is already left
+                    # intact by the caller (delete_previous=False), so this is a
+                    # pure signal and no data is lost. The outer handler turns
+                    # this into a 400 with the error message.
+                    raise Exception("Eval recompute failed for this span")  # noqa: B904
+
                 properties = get_mixpanel_properties(
                     user=request.user,
                     span=observation_span,

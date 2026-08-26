@@ -1152,7 +1152,7 @@ class TestObservationSpanRetrieveLoadingAPI:
 
 @pytest.mark.django_db
 class TestSubmitFeedbackActionTypeRecalculate:
-    """Regression coverage for issue #2357.
+    """Regression coverage for issue #2333.
 
     Submitting action_type="recalculate" must NOT crash, and must not delete
     the existing eval result until the recompute has actually produced a new
@@ -1161,13 +1161,13 @@ class TestSubmitFeedbackActionTypeRecalculate:
       1. The experiment (project_version) path used to pass 4 positional args
          to ``evaluate_observation_span`` (which only accepts 3), raising a
          TypeError that was swallowed into a 400 — while the prior result had
-         already been soft-deleted. (the "crash" half of #2357)
+         already been soft-deleted. (the "crash" half of #2333)
 
       2. The old result was soft-deleted BEFORE the recompute ran, so a failed
          recompute left the span with no result at all. (the "deletes the
-         result" half of #2357)
+         result" half of #2333)
 
-    A third mode (observe path, see #2357 design note) is covered by the
+    A third mode (observe path, see #2333 design note) is covered by the
     ``*_forces_recompute_*`` tests: the live prior row shares the span's
     eval_task_id, so ``evaluate_observation_span_observe``'s batch-eval-task
     idempotency guard would otherwise silently no-op the recalculate.
@@ -1259,6 +1259,7 @@ class TestSubmitFeedbackActionTypeRecalculate:
         assert old.deleted is False
 
     @patch("tracer.utils.eval._execute_evaluation")
+    @pytest.mark.integration
     def test_recalculate_observe_path_forces_recompute_past_idempotency_guard(
         self,
         mock_execute,
@@ -1267,7 +1268,7 @@ class TestSubmitFeedbackActionTypeRecalculate:
         custom_eval_config,
         user,
     ):
-        """Observe path regression for #2357: the live prior result row carries
+        """Observe path regression for #2333: the live prior result row carries
         the same eval_task_id, so ``evaluate_observation_span_observe``'s
         batch-eval-task idempotency guard would otherwise hit it and silently
         no-op (return None -> view reports 200 but nothing recomputed).
@@ -1278,7 +1279,7 @@ class TestSubmitFeedbackActionTypeRecalculate:
         """
         feedback = self._make_feedback(user, observation_span)
         # Prior result with a real eval_task_id — this is exactly what makes the
-        # default guard fire and would have no-op'd the recalculate before #2357.
+        # default guard fire and would have no-op'd the recalculate before #2333.
         old = self._make_eval_logger(
             observation_span,
             custom_eval_config,
@@ -1303,6 +1304,7 @@ class TestSubmitFeedbackActionTypeRecalculate:
         assert old.deleted is True
 
     @patch("tracer.utils.eval._execute_evaluation")
+    @pytest.mark.integration
     def test_recalculate_observe_path_no_force_would_skip_recompute(
         self, mock_execute, auth_client, observation_span, custom_eval_config, user
     ):
@@ -1349,7 +1351,7 @@ class TestSubmitFeedbackActionTypeRecalculate:
         user,
     ):
         """Experiment path (project_version set): the 4-arg TypeError from
-        #2357 is gone, and the old result is replaced only on success."""
+        #2333 is gone, and the old result is replaced only on success."""
         observation_span.project_version = project_version
         observation_span.save(update_fields=["project_version"])
         feedback = self._make_feedback(user, observation_span)
