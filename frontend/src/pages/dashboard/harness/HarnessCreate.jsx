@@ -7,6 +7,9 @@ import {
   ButtonBase,
   Chip,
   CircularProgress,
+  Collapse,
+  IconButton,
+  InputAdornment,
   LinearProgress,
   MenuItem,
   Paper,
@@ -153,6 +156,8 @@ export default function HarnessCreate() {
   // A changed input does not invalidate what preflight already told us — it just means the
   // answer may be out of date. Hiding the panel loses the findings the user was reading.
   const [preflightDirty, setPreflightDirty] = useState(false);
+  const [showDetected, setShowDetected] = useState(false);
+  const [revealedSecrets, setRevealedSecrets] = useState(() => new Set());
   // A credential FILE cannot travel as an environment value. It is uploaded on its own and
   // referenced by an opaque handle, so the contents never reach a job body, log or artifact.
   const [secretFileRefs, setSecretFileRefs] = useState({});
@@ -370,6 +375,114 @@ export default function HarnessCreate() {
     ) && unsatisfiedChoices.length === 0;
   const requiredInputCount =
     missingRequirements.length + unsatisfiedChoices.length;
+  // Only "missing" rows take a value; everything else is read-only detail that
+  // would otherwise bury them at equal visual weight.
+  const requirementsNeedingValue = requirements.filter(
+    (item) => item.status === "missing",
+  );
+  const detectedRequirements = requirements.filter(
+    (item) => item.status !== "missing",
+  );
+  const toggleSecret = (name) =>
+    setRevealedSecrets((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  // Blocking and optional variables get the same row, so an optional one can be
+  // set without hunting for somewhere else to put it.
+  const renderCredentialRow = (item, index) => {
+    const isSecret = item.kind === "secret";
+    const revealed = revealedSecrets.has(item.environment_name);
+    return (
+      <Stack
+        key={item.id}
+        direction={{ xs: "column", md: "row" }}
+        spacing={{ xs: 1, md: 3 }}
+        alignItems={{ md: "center" }}
+        sx={{
+          p: 1.5,
+          borderTop: index === 0 ? 0 : "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box sx={{ width: { md: 280 }, flexShrink: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={600}
+            sx={{ fontFamily: "monospace", wordBreak: "break-all" }}
+          >
+            {item.environment_name}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {item.provider} · {item.purpose}
+          </Typography>
+        </Box>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder={
+            item.status === "missing"
+              ? isSecret
+                ? "Paste secret"
+                : "Enter value"
+              : readable(item.status)
+          }
+          type={isSecret && !revealed ? "password" : "text"}
+          // One logical value per variable. Reading and writing through the
+          // helpers keeps it out of both maps at once, which is what left a
+          // stale entry showing after a paste.
+          value={credentialValue(
+            environmentValues,
+            configurationValues,
+            item.environment_name,
+          )}
+          onChange={(event) => {
+            const next = updateCredential(
+              environmentValues,
+              configurationValues,
+              {
+                name: item.environment_name,
+                value: event.target.value,
+                kind: item.kind,
+              },
+            );
+            setEnvironmentValues(next.environmentValues);
+            setConfigurationValues(next.configurationValues);
+            setPreflightDirty(Boolean(preflight));
+          }}
+          InputProps={
+            isSecret
+              ? {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        size="small"
+                        edge="end"
+                        onClick={() => toggleSecret(item.environment_name)}
+                        aria-label={`${revealed ? "Hide" : "Show"} ${item.environment_name}`}
+                      >
+                        <Iconify
+                          icon={
+                            revealed
+                              ? "solar:eye-closed-linear"
+                              : "solar:eye-linear"
+                          }
+                          width={16}
+                        />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }
+              : undefined
+          }
+        />
+      </Stack>
+    );
+  };
+
   const hasSource =
     sourceMode === "upload"
       ? Boolean(uploadedSource?.source_id)
@@ -659,8 +772,8 @@ export default function HarnessCreate() {
                   </Button>
                   <Typography variant="caption" color="text.secondary">
                     {hasSource
-                      ? "Check what the agent needs before filling in values."
-                      : "Choose an agent source first."}
+                      ? "Check the agent's requirements before entering values."
+                      : "Select an agent source to check its requirements."}
                   </Typography>
                 </Stack>
 
@@ -729,64 +842,61 @@ export default function HarnessCreate() {
                           .join(" or ")}
                       </Alert>
                     ))}
-                    {requirements.map((item) => (
-                      <Stack
-                        key={item.id}
-                        direction={{ xs: "column", md: "row" }}
-                        spacing={1.5}
-                        alignItems={{ md: "center" }}
-                      >
-                        <Box sx={{ minWidth: 260 }}>
-                          <Typography variant="body2" fontWeight={600}>
-                            {item.environment_name}
+                    {requirementsNeedingValue.length > 0 && (
+                      <Box>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          alignItems="baseline"
+                          flexWrap="wrap"
+                          useFlexGap
+                          sx={{ mb: 1 }}
+                        >
+                          <Typography variant="subtitle2">
+                            Needs a value
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {item.provider} · {item.purpose} ·{" "}
-                            {readable(item.status)}
+                            Used for this run only, then discarded.
                           </Typography>
-                        </Box>
-                        {item.status === "missing" && (
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label={
-                              item.kind === "secret"
-                                ? "Secret value (used for this run only)"
-                                : "Configuration value"
-                            }
-                            type={item.kind === "secret" ? "password" : "text"}
-                            // One logical value per variable. Reading and writing through the
-                            // helpers keeps it out of both maps at once, which is what left a
-                            // stale entry showing after a paste.
-                            value={credentialValue(
-                              environmentValues,
-                              configurationValues,
-                              item.environment_name,
-                            )}
-                            onChange={(event) => {
-                              const next = updateCredential(
-                                environmentValues,
-                                configurationValues,
-                                {
-                                  name: item.environment_name,
-                                  value: event.target.value,
-                                  kind: item.kind,
-                                },
-                              );
-                              setEnvironmentValues(next.environmentValues);
-                              setConfigurationValues(next.configurationValues);
-                              setPreflightDirty(Boolean(preflight));
-                            }}
-                            helperText={
-                              item.kind === "secret"
-                                ? "Injected ephemerally and removed when the run finishes"
-                                : undefined
-                            }
-                            FormHelperTextProps={{ sx: { mx: 0 } }}
-                          />
-                        )}
-                      </Stack>
-                    ))}
+                        </Stack>
+
+                        <Paper variant="outlined">
+                          {requirementsNeedingValue.map(renderCredentialRow)}
+                        </Paper>
+                      </Box>
+                    )}
+
+                    {detectedRequirements.length > 0 && (
+                      <Box>
+                        <Button
+                          size="small"
+                          onClick={() => setShowDetected((open) => !open)}
+                          startIcon={
+                            <Iconify
+                              icon={
+                                showDetected
+                                  ? "solar:alt-arrow-down-linear"
+                                  : "solar:alt-arrow-right-linear"
+                              }
+                              width={16}
+                            />
+                          }
+                          sx={{
+                            px: 0.5,
+                            fontWeight: 400,
+                            color: "text.secondary",
+                          }}
+                        >
+                          {detectedRequirements.length} optional or provided —
+                          set them if you want to override a default
+                        </Button>
+                        <Collapse in={showDetected}>
+                          <Paper variant="outlined" sx={{ mt: 1 }}>
+                            {detectedRequirements.map(renderCredentialRow)}
+                          </Paper>
+                        </Collapse>
+                      </Box>
+                    )}
                   </Stack>
                 )}
               </Paper>

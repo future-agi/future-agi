@@ -44,6 +44,8 @@ import {
   shortRunId,
   STAGE_STATE,
   stageElapsed,
+  tabState,
+  TAB_STATE,
   stageState,
   eventMessage,
   jobProgress,
@@ -52,6 +54,23 @@ import {
   stageStatus,
   terminalStages,
 } from "./harnessShared";
+
+// A tab says where the run is: spinning while its stage is being worked, ticked once it has
+// something to show, bare until then.
+const tabIcon = (state) => {
+  if (state === TAB_STATE.WORKING) return <CircularProgress size={13} />;
+  if (state === TAB_STATE.DONE)
+    return (
+      <Iconify
+        // Outline, not filled: a solid glyph carries as much ink as the label beside it,
+        // which is too much for a secondary marker.
+        icon="solar:check-circle-linear"
+        color="accent.pass"
+        width={14}
+      />
+    );
+  return undefined;
+};
 
 const DETAIL_TABS = [
   { value: "contract", label: "Contract" },
@@ -79,6 +98,7 @@ export default function HarnessDetail() {
   // does not animate through the whole history.
   const arriving = useRef(true);
   const lastScrollTop = useRef(0);
+  const following = useRef(true);
   const [adjustError, setAdjustError] = useState("");
 
   const {
@@ -202,6 +222,30 @@ export default function HarnessDetail() {
     return { ...counts, [key]: (counts[key] || 0) + 1 };
   }, {});
 
+  const tabStates = DETAIL_TABS.reduce(
+    (states, tab) => ({
+      ...states,
+      [tab.value]: tabState(
+        tab.value,
+        status,
+        current?.events,
+        Boolean(outputCounts[tab.value]),
+      ),
+    }),
+    {},
+  );
+  const workingTab = DETAIL_TABS.find(
+    (tab) => tabStates[tab.value] === TAB_STATE.WORKING,
+  )?.value;
+
+  // The page follows the run from stage to stage on its own, so watching a job does not mean
+  // clicking tabs to find where the work moved. Choosing a tab that is not the live one is a
+  // decision to stay put; coming back to the live one resumes the follow.
+  useEffect(() => {
+    if (!following.current || !workingTab) return;
+    setDetailTab(workingTab);
+  }, [workingTab]);
+
   // The live seconds counter is a heartbeat: it says the run is still being watched. Once
   // the run is terminal there is nothing left to watch, so the tick stops and the label
   // settles into a plain relative time rather than counting up forever.
@@ -266,10 +310,13 @@ export default function HarnessDetail() {
     )?.matches;
     // A new entry slides into view so it reads as an arrival. Landing on the tab jumps,
     // because animating through two thousand pixels of history looks like a fault.
-    feed.scrollTo({
-      top: feed.scrollHeight,
-      behavior: arriving.current || reducedMotion ? "auto" : "smooth",
-    });
+    // jsdom has no scrollTo, so the fallback keeps the component renderable under test.
+    if (typeof feed.scrollTo === "function")
+      feed.scrollTo({
+        top: feed.scrollHeight,
+        behavior: arriving.current || reducedMotion ? "auto" : "smooth",
+      });
+    else feed.scrollTop = feed.scrollHeight;
     arriving.current = false;
   }, [detailTab, timeline.length, selectedOutputs.length]);
 
@@ -656,7 +703,10 @@ export default function HarnessDetail() {
             >
               <Tabs
                 value={detailTab}
-                onChange={(_, value) => setDetailTab(value)}
+                onChange={(_, value) => {
+                  following.current = value === workingTab;
+                  setDetailTab(value);
+                }}
                 variant="scrollable"
                 scrollButtons={false}
                 sx={(theme) => ({
@@ -675,6 +725,11 @@ export default function HarnessDetail() {
                     opacity: theme.palette.mode === "light" ? 0.9 : 0.5,
                   },
                   "& .Mui-selected .MuiTab-iconWrapper": { opacity: 1 },
+                  // The tick is a marker and can sit back; a spinner is the live signal on
+                  // the page and has to hold its weight on every tab, selected or not.
+                  "& .MuiTab-iconWrapper:has(.MuiCircularProgress-root)": {
+                    opacity: 1,
+                  },
                   "& .MuiTab-root": {
                     minHeight: 38,
                     minWidth: "auto",
@@ -694,17 +749,7 @@ export default function HarnessDetail() {
                     key={tab.value}
                     value={tab.value}
                     label={tab.label}
-                    icon={
-                      outputCounts[tab.value] ? (
-                        <Iconify
-                          // Outline, not filled: a solid glyph carries as much ink as the
-                          // label beside it, which is too much for a secondary marker.
-                          icon="solar:check-circle-linear"
-                          color="accent.pass"
-                          width={14}
-                        />
-                      ) : undefined
-                    }
+                    icon={tabIcon(tabStates[tab.value])}
                     // Leading, and tight against the label: the tick marks the tab, so it
                     // reads as part of the name rather than a badge trailing after it.
                     iconPosition="start"

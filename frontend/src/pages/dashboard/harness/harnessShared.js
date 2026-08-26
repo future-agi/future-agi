@@ -215,6 +215,46 @@ export const stageState = (status, index, events = []) => {
   return STAGE_STATE.PENDING;
 };
 
+export const TAB_STATE = {
+  DONE: "done",
+  PENDING: "pending",
+  WORKING: "working",
+};
+
+// Which pipeline stages produce each tab's content. The checklist is finer-grained than the
+// tabs: four stages feed Environment, and everything after the scenarios are validated feeds
+// Runs, which is also the catch-all.
+const TAB_STAGES = {
+  contract: ["understanding_agent"],
+  environment: [
+    "generating_environment",
+    "building_environment",
+    "validating_environment",
+    "generating_data",
+  ],
+  scenarios: ["generating_scenarios", "validating_scenarios"],
+  runs: [
+    "connecting_agent",
+    "running",
+    "grading",
+    "uploading_artifacts",
+    "cleaning_up",
+  ],
+};
+
+// What a tab should say about itself: working while the runner is inside any of its stages,
+// done once it has an artifact or the run has moved past all of them. `hasOutput` wins on its
+// own because a tab can hold an artifact from a stage the checklist never emits an event for.
+export const tabState = (tab, status, events = [], hasOutput = false) => {
+  const states = (TAB_STAGES[tab] || []).map((name) =>
+    stageState(status, stages.indexOf(name), events),
+  );
+  if (states.includes(STAGE_STATE.ACTIVE)) return TAB_STATE.WORKING;
+  if (hasOutput || (states.length && states.every((s) => s === STAGE_STATE.DONE)))
+    return TAB_STATE.DONE;
+  return TAB_STATE.PENDING;
+};
+
 // Stage names as a person would say them. `readable` de-snake-cases anything not listed,
 // which is right for field names but produces "Running" and "Grading" for stages that are
 // really "Running scenarios" and "Grading results".
