@@ -361,7 +361,11 @@ def delete_column(*, dataset_id, column_id, organization=None):
             )
 
             bulk_soft_delete(
-                Cell.objects.filter(column__in=columns_to_delete),
+                Cell.objects.filter(
+                    column__in=columns_to_delete,
+                    dataset=dataset,
+                    dataset__organization_id=dataset.organization_id,
+                ),
                 now=now,
             )
 
@@ -385,13 +389,19 @@ def delete_column(*, dataset_id, column_id, organization=None):
     )
     # Delete cells where source_id starts with column.id
     bulk_soft_delete(
-        Cell.objects.filter(column__source_id__startswith=f"{column.id}"),
+        Cell.objects.filter(
+            column__source_id__startswith=f"{column.id}",
+            dataset=dataset,
+            dataset__organization_id=dataset.organization_id,
+        ),
         now=now,
     )
 
     # Get columns to delete (including those with source_id starting with column.id)
     columns_to_delete = Column.objects.filter(
-        Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
+        Q(id=column.id) | Q(source_id__startswith=f"{column.id}"),
+        dataset=dataset,
+        dataset__organization_id=dataset.organization_id,
     ).values_list("id", flat=True)
 
     # Clean up column_order and column_config
@@ -429,7 +439,9 @@ def delete_column(*, dataset_id, column_id, organization=None):
     # Now safe to delete columns
     bulk_soft_delete(
         Column.objects.filter(
-            Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
+            Q(id=column.id) | Q(source_id__startswith=f"{column.id}"),
+            dataset=dataset,
+            dataset__organization_id=dataset.organization_id,
         ),
         now=now,
     )

@@ -372,6 +372,8 @@ def delete_eval_column_and_dependents(column, organization_id):
         col_ids = list(
             Column.objects.filter(
                 Q(id=column.id) | Q(source_id__startswith=f"{column.id}-sourceid-"),
+                dataset_id=column.dataset_id,
+                dataset__organization_id=organization_id,
                 deleted=False,
             ).values_list("id", flat=True)
         )
@@ -380,7 +382,12 @@ def delete_eval_column_and_dependents(column, organization_id):
         # 2. Soft-delete cells by indexed column_id IN — no JOIN on source_id.
         if col_ids:
             bulk_soft_delete(
-                Cell.objects.filter(column_id__in=col_ids, deleted=False),
+                Cell.objects.filter(
+                    column_id__in=col_ids,
+                    dataset_id=column.dataset_id,
+                    dataset__organization_id=organization_id,
+                    deleted=False,
+                ),
                 now=now,
             )
 
@@ -398,4 +405,11 @@ def delete_eval_column_and_dependents(column, organization_id):
 
         # 5. Soft-delete the columns.
         if col_ids:
-            bulk_soft_delete(Column.objects.filter(id__in=col_ids), now=now)
+            bulk_soft_delete(
+                Column.objects.filter(
+                    id__in=col_ids,
+                    dataset_id=column.dataset_id,
+                    dataset__organization_id=organization_id,
+                ),
+                now=now,
+            )

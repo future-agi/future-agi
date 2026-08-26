@@ -14,6 +14,7 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.services.column_service import delete_eval_column_and_dependents
 from model_hub.services.dataset_service import delete_column, delete_rows
 from model_hub.services.lifecycle import bulk_restore, bulk_soft_delete
 
@@ -49,6 +50,30 @@ def _assert_soft_deleted(instance, previous_updated_at):
     assert instance.deleted_at is not None
     assert instance.updated_at == instance.deleted_at
     assert instance.updated_at > previous_updated_at
+
+
+def _create_isolated_dataset(*, suffix):
+    organization = Organization.objects.create(name=f"Dataset Isolation Org {suffix}")
+    user = User.objects.create_user(
+        email=f"dataset-isolation-{suffix}@example.com",
+        password="testpassword123",
+        name=f"Dataset Isolation User {suffix}",
+        organization=organization,
+    )
+    workspace = Workspace.objects.create(
+        name=f"Dataset Isolation Workspace {suffix}",
+        organization=organization,
+        created_by=user,
+    )
+    dataset = Dataset.objects.create(
+        name=f"Dataset Isolation {suffix}",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    return organization, dataset
 
 
 @pytest.mark.django_db
@@ -143,6 +168,137 @@ def test_delete_run_prompt_column_stamps_source_and_column(lifecycle_context):
             dependent_cell.updated_at,
         }
     ) == 1
+
+
+@pytest.mark.django_db
+def test_delete_column_scopes_source_id_dependents_to_dataset_tenant(
+    lifecycle_context,
+):
+    organization, _, _, dataset = lifecycle_context
+    root_column = Column.objects.create(
+        name="Tenant Root",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    local_dependent = Column.objects.create(
+        name="Tenant Local Dependent",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+        source_id=f"{root_column.id}-detail",
+    )
+    local_row = Row.objects.create(dataset=dataset, order=0)
+    local_cell = Cell.objects.create(
+        dataset=dataset,
+        column=local_dependent,
+        row=local_row,
+        value="local",
+    )
+
+    _, other_dataset = _create_isolated_dataset(suffix="delete-column")
+    colliding_column = Column.objects.create(
+        name="Other Tenant Collision",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=other_dataset,
+        source=SourceChoices.OTHERS.value,
+        source_id=f"{root_column.id}-detail",
+    )
+    other_row = Row.objects.create(dataset=other_dataset, order=0)
+    colliding_cell = Cell.objects.create(
+        dataset=other_dataset,
+        column=colliding_column,
+        row=other_row,
+        value="other",
+    )
+    cross_tenant_cell = Cell.objects.create(
+        dataset=other_dataset,
+        column=local_dependent,
+        row=other_row,
+        value="injected",
+    )
+
+    result = delete_column(
+        dataset_id=str(dataset.id),
+        column_id=str(root_column.id),
+        organization=organization,
+    )
+
+    assert result["column_id"] == str(root_column.id)
+    root_column.refresh_from_db()
+    local_dependent.refresh_from_db()
+    local_cell.refresh_from_db()
+    colliding_column.refresh_from_db()
+    colliding_cell.refresh_from_db()
+    cross_tenant_cell.refresh_from_db()
+    assert root_column.deleted is True
+    assert local_dependent.deleted is True
+    assert local_cell.deleted is True
+    assert colliding_column.deleted is False
+    assert colliding_cell.deleted is False
+    assert cross_tenant_cell.deleted is False
+
+
+@pytest.mark.django_db
+def test_delete_eval_column_scopes_dependents_to_dataset_tenant(lifecycle_context):
+    organization, _, _, dataset = lifecycle_context
+    eval_column = Column.objects.create(
+        name="Tenant Eval",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=dataset,
+        source=SourceChoices.EVALUATION.value,
+    )
+    reason_column = Column.objects.create(
+        name="Tenant Eval Reason",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=dataset,
+        source=SourceChoices.EVALUATION_REASON.value,
+        source_id=f"{eval_column.id}-sourceid-local",
+    )
+    local_row = Row.objects.create(dataset=dataset, order=0)
+    local_cell = Cell.objects.create(
+        dataset=dataset,
+        column=reason_column,
+        row=local_row,
+        value="local",
+    )
+
+    _, other_dataset = _create_isolated_dataset(suffix="delete-eval-column")
+    colliding_column = Column.objects.create(
+        name="Other Tenant Eval Collision",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=other_dataset,
+        source=SourceChoices.EVALUATION_REASON.value,
+        source_id=f"{eval_column.id}-sourceid-other",
+    )
+    other_row = Row.objects.create(dataset=other_dataset, order=0)
+    colliding_cell = Cell.objects.create(
+        dataset=other_dataset,
+        column=colliding_column,
+        row=other_row,
+        value="other",
+    )
+    cross_tenant_cell = Cell.objects.create(
+        dataset=other_dataset,
+        column=reason_column,
+        row=other_row,
+        value="injected",
+    )
+
+    delete_eval_column_and_dependents(eval_column, organization.id)
+
+    eval_column.refresh_from_db()
+    reason_column.refresh_from_db()
+    local_cell.refresh_from_db()
+    colliding_column.refresh_from_db()
+    colliding_cell.refresh_from_db()
+    cross_tenant_cell.refresh_from_db()
+    assert eval_column.deleted is True
+    assert reason_column.deleted is True
+    assert local_cell.deleted is True
+    assert colliding_column.deleted is False
+    assert colliding_cell.deleted is False
+    assert cross_tenant_cell.deleted is False
 
 
 @pytest.mark.django_db
