@@ -380,7 +380,7 @@ def test_exact_graph_root_partition_reduces_versions_before_live_window_filter()
 
 
 @pytest.mark.unit
-def test_exact_graph_raw_candidate_sentinel_stays_finite_and_unsorted():
+def test_exact_graph_raw_candidate_page_stays_finite_and_keyset_ordered():
     builder = _builder(_attribute_filter())
 
     sql, params = builder.build_exact_graph_candidate_witness_probe(limit=1_001)
@@ -388,9 +388,18 @@ def test_exact_graph_raw_candidate_sentinel_stays_finite_and_unsorted():
 
     assert "LIMIT 1 BY trace_id" in compact
     assert "GROUP BY" not in compact
-    assert "ORDER BY" not in compact
+    assert "ORDER BY trace_id ASC" in compact
     assert re.search(r"LIMIT %\(exact_graph_candidate_limit\)s", compact)
     assert params["exact_graph_candidate_limit"] == 1_001
+
+    next_sql, next_params = builder.build_exact_graph_candidate_witness_probe(
+        limit=1_001,
+        after_trace_id="11111111-1111-4111-8111-111111111111",
+    )
+    assert "trace_id > %(exact_graph_candidate_after_trace_id)s" in _compact(next_sql)
+    assert next_params["exact_graph_candidate_after_trace_id"] == (
+        "11111111-1111-4111-8111-111111111111"
+    )
 
 
 @pytest.mark.unit

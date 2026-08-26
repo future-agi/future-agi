@@ -1908,8 +1908,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self,
         *,
         limit: int,
+        after_trace_id: str | None = None,
+        before_start_time: datetime | None = None,
+        before_id: Any = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Return a finite necessary superset for a selective exact graph.
+        """Return one keyset page of a necessary exact-graph superset.
 
         Positive scalar typed-Map predicates have an exhaustive raw witness:
         default-safe comparisons use a key/value witness, while shapes whose
@@ -1960,13 +1963,21 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             if self._positive_relational_seed_filter() is None:
                 return "", {}
             request_start, request_end = self.parse_time_range(self.filters)
+            if after_trace_id is not None:
+                raise ValueError("relational candidate cursor must use root ordering")
             return TraceListQueryBuilder.build_filter_ordered_seed_page(
                 self,
                 slice_start=request_start,
                 slice_end=request_end,
                 limit=limit,
+                before_start_time=before_start_time,
+                before_id=before_id,
                 _positive_relation_candidate_first=True,
             )
+        if (before_start_time is None) != (before_id is None):
+            raise ValueError("candidate root keyset values must be provided together")
+        if before_start_time is not None:
+            raise ValueError("raw candidate cursor must use trace identity ordering")
         raw_witness_predicate = str(
             anchor.raw_graph_value_witness_predicate
             or anchor.raw_key_witness_predicate
@@ -1988,12 +1999,20 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if self.project_version_id:
             params["project_version_id"] = self.project_version_id
             project_version_fragment = "AND project_version_id = %(project_version_id)s"
+        keyset_fragment = ""
+        if after_trace_id is not None:
+            if not str(after_trace_id):
+                raise ValueError("exact graph candidate cursor must be non-empty")
+            params["exact_graph_candidate_after_trace_id"] = str(after_trace_id)
+            keyset_fragment = "AND trace_id > %(exact_graph_candidate_after_trace_id)s"
         query = f"""
         SELECT trace_id
         FROM {self.TABLE}
         PREWHERE {self.project_filter_sql()}
           {project_version_fragment}
+          {keyset_fragment}
         WHERE {raw_witness_predicate}
+        ORDER BY trace_id ASC
         LIMIT 1 BY trace_id
         LIMIT %(exact_graph_candidate_limit)s
         """

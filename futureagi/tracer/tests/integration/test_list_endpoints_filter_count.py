@@ -212,14 +212,11 @@ def test_list_endpoint_total_rows(
     expected = _expected_count(case, seeded)
 
     filters = case.to_filter_dict()["filters"]
-    # The UI always sends its explicit date-range filter. Nullness does not
-    # itself provide a bounded range, so retain the UI window for both
-    # created_at null operators as well.
-    if case.column_id != "created_at" or case.filter_op in {
-        "is_null",
-        "is_not_null",
-    }:
-        filters = filters + [_DEFAULT_WINDOW_FILTER]
+    # The UI always sends its explicit date-range filter in addition to any
+    # user-created timestamp predicate. Keep that broad safety window for all
+    # cases so one-sided and complement operators exercise the real request
+    # shape instead of falling back to the backend's rolling 30-day default.
+    filters = filters + [_DEFAULT_WINDOW_FILTER]
     filter_json = json.dumps(filters)
     url = ENDPOINTS[case.target_type]
     # list_voice_calls uses a 1-based `page` param; the others use page_number.

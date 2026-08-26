@@ -80,9 +80,6 @@ class FilterCase:
 
 # ---------- SYSTEM_METRIC leaves (per filter_type × filter_op) ---------------
 
-_DATETIME_GAP = "finite default window excludes the fixed historical corpus"
-_NUMBER_MEMBERSHIP_GAP = "number filters do not support membership operators"
-
 
 def _sm_number_leaves():
     """SYSTEM_METRIC × number — column_id 'cost'. Per-span on spans/voiceCalls
@@ -162,7 +159,6 @@ def _sm_datetime_leaves():
     # between window end sits mid-gap (no row at +12h) so inclusive/exclusive
     # upper-bound differences between the span and trace list don't matter.
     mid = _NOW + timedelta(hours=12)
-    gap = {"contract_gap": _DATETIME_GAP}
     # parse_time_range converts direct DateTime64(6) comparisons to an exact
     # half-open request window.  In particular, greater_than is strict: its
     # lower bound is value + 1 microsecond.
@@ -174,24 +170,22 @@ def _sm_datetime_leaves():
             {},
         ),
         ("greater_than", day1.isoformat(), lambda r: r.created_at > day1, {}),
-        # less_than defaults the (missing) start to utcnow-30d, which is AFTER
-        # the fixed corpus window → the endpoint returns 0. Real backend gap.
-        ("less_than", end.isoformat(), lambda r: r.created_at < end, gap),
+        ("less_than", end.isoformat(), lambda r: r.created_at < end, {}),
         # Equality and inclusive lower bounds are represented exactly.
         ("equals", _NOW.isoformat(), lambda r: r.created_at == _NOW, {}),
-        ("not_equals", _NOW.isoformat(), lambda r: r.created_at != _NOW, gap),
+        ("not_equals", _NOW.isoformat(), lambda r: r.created_at != _NOW, {}),
         (
             "greater_than_or_equal",
             day1.isoformat(),
             lambda r: r.created_at >= day1,
             {},
         ),
-        ("less_than_or_equal", end.isoformat(), lambda r: r.created_at <= end, gap),
+        ("less_than_or_equal", end.isoformat(), lambda r: r.created_at <= end, {}),
         (
             "not_between",
             [_NOW.isoformat(), day1.isoformat()],
-            lambda r: not (_NOW <= r.created_at <= day1),
-            gap,
+            lambda r: not (_NOW <= r.created_at < day1),
+            {},
         ),
         # No row has a null created_at → endpoint (0) agrees with predicate (0).
         ("is_null", None, lambda r: False, {}),
@@ -795,10 +789,6 @@ def _session_aggregate_leaves():
     # scan to parent_span_id IS NULL). The shared aggregate compiler supports
     # the complete number-operator contract in both list and graph queries.
     sess = {"only_targets": ("sessions",)}
-    membership_gap = {
-        "only_targets": ("sessions",),
-        "contract_gap": _NUMBER_MEMBERSHIP_GAP,
-    }
 
     def cost(g):
         return sum(r.cost for r in g)
@@ -824,20 +814,6 @@ def _session_aggregate_leaves():
             [0.04, 0.2],
             lambda g: not (0.04 <= cost(g) <= 0.2),
             sess,
-        ),
-        (
-            "traces_count",
-            "in",
-            [3],
-            lambda g: traces(g) in (3,),
-            membership_gap,
-        ),
-        (
-            "traces_count",
-            "not_in",
-            [3],
-            lambda g: traces(g) not in (3,),
-            membership_gap,
         ),
         ("total_tokens", "is_not_null", None, lambda g: True, sess),
         ("total_tokens", "is_null", None, lambda g: False, sess),

@@ -74,9 +74,12 @@ def ch_client():
             password=ch.get("CH_PASSWORD", ""),
         )
         native.execute("SELECT 1")
-        return _CHDriverAdapter(native)
     except Exception as exc:
         pytest.skip(f"ClickHouse not reachable for integration tests: {exc}")
+    try:
+        yield _CHDriverAdapter(native)
+    finally:
+        native.disconnect_connection()
 
 
 @pytest.fixture(scope="session")
