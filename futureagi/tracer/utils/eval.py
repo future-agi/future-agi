@@ -1979,6 +1979,14 @@ def evaluate_observation_span(
         logger.exception(
             f"Exception during evaluation in evaluate_observation_span: {e}"
         )
+        # Non-ValueError failures must still leave a failed-eval row so the
+        # span is never left without an eval record (#2334).
+        try:
+            _create_error_eval_logger(
+                observation_span, custom_eval_config, eval_task_id, e
+            )
+        except Exception:
+            logger.exception("Failed to persist error eval logger")
         return False
 
 
