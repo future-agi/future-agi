@@ -277,11 +277,13 @@ SELECT
     active_candidates.state_version AS state_version,
     active_candidates.latest_state_variants AS latest_state_variants,
     active_candidates.latest_active_states AS latest_active_states,
-    active_revision_counts.active_builds,
-    reservation_states.reservation_projection_version,
-    reservation_states.build_plan_json,
-    reservation_states.build_lease_sha256,
-    reservation_states.latest_reservation_variants,
+    active_revision_counts.active_builds AS active_builds,
+    reservation_states.reservation_projection_version
+        AS reservation_projection_version,
+    reservation_states.build_plan_json AS build_plan_json,
+    reservation_states.build_lease_sha256 AS build_lease_sha256,
+    reservation_states.latest_reservation_variants
+        AS latest_reservation_variants,
     anchor_candidates.catalog_revision AS anchor_catalog_revision,
     anchor_candidates.build_token AS anchor_build_token,
     anchor_candidates.projection_version AS anchor_projection_version,

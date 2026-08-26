@@ -68,6 +68,20 @@ def test_clickhouse25_aggregate_inputs_are_raw_qualified() -> None:
         "state_version",
     ):
         assert f"active_candidates.{column} AS {column}" in _ACTIVATION_SQL
+    for expression, alias in (
+        ("active_revision_counts.active_builds", "active_builds"),
+        (
+            "reservation_states.reservation_projection_version",
+            "reservation_projection_version",
+        ),
+        ("reservation_states.build_plan_json", "build_plan_json"),
+        ("reservation_states.build_lease_sha256", "build_lease_sha256"),
+        (
+            "reservation_states.latest_reservation_variants",
+            "latest_reservation_variants",
+        ),
+    ):
+        assert f"{expression} AS {alias}" in " ".join(_ACTIVATION_SQL.split())
 
     definitions_sql = _definition_ctes("th7247_catalog_dev_test")
     assert "FROM lineage_versioned AS versioned_rows" in definitions_sql
