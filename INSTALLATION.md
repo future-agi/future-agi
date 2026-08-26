@@ -389,8 +389,8 @@ Named Docker volumes hold all state:
 docker volume ls | grep futureagi
 # futureagi_postgres-data
 # futureagi_clickhouse-data
-# future-agi_redis-data
-# future-agi_minio-data
+# futureagi_redis-data
+# futureagi_minio-data
 ```
 
 To back up Postgres:
