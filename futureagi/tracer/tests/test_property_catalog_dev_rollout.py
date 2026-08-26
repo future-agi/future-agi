@@ -69,18 +69,25 @@ from tracer.services.clickhouse.v2.property_catalog.durable_lifecycle import (
     StreamStart,
 )
 from tracer.services.clickhouse.v2.property_catalog.models import SourceAdapter
+from tracer.services.clickhouse.v2.property_catalog.projection import (
+    PostgresSnapshotContext,
+)
 from tracer.services.clickhouse.v2.property_catalog.publisher import (
     CatalogWriteLease,
     SharedCatalogDeadline,
 )
 from tracer.services.clickhouse.v2.property_catalog.reconciler import ReconcileMode
 from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
+from tracer.services.clickhouse.v2.property_catalog.source_adapters import (
+    SpanAttributeDefinitionSourceAdapter,
+)
 from tracer.services.clickhouse.v2.property_catalog.span_source import (
     CANONICAL_SPAN_QUERY_TIMEOUT_MS,
     DEV_INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS,
     DEV_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS,
     SPAN_AUDIT_CUTOFF_LABEL,
     FrozenSpanSource,
+    RevisionPinnedSpanAttributeGroupPageLoader,
 )
 
 ORG = "11111111-1111-4111-8111-111111111111"
@@ -2335,6 +2342,152 @@ def test_activation_rereads_exact_active_before_retirement_and_fails_closed(
     with pytest.raises(PropertyCatalogDevRuntimeError, match="durably reread"):
         runtime.activate(request)
     assert published == []
+
+
+def test_full_repair_span_definition_ignores_the_prior_active_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_token = "55555555-5555-4555-8555-555555555555"
+    context = PostgresSnapshotContext(
+        organization_id=ORG,
+        workspace_id=WORKSPACE,
+        project_ids=(PROJECT,),
+        catalog_epoch=1,
+        catalog_revision=12,
+        projection_version=1,
+        snapshot_cutoff=datetime(2026, 8, 14, 13, tzinfo=UTC),
+    )
+
+    class CatalogClient:
+        catalog_database = "th7247_catalog_dev_unit"
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any], int]] = []
+
+        def query(
+            self,
+            sql: str,
+            params: dict[str, Any],
+            *,
+            timeout_ms: int,
+        ) -> tuple[object, ...]:
+            self.calls.append((sql, dict(params), timeout_ms))
+            return ()
+
+    proof = SimpleNamespace(state_conflict_count=0, count=0, digest="0" * 64)
+
+    class SpanReader:
+        def audit(self, _frozen: object) -> object:
+            return proof
+
+    result = SimpleNamespace(
+        checkpoint_write=SimpleNamespace(
+            checkpoint=SimpleNamespace(definition_count=0),
+        )
+    )
+    authoritative = SimpleNamespace(
+        values=SimpleNamespace(source_count=0, source_digest=proof.digest),
+        source_audit=SimpleNamespace(source_count=0, source_digest=proof.digest),
+    )
+    execution = SimpleNamespace(
+        context=context,
+        lease=SimpleNamespace(build_token=build_token),
+        prepared=SimpleNamespace(
+            mode=LifecycleRunMode.FULL_REPAIR,
+            lineage_anchor_revision=context.catalog_revision,
+            prior_active=SimpleNamespace(catalog_revision=11),
+        ),
+        frozen=object(),
+    )
+    captured_loaders: list[RevisionPinnedSpanAttributeGroupPageLoader] = []
+
+    def run_definition_adapter(
+        _runtime: CheckedInPropertyCatalogDevRuntime,
+        _execution: object,
+        adapter: object,
+    ) -> object:
+        if getattr(adapter, "source_adapter", None) is SourceAdapter.SPAN_ATTRIBUTE:
+            assert isinstance(adapter, SpanAttributeDefinitionSourceAdapter)
+            loaders = tuple(
+                cell.cell_contents
+                for cell in (adapter._page_loader.__closure__ or ())
+                if isinstance(
+                    cell.cell_contents,
+                    RevisionPinnedSpanAttributeGroupPageLoader,
+                )
+            )
+            assert len(loaders) == 1
+            captured_loaders.extend(loaders)
+            assert adapter._page_loader(context=context, cursor=None, limit=2) == ()
+        return result
+
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_validate_mutation_request",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_refresh_project_tenant_authorization",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_require_execution",
+        lambda *_args, **_kwargs: execution,
+    )
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_record_postgres_result",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_run_definition_adapter",
+        run_definition_adapter,
+    )
+    monkeypatch.setattr(
+        CheckedInPropertyCatalogDevRuntime,
+        "_require_authoritative",
+        lambda *_args, **_kwargs: authoritative,
+    )
+
+    client = CatalogClient()
+    request = _request(execute=True)
+    config = _unit_runtime_config()
+    runtime = CheckedInPropertyCatalogDevRuntime(
+        config=config,
+        bound_request=request,
+        provenance=_provenance_evidence(config=config, request=request),
+        schema_client=object(),  # type: ignore[arg-type]
+        catalog_client=client,  # type: ignore[arg-type]
+        source_client=object(),  # type: ignore[arg-type]
+        serializer=object(),  # type: ignore[arg-type]
+        deadline=SharedCatalogDeadline(wall_ms=100_000),
+        state_store=object(),  # type: ignore[arg-type]
+        coordinator=object(),  # type: ignore[arg-type]
+        lifecycle=object(),  # type: ignore[arg-type]
+        span_reader=SpanReader(),  # type: ignore[arg-type]
+        hot_proof_source=object(),  # type: ignore[arg-type]
+        now=lambda: datetime(2026, 8, 14, 12, tzinfo=UTC),
+        new_build_token=lambda: build_token,
+        project_tenant_binding_probe=_project_bindings,
+        _factory_authority=_RUNTIME_FACTORY_AUTHORITY,
+    )
+
+    output = runtime.reconcile_non_postgres(
+        request,
+        SimpleNamespace(adapter_results=()),
+    )
+
+    assert output["span_definition_rows"] == 0
+    assert len(captured_loaders) == 1
+    assert len(client.calls) == 1
+    _sql, params, timeout_ms = client.calls[0]
+    assert params["lineage_anchor_revision"] == context.catalog_revision
+    assert params["prior_active_revision"] == 0
+    assert params["has_prior_lineage"] == 0
+    assert timeout_ms > 0
 
 
 def test_activation_value_inventory_joins_exact_anchor_lineage_and_current_build(

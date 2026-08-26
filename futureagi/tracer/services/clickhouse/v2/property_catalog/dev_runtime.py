@@ -2487,6 +2487,17 @@ class CheckedInPropertyCatalogDevRuntime:
                     context=execution.context,
                     build_token=execution.lease.build_token,
                     deadline=self.deadline,
+                    lineage_anchor_revision=(
+                        execution.prepared.lineage_anchor_revision
+                    ),
+                    prior_active_revision=(
+                        execution.prepared.prior_active.catalog_revision
+                        if (
+                            execution.prepared.mode is LifecycleRunMode.INCREMENTAL
+                            and execution.prepared.prior_active is not None
+                        )
+                        else None
+                    ),
                 )
             ),
         )
