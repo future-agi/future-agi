@@ -15,6 +15,11 @@ from typing import Any
 import structlog
 from django.conf import settings
 
+from tracer.services.clickhouse.list_cursor import (
+    ListCursor,
+    ListCursorError,
+    decode_list_cursor,
+)
 from tracer.services.clickhouse.v2.attribute_catalog_cutover import (
     catalog_dev_read_enabled,
 )
@@ -23,6 +28,68 @@ logger = structlog.get_logger(__name__)
 
 CATALOG_SNAPSHOT_MODE = "frozen_snapshot"
 CATALOG_SNAPSHOT_HEADER = "frozen-snapshot"
+
+
+def decode_catalog_snapshot_list_cursor(
+    token: str,
+    *,
+    resource: str,
+    scope: dict[str, Any],
+    query: dict[str, Any],
+    page_size: int,
+) -> tuple[ListCursor, str | None]:
+    """Authenticate a cursor against the only two catalog window modes.
+
+    Runtime flags govern fresh walks only. A continuation must instead recover
+    whether its signed query identity was the baseline contract or the explicit
+    frozen-snapshot contract. Trying only these two server-defined variants
+    keeps that recovery authenticated without decoding or trusting cursor
+    payload fields directly.
+    """
+
+    baseline_query = dict(query)
+    supplied_mode = baseline_query.pop("query_window_mode", None)
+    if supplied_mode not in (None, CATALOG_SNAPSHOT_MODE):
+        raise ListCursorError(
+            "invalid_cursor",
+            "The continuation cursor is invalid.",
+        )
+
+    try:
+        return (
+            decode_list_cursor(
+                token,
+                resource=resource,
+                scope=scope,
+                query=baseline_query,
+                page_size=page_size,
+            ),
+            None,
+        )
+    except ListCursorError as baseline_error:
+        if baseline_error.code != "cursor_mismatch":
+            raise
+        baseline_mismatch = baseline_error
+
+    snapshot_query = {
+        **baseline_query,
+        "query_window_mode": CATALOG_SNAPSHOT_MODE,
+    }
+    try:
+        return (
+            decode_list_cursor(
+                token,
+                resource=resource,
+                scope=scope,
+                query=snapshot_query,
+                page_size=page_size,
+            ),
+            CATALOG_SNAPSHOT_MODE,
+        )
+    except ListCursorError as snapshot_error:
+        if snapshot_error.code != "cursor_mismatch":
+            raise
+        raise baseline_mismatch from snapshot_error
 
 
 def catalog_dev_snapshot_enabled() -> bool:
@@ -117,5 +184,6 @@ __all__ = [
     "catalog_dev_snapshot_enabled",
     "catalog_dev_snapshot_window",
     "catalog_snapshot_metadata",
+    "decode_catalog_snapshot_list_cursor",
     "mark_catalog_snapshot_response",
 ]

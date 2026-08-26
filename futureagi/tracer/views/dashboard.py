@@ -127,9 +127,9 @@ from tracer.services.clickhouse.v2.attribute_catalog_shadow import (
 )
 from tracer.services.clickhouse.v2.attribute_catalog_snapshot import (
     CATALOG_SNAPSHOT_MODE,
-    catalog_dev_snapshot_enabled,
     catalog_dev_snapshot_window,
     catalog_snapshot_metadata,
+    decode_catalog_snapshot_list_cursor,
     mark_catalog_snapshot_response,
 )
 from tracer.services.clickhouse.v2.property_catalog.activation_control import (
@@ -796,13 +796,16 @@ def _batched_filter_value_cursor(
             True,
         )
 
-    cursor_state = decode_list_cursor(
+    cursor_state, cursor_window_mode = decode_catalog_snapshot_list_cursor(
         cursor_token,
         resource=_FILTER_VALUE_BATCH_CURSOR_RESOURCE,
         scope=cursor_scope,
         query=cursor_query,
         page_size=page_size,
     )
+    cursor_query.pop("query_window_mode", None)
+    if cursor_window_mode is not None:
+        cursor_query["query_window_mode"] = cursor_window_mode
     if len(cursor_state.order) != 8:
         raise ListCursorError("invalid_cursor", "The continuation cursor is invalid.")
     (
@@ -4163,13 +4166,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     cursor_resource = "dashboard_system_filter_values"
                     if metric_name in enduser_string_cols or metric_name == "session":
                         if cursor_token:
-                            cursor_state = decode_list_cursor(
-                                cursor_token,
-                                resource=cursor_resource,
-                                scope=cursor_scope,
-                                query=cursor_query,
-                                page_size=page_size,
+                            cursor_state, cursor_window_mode = (
+                                decode_catalog_snapshot_list_cursor(
+                                    cursor_token,
+                                    resource=cursor_resource,
+                                    scope=cursor_scope,
+                                    query=cursor_query,
+                                    page_size=page_size,
+                                )
                             )
+                            if cursor_window_mode is not None:
+                                cursor_query["query_window_mode"] = cursor_window_mode
                             if (
                                 len(cursor_state.order) != 1
                                 or not isinstance(cursor_state.order[0], str)
@@ -4254,13 +4261,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     catalog_after = None
                     catalog_cursor = False
                     if cursor_token:
-                        cursor_state = decode_list_cursor(
-                            cursor_token,
-                            resource=cursor_resource,
-                            scope=cursor_scope,
-                            query=cursor_query,
-                            page_size=page_size,
+                        cursor_state, cursor_window_mode = (
+                            decode_catalog_snapshot_list_cursor(
+                                cursor_token,
+                                resource=cursor_resource,
+                                scope=cursor_scope,
+                                query=cursor_query,
+                                page_size=page_size,
+                            )
                         )
+                        if cursor_window_mode is not None:
+                            cursor_query["query_window_mode"] = cursor_window_mode
                         if (
                             len(cursor_state.order) == 2
                             and cursor_state.order[0] == CATALOG_VALUE_CURSOR_MARKER
@@ -5053,9 +5064,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             batch_lane = "custom_attribute"
                             configured_snapshot_window = catalog_dev_snapshot_window()
                             cursor_window_mode = None
-                            if configured_snapshot_window is not None or (
-                                cursor_token and catalog_dev_snapshot_enabled()
-                            ):
+                            if configured_snapshot_window is not None:
                                 cursor_window_mode = CATALOG_SNAPSHOT_MODE
                             batched_query = {
                                 "metric_name": metric_name,
@@ -5077,6 +5086,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 page_size=page_size,
                                 lane=batch_lane,
                                 query=batched_query,
+                            )
+                            cursor_window_mode = batched_cursor.cursor_query.get(
+                                "query_window_mode"
                             )
                             project_scope = batched_cursor.scope
                             project_ids = list(project_scope.project_ids)
@@ -5414,22 +5426,24 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         }
                         configured_snapshot_window = catalog_dev_snapshot_window()
                         cursor_window_mode = None
-                        if configured_snapshot_window is not None or (
-                            cursor_token and catalog_dev_snapshot_enabled()
-                        ):
+                        if configured_snapshot_window is not None and not cursor_token:
                             cursor_window_mode = CATALOG_SNAPSHOT_MODE
                             cursor_query["query_window_mode"] = cursor_window_mode
                         selector = None
                         catalog_after = None
                         catalog_cursor = False
                         if cursor_token:
-                            cursor_state = decode_list_cursor(
-                                cursor_token,
-                                resource="dashboard_filter_values",
-                                scope=cursor_scope,
-                                query=cursor_query,
-                                page_size=page_size,
+                            cursor_state, cursor_window_mode = (
+                                decode_catalog_snapshot_list_cursor(
+                                    cursor_token,
+                                    resource="dashboard_filter_values",
+                                    scope=cursor_scope,
+                                    query=cursor_query,
+                                    page_size=page_size,
+                                )
                             )
+                            if cursor_window_mode is not None:
+                                cursor_query["query_window_mode"] = cursor_window_mode
                             if (
                                 len(cursor_state.order) == 3
                                 and cursor_state.order[0] == CATALOG_VALUE_CURSOR_MARKER

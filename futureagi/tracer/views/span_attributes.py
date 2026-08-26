@@ -51,7 +51,6 @@ from tracer.services.clickhouse.attribute_reads import (
 from tracer.services.clickhouse.list_cursor import (
     ListCursorError,
     cursor_scope_for_request,
-    decode_list_cursor,
     encode_list_cursor,
 )
 from tracer.services.clickhouse.read_budget import (
@@ -72,9 +71,9 @@ from tracer.services.clickhouse.v2.attribute_catalog_shadow import (
 )
 from tracer.services.clickhouse.v2.attribute_catalog_snapshot import (
     CATALOG_SNAPSHOT_MODE,
-    catalog_dev_snapshot_enabled,
     catalog_dev_snapshot_window,
     catalog_snapshot_metadata,
+    decode_catalog_snapshot_list_cursor,
     mark_catalog_snapshot_response,
 )
 from tracer.services.exact_aggregation_cache import read_or_schedule_exact_snapshot
@@ -333,11 +332,6 @@ class SpanAttributeKeysView(APIView):
                     }
                 )
                 cursor_window_mode = None
-                if cursor_token and catalog_dev_snapshot_enabled():
-                    # Successful cursor verification below authenticates this
-                    # mode independently of mutable A/B settings.
-                    cursor_window_mode = CATALOG_SNAPSHOT_MODE
-                    cursor_query["query_window_mode"] = cursor_window_mode
                 # Keep the default cursor query byte-for-byte compatible with
                 # cursors emitted by older pods. Eval mapping is a distinct
                 # key contract and is explicitly signed so its cursor cannot
@@ -350,13 +344,17 @@ class SpanAttributeKeysView(APIView):
                     # can therefore never be replayed under another key.
                     cursor_query["q"] = exact_key
                 if cursor_token:
-                    cursor_state = decode_list_cursor(
-                        cursor_token,
-                        resource="span_attribute_keys",
-                        scope=cursor_scope,
-                        query=cursor_query,
-                        page_size=page_size,
+                    cursor_state, cursor_window_mode = (
+                        decode_catalog_snapshot_list_cursor(
+                            cursor_token,
+                            resource="span_attribute_keys",
+                            scope=cursor_scope,
+                            query=cursor_query,
+                            page_size=page_size,
+                        )
                     )
+                    if cursor_window_mode is not None:
+                        cursor_query["query_window_mode"] = cursor_window_mode
                     expected_order_lengths = {6, 8, 9} if workspace_scope else {3, 5, 6}
                     if len(cursor_state.order) not in expected_order_lengths:
                         raise ListCursorError(
