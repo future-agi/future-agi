@@ -663,6 +663,9 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
 ]
+# Voice runs need WebRTC media (UDP/ICE), which a hostname allowlist cannot
+# pass; setting this launches sandboxes with an open network instead.
+ALK_HOSTED_EGRESS_OPEN = os.getenv("ALK_HOSTED_EGRESS_OPEN", "")
 # The OS user the hosted entrypoint runs as inside the sandbox. Must be "root" for the process
 # provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
 # (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
