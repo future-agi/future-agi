@@ -10,6 +10,9 @@ import { LoadingScreen } from "src/components/loading-screen";
 import React, { useState, useEffect, useRef } from "react";
 import { Viewer, Worker } from "@react-pdf-viewer/core";
 import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
+// pdfjs-dist is a pinned local dependency — bundle its worker instead of
+// loading it from the unpkg CDN (breaks offline self-host and CSP) (#2339).
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { usePdfPreviewStoreShallow } from "src/utils/CommonStores/pdfPreviewStore";
 import Iconify from "./iconify";
 import SvgColor from "./svg-color";
@@ -114,7 +117,7 @@ const PdfPreviewDrawer = () => {
       case "pdf":
         return (
           <Box sx={{ height: "100%", backgroundColor: "background.paper" }}>
-            <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
+            <Worker workerUrl={pdfWorkerUrl}>
               <Viewer
                 fileUrl={fileUrl}
                 plugins={[defaultLayoutPluginInstance]}
