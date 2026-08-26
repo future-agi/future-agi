@@ -14,6 +14,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 import structlog
+from django.conf import settings
 
 from tracer.services.clickhouse.attribute_reads import (
     AttributeKeyInventory,
@@ -33,9 +34,12 @@ from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
 logger = structlog.get_logger(__name__)
 
-APPLICATION_READ_TIMEOUT_MS = 9_500
-APPLICATION_READ_MAX_MEMORY_USAGE = 36 * 1024 * 1024 * 1024
-APPLICATION_READ_MAX_BYTES_TO_READ = 36 * 1024 * 1024 * 1024
+APPLICATION_READ_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+APPLICATION_READ_MAX_MEMORY_USAGE = (
+    settings.CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES
+)
+APPLICATION_READ_MAX_BYTES_TO_READ = settings.CLICKHOUSE_APPLICATION_READ_MAX_BYTES
+REVIEWED_READ_TIMEOUT_CEILING_MS = settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
 
 
 class SpanTraceMapIntegrityError(ReadDeadlineExceeded):
@@ -45,8 +49,8 @@ class SpanTraceMapIntegrityError(ReadDeadlineExceeded):
 _PAGE_EVAL_READ_SETTINGS = {
     "max_threads": 2,
     "read_overflow_mode": "throw",
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
+    "max_bytes_to_read": APPLICATION_READ_MAX_BYTES_TO_READ,
+    "max_memory_usage": APPLICATION_READ_MAX_MEMORY_USAGE,
     "timeout_overflow_mode": "throw",
 }
 
@@ -130,8 +134,39 @@ class QueryExecutor(Protocol):
 class AnalyticsQueryService:
     """ClickHouse query dispatcher for the analytics endpoints."""
 
-    def __init__(self):
-        self._ch_client: ClickHouseClient | None = None
+    def __init__(
+        self,
+        *,
+        ch_client: ClickHouseClient | None = None,
+        read_timeout_ceiling_ms: int | None = None,
+    ) -> None:
+        self._ch_client = ch_client
+        self._read_timeout_ceiling_ms = self._validated_read_timeout_ceiling_ms(
+            read_timeout_ceiling_ms
+        )
+
+    @staticmethod
+    def _validated_read_timeout_ceiling_ms(value: int | None) -> int:
+        ceiling_ms = APPLICATION_READ_TIMEOUT_MS if value is None else value
+        if type(ceiling_ms) is not int or not (
+            1 <= ceiling_ms <= REVIEWED_READ_TIMEOUT_CEILING_MS
+        ):
+            raise ValueError(
+                "ClickHouse service read timeout ceiling is outside [1, "
+                f"{REVIEWED_READ_TIMEOUT_CEILING_MS}] ms"
+            )
+        return ceiling_ms
+
+    @property
+    def read_timeout_ceiling_ms(self) -> int:
+        # V2AnalyticsQueryService predates this constructor and intentionally
+        # owns its process-wide client. Preserve its interactive default until
+        # that shared lane is explicitly instantiated through this base class.
+        return getattr(
+            self,
+            "_read_timeout_ceiling_ms",
+            APPLICATION_READ_TIMEOUT_MS,
+        )
 
     @property
     def ch_client(self) -> ClickHouseClient:
@@ -163,7 +198,7 @@ class AnalyticsQueryService:
         self,
         query: str,
         params: dict = None,
-        timeout_ms: int = 10000,
+        timeout_ms: int | None = APPLICATION_READ_TIMEOUT_MS,
         settings: dict | None = None,
     ) -> QueryResult:
         """Execute a query on ClickHouse and return QueryResult."""
@@ -171,10 +206,10 @@ class AnalyticsQueryService:
         # that omit settings. Row-count ceilings reject healthy high-volume
         # reads before their finite byte/time/result budgets are reached.
         requested_timeout_ms = (
-            APPLICATION_READ_TIMEOUT_MS if timeout_ms is None else int(timeout_ms)
+            self.read_timeout_ceiling_ms if timeout_ms is None else int(timeout_ms)
         )
         timeout_ms = min(
-            APPLICATION_READ_TIMEOUT_MS,
+            self.read_timeout_ceiling_ms,
             max(1, requested_timeout_ms),
         )
         if self.supports_per_query_read_settings:

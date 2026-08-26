@@ -7,14 +7,16 @@ re-resolve tenant records and publish only a fully complete exact payload.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from inspect import unwrap
 from threading import Event, Thread
 from types import SimpleNamespace
 from typing import Any
 
 import structlog
-from tfc.temporal import temporal_activity
 
+from tfc.temporal import temporal_activity
 from tracer.services.exact_aggregation_cache import (
     EXACT_AGGREGATION_ACTIVITY_TIMEOUT_SECONDS,
     EXACT_AGGREGATION_SCHEDULE_TO_START_TIMEOUT_SECONDS,
@@ -37,7 +39,6 @@ def _reauthorize_exact_observe_project(identity: dict[str, Any]) -> None:
     """Re-resolve the trusted tenant scope before any Observe ClickHouse read."""
 
     from accounts.models import Organization, Workspace
-
     from tracer.utils.workspace_scope import project_queryset_for_request
 
     organization_id = identity.get("organization_id")
@@ -84,6 +85,36 @@ def _renew_exact_refresh_lease_until_stopped(
         activate_exact_refresh(namespace, identity, refresh_token)
 
 
+@contextmanager
+def _exact_observe_analytics() -> Iterator[Any]:
+    """Own one CH25 client with the reviewed exact-graph timeout ceiling."""
+
+    from django.conf import settings
+
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.v2 import get_v2_config
+
+    config = get_v2_config()
+    read_timeout_ceiling_ms = int(settings.GRAPH_BACKGROUND_WALL_MS)
+    client = ClickHouseClient(
+        host=config["host"],
+        port=config["tcp_port"],
+        user=config["user"],
+        password=config["password"],
+        database=config["database"],
+        server_enforced_readonly=config["server_enforced_readonly"],
+        read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+    )
+    try:
+        yield AnalyticsQueryService(
+            ch_client=client,
+            read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+        )
+    finally:
+        client.close()
+
+
 def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
     from tracer.services.clickhouse.exact_graph_reads import (
         read_exact_agent_graph,
@@ -94,61 +125,59 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
         read_exact_system_graph,
         read_exact_user_system_graph,
     )
-    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
     _reauthorize_exact_observe_project(identity)
-    analytics = V2AnalyticsQueryService()
-    if namespace == "observe-agent-graph":
-        return read_exact_agent_graph(
-            analytics=analytics,
-            project_id=str(identity["project_id"]),
-            filters=list(identity.get("filters") or []),
-        )
-    common = {
-        "analytics": analytics,
-        "project_id": str(identity["project_id"]),
-        "filters": list(identity.get("filters") or []),
-        "interval": str(identity["interval"]),
-    }
-    if namespace == "observe-system-graph":
-        return read_exact_system_graph(
-            **common,
-            metric_id=str(identity.get("metric_id") or ""),
-            observe_type=str(identity.get("observe_type") or "trace"),
-        )
-    if namespace == "observe-all-system-graphs":
-        return read_exact_all_system_metrics(**common)
-    if namespace == "observe-user-system-graph":
-        return read_exact_user_system_graph(
-            **common,
-            metric_id=str(identity.get("metric_id") or "active_users"),
-        )
-    if namespace == "observe-session-system-graph":
-        return read_exact_session_system_graph(
-            **common,
-            metric_id=str(identity.get("metric_id") or "session_count"),
-        )
-    if namespace in {"observe-eval-graph", "observe-eval-chart-series"}:
-        return read_exact_eval_graph(
-            **common,
-            req_data_config=dict(identity.get("req_data_config") or {}),
-            observe_type=str(identity.get("observe_type") or "trace"),
-            all_series=namespace == "observe-eval-chart-series",
-            aggregation_context=str(identity.get("aggregation_context") or "trace"),
-        )
-    if namespace == "observe-annotation-graph":
-        return read_exact_annotation_graph(
-            **common,
-            req_data_config=dict(identity.get("req_data_config") or {}),
-            observe_type=str(identity.get("observe_type") or "trace"),
-            aggregation_context=str(identity.get("aggregation_context") or "trace"),
-        )
-    raise ValueError("unsupported exact Observe refresh namespace")
+    with _exact_observe_analytics() as analytics:
+        if namespace == "observe-agent-graph":
+            return read_exact_agent_graph(
+                analytics=analytics,
+                project_id=str(identity["project_id"]),
+                filters=list(identity.get("filters") or []),
+            )
+        common = {
+            "analytics": analytics,
+            "project_id": str(identity["project_id"]),
+            "filters": list(identity.get("filters") or []),
+            "interval": str(identity["interval"]),
+        }
+        if namespace == "observe-system-graph":
+            return read_exact_system_graph(
+                **common,
+                metric_id=str(identity.get("metric_id") or ""),
+                observe_type=str(identity.get("observe_type") or "trace"),
+            )
+        if namespace == "observe-all-system-graphs":
+            return read_exact_all_system_metrics(**common)
+        if namespace == "observe-user-system-graph":
+            return read_exact_user_system_graph(
+                **common,
+                metric_id=str(identity.get("metric_id") or "active_users"),
+            )
+        if namespace == "observe-session-system-graph":
+            return read_exact_session_system_graph(
+                **common,
+                metric_id=str(identity.get("metric_id") or "session_count"),
+            )
+        if namespace in {"observe-eval-graph", "observe-eval-chart-series"}:
+            return read_exact_eval_graph(
+                **common,
+                req_data_config=dict(identity.get("req_data_config") or {}),
+                observe_type=str(identity.get("observe_type") or "trace"),
+                all_series=namespace == "observe-eval-chart-series",
+                aggregation_context=str(identity.get("aggregation_context") or "trace"),
+            )
+        if namespace == "observe-annotation-graph":
+            return read_exact_annotation_graph(
+                **common,
+                req_data_config=dict(identity.get("req_data_config") or {}),
+                observe_type=str(identity.get("observe_type") or "trace"),
+                aggregation_context=str(identity.get("aggregation_context") or "trace"),
+            )
+        raise ValueError("unsupported exact Observe refresh namespace")
 
 
 def _dashboard_payload(identity: dict[str, Any]) -> Any:
     from accounts.models import Workspace
-
     from tracer.views.dashboard import DashboardWidgetViewSet
 
     workspace = Workspace.objects.select_related("organization").get(
@@ -217,7 +246,6 @@ def _attribute_detail_payload(identity: dict[str, Any]) -> Any:
     """Re-authorize then compute one exact span-attribute snapshot."""
 
     from accounts.models import Workspace
-
     from tracer.services.clickhouse.exact_attribute_detail import (
         read_exact_attribute_detail,
     )
