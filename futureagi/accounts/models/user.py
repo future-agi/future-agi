@@ -311,7 +311,12 @@ class OrgApiKey(BaseModel):
     type = models.CharField(
         max_length=50,
         default="system",
-        choices=[("system", "System"), ("user", "User"), ("mcp", "MCP")],
+        choices=[
+            ("system", "System"),
+            ("user", "User"),
+            ("mcp", "MCP"),
+            ("harness", "Harness reporting"),
+        ],
     )
     enabled = models.BooleanField(default=True)
     user = models.ForeignKey(
@@ -336,7 +341,13 @@ class OrgApiKey(BaseModel):
                 condition=models.Q(type="system", deleted=False),
                 name="unique_system_api_key_per_org_not_deleted",
                 violation_error_message="Only one system API key is allowed per organization.",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "type"],
+                condition=models.Q(type="harness", deleted=False),
+                name="unique_harness_api_key_per_org_not_deleted",
+                violation_error_message="Only one harness API key is allowed per organization.",
+            ),
         ]
 
     def __str__(self):

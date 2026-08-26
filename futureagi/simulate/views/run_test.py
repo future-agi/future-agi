@@ -6423,7 +6423,10 @@ def _latest_repository_harness_execution(run_test):
 def _dispatch_repository_harness_rerun(
     test_execution, *, environment_values: dict[str, str]
 ) -> dict:
-    from simulate.services.harness_credentials import credentials_for_rerun
+    from simulate.services.harness_credentials import (
+        credentials_for_rerun,
+        harness_reporting_environment,
+    )
     from simulate.services.harness_sandbox import HarnessSandboxClient
 
     job_id = _repository_harness_job_id(test_execution)
@@ -6441,6 +6444,10 @@ def _dispatch_repository_harness_rerun(
         {
             "environment_values": saved_environment,
             "secret_refs": secret_refs,
+            "controller_environment_values": harness_reporting_environment(
+                organization=test_execution.run_test.organization,
+                workspace=test_execution.run_test.workspace,
+            ),
             "only": [],
         },
     )

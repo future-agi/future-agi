@@ -41,6 +41,7 @@ import {
   mergePastedCredentials,
   updateCredential,
 } from "./credentialValues";
+import { compactActivityEvents } from "./activityEvents";
 
 const terminalStages = new Set(["completed", "failed", "canceled"]);
 const stages = [
@@ -530,13 +531,7 @@ export default function Harness() {
     ? Math.max(0, Math.floor((clock - updatedAt.getTime()) / 1000))
     : null;
   const messages = useMemo(() => {
-    const seen = new Set();
-    return (current?.events || []).filter((event) => {
-      const key = event.event_id || JSON.stringify(event);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    return compactActivityEvents(current?.events || []);
   }, [current?.events]);
   const packagingFindings = (preflight?.packaging?.candidates || []).flatMap(
     (candidate) =>
@@ -1530,6 +1525,30 @@ export default function Harness() {
                             {current.status.failure.code}
                           </Typography>
                           {current.status.failure.message}
+                          {current.status.failure.action && (
+                            <Typography variant="body2" sx={{ mt: 0.75 }}>
+                              Next step: {current.status.failure.action}
+                            </Typography>
+                          )}
+                          {(current.status.failure.details?.packaging_type ||
+                            current.status.failure.details?.failed_adapter) && (
+                            <Typography
+                              variant="caption"
+                              component="div"
+                              sx={{ mt: 0.75 }}
+                            >
+                              {current.status.failure.details.packaging_type
+                                ? `Packaging: ${readable(current.status.failure.details.packaging_type)}`
+                                : ""}
+                              {current.status.failure.details.packaging_type &&
+                              current.status.failure.details.failed_adapter
+                                ? " · "
+                                : ""}
+                              {current.status.failure.details.failed_adapter
+                                ? `Adapter: ${readable(current.status.failure.details.failed_adapter)}`
+                                : ""}
+                            </Typography>
+                          )}
                         </Alert>
                       )}
                       {current.status.detail && (

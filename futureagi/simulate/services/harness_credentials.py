@@ -3,11 +3,43 @@ from __future__ import annotations
 from typing import Any
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import transaction
 
+from accounts.models import OrgApiKey
 from simulate.models import HarnessCredentialFile, HarnessEnvironmentCredentials
 
 
 PLATFORM_FILE_MANAGER = "harness_environment_file"
+
+
+def harness_reporting_environment(*, organization, workspace) -> dict[str, str]:
+    """Return the persistent, least-purpose credential for one tenant.
+
+    The values cross only the trusted platform-to-provider request and are
+    mounted into the harness controller. They are never part of the submitted
+    agent environment or the persisted HarnessJob.
+    """
+
+    with transaction.atomic():
+        type(organization).objects.select_for_update().get(pk=organization.pk)
+        credential, _ = OrgApiKey.no_workspace_objects.get_or_create(
+            organization=organization,
+            type="harness",
+            deleted=False,
+            defaults={
+                "name": "ALK harness reporting",
+                "enabled": True,
+            },
+        )
+        if not credential.enabled:
+            raise PermissionError("organization harness reporting key is disabled")
+    values = {
+        "HARNESS_PLATFORM_API_KEY": credential.api_key,
+        "HARNESS_PLATFORM_SECRET_KEY": credential.secret_key,
+    }
+    if workspace is not None:
+        values["HARNESS_PLATFORM_WORKSPACE_ID"] = str(workspace.id)
+    return values
 
 
 def request_scope(request) -> tuple[Any, Any]:
