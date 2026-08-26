@@ -48,12 +48,38 @@ func NewRelay(session *Session, config RelayConfig, logger *slog.Logger) *Relay 
 
 // Start begins relaying messages. Blocks until the session is done.
 func (r *Relay) Start() {
-	r.wg.Add(4)
+	r.wg.Add(5)
 	go r.readFromClient()
 	go r.writeToProvider()
 	go r.readFromProvider()
 	go r.writeToClient()
+	go r.pingPeers()
 	r.wg.Wait()
+}
+
+// pingPeers sends periodic WebSocket pings so the read deadlines set on both
+// connections (extended only by the pong handlers) never expire on idle
+// sessions. Without pings no pongs arrive, so idle relays were dropped
+// (#2336).
+func (r *Relay) pingPeers() {
+	defer r.wg.Done()
+	ticker := time.NewTicker(r.config.PingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			deadline := time.Now().Add(10 * time.Second)
+			for _, conn := range []*websocket.Conn{r.session.ClientConn, r.session.ProviderConn} {
+				conn.SetWriteDeadline(deadline)
+				if err := conn.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
+					r.session.Close("peer_ping_error")
+					return
+				}
+			}
+		case <-r.session.StopChan():
+			return
+		}
+	}
 }
 
 func (r *Relay) readFromClient() {
