@@ -373,6 +373,45 @@ class DaytonaHostedGateway:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
         secrets_map = PlatformSecretResolver().resolve(job)
+        # The guest matches each process's declared secret purposes against the
+        # refs in job.json by exact tag. The platform's credential channels do
+        # not carry that tag: uploaded credential files get a descriptive
+        # purpose and pasted values travel with no ref at all. Tag both here,
+        # on the sandbox copy only — the stored job payload keeps what the
+        # user submitted.
+        from simulate.services.harness_credentials import PLATFORM_FILE_MANAGER
+
+        agent = dict(payload["agent"])
+        secret_refs = {
+            alias: dict(ref) for alias, ref in agent["secret_refs"].items()
+        }
+        # The guest's job model additionally accepts only manager
+        # "platform-vault" on agent refs, so both corrections converge on it.
+        for ref in secret_refs.values():
+            if ref.get("manager") == PLATFORM_FILE_MANAGER:
+                ref["manager"] = "platform-vault"
+                ref["purpose"] = "target_provider"
+        for alias in secrets_map:
+            secret_refs.setdefault(
+                alias,
+                {
+                    "manager": "platform-vault",
+                    "key": alias,
+                    "version": None,
+                    "purpose": "target_provider",
+                },
+            )
+        agent["secret_refs"] = secret_refs
+        # The caller dials with agent.config["livekit_url"], but the create
+        # page has no configuration input yet — mirror the supplied LiveKit
+        # URL into the sandbox copy's config when the key is absent.
+        config = dict(agent.get("config") or {})
+        if not config.get("livekit_url"):
+            supplied = secrets_map.get("LIVEKIT_URL") or secrets_map.get("livekit_url")
+            if supplied:
+                config["livekit_url"] = supplied
+        agent["config"] = config
+        payload = {**payload, "agent": agent}
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
@@ -387,6 +426,12 @@ class DaytonaHostedGateway:
         allowed_domains.update(payload["security"]["allowed_egress_domains"])
         if platform_host:
             allowed_domains.add(platform_host)
+        # WebRTC media (UDP/ICE) does not pass a hostname allowlist; until the
+        # TURN-over-TLS host is known, this escape hatch launches the sandbox
+        # with an open network so voice runs can connect at all.
+        egress_open = bool(getattr(settings, "ALK_HOSTED_EGRESS_OPEN", ""))
+        if egress_open:
+            allowed_domains = set()
         sandbox = None
         try:
             sandbox = self.client.create(
@@ -398,7 +443,7 @@ class DaytonaHostedGateway:
                         "futureagi.job": str(job.id),
                         "futureagi.attempt": str(attempt.id),
                     },
-                    network_block_all=not allowed_domains,
+                    network_block_all=False if egress_open else not allowed_domains,
                     domain_allow_list=",".join(sorted(allowed_domains)) or None,
                     ephemeral=True,
                     ttl_minutes=ttl_minutes,
