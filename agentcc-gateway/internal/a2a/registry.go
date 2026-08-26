@@ -96,6 +96,26 @@ func (r *Registry) Count() int {
 	return len(r.agents)
 }
 
+// SetCard stores a fetched agent card under the write lock so background
+// card fetches never race with readers (#2337).
+func (r *Registry) SetCard(name string, card *AgentCard) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a, ok := r.agents[name]; ok {
+		a.Card = card
+	}
+}
+
+// CardOf returns a snapshot of an agent's card under the read lock.
+func (r *Registry) CardOf(name string) *AgentCard {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if a, ok := r.agents[name]; ok {
+		return a.Card
+	}
+	return nil
+}
+
 // FetchCards fetches agent cards from all agents in the background.
 // Non-blocking — logs warnings on failures.
 func (r *Registry) FetchCards(ctx context.Context) {
@@ -138,7 +158,7 @@ func (r *Registry) FetchCards(ctx context.Context) {
 				return
 			}
 
-			a.Card = &card
+			r.SetCard(a.Name, &card)
 			a.healthy.Store(true)
 			slog.Info("a2a: fetched agent card", "agent", a.Name, "skills", len(card.Skills))
 		}(agent)

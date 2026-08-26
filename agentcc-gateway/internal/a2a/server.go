@@ -143,7 +143,9 @@ func (s *Server) ListAgents(w http.ResponseWriter, r *http.Request) {
 			Description: a.Description,
 			Skills:      a.Skills,
 			Healthy:     a.Healthy(),
-			Card:        a.Card,
+			// Card is written by the background fetcher — read it under the
+			// registry lock to avoid the data race (#2337).
+			Card: s.registry.CardOf(a.Name),
 		})
 	}
 
