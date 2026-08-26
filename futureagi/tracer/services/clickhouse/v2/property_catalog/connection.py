@@ -41,6 +41,7 @@ PROPERTY_CATALOG_TABLES = frozenset(
         "span_attribute_value_catalog",
         "property_catalog_checkpoints",
         "property_catalog_activations",
+        "property_catalog_activation_control_events",
         "property_catalog_deliveries",
         "property_catalog_source_streams",
     }
@@ -87,8 +88,11 @@ class PropertyCatalogConnectionConfig:
             api_read_user=config.user,
             password=config.password,
             source_users=source_users,
-            workspace_allowlist=getattr(
+            dev_workspace_allowlist=getattr(
                 source, "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", None
+            ),
+            prod_workspace_allowlist=getattr(
+                source, "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", None
             ),
         )
         if deployment is None:

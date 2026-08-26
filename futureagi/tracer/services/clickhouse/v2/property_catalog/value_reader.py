@@ -23,6 +23,11 @@ from typing import Any, Protocol
 from tracer.services.clickhouse.v2.attribute_catalog_codec import (
     encode_catalog_scalar,
 )
+from tracer.services.clickhouse.v2.property_catalog.activation_control import (
+    ActivationControlSelector,
+    ActivationControlTarget,
+    ActivationControlUnavailable,
+)
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     MAX_DEFINITION_JSON_BYTES,
     MAX_IDENTITY_COMPONENT_BYTES,
@@ -39,6 +44,7 @@ from tracer.services.clickhouse.v2.property_catalog.cursor import (
 from tracer.services.clickhouse.v2.property_catalog.reader import (
     PropertyCatalogActivation,
     PropertyCatalogUnavailable,
+    _control_target_matches_activation,
     property_catalog_activation_sql,
     require_property_catalog_activation_coverage,
     verify_property_catalog_activation,
@@ -680,10 +686,16 @@ class PropertyCatalogValueReader:
         executor: PropertyCatalogValueQueryExecutor,
         *,
         catalog_database: str,
+        activation_selector: ActivationControlSelector | None = None,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         self._executor = executor
         self._database = _database(catalog_database)
+        if self._database.startswith("th7247_catalog_prod_") and (
+            activation_selector is None
+        ):
+            raise ValueError("production property catalog requires control selection")
+        self._activation_selector = activation_selector
         self._clock = clock
         definition_ctes = _definition_ctes(self._database)
         self._activation_sql = property_catalog_activation_sql(self._database)
@@ -924,24 +936,54 @@ class PropertyCatalogValueReader:
         cursor: PropertyCatalogValueCursor | None,
         budget: _ReadBudget,
     ) -> PropertyCatalogActivation:
+        target: ActivationControlTarget | None = None
+        if self._activation_selector is not None:
+            try:
+                target = self._activation_selector.select_target(
+                    scope=scope,
+                    timeout_ms=budget.remaining_ms(),
+                )
+                budget.query_count += 1
+            except ActivationControlUnavailable as exc:
+                raise PropertyCatalogValueUnavailable(exc.reason) from exc
         rows = self._execute(
             self._activation_sql,
             {
                 "catalog_organization_id": scope["organization_id"],
                 "catalog_workspace_id": scope["workspace_id"],
-                "catalog_exact_activation": int(cursor is not None),
-                "catalog_epoch": cursor.catalog_epoch if cursor else 0,
-                "catalog_revision": cursor.catalog_revision if cursor else 0,
+                "catalog_exact_activation": int(
+                    target is not None or cursor is not None
+                ),
+                "catalog_epoch": (
+                    target.catalog_epoch
+                    if target is not None
+                    else cursor.catalog_epoch
+                    if cursor
+                    else 0
+                ),
+                "catalog_revision": (
+                    target.catalog_revision
+                    if target is not None
+                    else cursor.catalog_revision
+                    if cursor
+                    else 0
+                ),
             },
             max_result_rows=2,
             budget=budget,
         )
-        return verify_property_catalog_activation(
+        activation = verify_property_catalog_activation(
             rows,
             scope=scope,
-            cursor_present=cursor is not None,
+            cursor_present=target is not None or cursor is not None,
             unavailable_type=PropertyCatalogValueUnavailable,
         )
+        if target is not None and not _control_target_matches_activation(
+            target,
+            activation,
+        ):
+            raise PropertyCatalogValueUnavailable("control_target_mismatch")
+        return activation
 
     def _definition(
         self,

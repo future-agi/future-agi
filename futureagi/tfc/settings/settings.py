@@ -1178,7 +1178,10 @@ def property_catalog_read_deployment(
         normalized_environment == "staging" and normalized_cloud == "DEV"
     ):
         return "dev"
-    if normalized_environment == "production" and normalized_cloud != "DEV":
+    # ``ENV_TYPE`` is documented and deployed as ``prod``. Keep the longer
+    # spelling as a backwards-compatible alias, but never classify either as
+    # production when the cloud deployment is explicitly DEV.
+    if normalized_environment in {"prod", "production"} and normalized_cloud != "DEV":
         return "prod"
     raise ValueError(
         "unified property catalog reads require an explicitly supported DEV "
@@ -1276,7 +1279,8 @@ def validate_property_catalog_read_admission(
     api_read_user: object,
     password: object,
     source_users: object,
-    workspace_allowlist: object,
+    dev_workspace_allowlist: object,
+    prod_workspace_allowlist: object,
 ) -> str | None:
     """Fail closed unless one bounded DEV or production read is admitted."""
 
@@ -1293,10 +1297,14 @@ def validate_property_catalog_read_admission(
         acknowledgement = dev_acknowledgement
         expected_acknowledgement = PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT
         cross_wired_acknowledgement = prod_acknowledgement
+        workspace_allowlist = dev_workspace_allowlist
+        cross_wired_workspace_allowlist = prod_workspace_allowlist
     else:
         acknowledgement = prod_acknowledgement
         expected_acknowledgement = PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT
         cross_wired_acknowledgement = dev_acknowledgement
+        workspace_allowlist = prod_workspace_allowlist
+        cross_wired_workspace_allowlist = dev_workspace_allowlist
     if (
         acknowledgement != expected_acknowledgement
         or cross_wired_acknowledgement not in {None, ""}
@@ -1304,6 +1312,16 @@ def validate_property_catalog_read_admission(
         raise ValueError(
             "unified property catalog reads require the exact deployment-specific "
             "acknowledgement"
+        )
+    try:
+        cross_wired_workspaces = tuple(cross_wired_workspace_allowlist)
+    except TypeError as exc:
+        raise ValueError(
+            "property catalog workspace allowlists must be deployment-specific"
+        ) from exc
+    if cross_wired_workspaces:
+        raise ValueError(
+            "property catalog workspace allowlists must be deployment-specific"
         )
 
     validate_property_catalog_read_connection(
@@ -1334,6 +1352,22 @@ def validate_property_catalog_read_admission(
             "property catalog workspace allowlist must contain 1 to 256 entries"
         )
     return deployment
+
+
+def property_catalog_read_workspace_allowlist(source: object) -> tuple[object, ...]:
+    """Return only the allowlist bound to the admitted read deployment."""
+
+    deployment = getattr(source, "PROPERTY_CATALOG_READ_DEPLOYMENT", None)
+    if deployment == "dev":
+        configured = getattr(source, "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", ())
+    elif deployment == "prod":
+        configured = getattr(source, "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", ())
+    else:
+        return ()
+    try:
+        return tuple(configured)
+    except TypeError:
+        return ()
 
 
 PROPERTY_CATALOG_READ_MODE = (
@@ -1480,6 +1514,17 @@ PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = tuple(
         }
     )
 )
+PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = tuple(
+    sorted(
+        {
+            value.strip()
+            for value in os.getenv(
+                "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", ""
+            ).split(",")
+            if value.strip()
+        }
+    )
+)
 try:
     PROPERTY_CATALOG_CH_PORT = (
         int(_property_catalog_ch_port_raw) if _property_catalog_ch_port_raw else 0
@@ -1554,7 +1599,15 @@ PROPERTY_CATALOG_READ_DEPLOYMENT = validate_property_catalog_read_admission(
         str(CLICKHOUSE.get("CH_USERNAME") or "").strip(),
     }
     - {""},
-    workspace_allowlist=PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST,
+    dev_workspace_allowlist=PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST,
+    prod_workspace_allowlist=PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST,
+)
+PROPERTY_CATALOG_READ_WORKSPACE_ALLOWLIST = (
+    PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST
+    if PROPERTY_CATALOG_READ_DEPLOYMENT == "dev"
+    else PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST
+    if PROPERTY_CATALOG_READ_DEPLOYMENT == "prod"
+    else ()
 )
 
 # Fail-closed: rollup routing requires both flag=on and window >= coverage date.

@@ -7,6 +7,7 @@ import pytest
 from tfc.settings.settings import (
     PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT,
     PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT,
+    property_catalog_read_workspace_allowlist,
 )
 from tracer.services.clickhouse.v2.attribute_catalog_connection import (
     _validate_catalog_query,
@@ -43,6 +44,7 @@ def _read_settings(**overrides):
         "PROPERTY_CATALOG_CH_USER": "property_catalog_reader",
         "PROPERTY_CATALOG_CH_PASSWORD": "not-logged",
         "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": ("workspace-1",),
+        "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": (),
         "CLICKHOUSE_V2": {"CH25_USER": "source_v2"},
         "CLICKHOUSE": {"CH_USERNAME": "source_v1"},
     }
@@ -58,6 +60,8 @@ def _prod_settings(**overrides):
         "PROPERTY_CATALOG_PROD_READ_ACK": (PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT),
         "PROPERTY_CATALOG_DATABASE": "th7247_catalog_prod_clean",
         "PROPERTY_CATALOG_CH_DATABASE": "th7247_catalog_prod_clean",
+        "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": (),
+        "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": ("workspace-1",),
     }
     values.update(overrides)
     return _read_settings(**values)
@@ -78,6 +82,7 @@ def test_property_catalog_table_allowlist_is_exact():
         "span_attribute_value_catalog",
         "property_catalog_checkpoints",
         "property_catalog_activations",
+        "property_catalog_activation_control_events",
         "property_catalog_deliveries",
         "property_catalog_source_streams",
     }
@@ -128,9 +133,15 @@ def test_property_catalog_connection_preserves_acknowledged_dev_admission():
 
 
 @pytest.mark.parametrize("read_mode", ["read", "shadow"])
-def test_property_catalog_connection_admits_bounded_production_reads(read_mode):
+@pytest.mark.parametrize("environment_type", ["prod", "production"])
+def test_property_catalog_connection_admits_bounded_production_reads(
+    read_mode, environment_type
+):
     config = PropertyCatalogConnectionConfig.from_settings(
-        _prod_settings(PROPERTY_CATALOG_READ_MODE=read_mode)
+        _prod_settings(
+            ENV_TYPE=environment_type,
+            PROPERTY_CATALOG_READ_MODE=read_mode,
+        )
     )
 
     assert config.database == "th7247_catalog_prod_clean"
@@ -143,13 +154,26 @@ def test_property_catalog_connection_admits_bounded_production_reads(read_mode):
 
 def test_property_catalog_connection_accepts_maximum_production_allowlist():
     source = _prod_settings(
-        PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST=tuple(
+        PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST=tuple(
             f"workspace-{index}" for index in range(256)
         )
     )
-
     assert PropertyCatalogConnectionConfig.from_settings(source).database == (
         "th7247_catalog_prod_clean"
+    )
+
+
+def test_property_catalog_read_workspace_allowlist_is_deployment_bound():
+    dev = _read_settings(PROPERTY_CATALOG_READ_DEPLOYMENT="dev")
+    prod = _prod_settings(PROPERTY_CATALOG_READ_DEPLOYMENT="prod")
+
+    assert property_catalog_read_workspace_allowlist(dev) == ("workspace-1",)
+    assert property_catalog_read_workspace_allowlist(prod) == ("workspace-1",)
+    assert (
+        property_catalog_read_workspace_allowlist(
+            SimpleNamespace(PROPERTY_CATALOG_READ_DEPLOYMENT=None)
+        )
+        == ()
     )
 
 
@@ -183,7 +207,8 @@ def test_property_catalog_read_mode_off_never_builds_a_runtime_connection():
             api_read_user="",
             password="",
             source_users=None,
-            workspace_allowlist=None,
+            dev_workspace_allowlist=None,
+            prod_workspace_allowlist=None,
         )
         is None
     )
@@ -192,7 +217,6 @@ def test_property_catalog_read_mode_off_never_builds_a_runtime_connection():
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"ENV_TYPE": "prod"}, "supported DEV or production"),
         ({"ENV_TYPE": "staging", "CLOUD_DEPLOYMENT": "US"}, "supported DEV"),
         ({"CLOUD_DEPLOYMENT": "DEV"}, "supported DEV or production"),
         (
@@ -223,12 +247,18 @@ def test_property_catalog_read_mode_off_never_builds_a_runtime_connection():
             "qualifier and connection databases must match",
         ),
         (
-            {"PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": ()},
+            {"PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": ()},
             "allowlist must contain 1 to 256",
         ),
         (
             {
-                "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": tuple(
+                "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": ("dev-cross-wire",),
+            },
+            "allowlists must be deployment-specific",
+        ),
+        (
+            {
+                "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": tuple(
                     f"workspace-{index}" for index in range(257)
                 )
             },

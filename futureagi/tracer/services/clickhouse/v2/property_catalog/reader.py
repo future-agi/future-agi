@@ -13,6 +13,11 @@ from tracer.services.clickhouse.v2.property_catalog.activation import (
     BuildPlanSourceScope,
     RevisionBuildPlan,
 )
+from tracer.services.clickhouse.v2.property_catalog.activation_control import (
+    ActivationControlSelector,
+    ActivationControlTarget,
+    ActivationControlUnavailable,
+)
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     MAX_DEFINITION_JSON_BYTES,
     canonical_json,
@@ -1218,6 +1223,19 @@ def require_property_catalog_activation_coverage(
         raise unavailable_type("activation_scope_incomplete")
 
 
+def _control_target_matches_activation(
+    target: ActivationControlTarget,
+    activation: PropertyCatalogActivation,
+) -> bool:
+    return (
+        target.catalog_epoch == activation.catalog_epoch
+        and target.catalog_revision == activation.catalog_revision
+        and target.build_token == activation.build_token
+        and target.projection_version == activation.projection_version
+        and target.activation_sha256 == activation.activation_sha256
+    )
+
+
 def _custom_attribute_transport_source(source: str) -> str:
     try:
         return normalize_custom_attribute_source(source, allow_blank=True)
@@ -1288,9 +1306,15 @@ class PropertyCatalogReader:
         executor: PropertyCatalogQueryExecutor,
         *,
         catalog_database: str,
+        activation_selector: ActivationControlSelector | None = None,
     ) -> None:
         self._executor = executor
         self._database = _database(catalog_database)
+        if self._database.startswith("th7247_catalog_prod_") and (
+            activation_selector is None
+        ):
+            raise ValueError("production property catalog requires control selection")
+        self._activation_selector = activation_selector
         ctes = _definition_ctes(self._database)
         self._activation_sql = property_catalog_activation_sql(self._database)
         self._conflict_sql = ctes + _CONFLICT_SQL_SUFFIX
@@ -1553,23 +1577,52 @@ class PropertyCatalogReader:
         cursor: PropertyCatalogCursor | None,
         budget: _ReadBudget,
     ) -> PropertyCatalogActivation:
+        target: ActivationControlTarget | None = None
+        if self._activation_selector is not None:
+            try:
+                target = self._activation_selector.select_target(
+                    scope=scope,
+                    timeout_ms=budget.remaining_ms(),
+                )
+            except ActivationControlUnavailable as exc:
+                raise PropertyCatalogUnavailable(exc.reason) from exc
         rows = self._execute(
             self._activation_sql,
             {
                 "catalog_organization_id": scope["organization_id"],
                 "catalog_workspace_id": scope["workspace_id"],
-                "catalog_exact_activation": int(cursor is not None),
-                "catalog_epoch": cursor.catalog_epoch if cursor else 0,
-                "catalog_revision": cursor.catalog_revision if cursor else 0,
+                "catalog_exact_activation": int(
+                    target is not None or cursor is not None
+                ),
+                "catalog_epoch": (
+                    target.catalog_epoch
+                    if target is not None
+                    else cursor.catalog_epoch
+                    if cursor
+                    else 0
+                ),
+                "catalog_revision": (
+                    target.catalog_revision
+                    if target is not None
+                    else cursor.catalog_revision
+                    if cursor
+                    else 0
+                ),
             },
             max_result_rows=2,
             budget=budget,
         )
-        return verify_property_catalog_activation(
+        activation = verify_property_catalog_activation(
             rows,
             scope=scope,
-            cursor_present=cursor is not None,
+            cursor_present=target is not None or cursor is not None,
         )
+        if target is not None and not _control_target_matches_activation(
+            target,
+            activation,
+        ):
+            raise PropertyCatalogUnavailable("control_target_mismatch")
+        return activation
 
     @staticmethod
     def _require_activation_coverage(

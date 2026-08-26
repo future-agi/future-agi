@@ -6,7 +6,7 @@ production-only, fully-qualified, Keeper-replicated schema.  It never discovers
 or rewrites arbitrary migrations and it has no import-time network behaviour.
 
 The write surface is intentionally tiny: :func:`install_catalog_prod_schema`
-can issue exactly one ``CREATE DATABASE IF NOT EXISTS`` followed by the six
+can issue exactly one ``CREATE DATABASE IF NOT EXISTS`` followed by the seven
 ``CREATE TABLE IF NOT EXISTS`` statements in the isolated target database.  It
 has no API capable of altering, deleting, renaming, attaching, detaching, or
 backfilling any table.
@@ -30,7 +30,7 @@ from tracer.services.clickhouse.v2.apply_schema_rewriter import (
 TARGET_DATABASE_PATTERN = r"th7247_catalog_prod_[a-z0-9_]+"
 REQUIRED_SHARDS = 1
 REQUIRED_REPLICAS = 3
-MANIFEST_VERSION = "th7247-property-catalog-prod-schema/v1"
+MANIFEST_VERSION = "th7247-property-catalog-prod-schema/v2"
 
 _TARGET_DATABASE_RE = re.compile(rf"\A{TARGET_DATABASE_PATTERN}\Z", re.ASCII)
 _CLUSTER_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_.-]*\Z", re.ASCII)
@@ -63,6 +63,33 @@ _FORBIDDEN_SQL = (
 )
 
 _SCHEMA_DIR = Path(__file__).with_name("schema")
+_ACTIVATION_CONTROL_TABLE = "property_catalog_activation_control_events"
+_ACTIVATION_CONTROL_SOURCE = """\
+CREATE TABLE IF NOT EXISTS property_catalog_activation_control_events
+(
+    organization_id          UUID,
+    workspace_id             UUID,
+    catalog_epoch            UInt16,
+    projection_version       UInt16,
+    control_sequence         UInt64,
+    request_id               UUID,
+    action                   Enum8('activate' = 1, 'disable' = 2, 'rollback' = 3),
+    target_catalog_revision  UInt64,
+    target_build_token       UUID,
+    target_activation_sha256 FixedString(64),
+    previous_control_sha256  FixedString(64),
+    control_sha256           FixedString(64),
+    controlled_at            DateTime64(6, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    organization_id,
+    workspace_id,
+    control_sequence,
+    request_id
+)
+SETTINGS index_granularity = 8192;"""
 
 
 class CatalogProdSchemaError(RuntimeError):
@@ -311,6 +338,13 @@ _TABLE_SPECS = (
     ),
 )
 
+_ACTIVATION_CONTROL_SPEC = _TableSpec(
+    "generated:property-catalog-activation-control/v1",
+    _ACTIVATION_CONTROL_TABLE,
+    "MergeTree",
+    "ReplicatedMergeTree",
+)
+
 _TOPOLOGY_SQL = """\
 SELECT shard_num, replica_num, host_name
 FROM system.clusters
@@ -496,6 +530,32 @@ def _load_canonical_statements() -> tuple[_CanonicalStatement, ...]:
     return tuple(loaded)
 
 
+def _activation_control_statement() -> _CanonicalStatement:
+    """Return the production-only ledger source without editing migrations."""
+
+    match = _CANONICAL_CREATE_RE.match(_ACTIVATION_CONTROL_SOURCE)
+    engines = _ENGINE_RE.findall(_ACTIVATION_CONTROL_SOURCE)
+    if (
+        match is None
+        or match.group("table") != _ACTIVATION_CONTROL_TABLE
+        or engines != ["MergeTree"]
+        or _ACTIVATION_CONTROL_SOURCE.count(";") != 1
+    ):
+        raise CatalogProdSchemaError("activation-control source contract drift")
+    _reject_forbidden_sql(
+        _ACTIVATION_CONTROL_SOURCE,
+        label="generated activation-control ledger",
+    )
+    return _CanonicalStatement(
+        migration=_ACTIVATION_CONTROL_SPEC.migration,
+        ordinal=1,
+        table=_ACTIVATION_CONTROL_TABLE,
+        engine="MergeTree",
+        source_sha256=_sha256_text(_ACTIVATION_CONTROL_SOURCE),
+        sql=_ACTIVATION_CONTROL_SOURCE,
+    )
+
+
 def _reject_forbidden_sql(sql: str, *, label: str) -> None:
     for operation, pattern in _FORBIDDEN_SQL:
         if pattern.search(sql):
@@ -599,7 +659,7 @@ def _validate_rendered_table_sql(
 def render_catalog_prod_schema(
     *, target_database: str, cluster: str, keeper_path_prefix: str
 ) -> CatalogProdSchemaManifest:
-    """Render the deterministic seven-statement CREATE-only manifest."""
+    """Render the deterministic eight-statement CREATE-only manifest."""
 
     _validate_options(
         target_database=target_database,
@@ -607,7 +667,7 @@ def render_catalog_prod_schema(
         keeper_path_prefix=keeper_path_prefix,
     )
     canonical = _load_canonical_statements()
-    tables = tuple(
+    canonical_tables = tuple(
         _render_table(
             statement,
             spec,
@@ -617,6 +677,14 @@ def render_catalog_prod_schema(
         )
         for statement, spec in zip(canonical, _TABLE_SPECS, strict=True)
     )
+    control_table = _render_table(
+        _activation_control_statement(),
+        _ACTIVATION_CONTROL_SPEC,
+        target_database=target_database,
+        cluster=cluster,
+        keeper_path_prefix=keeper_path_prefix,
+    )
+    tables = (*canonical_tables, control_table)
     database_sql = (
         f"CREATE DATABASE IF NOT EXISTS {target_database} ON CLUSTER '{cluster}';"
     )
@@ -824,7 +892,7 @@ def _validate_exact_replica_schema(
     for host, host_tables in sorted(by_host.items()):
         if set(host_tables) != expected_names:
             raise CatalogProdSchemaError(
-                f"target database on {host} must contain exactly the six expected "
+                f"target database on {host} must contain exactly the seven expected "
                 f"tables; got {sorted(host_tables)}"
             )
         for table_name, actual in sorted(host_tables.items()):
@@ -1073,7 +1141,7 @@ def verify_catalog_prod_schema(
     cluster: str,
     keeper_path_prefix: str,
 ) -> str:
-    """Read-only proof of 1x3 topology and exact six-table definitions."""
+    """Read-only proof of 1x3 topology and exact seven-table definitions."""
 
     manifest = render_catalog_prod_schema(
         target_database=target_database,
@@ -1084,7 +1152,7 @@ def verify_catalog_prod_schema(
     observed = _snapshot_target(client, manifest, topology)
     if observed.state != "exact":
         raise CatalogProdSchemaError(
-            "verification requires the exact six-table production catalog on all "
+            "verification requires the exact seven-table production catalog on all "
             "three replicas"
         )
     return _evidence(
@@ -1148,7 +1216,7 @@ def install_catalog_prod_schema(
             )
             if rendered is None:
                 raise CatalogProdSchemaError(
-                    "manifest contains a statement outside the six-table allowlist"
+                    "manifest contains a statement outside the seven-table allowlist"
                 )
             _validate_rendered_table_sql(
                 statement,

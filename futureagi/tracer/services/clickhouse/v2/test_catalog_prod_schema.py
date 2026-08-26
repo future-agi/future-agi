@@ -148,7 +148,7 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
     manifest = _manifest()
 
     assert manifest.manifest_sha256 == (
-        "b1f7f22c38867a99664d216a9361634b726901522861e550facd88d6f5fd0847"
+        "71667a959c24bd05a6375b21896d116d3c26d790c017e603d0fee83a64b5d7e3"
     )
     assert manifest.database_sql_sha256 == (
         "4f695a1763f59960cd08c89ff04a4e33d5f33ecfc152952215c73f8baca2df54"
@@ -160,8 +160,9 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
         "9fe77eed2ceb161c4df9a9d8198fbbda3c1156b5b159efa3fa368fccc59a47b9",
         "751e4bc5e497f52215d049f196e64f3a92d82de16d71bce19e78dce3c514aa15",
         "d7e4c89a57f41f191bd722e80dfc9ccddb78efc2466339c90f3301538893c6ec",
+        "749f3aa6de566e067b90ef0952544efefe8f7c799bd3b1811d7f55b1b35827f7",
     )
-    assert len(manifest.statements) == 7
+    assert len(manifest.statements) == 8
     assert manifest.database_sql == (
         "CREATE DATABASE IF NOT EXISTS th7247_catalog_prod_unit ON CLUSTER 'us_prod';"
     )
@@ -172,6 +173,7 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
         "ReplicatedReplacingMergeTree",
         "ReplicatedMergeTree",
         "ReplicatedReplacingMergeTree",
+        "ReplicatedMergeTree",
     )
 
     executable = "\n".join(manifest.statements)
@@ -184,9 +186,18 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
     )
     assert re.search(r"(?i)\bMATERIALIZED\s+VIEW\b", executable) is None
     assert executable.count("CREATE DATABASE IF NOT EXISTS") == 1
-    assert executable.count("CREATE TABLE IF NOT EXISTS") == 6
-    assert executable.count("ON CLUSTER 'us_prod'") == 7
-    assert executable.count("'{replica}'") == 6
+    assert executable.count("CREATE TABLE IF NOT EXISTS") == 7
+    assert executable.count("ON CLUSTER 'us_prod'") == 8
+    assert executable.count("'{replica}'") == 7
+    control_sql = next(
+        table.sql
+        for table in manifest.tables
+        if table.table == "property_catalog_activation_control_events"
+    )
+    assert "ReplicatedMergeTree(" in control_sql
+    assert "ReplacingMergeTree" not in control_sql
+    assert "control_sequence" in control_sql
+    assert "previous_control_sha256" in control_sql
     assert all(
         table.sql.startswith(
             f"CREATE TABLE IF NOT EXISTS {TARGET}.{table.table} ON CLUSTER '{CLUSTER}'"
@@ -280,7 +291,7 @@ def test_dry_run_is_read_only_and_includes_topology_and_manifest() -> None:
     assert result["action"] == "would_create"
     assert result["write_count"] == 0
     assert result["before"]["state"] == "absent"
-    assert result["manifest"]["statement_count"] == 7
+    assert result["manifest"]["statement_count"] == 8
     assert result["manifest"]["required_topology"] == {
         "replicas_per_shard": 3,
         "shards": 1,
@@ -424,11 +435,11 @@ def test_exact_existing_schema_is_verified_read_only_on_all_replicas() -> None:
     assert verify_result["write_count"] == 0
     assert install_result["action"] == "verified_existing"
     assert install_result["write_count"] == 0
-    assert len(verify_result["after"]["table_rows"]) == 18
+    assert len(verify_result["after"]["table_rows"]) == 21
 
 
 @pytest.mark.parametrize("initial_state", ("absent", "empty"))
-def test_install_executes_only_seven_allowlisted_creates_and_verifies(
+def test_install_executes_only_eight_allowlisted_creates_and_verifies(
     initial_state: str,
 ) -> None:
     database_hosts: Sequence[str] = ()
@@ -445,7 +456,7 @@ def test_install_executes_only_seven_allowlisted_creates_and_verifies(
         )
     )
 
-    assert len(client.commands) == 7
+    assert len(client.commands) == 8
     assert client.commands[0].startswith("CREATE DATABASE IF NOT EXISTS ")
     assert all(
         statement.startswith("CREATE TABLE IF NOT EXISTS ")
@@ -462,10 +473,10 @@ def test_install_executes_only_seven_allowlisted_creates_and_verifies(
         is None
     )
     assert result["action"] == "created"
-    assert result["write_count"] == 7
+    assert result["write_count"] == 8
     assert result["before"]["state"] == initial_state
     assert result["after"]["state"] == "exact"
-    assert len(result["after"]["table_rows"]) == 18
+    assert len(result["after"]["table_rows"]) == 21
 
 
 def test_install_fails_closed_when_post_create_replica_proof_is_not_exact() -> None:
@@ -482,7 +493,7 @@ def test_install_fails_closed_when_post_create_replica_proof_is_not_exact() -> N
             keeper_path_prefix=KEEPER_PREFIX,
         )
 
-    assert len(client.commands) == 7
+    assert len(client.commands) == 8
 
 
 def test_verify_is_read_only_and_rejects_absent_or_empty_target() -> None:
@@ -490,7 +501,7 @@ def test_verify_is_read_only_and_rejects_absent_or_empty_target() -> None:
         client = FakeProdClickHouseClient(database_hosts=database_hosts)
         with pytest.raises(
             catalog_prod_schema.CatalogProdSchemaError,
-            match="verification requires the exact six-table",
+            match="verification requires the exact seven-table",
         ):
             catalog_prod_schema.verify_catalog_prod_schema(
                 client,

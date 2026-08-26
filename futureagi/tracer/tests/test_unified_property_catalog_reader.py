@@ -78,9 +78,15 @@ def test_clickhouse25_aggregate_inputs_are_raw_qualified() -> None:
 
 
 def test_property_reader_accepts_isolated_production_database_namespace() -> None:
+    with pytest.raises(ValueError, match="requires control selection"):
+        PropertyCatalogReader(
+            FakeExecutor([]),
+            catalog_database="th7247_catalog_prod_reader",
+        )
     reader = PropertyCatalogReader(
         FakeExecutor([]),
         catalog_database="th7247_catalog_prod_reader",
+        activation_selector=SimpleNamespace(select_target=lambda **_kwargs: None),
     )
 
     assert "`th7247_catalog_prod_reader`" in reader._activation_sql
