@@ -292,17 +292,6 @@ export default function HarnessCreate() {
     }
   };
 
-  const uploadEnvironment = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (file.size > 262144) {
-      setEnvironmentError("The .env file may not exceed 256 KiB");
-      return;
-    }
-    loadEnvironment(await file.text());
-  };
-
   const uploadSourceFolder = async (event) => {
     const selected = Array.from(event.target.files || []);
     event.target.value = "";
@@ -911,29 +900,12 @@ export default function HarnessCreate() {
                     spacing={1.5}
                     alignItems={{ md: "center" }}
                   >
-                    <Button
-                      component="label"
-                      variant="outlined"
-                      startIcon={
-                        <Iconify icon="solar:upload-minimalistic-linear" />
-                      }
-                      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-                    >
-                      Upload .env
-                      <Box
-                        component="input"
-                        type="file"
-                        accept=".env,text/plain"
-                        onChange={uploadEnvironment}
-                        sx={{ display: "none" }}
-                      />
-                    </Button>
                     <TextField
                       fullWidth
                       size="small"
                       multiline
                       maxRows={4}
-                      label="Or paste .env contents"
+                      label="Paste .env contents"
                       placeholder="OPENAI_API_KEY=..."
                       value={environmentText}
                       onChange={(event) =>
