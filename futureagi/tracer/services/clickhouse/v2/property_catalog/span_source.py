@@ -1010,13 +1010,15 @@ class CanonicalSpanAttributeGroupPageLoader:
 
 
 class RevisionPinnedSpanAttributeGroupPageLoader:
-    """Read complete key/type/project unions from this build's value rows.
+    """Read complete key/type/project unions from the retained build lineage.
 
     Authoritative value reconciliation has already projected and revision-pinned
-    every selectable span attribute. Definitions therefore consume that exact
-    immutable build output instead of repeating the expensive canonical spans
-    hydration scan. The independent source audit still runs after definition
-    projection and proves that the source did not change before activation.
+    every selectable span attribute. Snapshot builds consume only their own
+    immutable value rows. Incremental builds union the already-active snapshot
+    lineage with the current revision so a touched key cannot lose an older
+    project binding or observed type. The independent source audit still runs
+    after definition projection and proves that the current source slice did
+    not change before activation.
     """
 
     def __init__(
@@ -1026,6 +1028,8 @@ class RevisionPinnedSpanAttributeGroupPageLoader:
         context: PostgresSnapshotContext,
         build_token: str,
         deadline: SharedCatalogDeadline,
+        lineage_anchor_revision: int | None = None,
+        prior_active_revision: int | None = None,
         timeout_ms: int = _CATALOG_GROUP_QUERY_TIMEOUT_MS,
         max_groups: int = _MAX_GROUPS,
         max_group_bytes: int = _MAX_GROUP_BYTES,
@@ -1057,6 +1061,26 @@ class RevisionPinnedSpanAttributeGroupPageLoader:
         self._catalog_database = database
         self._context = context
         self._build_token = canonical_uuid(build_token, field="build_token")
+        anchor_revision = (
+            context.catalog_revision
+            if lineage_anchor_revision is None
+            else lineage_anchor_revision
+        )
+        if type(anchor_revision) is not int or not (
+            1 <= anchor_revision <= context.catalog_revision
+        ):
+            raise ValueError("lineage anchor revision is outside the build lineage")
+        if prior_active_revision is None:
+            if anchor_revision != context.catalog_revision:
+                raise ValueError(
+                    "incremental span groups require a prior active revision"
+                )
+        elif type(prior_active_revision) is not int or not (
+            anchor_revision <= prior_active_revision < context.catalog_revision
+        ):
+            raise ValueError("prior active revision is outside the build lineage")
+        self._lineage_anchor_revision = anchor_revision
+        self._prior_active_revision = prior_active_revision
         self._deadline = deadline
         self._timeout_ms = timeout_ms
         self._max_groups = max_groups
@@ -1106,19 +1130,99 @@ class RevisionPinnedSpanAttributeGroupPageLoader:
             )
         result_limit = self._max_groups + 1
         sql = f"""
+WITH activation_versioned AS
+(
+    SELECT
+        *,
+        max(_version) OVER (
+            PARTITION BY organization_id, workspace_id,
+                         catalog_epoch, catalog_revision, build_token
+        ) AS latest_version
+    FROM `{self._catalog_database}`.`property_catalog_activations`
+    PREWHERE organization_id = %(organization_id)s
+      AND workspace_id = %(workspace_id)s
+      AND catalog_epoch = %(catalog_epoch)s
+      AND catalog_revision >= %(lineage_anchor_revision)s
+      AND catalog_revision <= %(prior_active_revision)s
+), activation_states AS
+(
+    SELECT
+        versioned_rows.catalog_epoch,
+        versioned_rows.catalog_revision,
+        versioned_rows.build_token,
+        argMax(versioned_rows.projection_version, versioned_rows._version)
+            AS projection_version,
+        argMax(versioned_rows.lineage_anchor_revision, versioned_rows._version)
+            AS lineage_anchor_revision,
+        argMax(versioned_rows.status, versioned_rows._version) AS status,
+        argMax(versioned_rows.qualified_at, versioned_rows._version) AS qualified_at,
+        uniqExactIf(
+            tuple(
+                versioned_rows.projection_version,
+                versioned_rows.lineage_anchor_revision,
+                versioned_rows.status,
+                versioned_rows.qualified_at
+            ),
+            versioned_rows._version = versioned_rows.latest_version
+        ) AS latest_state_variants
+    FROM activation_versioned AS versioned_rows
+    GROUP BY
+        versioned_rows.catalog_epoch,
+        versioned_rows.catalog_revision,
+        versioned_rows.build_token
+), active_lineage_candidates AS
+(
+    SELECT *
+    FROM activation_states
+    WHERE %(has_prior_lineage)s = 1
+      AND latest_state_variants = 1
+      AND projection_version = %(projection_version)s
+      AND lineage_anchor_revision = %(lineage_anchor_revision)s
+      AND status = 'active'
+      AND qualified_at IS NOT NULL
+), active_lineage AS
+(
+    SELECT
+        catalog_epoch,
+        catalog_revision,
+        any(build_token) AS build_token,
+        count() AS active_builds
+    FROM active_lineage_candidates
+    GROUP BY catalog_epoch, catalog_revision
+    HAVING active_builds = 1
+), retained_values AS
+(
+    SELECT value_rows.*
+    FROM `{self._catalog_database}`.`span_attribute_value_catalog` AS value_rows
+    INNER JOIN active_lineage AS lineage
+        ON value_rows.catalog_epoch = lineage.catalog_epoch
+       AND value_rows.catalog_revision = lineage.catalog_revision
+       AND value_rows.build_token = lineage.build_token
+    PREWHERE value_rows.organization_id = %(organization_id)s
+      AND value_rows.workspace_id = %(workspace_id)s
+      AND value_rows.project_id IN %(project_ids)s
+      AND value_rows.catalog_epoch = %(catalog_epoch)s
+      AND value_rows.catalog_revision >= %(lineage_anchor_revision)s
+      AND value_rows.catalog_revision <= %(prior_active_revision)s
+
+    UNION ALL
+
+    SELECT current_rows.*
+    FROM `{self._catalog_database}`.`span_attribute_value_catalog` AS current_rows
+    PREWHERE current_rows.organization_id = %(organization_id)s
+      AND current_rows.workspace_id = %(workspace_id)s
+      AND current_rows.project_id IN %(project_ids)s
+      AND current_rows.catalog_epoch = %(catalog_epoch)s
+      AND current_rows.catalog_revision = %(catalog_revision)s
+      AND current_rows.build_token = %(build_token)s
+)
 SELECT
     attribute_key,
     arraySort(groupUniqArray(toString(attribute_type))) AS observed_types,
     arraySort(groupUniqArray(toString(project_id))) AS project_ids,
     min(first_seen) AS first_seen,
     max(last_seen) AS last_seen
-FROM `{self._catalog_database}`.`span_attribute_value_catalog`
-PREWHERE organization_id = %(organization_id)s
-  AND workspace_id = %(workspace_id)s
-  AND project_id IN %(project_ids)s
-  AND catalog_epoch = %(catalog_epoch)s
-  AND catalog_revision = %(catalog_revision)s
-  AND build_token = %(build_token)s
+FROM retained_values
 WHERE source_kind = 'custom_attribute'
 GROUP BY attribute_key
 ORDER BY attribute_key ASC
@@ -1137,8 +1241,12 @@ SETTINGS max_threads = {RUNTIME_LIMITS.canonical_span_max_threads},
                     "workspace_id": self._context.workspace_id,
                     "project_ids": self._context.project_ids,
                     "catalog_epoch": self._context.catalog_epoch,
+                    "lineage_anchor_revision": self._lineage_anchor_revision,
+                    "prior_active_revision": self._prior_active_revision or 0,
+                    "has_prior_lineage": int(self._prior_active_revision is not None),
                     "catalog_revision": self._context.catalog_revision,
                     "build_token": self._build_token,
+                    "projection_version": self._context.projection_version,
                     "catalog_group_limit": result_limit,
                 },
                 timeout_ms=remaining,

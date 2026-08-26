@@ -216,19 +216,68 @@ def test_revision_pinned_group_loader_reads_the_exact_build_once_and_paginates()
     assert len(client.calls) == 1
     sql, params, timeout_ms = client.calls[0]
     assert f"`{CATALOG_DATABASE}`.`span_attribute_value_catalog`" in sql
+    assert "FROM retained_values" in sql
     assert "WHERE source_kind = 'custom_attribute'" in sql
+    assert "property_catalog_activations" in sql
     assert "max_result_bytes = 67108864" in sql
     assert params == {
         "organization_id": ORG,
         "workspace_id": WORKSPACE,
         "project_ids": (PROJECT_A, PROJECT_B),
         "catalog_epoch": 11,
+        "lineage_anchor_revision": 12,
+        "prior_active_revision": 0,
+        "has_prior_lineage": 0,
         "catalog_revision": 12,
         "build_token": BUILD_TOKEN,
+        "projection_version": 1,
         "catalog_group_limit": 11,
     }
     assert timeout_ms == 7_000
     assert deadline.caps == [RUNTIME_LIMITS.state_store_timeout_ms]
+
+
+def test_revision_pinned_group_loader_unions_prior_active_lineage() -> None:
+    context = _catalog_group_context()
+    client = _CatalogGroupClient(())
+    loader = RevisionPinnedSpanAttributeGroupPageLoader(
+        client,
+        context=context,
+        build_token=BUILD_TOKEN,
+        deadline=_FixedDeadline(7_000),  # type: ignore[arg-type]
+        lineage_anchor_revision=7,
+        prior_active_revision=11,
+    )
+
+    assert loader(context=context, cursor=None, limit=10) == ()
+    sql, params, _ = client.calls[0]
+    assert "INNER JOIN active_lineage AS lineage" in sql
+    assert "UNION ALL" in sql
+    assert params["lineage_anchor_revision"] == 7
+    assert params["prior_active_revision"] == 11
+    assert params["has_prior_lineage"] == 1
+
+
+def test_revision_pinned_group_loader_rejects_incomplete_lineage_scope() -> None:
+    context = _catalog_group_context()
+
+    with pytest.raises(ValueError, match="require a prior active revision"):
+        RevisionPinnedSpanAttributeGroupPageLoader(
+            _CatalogGroupClient(()),
+            context=context,
+            build_token=BUILD_TOKEN,
+            deadline=_FixedDeadline(7_000),  # type: ignore[arg-type]
+            lineage_anchor_revision=7,
+        )
+    with pytest.raises(ValueError, match="prior active revision"):
+        RevisionPinnedSpanAttributeGroupPageLoader(
+            _CatalogGroupClient(()),
+            context=context,
+            build_token=BUILD_TOKEN,
+            deadline=_FixedDeadline(7_000),  # type: ignore[arg-type]
+            lineage_anchor_revision=7,
+            prior_active_revision=12,
+        )
 
 
 def test_revision_pinned_group_loader_keeps_source_and_catalog_timeouts_separate() -> (
