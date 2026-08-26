@@ -286,6 +286,18 @@ export const jobProgress = (status) => {
 // The axios interceptor rejects with a FLAT object — {...response.data, statusCode} — so
 // there is no `.response` to read through. Harness views return a bare {"detail": "..."},
 // while the platform envelope carries both detail and message, so detail comes first.
+// What became of a mid-run change. ALK never finalises an adjustment it did not reach, so
+// one left "pending" on a run that has stopped is not in flight — it was stranded, and
+// saying "will land at X" about a dead run is a promise the platform cannot keep.
+export const adjustmentStatus = (adjustment, jobStage) => {
+  if (adjustment.status === "applied")
+    return `Applied at ${readable(adjustment.applied_stage || adjustment.target_stage)}`;
+  if (jobStage === "canceled") return "Not applied — the run was canceled first";
+  if (jobStage === "failed") return "Not applied — the run failed first";
+  if (jobStage === "completed") return "Not applied — the run finished first";
+  return `${readable(adjustment.status)} · will land at ${readable(adjustment.target_stage)}`;
+};
+
 export const errorMessage = (error) => {
   const detail = error?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;

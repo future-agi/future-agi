@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { STATUS_TYPES } from "src/utils/statusUtils";
 import {
+  adjustmentStatus,
   agentTypeIcon,
   jobProgress,
   readable,
@@ -396,5 +397,34 @@ describe("shortRunId", () => {
     expect(shortRunId("harness")).toBe("harness");
     expect(shortRunId("")).toBe("");
     expect(shortRunId(undefined)).toBe("");
+  });
+});
+
+describe("adjustmentStatus", () => {
+  const pending = { status: "pending", target_stage: "environment" };
+
+  it("names the stage a change landed at", () => {
+    expect(
+      adjustmentStatus(
+        { status: "applied", target_stage: "understand", applied_stage: "environment" },
+        "completed",
+      ),
+    ).toBe("Applied at Environment");
+  });
+
+  it("still promises delivery while the run is alive", () => {
+    expect(adjustmentStatus(pending, "generating_environment")).toBe(
+      "Pending · will land at Environment",
+    );
+  });
+
+  // ALK leaves an unreached change at "pending" forever, so the job's own outcome is the
+  // only thing that says it will never land.
+  it.each([
+    ["canceled", "Not applied — the run was canceled first"],
+    ["failed", "Not applied — the run failed first"],
+    ["completed", "Not applied — the run finished first"],
+  ])("reports a change stranded by a %s run", (stage, expected) => {
+    expect(adjustmentStatus(pending, stage)).toBe(expected);
   });
 });
