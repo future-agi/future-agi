@@ -201,12 +201,15 @@ def load_mcp_tools(organization, workspace=None) -> list[MCPToolWrapper]:
         tools = []
         for connector in connectors:
             discovered = connector.discovered_tools or []
-            enabled = connector.enabled_tool_names or []
+            # enabled_tool_names is the authoritative allow-list. Discovery
+            # always seeds it with every discovered tool name, so an empty
+            # list here means the user explicitly disabled all of them, not
+            # "unset" - it must not be treated as a wildcard.
+            enabled = set(connector.enabled_tool_names or [])
 
             for tool_schema in discovered:
                 tool_name = tool_schema.get("name", "")
-                # If enabled list is empty, all tools are enabled
-                if enabled and tool_name not in enabled:
+                if tool_name not in enabled:
                     continue
 
                 try:
