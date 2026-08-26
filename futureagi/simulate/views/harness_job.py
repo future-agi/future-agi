@@ -21,6 +21,7 @@ from simulate.services.harness_sandbox import (
 )
 from simulate.services.harness_credentials import (
     credential_file_ref,
+    harness_reporting_environment,
     materialize_secret_refs,
     request_scope,
     save_environment_credentials,
@@ -37,6 +38,23 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def _client(self) -> HarnessSandboxClient:
         return HarnessSandboxClient()
 
+    def _owned_job(self, request, job_id: str):
+        from simulate.models import HarnessEnvironmentCredentials
+
+        organization, workspace = request_scope(request)
+        filters = {
+            "harness_job_id": str(job_id),
+            "organization": organization,
+            "deleted": False,
+        }
+        if workspace is not None:
+            filters["workspace"] = workspace
+        return HarnessEnvironmentCredentials.objects.filter(**filters).first()
+
+    def _not_found(self):
+        # Do not reveal that a sandbox job exists in another tenant.
+        return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
+
     @validated_request(
         request_serializer=HarnessJobCreateSerializer,
         reject_unknown_fields=True,
@@ -49,11 +67,18 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         payload = dict(request.validated_data)
+        customer_environment = dict(payload.get("environment_values") or {})
         durable_refs = dict(payload.get("secret_refs") or {})
         client = self._client()
         try:
             payload["secret_refs"] = materialize_secret_refs(
                 durable_refs, organization=organization, client=client
+            )
+            payload["controller_environment_values"] = (
+                harness_reporting_environment(
+                    organization=organization,
+                    workspace=workspace,
+                )
             )
             result = client.submit(payload)
             job_id = str(result.get("job", {}).get("job_id") or "").strip()
@@ -63,7 +88,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 )
             save_environment_credentials(
                 job_id,
-                environment_values=dict(payload.get("environment_values") or {}),
+                environment_values=customer_environment,
                 secret_refs=durable_refs,
                 organization=organization,
                 workspace=workspace,
@@ -77,8 +102,24 @@ class HarnessJobViewSet(viewsets.ViewSet):
         return Response(result, status=status.HTTP_202_ACCEPTED)
 
     def list(self, request):
+        from simulate.models import HarnessEnvironmentCredentials
+
+        organization, workspace = request_scope(request)
+        profiles = HarnessEnvironmentCredentials.objects.filter(
+            organization=organization, deleted=False
+        )
+        if workspace is not None:
+            profiles = profiles.filter(workspace=workspace)
+        allowed = set(profiles.values_list("harness_job_id", flat=True))
         try:
-            return Response(self._client().list_jobs())
+            jobs = self._client().list_jobs()
+            return Response(
+                [
+                    item
+                    for item in jobs
+                    if str((item.get("job") or {}).get("job_id") or "") in allowed
+                ]
+            )
         except HarnessSandboxUnavailable as exc:
             return Response(
                 {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
@@ -219,6 +260,8 @@ class HarnessJobViewSet(viewsets.ViewSet):
             )
 
     def retrieve(self, request, pk=None):
+        if self._owned_job(request, str(pk)) is None:
+            return self._not_found()
         try:
             return Response(self._client().get(str(pk)))
         except HarnessSandboxRejected as exc:
@@ -234,6 +277,8 @@ class HarnessJobViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
+        if self._owned_job(request, str(pk)) is None:
+            return self._not_found()
         try:
             return Response(self._client().cancel(str(pk)))
         except HarnessSandboxRejected as exc:
@@ -249,6 +294,8 @@ class HarnessJobViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def adjust(self, request, pk=None):
+        if self._owned_job(request, str(pk)) is None:
+            return self._not_found()
         try:
             return Response(self._client().adjust(str(pk), request.validated_data))
         except HarnessSandboxRejected as exc:

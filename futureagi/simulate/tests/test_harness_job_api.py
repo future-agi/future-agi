@@ -5,6 +5,18 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 
+def _own_job(user, job_id="job-1"):
+    from simulate.models import HarnessEnvironmentCredentials
+
+    profile = HarnessEnvironmentCredentials(
+        harness_job_id=job_id,
+        organization=user.organization,
+    )
+    profile.set_environment({})
+    profile.save()
+    return profile
+
+
 @pytest.mark.django_db
 def test_harness_job_create_proxies_typed_request(user):
     client = APIClient()
@@ -23,6 +35,84 @@ def test_harness_job_create_proxies_typed_request(user):
     assert response.status_code == 202
     assert response.json() == expected
     assert submit.call_args.args[0]["source_path"] == "/workspace/agent"
+    controller = submit.call_args.args[0]["controller_environment_values"]
+    assert controller["HARNESS_PLATFORM_API_KEY"]
+    assert controller["HARNESS_PLATFORM_SECRET_KEY"]
+
+
+@pytest.mark.django_db
+def test_harness_reporting_key_is_rejected_outside_ingestion(user):
+    from accounts.models import OrgApiKey
+
+    key = OrgApiKey.no_workspace_objects.create(
+        organization=user.organization,
+        name="ALK harness reporting",
+        type="harness",
+    )
+    client = APIClient()
+    client.credentials(
+        HTTP_X_API_KEY=key.api_key,
+        HTTP_X_SECRET_KEY=key.secret_key,
+    )
+
+    response = client.get("/simulate/api/harness-jobs/")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.django_db
+def test_unowned_harness_job_is_hidden_without_calling_sandbox(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    with patch("simulate.views.harness_job.HarnessSandboxClient.get") as get_job:
+        response = client.get("/simulate/api/harness-jobs/not-mine/")
+
+    assert response.status_code == 404
+    get_job.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_harness_job_status_preserves_actionable_failure_and_progress(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    expected = {
+        "job": {"job_id": "job-1"},
+        "status": {
+            "stage": "failed",
+            "detail": "Cannot create the source environment: no runtime adapter",
+            "failure": {
+                "domain": "environment",
+                "stage": "validating_environment",
+                "code": "environment_provision_failed",
+                "message": "Cannot create the source environment: no runtime adapter",
+                "retryable": False,
+                "action": "Package the agent runtime and retry.",
+                "details": {
+                    "packaging_type": "unpackaged",
+                    "failed_adapter": "generated_runtime",
+                },
+            },
+        },
+        "events": [
+            {
+                "type": "harness.stage.progress",
+                "payload": {
+                    "stage": "environment",
+                    "detail": "Building environment · installing dependencies",
+                },
+            }
+        ],
+    }
+    _own_job(user)
+
+    with patch(
+        "simulate.views.harness_job.HarnessSandboxClient.get", return_value=expected
+    ):
+        response = client.get("/simulate/api/harness-jobs/job-1/")
+
+    assert response.status_code == 200
+    assert response.json() == expected
 
 
 @pytest.mark.django_db
@@ -384,6 +474,7 @@ def test_harness_job_cancel_accepts_optional_audit_reason(user):
     client = APIClient()
     client.force_authenticate(user=user)
     expected = {"job": {"job_id": "job-1"}, "status": {"stage": "canceled"}}
+    _own_job(user)
 
     with patch(
         "simulate.views.harness_job.HarnessSandboxClient.cancel",
@@ -413,6 +504,7 @@ def test_harness_job_adjustment_is_validated_and_forwarded(user):
         "instruction": "Add 10 more scenarios covering payment failures",
         "client_request_id": "browser-1",
     }
+    _own_job(user)
 
     with patch(
         "simulate.views.harness_job.HarnessSandboxClient.adjust",

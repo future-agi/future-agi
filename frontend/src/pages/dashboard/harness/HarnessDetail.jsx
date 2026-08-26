@@ -24,6 +24,7 @@ import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import CustomTooltip from "src/components/tooltip";
 
 import StageOutput from "./StageOutput";
+import { compactActivityEvents } from "./activityEvents";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import {
@@ -269,14 +270,7 @@ export default function HarnessDetail() {
   // beside the stages it lands between, so events and adjustments are merged and sorted by
   // the moment each happened.
   const timeline = useMemo(() => {
-    const seen = new Set();
-    const events = (current?.events || [])
-      .filter((event) => {
-        const key = event.event_id || JSON.stringify(event);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
+    const events = compactActivityEvents(current?.events || [])
       .map((event) => ({
         kind: "event",
         id: event.event_id,
@@ -901,6 +895,30 @@ export default function HarnessDetail() {
                       {readable(status.failure.domain)} · {status.failure.code}
                     </Typography>
                     {status.failure.message}
+                    {status.failure.action && (
+                      <Typography variant="body2" sx={{ mt: 0.75 }}>
+                        Next step: {status.failure.action}
+                      </Typography>
+                    )}
+                    {(status.failure.details?.packaging_type ||
+                      status.failure.details?.failed_adapter) && (
+                      <Typography
+                        variant="caption"
+                        component="div"
+                        sx={{ mt: 0.75 }}
+                      >
+                        {status.failure.details.packaging_type
+                          ? `Packaging: ${readable(status.failure.details.packaging_type)}`
+                          : ""}
+                        {status.failure.details.packaging_type &&
+                        status.failure.details.failed_adapter
+                          ? " · "
+                          : ""}
+                        {status.failure.details.failed_adapter
+                          ? `Adapter: ${readable(status.failure.details.failed_adapter)}`
+                          : ""}
+                      </Typography>
+                    )}
                   </Alert>
                 )}
                 {status?.detail && (

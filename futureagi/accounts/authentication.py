@@ -171,6 +171,13 @@ class APIKeyAuthentication(BaseAuthentication):
                 deleted=False,
             )
 
+            if org_api_key.type == "harness" and not request.path.startswith(
+                "/simulate/api/alk-simulate/"
+            ):
+                raise AuthenticationFailed(
+                    "Harness API keys may only report harness execution results"
+                )
+
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
                 raise AuthenticationFailed("API key has no organization")
@@ -180,7 +187,7 @@ class APIKeyAuthentication(BaseAuthentication):
                 raise AuthenticationFailed("API key is disabled")
 
             # Get or create a system user for this organization
-            if org_api_key.type == "system":
+            if org_api_key.type in {"system", "harness"}:
                 user = (
                     User.objects.select_related("organization")
                     .filter(organization=org_api_key.organization)
@@ -397,6 +404,22 @@ class APIKeyAuthentication(BaseAuthentication):
         # Fallback to query parameter
         if not workspace_id:
             workspace_id = request.GET.get("workspace_id")
+
+        # A harness credential is an organization-owned service identity and is
+        # accepted only by the ALK ingestion surface above. Resolve its explicit
+        # workspace directly inside that organization instead of depending on
+        # whichever human account happened to be selected as the service user.
+        if (
+            workspace_id
+            and getattr(getattr(request, "org_api_key", None), "type", None)
+            == "harness"
+        ):
+            try:
+                return Workspace.objects.get(
+                    id=workspace_id, organization=organization, is_active=True
+                )
+            except (Workspace.DoesNotExist, ValueError):
+                raise PermissionDenied("Invalid harness workspace")
 
         if workspace_id:
             try:

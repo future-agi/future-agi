@@ -12,10 +12,12 @@ the API envelope — runs for real.
 """
 
 import json
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from rest_framework.test import APIClient
 
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
@@ -173,7 +175,39 @@ class TestProvisionRunTest:
     def _provision(self, auth_client, **body):
         return auth_client.post(f"{ALK_BASE}/run-tests/provision/", body, format="json")
 
-    def test_provision_creates_text_agent_scenario_and_run_test(self, auth_client):
+    def test_harness_key_routes_created_objects_to_requested_workspace(
+        self, user, workspace
+    ):
+        from accounts.models import OrgApiKey
+
+        key = OrgApiKey.no_workspace_objects.create(
+            organization=user.organization,
+            name="ALK harness reporting",
+            type="harness",
+        )
+        client = APIClient()
+        client.credentials(
+            HTTP_X_API_KEY=key.api_key,
+            HTTP_X_SECRET_KEY=key.secret_key,
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+        response = self._provision(
+            client,
+            name="tenant-routed-run",
+            personas=[{"name": "Sam", "situation": "needs help"}],
+        )
+
+        assert response.status_code == 200, response.content
+        run_test = RunTest.objects.get(id=response.json()["result"]["run_test_id"])
+        assert run_test.organization == user.organization
+        assert run_test.workspace == workspace
+        assert run_test.agent_definition.workspace == workspace
+        assert run_test.scenarios.get().workspace == workspace
+
+    def test_provision_creates_text_agent_scenario_and_run_test(
+        self, auth_client, workspace
+    ):
         resp = self._provision(
             auth_client,
             name="sdk-e2e",
@@ -191,12 +225,15 @@ class TestProvisionRunTest:
         assert len(result["scenario_ids"]) == 1
 
         run_test = RunTest.objects.get(id=result["run_test_id"])
+        assert run_test.workspace == workspace
+        assert run_test.agent_definition.workspace == workspace
         assert (
             run_test.agent_definition.agent_type
             == AgentDefinition.AgentTypeChoices.TEXT
         )
         assert run_test.scenarios.count() == 1
         scenario = Scenarios.objects.get(id=result["scenario_ids"][0])
+        assert scenario.workspace == workspace
         assert scenario.name == "Resolve a late refund"
         assert not scenario.name.startswith(run_test.name)
         assert scenario.status == StatusType.COMPLETED.value
@@ -207,6 +244,7 @@ class TestProvisionRunTest:
         from model_hub.models.develop_dataset import Cell, Row
 
         assert scenario.dataset_id is not None
+        assert scenario.dataset.workspace == workspace
         rows = Row.objects.filter(dataset=scenario.dataset)
         assert rows.count() == 1
         cell_values = {
@@ -334,11 +372,14 @@ class TestStartTestExecution:
     def test_creates_execution_inheriting_run_test(
         self, auth_client, run_test, scenario
     ):
-        resp = auth_client.post(
-            f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
-            {},
-            format="json",
-        )
+        with patch(
+            "simulate.services.alk_simulate_ingestion.notify_simulation_update"
+        ) as notify:
+            resp = auth_client.post(
+                f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+                {},
+                format="json",
+            )
         assert resp.status_code == 200, resp.content
         result = resp.json()["result"]
         assert result["run_test_id"] == str(run_test.id)
@@ -350,6 +391,11 @@ class TestStartTestExecution:
         assert te.agent_definition_id == run_test.agent_definition_id
         assert te.scenario_ids == [str(scenario.id)]
         assert te.status == SimTestExecution.ExecutionStatus.PENDING
+        notify.assert_called_once_with(
+            organization_id=str(run_test.organization_id),
+            run_test_id=str(run_test.id),
+            test_execution_id=str(te.id),
+        )
 
     def test_unknown_run_test_returns_404(self, auth_client):
         unknown = "00000000-0000-4000-8000-0000deadbeef"
@@ -668,6 +714,46 @@ class TestMixedResultRollup:
 @pytest.mark.api
 @pytest.mark.django_db
 class TestResultIngest:
+    def test_hosted_result_with_incomplete_eval_coverage_is_grading_failure(
+        self, auth_client, run_test
+    ):
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        execution.execution_metadata = {"harness_job_id": str(uuid.uuid4())}
+        execution.save(update_fields=["execution_metadata"])
+
+        response = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [],
+                    "harness_eval_coverage": {
+                        "expected": 2,
+                        "executed": 0,
+                        "failed": 2,
+                        "complete": False,
+                    },
+                    "harness_failure_classification": "grading_failure",
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.status == CallExecution.CallStatus.COMPLETED
+        assert call.error_message in (None, "")
+        assert call.call_metadata["harness_grading_status"] == "failed"
+        assert "grading failure" in call.call_metadata[
+            "harness_grading_error"
+        ].lower()
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_calls == 1
+        assert execution.failed_calls == 0
+
     def test_sealed_result_retry_is_idempotent_and_conflicting_digest_is_rejected(
         self, auth_client, run_test
     ):
