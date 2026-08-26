@@ -387,8 +387,8 @@ Named Docker volumes hold all state:
 
 ```bash
 docker volume ls | grep futureagi
-# future-agi_postgres-data
-# future-agi_clickhouse-data
+# futureagi_postgres-data
+# futureagi_clickhouse-data
 # future-agi_redis-data
 # future-agi_minio-data
 ```
