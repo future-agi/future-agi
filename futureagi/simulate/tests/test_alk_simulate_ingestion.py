@@ -372,11 +372,14 @@ class TestStartTestExecution:
     def test_creates_execution_inheriting_run_test(
         self, auth_client, run_test, scenario
     ):
-        resp = auth_client.post(
-            f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
-            {},
-            format="json",
-        )
+        with patch(
+            "simulate.services.alk_simulate_ingestion.notify_simulation_update"
+        ) as notify:
+            resp = auth_client.post(
+                f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+                {},
+                format="json",
+            )
         assert resp.status_code == 200, resp.content
         result = resp.json()["result"]
         assert result["run_test_id"] == str(run_test.id)
@@ -388,6 +391,11 @@ class TestStartTestExecution:
         assert te.agent_definition_id == run_test.agent_definition_id
         assert te.scenario_ids == [str(scenario.id)]
         assert te.status == SimTestExecution.ExecutionStatus.PENDING
+        notify.assert_called_once_with(
+            organization_id=str(run_test.organization_id),
+            run_test_id=str(run_test.id),
+            test_execution_id=str(te.id),
+        )
 
     def test_unknown_run_test_returns_404(self, auth_client):
         unknown = "00000000-0000-4000-8000-0000deadbeef"

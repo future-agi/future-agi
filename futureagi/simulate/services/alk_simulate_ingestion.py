@@ -554,7 +554,7 @@ def create_alk_sim_test_execution(
             "run_test has no scenarios; attach at least one before starting an ALK execution"
         )
 
-    return TestExecution.objects.create(
+    test_execution = TestExecution.objects.create(
         run_test=run_test,
         status=TestExecution.ExecutionStatus.PENDING,
         started_at=timezone.now(),
@@ -568,6 +568,16 @@ def create_alk_sim_test_execution(
             {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
         ),
     )
+    # A repository-backed rerun creates a new TestExecution while the user may
+    # still be looking at the previous execution's detail page. Publish as soon
+    # as the new execution exists (rather than waiting for its first call
+    # result) so every simulation surface can expose the new run immediately.
+    notify_simulation_update(
+        organization_id=str(run_test.organization_id),
+        run_test_id=str(run_test.id),
+        test_execution_id=str(test_execution.id),
+    )
+    return test_execution
 
 
 def create_alk_sim_call_execution_batch(
