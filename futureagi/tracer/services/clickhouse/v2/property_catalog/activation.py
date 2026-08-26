@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
@@ -309,6 +309,7 @@ class RevisionBuildPlan:
 
 class ActivationStatus(StrEnum):
     ACTIVE = "active"
+    DISABLED = "disabled"
 
 
 class CatalogLifecycleMode(StrEnum):
@@ -778,8 +779,8 @@ class ActivationRecord:
     version: int
 
     def __post_init__(self) -> None:
-        if self.status is not ActivationStatus.ACTIVE:
-            raise ValueError("control plane appends only complete active records")
+        if not isinstance(self.status, ActivationStatus):
+            raise TypeError("status must be an ActivationStatus")
         object.__setattr__(
             self,
             "organization_id",
@@ -856,6 +857,125 @@ class ActivationRecord:
 class ActivationResult:
     record: ActivationRecord
     qualification: RevisionQualification
+    idempotent: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationTarget:
+    """Exact qualified build named by an explicit control action."""
+
+    organization_id: str
+    workspace_id: str
+    catalog_epoch: int
+    catalog_revision: int
+    build_token: str
+    expected_activation_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "organization_id",
+            canonical_uuid(self.organization_id, field="organization_id"),
+        )
+        object.__setattr__(
+            self,
+            "workspace_id",
+            canonical_uuid(self.workspace_id, field="workspace_id"),
+        )
+        object.__setattr__(
+            self,
+            "build_token",
+            canonical_uuid(self.build_token, field="build_token"),
+        )
+        if type(self.catalog_epoch) is not int or not (
+            1 <= self.catalog_epoch < (1 << 16)
+        ):
+            raise ValueError("catalog_epoch must be a positive UInt16")
+        if type(self.catalog_revision) is not int or not (
+            1 <= self.catalog_revision < (1 << 64)
+        ):
+            raise ValueError("catalog_revision must be a positive UInt64")
+        require_sha256(
+            self.expected_activation_sha256,
+            field="expected_activation_sha256",
+        )
+
+    def matches(self, record: ActivationRecord) -> bool:
+        return (
+            self.organization_id == record.organization_id
+            and self.workspace_id == record.workspace_id
+            and self.catalog_epoch == record.catalog_epoch
+            and self.catalog_revision == record.catalog_revision
+            and self.build_token == record.build_token
+            and self.expected_activation_sha256 == record.activation_sha256
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationHead:
+    """Optimistic-concurrency precondition for one workspace activation ledger."""
+
+    activation_sequence: int
+    catalog_revision: int
+    build_token: str
+    activation_sha256: str
+    status: ActivationStatus
+
+    def __post_init__(self) -> None:
+        for field_name in ("activation_sequence", "catalog_revision"):
+            value = getattr(self, field_name)
+            if type(value) is not int or not 1 <= value < (1 << 64):
+                raise ValueError(f"{field_name} must be a positive UInt64")
+        object.__setattr__(
+            self,
+            "build_token",
+            canonical_uuid(self.build_token, field="build_token"),
+        )
+        require_sha256(self.activation_sha256, field="activation_sha256")
+        if not isinstance(self.status, ActivationStatus):
+            raise TypeError("status must be an ActivationStatus")
+
+    @classmethod
+    def from_record(cls, record: ActivationRecord) -> ActivationHead:
+        return cls(
+            activation_sequence=record.activation_sequence,
+            catalog_revision=record.catalog_revision,
+            build_token=record.build_token,
+            activation_sha256=record.activation_sha256,
+            status=record.status,
+        )
+
+    def matches(self, record: ActivationRecord) -> bool:
+        return (
+            self.activation_sequence == record.activation_sequence
+            and self.catalog_revision == record.catalog_revision
+            and self.build_token == record.build_token
+            and self.activation_sha256 == record.activation_sha256
+            and self.status is record.status
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationControlRequest:
+    """One explicit action plus the exact ledger state it was authorized from."""
+
+    target: ActivationTarget
+    expected_head: ActivationHead | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, ActivationTarget):
+            raise TypeError("target must be an ActivationTarget")
+        if self.expected_head is not None and not isinstance(
+            self.expected_head, ActivationHead
+        ):
+            raise TypeError("expected_head must be an ActivationHead or None")
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationControlResult:
+    records: tuple[ActivationRecord, ...]
+    active: ActivationRecord | None
+    qualification: RevisionQualification | None
     idempotent: bool
 
 
@@ -951,6 +1071,44 @@ class ActivationStore(Protocol):
         fence_sha256: str,
         checkpoint_state_sha256s: tuple[str, ...],
     ) -> ActivationRecord: ...
+
+
+class ActivationControlStore(Protocol):
+    """Append-only store required by explicit production control actions.
+
+    ``list_activation_events`` must return physical event history, including
+    superseded ACTIVE and DISABLED rows. ``append_activation_events`` must
+    serialize per workspace, compare the exact current head with
+    ``expected_head``, and append the whole batch or none of it. Implementations
+    must never UPDATE or DELETE activation rows.
+    """
+
+    def audit_build_plan(
+        self,
+        *,
+        build_plan: RevisionBuildPlan,
+        manifest: ActivationManifest,
+    ) -> None: ...
+
+    def load_checkpoints(
+        self,
+        requirement: RevisionRequirement,
+    ) -> Sequence[CatalogCheckpoint]: ...
+
+    def list_activation_events(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+    ) -> Sequence[ActivationRecord]: ...
+
+    def append_activation_events(
+        self,
+        records: tuple[ActivationRecord, ...],
+        *,
+        expected_head: ActivationHead | None,
+    ) -> Sequence[ActivationRecord]: ...
 
 
 class PropertyCatalogActivator:
@@ -1060,6 +1218,613 @@ class PropertyCatalogActivator:
         # Existing active records are deliberately retained: readers with an
         # issued signed cursor continue to pin their exact epoch/revision.
         return ActivationResult(record, qualification, False)
+
+
+class PropertyCatalogActivationControlPlane:
+    """Explicit append-only activation, disable, and rollback actions."""
+
+    def __init__(self, store: ActivationControlStore) -> None:
+        self._store = store
+
+    def qualify(
+        self,
+        *,
+        manifest: ActivationManifest,
+        fence: RevisionFence,
+    ) -> RevisionQualification:
+        """Return qualification evidence without changing activation state."""
+
+        return _qualify_control_activation(
+            self._store,
+            manifest=manifest,
+            fence=fence,
+        )
+
+    def activate(
+        self,
+        *,
+        request: ActivationControlRequest,
+        manifest: ActivationManifest,
+        fence: RevisionFence,
+        inventory: ActivationInventory,
+        now: datetime,
+    ) -> ActivationControlResult:
+        """Activate only the exact qualified build named by the request."""
+
+        _require_utc(now, "now")
+        _require_target_manifest(request.target, manifest)
+        qualification = self.qualify(
+            manifest=manifest,
+            fence=fence,
+        )
+        if qualification.activation_sha256 != (
+            request.target.expected_activation_sha256
+        ):
+            raise ActivationRejected(("activation_digest_mismatch",))
+
+        events = self._events(request.target)
+        prefix, tail = _control_action_window(events, request.expected_head)
+        qualified = _qualified_builds(prefix)
+        target_key = _activation_key_from_target(request.target)
+        if target_key in qualified:
+            raise ActivationRejected(("activation_target_already_qualified",))
+        if any(_activation_key(event) == target_key for event in prefix):
+            raise ActivationRejected(("activation_target_has_unqualified_state",))
+
+        latest_qualified_revision = max(
+            (record.catalog_revision for record in qualified.values()),
+            default=0,
+        )
+        if manifest.catalog_revision <= latest_qualified_revision:
+            raise ActivationRejected(("activation_revision_not_monotonic",))
+        current = _current_active_from_events(prefix)
+        if not qualified:
+            if manifest.lifecycle_mode is not CatalogLifecycleMode.INITIAL_BACKFILL:
+                raise ActivationRejected(
+                    ("first_activation_requires_initial_backfill",)
+                )
+        elif manifest.lifecycle_mode is CatalogLifecycleMode.INITIAL_BACKFILL:
+            raise ActivationRejected(("initial_backfill_requires_empty_lineage",))
+        elif manifest.lifecycle_mode is CatalogLifecycleMode.INCREMENTAL:
+            if current is None:
+                raise ActivationRejected(("incremental_requires_active_lineage",))
+            if (
+                manifest.lineage_anchor_revision != current.lineage_anchor_revision
+                or manifest.projection_version != current.projection_version
+            ):
+                raise ActivationRejected(("incremental_lineage_anchor_changed",))
+
+        next_sequence = _next_activation_sequence(prefix)
+        record = ActivationRecord(
+            organization_id=manifest.organization_id,
+            workspace_id=manifest.workspace_id,
+            catalog_epoch=manifest.catalog_epoch,
+            catalog_revision=manifest.catalog_revision,
+            build_token=manifest.build_token,
+            projection_version=manifest.projection_version,
+            lifecycle_mode=manifest.lifecycle_mode,
+            lineage_anchor_revision=manifest.lineage_anchor_revision,
+            activation_sequence=next_sequence,
+            source_manifest_json=manifest.canonical_json,
+            source_manifest_sha256=manifest.sha256,
+            revision_fence_sha256=fence.fence_sha256,
+            activation_sha256=qualification.activation_sha256,
+            status=ActivationStatus.ACTIVE,
+            live_definition_rows=inventory.live_definition_rows,
+            tombstone_rows=inventory.tombstone_rows,
+            value_rows=inventory.value_rows,
+            qualified_at=now,
+            updated_at=now,
+            version=next_sequence,
+        )
+        return self._append_plan(
+            request=request,
+            events=events,
+            prefix=prefix,
+            tail=tail,
+            transitions=((record, ActivationStatus.ACTIVE),),
+            qualification=qualification,
+            now=now,
+        )
+
+    def disable(
+        self,
+        *,
+        request: ActivationControlRequest,
+        now: datetime,
+    ) -> ActivationControlResult:
+        """Disable every active lineage row so readers cannot fall back."""
+
+        _require_utc(now, "now")
+        if request.expected_head is None:
+            raise ActivationRejected(("disable_requires_active_head",))
+        events = self._events(request.target)
+        prefix, tail = _control_action_window(events, request.expected_head)
+        current = _current_active_from_events(prefix)
+        if current is None or not request.target.matches(current):
+            raise ActivationRejected(("disable_target_is_not_current",))
+        if not request.expected_head.matches(current):
+            raise ActivationRejected(("disable_head_is_not_current",))
+
+        active = tuple(
+            sorted(
+                _active_states(prefix),
+                key=lambda record: (
+                    record.catalog_revision,
+                    record.activation_sequence,
+                    record.build_token,
+                ),
+            )
+        )
+        transitions = tuple(
+            (record, ActivationStatus.DISABLED)
+            for record in (*tuple(item for item in active if item != current), current)
+        )
+        result = self._append_plan(
+            request=request,
+            events=events,
+            prefix=prefix,
+            tail=tail,
+            transitions=transitions,
+            qualification=None,
+            now=now,
+        )
+        if result.active is not None:
+            raise PropertyCatalogActivationError(
+                "disable append left an active catalog build"
+            )
+        return result
+
+    def rollback(
+        self,
+        *,
+        request: ActivationControlRequest,
+        now: datetime,
+    ) -> ActivationControlResult:
+        """Append a control transition back to a prior qualified lineage."""
+
+        _require_utc(now, "now")
+        if request.expected_head is None:
+            raise ActivationRejected(("rollback_requires_existing_head",))
+        events = self._events(request.target)
+        prefix, tail = _control_action_window(events, request.expected_head)
+        target_key = _activation_key_from_target(request.target)
+        target_history = tuple(
+            event for event in prefix if _activation_key(event) == target_key
+        )
+        if not target_history:
+            if any(
+                event.catalog_revision == request.target.catalog_revision
+                for event in prefix
+            ):
+                raise ActivationRejected(("rollback_target_conflict",))
+            raise ActivationRejected(("rollback_target_unknown",))
+        target_active_history = tuple(
+            event for event in target_history if event.status is ActivationStatus.ACTIVE
+        )
+        if not target_active_history:
+            raise ActivationRejected(("rollback_target_not_qualified",))
+        target = max(
+            target_active_history,
+            key=lambda record: record.activation_sequence,
+        )
+        if not request.target.matches(target):
+            raise ActivationRejected(("rollback_target_digest_mismatch",))
+        if target.activation_sequence >= request.expected_head.activation_sequence:
+            raise ActivationRejected(("rollback_target_not_prior",))
+
+        lineage = _qualified_lineage(prefix, target)
+        desired_keys = {_activation_key(record) for record in lineage}
+        active_by_key = {
+            _activation_key(record): record for record in _active_states(prefix)
+        }
+        current = _current_active_from_events(prefix)
+        if (
+            current is not None
+            and _activation_key(current) == target_key
+            and set(active_by_key) == desired_keys
+        ):
+            raise ActivationRejected(("rollback_target_already_active",))
+
+        disable = tuple(
+            (record, ActivationStatus.DISABLED)
+            for key, record in sorted(
+                active_by_key.items(),
+                key=lambda item: (
+                    item[1].catalog_revision,
+                    item[1].activation_sequence,
+                    item[1].build_token,
+                ),
+            )
+            if key not in desired_keys
+        )
+        reactivate = tuple(
+            (record, ActivationStatus.ACTIVE)
+            for record in lineage
+            if _activation_key(record) != target_key
+            and (
+                _activation_key(record) not in active_by_key
+                or active_by_key[_activation_key(record)].status
+                is not ActivationStatus.ACTIVE
+            )
+        )
+        transitions = (
+            *disable,
+            *reactivate,
+            (target, ActivationStatus.ACTIVE),
+        )
+        result = self._append_plan(
+            request=request,
+            events=events,
+            prefix=prefix,
+            tail=tail,
+            transitions=transitions,
+            qualification=None,
+            now=now,
+        )
+        if result.active is None or not request.target.matches(result.active):
+            raise PropertyCatalogActivationError(
+                "rollback append did not select the requested qualified build"
+            )
+        return result
+
+    def _events(self, target: ActivationTarget) -> tuple[ActivationRecord, ...]:
+        return _canonical_control_events(
+            self._store.list_activation_events(
+                organization_id=target.organization_id,
+                workspace_id=target.workspace_id,
+                catalog_epoch=target.catalog_epoch,
+            ),
+            organization_id=target.organization_id,
+            workspace_id=target.workspace_id,
+            catalog_epoch=target.catalog_epoch,
+        )
+
+    def _append_plan(
+        self,
+        *,
+        request: ActivationControlRequest,
+        events: tuple[ActivationRecord, ...],
+        prefix: tuple[ActivationRecord, ...],
+        tail: tuple[ActivationRecord, ...],
+        transitions: tuple[tuple[ActivationRecord, ActivationStatus], ...],
+        qualification: RevisionQualification | None,
+        now: datetime,
+    ) -> ActivationControlResult:
+        start_sequence = _next_activation_sequence(prefix)
+        if _tail_matches_transitions(
+            tail,
+            transitions=transitions,
+            start_sequence=start_sequence,
+        ):
+            return ActivationControlResult(
+                records=tail,
+                active=_current_active_from_events(events),
+                qualification=qualification,
+                idempotent=True,
+            )
+        if tail:
+            raise ActivationRejected(("activation_control_stale",))
+
+        records = tuple(
+            _transition_record(
+                source,
+                status=status,
+                activation_sequence=start_sequence + index,
+                now=now,
+            )
+            for index, (source, status) in enumerate(transitions)
+        )
+        appended = tuple(
+            self._store.append_activation_events(
+                records,
+                expected_head=request.expected_head,
+            )
+        )
+        if appended != records:
+            raise PropertyCatalogActivationError(
+                "activation control store did not preserve the atomic append"
+            )
+        post_events = _canonical_control_events(
+            (*events, *appended),
+            organization_id=request.target.organization_id,
+            workspace_id=request.target.workspace_id,
+            catalog_epoch=request.target.catalog_epoch,
+        )
+        return ActivationControlResult(
+            records=records,
+            active=_current_active_from_events(post_events),
+            qualification=qualification,
+            idempotent=False,
+        )
+
+
+def current_active_activation(
+    events: Sequence[ActivationRecord],
+) -> ActivationRecord | None:
+    """Resolve the build current readers should select from physical events."""
+
+    return _current_active_from_events(_canonical_control_events(events))
+
+
+def _qualify_control_activation(
+    store: ActivationControlStore,
+    *,
+    manifest: ActivationManifest,
+    fence: RevisionFence,
+) -> RevisionQualification:
+    store.audit_build_plan(
+        build_plan=RevisionBuildPlan.from_json(fence.build_plan_json),
+        manifest=manifest,
+    )
+    requirement = manifest.revision_requirement
+    checkpoints = tuple(store.load_checkpoints(requirement))
+    qualification = qualify_revision(requirement, checkpoints)
+    if not qualification.qualified or qualification.activation_sha256 is None:
+        raise ActivationRejected(qualification.issues)
+    checkpoint_states = tuple(
+        checkpoint.state_sha256
+        for checkpoint in sorted(
+            checkpoints,
+            key=lambda value: (value.source_adapter, value.producer_stream_id),
+        )
+    )
+    _validate_fence(
+        fence,
+        manifest=manifest,
+        checkpoints=checkpoints,
+        checkpoint_states=checkpoint_states,
+    )
+    return qualification
+
+
+def _require_target_manifest(
+    target: ActivationTarget,
+    manifest: ActivationManifest,
+) -> None:
+    if (
+        target.organization_id != manifest.organization_id
+        or target.workspace_id != manifest.workspace_id
+        or target.catalog_epoch != manifest.catalog_epoch
+        or target.catalog_revision != manifest.catalog_revision
+        or target.build_token != manifest.build_token
+    ):
+        raise ActivationRejected(("activation_target_mismatch",))
+
+
+def _canonical_control_events(
+    events: Sequence[ActivationRecord],
+    *,
+    organization_id: str | None = None,
+    workspace_id: str | None = None,
+    catalog_epoch: int | None = None,
+) -> tuple[ActivationRecord, ...]:
+    by_sequence: dict[int, ActivationRecord] = {}
+    by_key_version: dict[tuple[int, str, int], ActivationRecord] = {}
+    build_evidence: dict[tuple[int, str], tuple[Any, ...]] = {}
+    qualified_tokens_by_revision: dict[int, set[str]] = {}
+    latest_version_by_key: dict[tuple[int, str], int] = {}
+    for record in events:
+        if not isinstance(record, ActivationRecord):
+            raise TypeError("activation control history must contain ActivationRecord")
+        if organization_id is None:
+            organization_id = record.organization_id
+            workspace_id = record.workspace_id
+            catalog_epoch = record.catalog_epoch
+        if (
+            record.organization_id != organization_id
+            or record.workspace_id != workspace_id
+            or record.catalog_epoch != catalog_epoch
+        ):
+            raise ActivationRejected(("activation_control_scope_conflict",))
+        previous_sequence = by_sequence.get(record.activation_sequence)
+        if previous_sequence is not None:
+            if previous_sequence != record:
+                raise ActivationRejected(("activation_sequence_conflict",))
+            continue
+        by_sequence[record.activation_sequence] = record
+        key = _activation_key(record)
+        key_version = (*key, record.version)
+        previous_version = by_key_version.get(key_version)
+        if previous_version is not None and previous_version != record:
+            raise ActivationRejected(("activation_state_conflict",))
+        by_key_version[key_version] = record
+        evidence = _immutable_build_evidence(record)
+        previous_evidence = build_evidence.setdefault(key, evidence)
+        if previous_evidence != evidence:
+            raise ActivationRejected(("activation_build_conflict",))
+        if record.status is ActivationStatus.ACTIVE:
+            qualified_tokens_by_revision.setdefault(record.catalog_revision, set()).add(
+                record.build_token
+            )
+
+    ordered = tuple(by_sequence[sequence] for sequence in sorted(by_sequence))
+    if any(
+        record.activation_sequence != expected
+        for expected, record in enumerate(ordered, start=1)
+    ):
+        raise ActivationRejected(("activation_sequence_gap",))
+    for record in ordered:
+        key = _activation_key(record)
+        previous_version = latest_version_by_key.get(key)
+        if previous_version is not None and record.version <= previous_version:
+            raise ActivationRejected(("activation_version_not_monotonic",))
+        latest_version_by_key[key] = record.version
+    if any(len(tokens) != 1 for tokens in qualified_tokens_by_revision.values()):
+        raise ActivationRejected(("activation_revision_conflict",))
+    return ordered
+
+
+def _control_action_window(
+    events: tuple[ActivationRecord, ...],
+    expected_head: ActivationHead | None,
+) -> tuple[tuple[ActivationRecord, ...], tuple[ActivationRecord, ...]]:
+    if expected_head is None:
+        return (), events
+    matching = tuple(
+        index
+        for index, event in enumerate(events)
+        if event.activation_sequence == expected_head.activation_sequence
+    )
+    if len(matching) != 1 or not expected_head.matches(events[matching[0]]):
+        raise ActivationRejected(("activation_control_precondition_mismatch",))
+    index = matching[0]
+    return events[: index + 1], events[index + 1 :]
+
+
+def _activation_key(record: ActivationRecord) -> tuple[int, str]:
+    return record.catalog_revision, record.build_token
+
+
+def _activation_key_from_target(target: ActivationTarget) -> tuple[int, str]:
+    return target.catalog_revision, target.build_token
+
+
+def _immutable_build_evidence(record: ActivationRecord) -> tuple[Any, ...]:
+    return (
+        record.organization_id,
+        record.workspace_id,
+        record.catalog_epoch,
+        record.catalog_revision,
+        record.build_token,
+        record.projection_version,
+        record.lifecycle_mode,
+        record.lineage_anchor_revision,
+        record.source_manifest_json,
+        record.source_manifest_sha256,
+        record.revision_fence_sha256,
+        record.activation_sha256,
+        record.live_definition_rows,
+        record.tombstone_rows,
+        record.value_rows,
+        record.qualified_at,
+    )
+
+
+def _transition_evidence(record: ActivationRecord) -> tuple[Any, ...]:
+    return _immutable_build_evidence(record)[:-1]
+
+
+def _latest_states(
+    events: tuple[ActivationRecord, ...],
+) -> dict[tuple[int, str], ActivationRecord]:
+    states: dict[tuple[int, str], ActivationRecord] = {}
+    for event in events:
+        states[_activation_key(event)] = event
+    return states
+
+
+def _active_states(
+    events: tuple[ActivationRecord, ...],
+) -> tuple[ActivationRecord, ...]:
+    return tuple(
+        record
+        for record in _latest_states(events).values()
+        if record.status is ActivationStatus.ACTIVE
+    )
+
+
+def _current_active_from_events(
+    events: tuple[ActivationRecord, ...],
+) -> ActivationRecord | None:
+    active = _active_states(events)
+    if not active:
+        return None
+    builds_by_revision: dict[int, set[str]] = {}
+    for record in active:
+        builds_by_revision.setdefault(record.catalog_revision, set()).add(
+            record.build_token
+        )
+    if any(len(tokens) != 1 for tokens in builds_by_revision.values()):
+        raise ActivationRejected(("activation_revision_conflict",))
+    return max(
+        active,
+        key=lambda record: (
+            record.catalog_revision,
+            record.activation_sequence,
+            record.build_token,
+        ),
+    )
+
+
+def _qualified_builds(
+    events: tuple[ActivationRecord, ...],
+) -> dict[tuple[int, str], ActivationRecord]:
+    qualified: dict[tuple[int, str], ActivationRecord] = {}
+    for event in events:
+        if event.status is ActivationStatus.ACTIVE:
+            qualified[_activation_key(event)] = event
+    return qualified
+
+
+def _qualified_lineage(
+    events: tuple[ActivationRecord, ...],
+    target: ActivationRecord,
+) -> tuple[ActivationRecord, ...]:
+    qualified = tuple(_qualified_builds(events).values())
+    by_revision = {
+        record.catalog_revision: record
+        for record in qualified
+        if record.projection_version == target.projection_version
+        and record.lineage_anchor_revision == target.lineage_anchor_revision
+        and target.lineage_anchor_revision
+        <= record.catalog_revision
+        <= target.catalog_revision
+    }
+    anchor = by_revision.get(target.lineage_anchor_revision)
+    if (
+        anchor is None
+        or anchor.lifecycle_mode
+        not in {
+            CatalogLifecycleMode.INITIAL_BACKFILL,
+            CatalogLifecycleMode.FULL_REPAIR,
+        }
+        or _activation_key(target)
+        != _activation_key(by_revision.get(target.catalog_revision, anchor))
+    ):
+        raise ActivationRejected(("rollback_lineage_incomplete",))
+    return tuple(by_revision[revision] for revision in sorted(by_revision))
+
+
+def _next_activation_sequence(events: tuple[ActivationRecord, ...]) -> int:
+    return 1 if not events else events[-1].activation_sequence + 1
+
+
+def _transition_record(
+    source: ActivationRecord,
+    *,
+    status: ActivationStatus,
+    activation_sequence: int,
+    now: datetime,
+) -> ActivationRecord:
+    if now < source.qualified_at or now < source.updated_at:
+        raise ActivationRejected(("activation_control_time_not_monotonic",))
+    return replace(
+        source,
+        activation_sequence=activation_sequence,
+        status=status,
+        updated_at=now,
+        version=activation_sequence,
+    )
+
+
+def _tail_matches_transitions(
+    tail: tuple[ActivationRecord, ...],
+    *,
+    transitions: tuple[tuple[ActivationRecord, ActivationStatus], ...],
+    start_sequence: int,
+) -> bool:
+    if len(tail) != len(transitions):
+        return False
+    return all(
+        event.activation_sequence == start_sequence + index
+        and event.version == start_sequence + index
+        and event.status is status
+        and _transition_evidence(event) == _transition_evidence(source)
+        for index, (event, (source, status)) in enumerate(
+            zip(tail, transitions, strict=True)
+        )
+    )
 
 
 def make_revision_fence(
@@ -1247,6 +2012,10 @@ def _validate_role_counts(
 
 
 __all__ = [
+    "ActivationControlRequest",
+    "ActivationControlResult",
+    "ActivationControlStore",
+    "ActivationHead",
     "ActivationInventory",
     "ActivationManifest",
     "ActivationRecord",
@@ -1254,6 +2023,7 @@ __all__ = [
     "ActivationResult",
     "ActivationStatus",
     "ActivationStore",
+    "ActivationTarget",
     "BuildPlanSourceScope",
     "BuildPlanStream",
     "CatalogLifecycleMode",
@@ -1261,6 +2031,7 @@ __all__ = [
     "ManifestStream",
     "ManifestStreamRole",
     "PropertyCatalogActivationError",
+    "PropertyCatalogActivationControlPlane",
     "PropertyCatalogActivator",
     "RevisionCoordinator",
     "RevisionBuildPlan",
@@ -1268,5 +2039,6 @@ __all__ = [
     "RevisionFenceStatus",
     "RevisionLease",
     "StreamDrainProof",
+    "current_active_activation",
     "make_revision_fence",
 ]
