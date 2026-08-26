@@ -479,6 +479,8 @@ class TestBuildCountQuery:
         builder.build()
         query, params = builder.build_count_query()
         assert "trace_name ILIKE %(search)s" in query
+        assert "input ILIKE %(search)s" in query
+        assert "output ILIKE %(search)s" in query
         assert params["search"] == "%boom%"
 
     def test_start_time_window_no_created_at_skew(self, project_id):

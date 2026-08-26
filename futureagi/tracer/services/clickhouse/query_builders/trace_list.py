@@ -28,6 +28,15 @@ from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBu
 # nothing and scans the whole project.
 TIME_FILTER_COLUMN = "start_time"  # Options: "created_at" | "start_time"
 
+# Free-text search covers the fields shown in the trace table. All queries
+# using it are already scoped to root spans, so input/output here are the
+# root span's content — matching what the grid renders.
+SEARCH_FRAGMENT = (
+    "AND (trace_name ILIKE %(search)s"
+    " OR input ILIKE %(search)s"
+    " OR output ILIKE %(search)s)"
+)
+
 
 class TraceListQueryBuilder(BaseQueryBuilder):
     """Build queries for the paginated trace list view.
@@ -185,10 +194,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             pv_fragment = "AND project_version_id = %(project_version_id)s"
             self.params["project_version_id"] = self.project_version_id
 
-        # Search filter on trace_name
+        # Free-text search over the root span's name and content. Lives in the
+        # root query so pagination and totals stay aligned with the page rows.
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = SEARCH_FRAGMENT
             self.params["search"] = f"%{self.search}%"
 
         # Configurable columns — only SELECT requested columns.
@@ -311,7 +321,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = SEARCH_FRAGMENT
             self.params["search"] = f"%{self.search}%"
 
         query = f"""
@@ -424,7 +434,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Search filter (reuse from build())
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = SEARCH_FRAGMENT
             params["search"] = f"%{self.search}%"
 
         query = f"""
