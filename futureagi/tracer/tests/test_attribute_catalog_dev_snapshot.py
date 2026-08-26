@@ -16,7 +16,14 @@ from tracer.services.clickhouse.attribute_reads import (
     AttributeReadMetadata,
     AttributeValueCursorPageRead,
     AttributeValueRow,
+    attribute_key_cursor_digest,
+    attribute_value_cursor_digest,
 )
+from tracer.services.clickhouse.filter_value_reads import (
+    EndUserFilterValueCursorPageRead,
+    FilterValueCursorPageRead,
+)
+from tracer.services.clickhouse.list_cursor import ListCursorError, encode_list_cursor
 from tracer.services.clickhouse.v2 import attribute_catalog_cutover as cutover
 from tracer.services.clickhouse.v2 import attribute_catalog_snapshot as snapshot
 from tracer.services.clickhouse.v2.attribute_catalog_reader import (
@@ -131,6 +138,33 @@ def _authenticated_get(path: str, data: dict[str, Any]):
     request = APIRequestFactory().get(path, data)
     force_authenticate(request, user=SimpleNamespace(is_authenticated=True))
     return request
+
+
+@pytest.mark.unit
+def test_snapshot_cursor_decoder_accepts_only_baseline_or_frozen_query_mode():
+    scope = {"principal_id": "test"}
+    baseline_query = {"project_id": PROJECT_ID, "mode": "recent_attribute_keys"}
+    token = encode_list_cursor(
+        resource="span_attribute_keys",
+        scope=scope,
+        query={**baseline_query, "query_window_mode": "unsupported_mode"},
+        page_size=10,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        order=(WINDOW_END, (), (), 0, ()),
+        seen_rows=0,
+    )
+
+    with pytest.raises(ListCursorError) as exc_info:
+        snapshot.decode_catalog_snapshot_list_cursor(
+            token,
+            resource="span_attribute_keys",
+            scope=scope,
+            query=baseline_query,
+            page_size=10,
+        )
+
+    assert exc_info.value.code == "cursor_mismatch"
 
 
 @pytest.mark.unit
@@ -312,10 +346,7 @@ def test_span_key_continuation_keeps_signed_snapshot_bounds(monkeypatch):
 
     # A settings change can govern only fresh walks.  The continuation remains
     # bound to the authenticated A/B embedded in its signed cursor.
-    with override_settings(
-        SPAN_ATTRIBUTE_CATALOG_HANDOFF_START=WINDOW_END,
-        SPAN_ATTRIBUTE_CATALOG_HANDOFF_END=WINDOW_END + timedelta(days=1),
-    ):
+    with override_settings(SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=False):
         second_request = _authenticated_get(
             "/api/traces/span-attribute-keys/",
             {
@@ -336,6 +367,77 @@ def test_span_key_continuation_keeps_signed_snapshot_bounds(monkeypatch):
     assert direct_windows == [(WINDOW_START, WINDOW_END)]
     assert second_response.data["query_window_mode"] == "frozen_snapshot"
     assert second_response["X-FutureAGI-Attribute-Catalog-Window"] == "frozen-snapshot"
+
+
+@pytest.mark.unit
+@override_settings(**SNAPSHOT_SETTINGS)
+def test_span_key_baseline_continuation_ignores_later_snapshot_enable(monkeypatch):
+    from tracer.views import span_attributes
+
+    captured_windows = []
+    calls = 0
+
+    class Selector:
+        def __init__(self, **_kwargs):
+            pass
+
+        def read_key_cursor_page(self, _project_ids, **kwargs):
+            nonlocal calls
+            calls += 1
+            key = f"baseline.key.{calls}"
+            digest = attribute_key_cursor_digest(key)
+            captured_windows.append((kwargs["window_start"], kwargs["window_end"]))
+            return AttributeKeyCursorPageRead(
+                rows=(AttributeKeyRow(key, "string", 1),),
+                metadata=_metadata(kwargs["window_start"], kwargs["window_end"]),
+                has_more=calls == 1,
+                browse_status="continuation" if calls == 1 else "exhausted",
+                next_segment_end=kwargs["window_end"],
+                next_before_identity=None,
+                next_resume_identity=None,
+                next_resume_key_offset=0,
+                seen_key_digests=(*kwargs["seen_key_digests"], digest),
+                appended_key_digests=(digest,),
+                seen_key_count=kwargs["seen_key_count"] + 1,
+            )
+
+    monkeypatch.setattr(
+        span_attributes,
+        "_project_is_in_request_scope",
+        lambda _request, _project_id: True,
+    )
+    monkeypatch.setattr(
+        span_attributes,
+        "try_catalog_key_page",
+        lambda **_kwargs: cutover.CatalogReadAttempt(
+            False,
+            None,
+            "runtime_disabled",
+        ),
+    )
+    monkeypatch.setattr(span_attributes, "AttributeReadSelector", Selector)
+    params = {"project_id": PROJECT_ID, "page_size": 1}
+
+    with override_settings(SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=False):
+        first_response = span_attributes.SpanAttributeKeysView.as_view()(
+            _authenticated_get("/api/traces/span-attribute-keys/", params)
+        )
+    assert first_response.status_code == 200
+    assert first_response.data["next_cursor"]
+
+    with override_settings(SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=True):
+        second_response = span_attributes.SpanAttributeKeysView.as_view()(
+            _authenticated_get(
+                "/api/traces/span-attribute-keys/",
+                {**params, "cursor": first_response.data["next_cursor"]},
+            )
+        )
+
+    assert second_response.status_code == 200
+    assert captured_windows[1] == captured_windows[0]
+    assert "query_window_mode" not in first_response.data
+    assert "query_window_mode" not in second_response.data
+    assert "X-FutureAGI-Attribute-Catalog-Window" not in second_response
 
 
 @pytest.mark.unit
@@ -524,3 +626,260 @@ def test_unactivated_dashboard_snapshot_falls_back_over_the_same_window(monkeypa
     assert response["X-FutureAGI-Attribute-Catalog"] == "fallback"
     assert response.data["result"]["query_window_mode"] == "frozen_snapshot"
     assert response["X-FutureAGI-Attribute-Catalog-Window"] == "frozen-snapshot"
+
+
+@pytest.mark.unit
+@override_settings(**SNAPSHOT_SETTINGS)
+@pytest.mark.parametrize(
+    "first_snapshot_enabled",
+    [
+        pytest.param(True, id="snapshot-to-baseline-runtime"),
+        pytest.param(False, id="baseline-to-snapshot-runtime"),
+    ],
+)
+def test_dashboard_custom_value_continuation_authenticates_original_window_mode(
+    monkeypatch,
+    first_snapshot_enabled,
+):
+    from tracer.views import dashboard
+
+    captured_windows = []
+    calls = 0
+
+    class Selector:
+        def __init__(self, **_kwargs):
+            pass
+
+        def retained_window_start(self, *_args, **_kwargs):
+            return WINDOW_START - timedelta(days=30)
+
+        def read_value_cursor_page(self, _project_ids, _key, **kwargs):
+            nonlocal calls
+            calls += 1
+            value = f"value-{calls}"
+            digest = attribute_value_cursor_digest("string", value)
+            captured_windows.append((kwargs["window_start"], kwargs["window_end"]))
+            return AttributeValueCursorPageRead(
+                rows=(AttributeValueRow(value, "string", 1),),
+                metadata=_metadata(kwargs["window_start"], kwargs["window_end"]),
+                has_more=calls == 1,
+                next_segment_end=kwargs["window_end"],
+                next_before_identity=None,
+                next_resume_identity=None,
+                next_resume_member_offset=0,
+                seen_value_digests=(*kwargs["seen_value_digests"], digest),
+                browse_status="continuation" if calls == 1 else "exhausted",
+                appended_value_digests=(digest,),
+                seen_value_count=kwargs["seen_value_count"] + 1,
+            )
+
+    _patch_dashboard_project_scope(monkeypatch, dashboard)
+    monkeypatch.setattr(dashboard, "AttributeReadSelector", Selector)
+    monkeypatch.setattr(
+        dashboard,
+        "try_catalog_value_page",
+        lambda **_kwargs: cutover.CatalogReadAttempt(
+            False,
+            None,
+            "runtime_disabled",
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "_run_catalog_value_shadow_fail_open",
+        lambda **_kwargs: None,
+    )
+    params = {
+        "metric_name": "snapshot.key",
+        "metric_type": "custom_attribute",
+        "project_ids": PROJECT_ID,
+        "source": "traces",
+        "page_size": 1,
+    }
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=first_snapshot_enabled
+    ):
+        first_response = dashboard.DashboardViewSet.as_view({"get": "filter_values"})(
+            _authenticated_get("/tracer/dashboard/filter_values/", params)
+        )
+    first_result = first_response.data["result"]
+    assert first_response.status_code == 200
+    assert first_result["next_cursor"]
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=not first_snapshot_enabled
+    ):
+        second_response = dashboard.DashboardViewSet.as_view({"get": "filter_values"})(
+            _authenticated_get(
+                "/tracer/dashboard/filter_values/",
+                {**params, "cursor": first_result["next_cursor"]},
+            )
+        )
+    second_result = second_response.data["result"]
+
+    assert second_response.status_code == 200
+    assert captured_windows[1] == captured_windows[0]
+    if first_snapshot_enabled:
+        assert first_result["query_window_mode"] == "frozen_snapshot"
+        assert second_result["query_window_mode"] == "frozen_snapshot"
+        assert (
+            second_response["X-FutureAGI-Attribute-Catalog-Window"] == "frozen-snapshot"
+        )
+    else:
+        assert "query_window_mode" not in first_result
+        assert "query_window_mode" not in second_result
+        assert "X-FutureAGI-Attribute-Catalog-Window" not in second_response
+
+
+@pytest.mark.unit
+@override_settings(**SNAPSHOT_SETTINGS)
+@pytest.mark.parametrize(
+    "first_snapshot_enabled",
+    [
+        pytest.param(True, id="enabled-to-disabled"),
+        pytest.param(False, id="disabled-to-enabled"),
+    ],
+)
+def test_dashboard_system_value_continuation_is_stable_across_snapshot_flag_toggle(
+    monkeypatch,
+    first_snapshot_enabled,
+):
+    from tracer.views import dashboard
+
+    calls = 0
+
+    def read_page(_analytics, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return EndUserFilterValueCursorPageRead(
+            values=(f"user-{calls}",),
+            has_more=calls == 1,
+            next_value_after=f"user-{calls}" if calls == 1 else None,
+            browse_status="continuation" if calls == 1 else "exhausted",
+        )
+
+    _patch_dashboard_project_scope(monkeypatch, dashboard)
+    monkeypatch.setattr(dashboard, "V2AnalyticsQueryService", object)
+    monkeypatch.setattr(
+        dashboard,
+        "read_end_user_filter_value_cursor_page",
+        read_page,
+    )
+    params = {
+        "metric_name": "user_id",
+        "metric_type": "system_metric",
+        "project_ids": PROJECT_ID,
+        "source": "traces",
+        "page_size": 1,
+    }
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=first_snapshot_enabled
+    ):
+        first_response = dashboard.DashboardViewSet.as_view({"get": "filter_values"})(
+            _authenticated_get("/tracer/dashboard/filter_values/", params)
+        )
+    first_result = first_response.data["result"]
+    assert first_result["next_cursor"]
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=not first_snapshot_enabled
+    ):
+        second_response = dashboard.DashboardViewSet.as_view({"get": "filter_values"})(
+            _authenticated_get(
+                "/tracer/dashboard/filter_values/",
+                {**params, "cursor": first_result["next_cursor"]},
+            )
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.data["result"]["values"] == [
+        {"value": "user-2", "label": "user-2"}
+    ]
+
+
+@pytest.mark.unit
+@override_settings(**SNAPSHOT_SETTINGS)
+@pytest.mark.parametrize(
+    "first_snapshot_enabled",
+    [
+        pytest.param(True, id="enabled-to-disabled"),
+        pytest.param(False, id="disabled-to-enabled"),
+    ],
+)
+def test_dashboard_span_system_value_continuation_is_stable_across_flag_toggle(
+    monkeypatch,
+    first_snapshot_enabled,
+):
+    from tracer.views import dashboard
+
+    calls = 0
+
+    class Selector:
+        def __init__(self, **_kwargs):
+            pass
+
+        def retained_window_start(self, *_args, **_kwargs):
+            return WINDOW_START - timedelta(days=30)
+
+    def read_page(_analytics, **kwargs):
+        nonlocal calls
+        calls += 1
+        value = f"status-{calls}"
+        digest = dashboard._filter_value_digest(value)
+        return FilterValueCursorPageRead(
+            values=(value,),
+            query_window_start=kwargs["window_start"],
+            query_window_end=kwargs["window_end"],
+            has_more=calls == 1,
+            next_segment_end=kwargs["window_end"],
+            next_segment_start=(kwargs["window_start"] if calls == 1 else None),
+            next_value_after=(value if calls == 1 else None),
+            seen_value_digests=(*kwargs["seen_value_digests"], digest),
+            browse_status="continuation" if calls == 1 else "exhausted",
+            appended_value_digests=(digest,),
+            seen_value_count=kwargs["seen_value_count"] + 1,
+        )
+
+    _patch_dashboard_project_scope(monkeypatch, dashboard)
+    monkeypatch.setattr(dashboard, "AttributeReadSelector", Selector)
+    monkeypatch.setattr(dashboard, "V2AnalyticsQueryService", object)
+    monkeypatch.setattr(
+        dashboard,
+        "read_span_system_filter_value_cursor_page",
+        read_page,
+    )
+    params = {
+        "metric_name": "status",
+        "metric_type": "system_metric",
+        "project_ids": PROJECT_ID,
+        "source": "traces",
+        "page_size": 1,
+    }
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=first_snapshot_enabled
+    ):
+        first_response = dashboard.DashboardViewSet.as_view({"get": "filter_values"})(
+            _authenticated_get("/tracer/dashboard/filter_values/", params)
+        )
+    first_result = first_response.data["result"]
+    assert first_result["next_cursor"]
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=not first_snapshot_enabled
+    ):
+        second_response = dashboard.DashboardViewSet.as_view({"get": "filter_values"})(
+            _authenticated_get(
+                "/tracer/dashboard/filter_values/",
+                {**params, "cursor": first_result["next_cursor"]},
+            )
+        )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.data["result"]["values"] == [
+        {"value": "status-2", "label": "status-2"}
+    ]

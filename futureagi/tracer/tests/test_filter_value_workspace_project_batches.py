@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from django.test import override_settings
 
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
 from tracer.services.clickhouse.attribute_cursor_state import AttributeCursorSeenState
@@ -21,7 +22,19 @@ from tracer.services.clickhouse.filter_value_reads import (
     FilterValueCursorPageRead,
     FilterValueRead,
 )
+from tracer.services.clickhouse.v2 import attribute_catalog_cutover as cutover
 from tracer.views import dashboard as dashboard_view
+
+SNAPSHOT_WINDOW_START = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
+SNAPSHOT_WINDOW_END = datetime(2026, 8, 2, 0, 0, tzinfo=UTC)
+SNAPSHOT_SETTINGS = {
+    "ENV_TYPE": "dev",
+    "SPAN_ATTRIBUTE_CATALOG_READ_MODE": "read",
+    "SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK": cutover.CATALOG_DEV_READ_ACK,
+    "SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED": True,
+    "SPAN_ATTRIBUTE_CATALOG_HANDOFF_START": SNAPSHOT_WINDOW_START,
+    "SPAN_ATTRIBUTE_CATALOG_HANDOFF_END": SNAPSHOT_WINDOW_END,
+}
 
 
 def _uuid(index: int) -> str:
@@ -208,6 +221,106 @@ def test_workspace_custom_values_walk_later_batch_without_duplicate(monkeypatch)
 
 
 @pytest.mark.unit
+@override_settings(**SNAPSHOT_SETTINGS)
+@pytest.mark.parametrize(
+    "first_snapshot_enabled",
+    [
+        pytest.param(True, id="snapshot-to-baseline-runtime"),
+        pytest.param(False, id="baseline-to-snapshot-runtime"),
+    ],
+)
+def test_workspace_custom_value_cursor_keeps_its_signed_window_mode(
+    monkeypatch,
+    first_snapshot_enabled,
+):
+    project_ids = [_uuid(index) for index in range(1, 66)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    observed_windows = []
+    calls = 0
+
+    class Selector:
+        def __init__(self, **_kwargs):
+            pass
+
+        def read_value_cursor_page(self, _batch, _key, **kwargs):
+            nonlocal calls
+            calls += 1
+            value = f"custom-{calls}"
+            digest = attribute_value_cursor_digest("string", value)
+            observed_windows.append((kwargs["window_start"], kwargs["window_end"]))
+            return AttributeValueCursorPageRead(
+                rows=(AttributeValueRow(value, "string", 1),),
+                metadata=AttributeReadMetadata(
+                    True,
+                    "complete",
+                    None,
+                    kwargs["window_start"],
+                    kwargs["window_end"],
+                    1,
+                ),
+                has_more=False,
+                next_segment_end=kwargs["window_start"],
+                next_before_identity=None,
+                next_resume_identity=None,
+                next_resume_member_offset=0,
+                seen_value_digests=(digest,),
+                browse_status="exhausted",
+                appended_value_digests=(digest,),
+                seen_value_count=kwargs["seen_value_count"] + 1,
+            )
+
+    monkeypatch.setattr(dashboard_view, "AttributeReadSelector", Selector)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    monkeypatch.setattr(
+        dashboard_view,
+        "try_catalog_value_page",
+        lambda **_kwargs: cutover.CatalogReadAttempt(
+            False,
+            None,
+            "runtime_disabled",
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "_run_catalog_value_shadow_fail_open",
+        lambda **_kwargs: None,
+    )
+    params = {
+        "metric_name": "customer.plan",
+        "metric_type": "custom_attribute",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=first_snapshot_enabled
+    ):
+        first = _result(_invoke(params))
+    assert first["next_cursor"]
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=not first_snapshot_enabled
+    ):
+        second = _result(_invoke({**params, "cursor": first["next_cursor"]}))
+
+    assert observed_windows[1] == observed_windows[0]
+    assert [item["value"] for item in second["values"]] == ["custom-2"]
+    if first_snapshot_enabled:
+        assert first["query_window_mode"] == "frozen_snapshot"
+        assert second["query_window_mode"] == "frozen_snapshot"
+        assert observed_windows == [
+            (SNAPSHOT_WINDOW_START, SNAPSHOT_WINDOW_END),
+            (SNAPSHOT_WINDOW_START, SNAPSHOT_WINDOW_END),
+        ]
+    else:
+        assert "query_window_mode" not in first
+        assert "query_window_mode" not in second
+
+
+@pytest.mark.unit
 def test_workspace_custom_values_keep_equal_values_with_distinct_types(monkeypatch):
     project_ids = [_uuid(index) for index in range(1, 66)]
     slice_limits = []
@@ -334,6 +447,75 @@ def test_workspace_voice_search_reaches_later_project_batch(monkeypatch):
     ]
     assert [len(batch) for batch in observed_batches] == [64, 1]
     assert all(limit <= ATTRIBUTE_READ_MAX_PROJECTS + 1 for limit in slice_limits)
+
+
+@pytest.mark.unit
+@override_settings(**SNAPSHOT_SETTINGS)
+@pytest.mark.parametrize(
+    "first_snapshot_enabled",
+    [
+        pytest.param(True, id="enabled-to-disabled"),
+        pytest.param(False, id="disabled-to-enabled"),
+    ],
+)
+def test_workspace_system_value_cursor_is_stable_across_snapshot_flag_toggle(
+    monkeypatch,
+    first_snapshot_enabled,
+):
+    project_ids = [_uuid(index) for index in range(1, 66)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    observed_windows = []
+    calls = 0
+
+    def read_page(_analytics, **kwargs):
+        nonlocal calls
+        calls += 1
+        value = f"system-{calls}"
+        digest = dashboard_view._filter_value_digest(value)
+        observed_windows.append((kwargs["window_start"], kwargs["window_end"]))
+        return FilterValueCursorPageRead(
+            values=(value,),
+            query_window_start=kwargs["window_start"],
+            query_window_end=kwargs["window_end"],
+            has_more=False,
+            next_segment_end=kwargs["window_start"],
+            next_segment_start=None,
+            next_value_after=None,
+            seen_value_digests=(digest,),
+            browse_status="exhausted",
+            appended_value_digests=(digest,),
+            seen_value_count=kwargs["seen_value_count"] + 1,
+        )
+
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_span_system_filter_value_cursor_page",
+        read_page,
+    )
+    params = {
+        "metric_name": "ended_reason",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=first_snapshot_enabled
+    ):
+        first = _result(_invoke(params))
+    assert first["next_cursor"]
+
+    with override_settings(
+        SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED=not first_snapshot_enabled
+    ):
+        second = _result(_invoke({**params, "cursor": first["next_cursor"]}))
+
+    assert observed_windows[1] == observed_windows[0]
+    assert second["values"] == [{"value": "system-2", "label": "system-2"}]
 
 
 @pytest.mark.unit
