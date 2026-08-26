@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -107,5 +108,24 @@ func TestCatalogReplayStopsOnContext(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("replay ignored cancellation")
+	}
+}
+
+func TestLogCatalogSubmissionOverflowReportsCoalescedFailures(t *testing.T) {
+	var output bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&output, nil))
+	logCatalogSubmissionOverflow(log, catalogwriter.SubmissionGapOverflow{
+		First: errors.New("first WAL failure"), Last: errors.New("last WAL failure"),
+		Suppressed: 7,
+	})
+	for _, want := range []string{
+		"attribute catalog WAL gap overflow",
+		"suppressed_count=7",
+		`first_err="first WAL failure"`,
+		`last_err="last WAL failure"`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("log %q does not contain %q", output.String(), want)
+		}
 	}
 }

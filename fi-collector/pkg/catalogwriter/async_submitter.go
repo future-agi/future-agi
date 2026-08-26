@@ -10,12 +10,24 @@ import (
 // flusher. Its queue is deliberately bounded; saturation returns an explicit
 // SubmissionGapError carrying immutable metadata, never a silent drop.
 type AsyncSubmitter struct {
-	writer *Writer
-	queue  chan Job
-	gaps   chan error
-	stop   chan struct{}
-	once   sync.Once
-	wg     sync.WaitGroup
+	writer       *Writer
+	queue        chan Job
+	gaps         chan error
+	overflowWake chan struct{}
+	stop         chan struct{}
+	once         sync.Once
+	wg           sync.WaitGroup
+	overflowMu   sync.Mutex
+	overflow     SubmissionGapOverflow
+}
+
+// SubmissionGapOverflow is the bounded summary used when the ordinary gap
+// channel is full. Suppressed counts failures absent from Gaps; First and Last
+// retain the edges needed to diagnose whether the failure mode changed.
+type SubmissionGapOverflow struct {
+	First      error
+	Last       error
+	Suppressed uint64
 }
 
 // AttributeCatalogWriter combines bounded staging with asynchronous WAL
@@ -61,7 +73,7 @@ func NewAsyncSubmitter(writer *Writer, queueDepth, gapDepth int) (*AsyncSubmitte
 	}
 	return &AsyncSubmitter{
 		writer: writer, queue: make(chan Job, queueDepth), gaps: make(chan error, gapDepth),
-		stop: make(chan struct{}),
+		overflowWake: make(chan struct{}, 1), stop: make(chan struct{}),
 	}, nil
 }
 
@@ -89,6 +101,25 @@ func (a *AsyncSubmitter) Enqueue(job Job) error {
 // Gaps exposes asynchronous WAL failures to monitoring/coverage coordination.
 // The channel is never closed; consumers stop with their runtime context.
 func (a *AsyncSubmitter) Gaps() <-chan error { return a.gaps }
+
+// OverflowWake emits one coalesced wake-up while overflow state is pending.
+// The channel is bounded to one signal regardless of failure volume.
+func (a *AsyncSubmitter) OverflowWake() <-chan struct{} { return a.overflowWake }
+
+// TakeOverflow atomically consumes the current coalesced overflow summary.
+func (a *AsyncSubmitter) TakeOverflow() (SubmissionGapOverflow, bool) {
+	if a == nil {
+		return SubmissionGapOverflow{}, false
+	}
+	a.overflowMu.Lock()
+	defer a.overflowMu.Unlock()
+	if a.overflow.Suppressed == 0 {
+		return SubmissionGapOverflow{}, false
+	}
+	summary := a.overflow
+	a.overflow = SubmissionGapOverflow{}
+	return summary, true
+}
 
 // Run starts one worker. Repeated calls are no-ops. Submit itself remains
 // serialized by Writer admission and retains exact fsync/cap semantics.
@@ -134,9 +165,24 @@ func (a *AsyncSubmitter) submit(ctx context.Context, job Job) {
 		select {
 		case a.gaps <- err:
 		default:
-			// A full gap channel is itself observable by the caller's missing
-			// drain/frozen-stream sequence. Runtime remains development-only.
+			a.recordOverflow(err)
 		}
+	}
+}
+
+func (a *AsyncSubmitter) recordOverflow(err error) {
+	a.overflowMu.Lock()
+	if a.overflow.Suppressed == 0 {
+		a.overflow.First = err
+	}
+	a.overflow.Last = err
+	if a.overflow.Suppressed < ^uint64(0) {
+		a.overflow.Suppressed++
+	}
+	a.overflowMu.Unlock()
+	select {
+	case a.overflowWake <- struct{}{}:
+	default:
 	}
 }
 

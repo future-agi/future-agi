@@ -3,6 +3,7 @@ package catalogwriter
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -65,6 +66,137 @@ func TestReplayToFailureRetainsAndAcknowledgementRemoves(t *testing.T) {
 	pending, err = w.Pending()
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("acknowledged delivery remains: pending=%+v err=%v", pending, err)
+	}
+}
+
+func TestReplayToQuarantinesUnscopedEnvelopeAndContinues(t *testing.T) {
+	dir := t.TempDir()
+	cfg := enabledConfig(dir)
+	w, err := NewTransportWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := w.StageCanonicalSpans([]map[string]any{
+		keyOnlySpan("2026-08-13 12:00:00.000001", "first.map"),
+	})
+	unscopedRow := keyOnlySpan("2026-08-13 12:00:01.000001", "unscoped.map")
+	unscopedRow["project_id"] = "not-a-project"
+	unscoped, _ := w.StageCanonicalSpans([]map[string]any{unscopedRow})
+	second, _ := w.StageCanonicalSpans([]map[string]any{
+		keyOnlySpan("2026-08-13 12:00:02.000001", "second.map"),
+	})
+	for _, job := range []Job{first, unscoped, second} {
+		if err := w.Submit(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	delivered := make([]string, 0, 2)
+	result, err := w.ReplayTo(context.Background(), deliveryHandlerFunc(
+		func(_ context.Context, delivery PendingDelivery) error {
+			if len(delivery.WireJob.KeyRows) != 1 {
+				t.Fatalf("delivery rows=%+v", delivery.WireJob.KeyRows)
+			}
+			delivered = append(delivered, delivery.WireJob.KeyRows[0]["attribute_key"].(string))
+			return nil
+		},
+	))
+	var permanent *PermanentDeliveryError
+	if !errors.As(err, &permanent) ||
+		result != (ReplayResult{Attempted: 3, Delivered: 2, Quarantined: 1}) ||
+		!reflect.DeepEqual(delivered, []string{"first.map", "second.map"}) {
+		t.Fatalf("result=%+v delivered=%v err=%v", result, delivered, err)
+	}
+	pending, pendingErr := w.Pending()
+	if pendingErr != nil || len(pending) != 0 {
+		t.Fatalf("active pending=%+v err=%v", pending, pendingErr)
+	}
+	entries, readErr := os.ReadDir(w.spool.quarantineDirectory())
+	if readErr != nil || len(entries) != 1 {
+		t.Fatalf("quarantine entries=%d err=%v", len(entries), readErr)
+	}
+	if w.spoolFiles != 1 || w.spoolBytes <= 0 {
+		t.Fatalf("quarantine escaped bounded accounting: files=%d bytes=%d", w.spoolFiles, w.spoolBytes)
+	}
+
+	restarted, restartErr := NewTransportWriter(cfg)
+	if restartErr != nil {
+		t.Fatal(restartErr)
+	}
+	if restarted.spoolFiles != 1 || restarted.spoolBytes != w.spoolBytes {
+		t.Fatalf(
+			"restart quarantine accounting=%d/%d want 1/%d",
+			restarted.spoolFiles, restarted.spoolBytes, w.spoolBytes,
+		)
+	}
+}
+
+func TestReplayToQuarantinesWholeDrainInputLimitGap(t *testing.T) {
+	cfg := enabledConfig(t.TempDir())
+	cfg.MaxJobInputSpans = 1
+	w, err := NewTransportWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := w.StageCanonicalSpansByProject([]map[string]any{
+		keyOnlySpan("2026-08-13 12:00:00.000001", "first.map"),
+		keyOnlySpan("2026-08-13 12:00:01.000001", "second.map"),
+	})
+	if len(staged) != 1 || len(staged[0].Job.Metadata().Projects) != 0 ||
+		staged[0].Job.Metadata().OverflowSpans != 1 {
+		t.Fatalf("whole-drain stage=%+v", staged)
+	}
+	if err := w.Submit(context.Background(), staged[0].Job); err != nil {
+		t.Fatal(err)
+	}
+	handlerCalls := 0
+	result, err := w.ReplayTo(context.Background(), deliveryHandlerFunc(
+		func(context.Context, PendingDelivery) error {
+			handlerCalls++
+			return nil
+		},
+	))
+	var permanent *PermanentDeliveryError
+	if !errors.As(err, &permanent) ||
+		result != (ReplayResult{Attempted: 1, Quarantined: 1}) || handlerCalls != 0 {
+		t.Fatalf("result=%+v calls=%d err=%v", result, handlerCalls, err)
+	}
+}
+
+func TestQuarantinedEnvelopeRemainsInsideSpoolCapacity(t *testing.T) {
+	cfg := enabledConfig(t.TempDir())
+	cfg.MaxSpoolFiles = 1
+	w, err := NewTransportWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unscopedRow := keyOnlySpan("2026-08-13 12:00:00.000001", "unscoped.map")
+	unscopedRow["project_id"] = "not-a-project"
+	unscoped, _ := w.StageCanonicalSpans([]map[string]any{unscopedRow})
+	if err := w.Submit(context.Background(), unscoped); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := w.ReplayTo(context.Background(), deliveryHandlerFunc(
+		func(context.Context, PendingDelivery) error { return nil },
+	)); result.Quarantined != 1 || err == nil {
+		t.Fatalf("quarantine result=%+v err=%v", result, err)
+	}
+	valid, _ := w.StageCanonicalSpans([]map[string]any{
+		keyOnlySpan("2026-08-13 12:00:01.000001", "valid.map"),
+	})
+	var gap *SubmissionGapError
+	if err := w.Submit(context.Background(), valid); !errors.As(err, &gap) ||
+		!strings.Contains(err.Error(), "spool file limit") {
+		t.Fatalf("quarantine did not retain capacity bound: %v", err)
+	}
+	restarted, err := NewTransportWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Submit(context.Background(), valid); !errors.As(err, &gap) ||
+		!strings.Contains(err.Error(), "spool file limit") {
+		t.Fatalf("restart lost quarantine capacity bound: %v", err)
 	}
 }
 
