@@ -105,11 +105,10 @@ EXACT_GRAPH_MEMBERSHIP_BATCH_SIZE = settings.EXACT_GRAPH_MEMBERSHIP_BATCH_SIZE
 # finite identity batch against latest state, then aggregates only proven trace
 # identities.  Neither value is a result ceiling.
 EXACT_GRAPH_TRACE_SELECTOR_PAGE_SIZE = settings.EXACT_GRAPH_TRACE_SELECTOR_PAGE_SIZE
-# A selective raw witness is only an optimization when it proves the complete
-# candidate population is genuinely small. Keep this sentinel independent of
-# the larger root transport page: broad values should abandon the optional
-# probe promptly instead of reading another 4k raw witnesses. The extra row is
-# an exact broadness sentinel, not sampling or a public result ceiling.
+# Candidate witnesses are transported in finite keyset pages. This setting is
+# a per-statement page bound, not a total-row limit: a broad but selective
+# multi-filter request continues until the witness is exhausted or the shared
+# action deadline/resource envelope fails closed.
 EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL = settings.EXACT_GRAPH_TRACE_CANDIDATE_MAX_ROWS + 1
 # Broad positive scalar Map filters use an authoritative latest-state scan over
 # disjoint whole-hour storage identities. A failing slice is split to
@@ -1124,22 +1123,43 @@ def _enumerate_exact_trace_ids(
     # A selective typed-Map leaf has an all-time raw witness, while a positive
     # relational condition can provide request-window canonical roots.  Both
     # are necessary supersets of exact latest-state membership. Prove that the
-    # complete population is smaller than one page, then classify only those
-    # trace identities. This avoids enumerating and globally classifying every
-    # root in a large tenant when the requested relation/value is sparse. A
-    # full sentinel or a resource-bounded optional probe falls back to the
-    # unchanged exhaustive root walk; malformed data and programming errors
-    # still fail closed.
+    # complete population through a bounded keyset cursor, then classify only
+    # those trace identities. This avoids enumerating and globally classifying
+    # every root in a large tenant when the requested relation/value is sparse.
+    # A resource-bounded first page may fall back to the exhaustive root walk;
+    # after cursor progress, any failure aborts instead of hiding a partial
+    # candidate scan. Malformed data and programming errors always fail closed.
     candidate_probe = getattr(
         builder,
         "build_exact_graph_candidate_witness_probe",
         None,
     )
     if callable(candidate_probe):
-        candidate_query, candidate_params = candidate_probe(
-            limit=EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL,
-        )
-        if candidate_query:
+        candidate_after_trace_id: str | None = None
+        candidate_before_start_time: datetime | None = None
+        candidate_before_id: Any = None
+        candidate_pages_completed = 0
+        while True:
+            candidate_page_limit = (
+                EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL
+                if candidate_pages_completed == 0
+                else EXACT_GRAPH_TRACE_CLASSIFY_BATCH_SIZE
+            )
+            candidate_kwargs: dict[str, Any] = {
+                "limit": candidate_page_limit,
+            }
+            if candidate_after_trace_id is not None:
+                candidate_kwargs["after_trace_id"] = candidate_after_trace_id
+            if candidate_before_start_time is not None:
+                candidate_kwargs.update(
+                    {
+                        "before_start_time": candidate_before_start_time,
+                        "before_id": candidate_before_id,
+                    }
+                )
+            candidate_query, candidate_params = candidate_probe(**candidate_kwargs)
+            if not candidate_query:
+                break
             query_count += 1
             try:
                 candidate_result = analytics.execute_ch_query(
@@ -1150,30 +1170,65 @@ def _enumerate_exact_trace_ids(
                     ),
                     settings={
                         **EXACT_GRAPH_READ_SETTINGS,
-                        "max_result_rows": EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL,
+                        "max_result_rows": candidate_page_limit,
                     },
                 )
             except Exception as exc:
-                if not is_read_budget_error(exc):
+                if not is_read_budget_error(exc) or candidate_pages_completed:
                     raise
+                break
             else:
                 candidate_rows = list(candidate_result.data or [])
                 rows_returned += len(candidate_rows)
-                if len(candidate_rows) > EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL:
+                if len(candidate_rows) > candidate_page_limit:
                     raise ExactGraphReadError(
-                        "Exact trace graph candidate witness exceeded its sentinel."
+                        "Exact trace graph candidate witness exceeded its page limit."
                     )
+                page_trace_ids: list[str] = []
                 candidate_trace_ids: set[str] = set()
                 for row in candidate_rows:
                     trace_id = str(row.get("trace_id") or "")
-                    if not trace_id or trace_id in candidate_trace_ids:
+                    if (
+                        not trace_id
+                        or trace_id in candidate_trace_ids
+                        or trace_id in seen_candidate_trace_ids
+                    ):
                         raise ExactGraphReadError(
                             "Exact trace graph candidate witness returned an invalid identity."
                         )
+                    page_trace_ids.append(trace_id)
                     candidate_trace_ids.add(trace_id)
-                if len(candidate_rows) < EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL:
-                    seen_candidate_trace_ids.update(candidate_trace_ids)
-                    classify(candidate_rows)
+                if candidate_rows and "start_time" in candidate_rows[0]:
+                    ordered_keys = [seed_key(row) for row in candidate_rows]
+                    if ordered_keys != sorted(ordered_keys, reverse=True):
+                        raise ExactGraphReadError(
+                            "Exact trace graph candidate root cursor is unordered."
+                        )
+                    next_start_time, next_order_token = ordered_keys[-1]
+                    if (
+                        candidate_before_start_time,
+                        candidate_before_id,
+                    ) == (next_start_time, next_order_token):
+                        raise ExactGraphReadError(
+                            "Exact trace graph candidate root cursor did not advance."
+                        )
+                    candidate_before_start_time = next_start_time
+                    candidate_before_id = next_order_token
+                elif candidate_rows:
+                    if page_trace_ids != sorted(page_trace_ids):
+                        raise ExactGraphReadError(
+                            "Exact trace graph candidate cursor is unordered."
+                        )
+                    next_trace_id = page_trace_ids[-1]
+                    if next_trace_id == candidate_after_trace_id:
+                        raise ExactGraphReadError(
+                            "Exact trace graph candidate cursor did not advance."
+                        )
+                    candidate_after_trace_id = next_trace_id
+                seen_candidate_trace_ids.update(candidate_trace_ids)
+                classify(candidate_rows)
+                candidate_pages_completed += 1
+                if len(candidate_rows) < candidate_page_limit:
                     return trace_ids, query_count, rows_returned
 
     authoritative_anchor = _enumerate_authoritative_anchor_trace_ids(

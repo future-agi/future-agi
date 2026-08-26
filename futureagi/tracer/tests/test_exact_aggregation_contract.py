@@ -2895,7 +2895,7 @@ def test_exact_trace_candidate_probe_is_all_time_but_classifier_stays_authoritat
 
     assert "LIMIT 1 BY trace_id" in probe_sql
     assert "GROUP BY trace_id" not in probe_sql
-    assert "ORDER BY trace_id" not in probe_sql
+    assert "ORDER BY trace_id ASC" in probe_sql
     assert "LIMIT %(exact_graph_candidate_limit)s" in probe_sql
     assert "start_time >=" not in probe_sql
     assert "start_time <" not in probe_sql
@@ -3741,10 +3741,8 @@ def test_exact_trace_membership_sparse_candidate_probe_avoids_root_fanout(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("candidate_outcome", ["broad", "read_budget"])
-def test_exact_trace_membership_candidate_probe_falls_back_without_partial_rows(
+def test_exact_trace_membership_candidate_probe_read_budget_falls_back_without_rows(
     monkeypatch,
-    candidate_outcome,
 ):
     from tracer.services.clickhouse import exact_graph_reads as exact_module
 
@@ -3770,7 +3768,7 @@ def test_exact_trace_membership_candidate_probe_falls_back_without_partial_rows(
             return request_start, request_end
 
         @staticmethod
-        def build_exact_graph_candidate_witness_probe(*, limit):
+        def build_exact_graph_candidate_witness_probe(*, limit, **_cursor):
             return "CANDIDATE", {"limit": limit}
 
         @staticmethod
@@ -3795,17 +3793,7 @@ def test_exact_trace_membership_candidate_probe_falls_back_without_partial_rows(
         @staticmethod
         def execute_ch_query(query, _params, **_kwargs):
             if query == "CANDIDATE":
-                if candidate_outcome == "read_budget":
-                    raise ServerException("private bounded probe cap", code=158)
-                return SimpleNamespace(
-                    data=[
-                        {"trace_id": "raw-1"},
-                        {"trace_id": "raw-2"},
-                        {"trace_id": "raw-3"},
-                    ],
-                    columns=["trace_id"],
-                    query_time_ms=1,
-                )
+                raise ServerException("private bounded probe cap", code=158)
             if query == "ROOT":
                 return SimpleNamespace(
                     data=[{"trace_id": "root-proven", "start_time": root_start}],
@@ -3833,7 +3821,105 @@ def test_exact_trace_membership_candidate_probe_falls_back_without_partial_rows(
     assert trace_ids == ["root-proven"]
     assert classifier_batches == [("root-proven",)]
     assert query_count == 3
-    assert rows_returned == (5 if candidate_outcome == "broad" else 2)
+    assert rows_returned == 2
+
+
+@pytest.mark.unit
+def test_exact_trace_membership_exhausts_broad_candidate_keyset_without_root_fanout(
+    monkeypatch,
+):
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
+    request_start = datetime(2026, 8, 1)
+    request_end = request_start + timedelta(minutes=5)
+    candidate_cursors = []
+    candidate_limits = []
+    classifier_batches = []
+
+    class Builder:
+        def __init__(self, **_kwargs):
+            pass
+
+        @staticmethod
+        def supports_bounded_filter_scan():
+            return True
+
+        @staticmethod
+        def parse_time_range(_filters):
+            return request_start, request_end
+
+        @staticmethod
+        def exact_graph_filter_witness_range():
+            return request_start, request_end
+
+        @staticmethod
+        def build_exact_graph_candidate_witness_probe(
+            *, limit, after_trace_id=None, **_cursor
+        ):
+            candidate_cursors.append(after_trace_id)
+            candidate_limits.append(limit)
+            return "CANDIDATE", {"limit": limit, "after": after_trace_id}
+
+        @staticmethod
+        def build_filter_ordered_seed_page(**_kwargs):
+            pytest.fail("an exhaustible candidate keyset must skip root enumeration")
+
+        @staticmethod
+        def build_filter_identity_match_query_from_seed_rows(rows):
+            ids = tuple(row["trace_id"] for row in rows)
+            classifier_batches.append(ids)
+            return "CLASSIFY", {"ids": ids}
+
+    class Analytics:
+        @staticmethod
+        def execute_ch_query(query, params, **_kwargs):
+            if query == "CANDIDATE":
+                values = (
+                    ["trace-1", "trace-2", "trace-3"]
+                    if params["after"] is None
+                    else ["trace-4", "trace-5", "trace-6", "trace-7"]
+                )
+                return SimpleNamespace(
+                    data=[{"trace_id": value} for value in values],
+                    columns=["trace_id"],
+                    query_time_ms=1,
+                )
+            assert query == "CLASSIFY"
+            return SimpleNamespace(
+                data=[{"trace_id": value} for value in params["ids"]],
+                columns=["trace_id"],
+                query_time_ms=1,
+            )
+
+    monkeypatch.setattr(exact_module, "TraceListQueryBuilderV2", Builder)
+    monkeypatch.setattr(exact_module, "EXACT_GRAPH_TRACE_CANDIDATE_SENTINEL", 3)
+    monkeypatch.setattr(exact_module, "EXACT_GRAPH_TRACE_CLASSIFY_BATCH_SIZE", 5)
+
+    trace_ids, query_count, rows_returned = _enumerate_exact_trace_ids(
+        analytics=Analytics(),
+        project_id="11111111-1111-4111-8111-111111111111",
+        filters=_exact_multi_filters(request_start, request_end),
+        annotation_label_ids=None,
+        started=exact_module.monotonic(),
+    )
+
+    assert trace_ids == [
+        "trace-1",
+        "trace-2",
+        "trace-3",
+        "trace-4",
+        "trace-5",
+        "trace-6",
+        "trace-7",
+    ]
+    assert candidate_cursors == [None, "trace-3"]
+    assert candidate_limits == [3, 5]
+    assert classifier_batches == [
+        ("trace-1", "trace-2", "trace-3"),
+        ("trace-4", "trace-5", "trace-6", "trace-7"),
+    ]
+    assert query_count == 4
+    assert rows_returned == 14
 
 
 @pytest.mark.unit

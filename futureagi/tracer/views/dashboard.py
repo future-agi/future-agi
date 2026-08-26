@@ -23,6 +23,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from tfc.routers import uses_db
+from tfc.settings.settings import property_catalog_read_workspace_allowlist
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
@@ -131,6 +132,9 @@ from tracer.services.clickhouse.v2.attribute_catalog_snapshot import (
     catalog_snapshot_metadata,
     mark_catalog_snapshot_response,
 )
+from tracer.services.clickhouse.v2.property_catalog.activation_control import (
+    activation_control_selector_for_deployment,
+)
 from tracer.services.clickhouse.v2.property_catalog.connection import (
     PropertyCatalogReadExecutor,
 )
@@ -189,7 +193,7 @@ def _property_catalog_read_enabled_for_workspace(workspace) -> bool:
         return False
     workspace_id = getattr(workspace, "id", None)
     return workspace_id is not None and str(workspace_id) in set(
-        getattr(settings, "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", ())
+        property_catalog_read_workspace_allowlist(settings)
     )
 
 
@@ -271,11 +275,17 @@ def _read_property_catalog_value_page(request, query_params, *, deadline):
         "attribute_type": query_params.get("attribute_type", ""),
         "search": query_params.get("search", ""),
     }
+    catalog_executor = PropertyCatalogReadExecutor(
+        max_wall_ms=deadline.remaining_ms(floor_ms=1),
+    )
     reader = PropertyCatalogValueReader(
-        PropertyCatalogReadExecutor(
-            max_wall_ms=deadline.remaining_ms(floor_ms=1),
-        ),
+        catalog_executor,
         catalog_database=settings.PROPERTY_CATALOG_DATABASE,
+        activation_selector=activation_control_selector_for_deployment(
+            catalog_executor,
+            database=settings.PROPERTY_CATALOG_DATABASE,
+            deployment=getattr(settings, "PROPERTY_CATALOG_READ_DEPLOYMENT", None),
+        ),
     )
     read_args = {
         "scope": cursor_scope,
@@ -1095,6 +1105,33 @@ def _filter_value_options_for_search(values, search):
             for field in searchable_fields
         )
     ]
+
+
+def _configured_eval_template_filter_values(eval_template):
+    """Return the exact finite picker vocabulary declared by an eval template."""
+
+    template_config = eval_template.config or {}
+    output_type = "SCORE"
+    if isinstance(template_config, dict):
+        normalized_output = (
+            (template_config.get("output") or "")
+            .upper()
+            .replace("/", "_")
+            .replace(" ", "_")
+        )
+        if normalized_output in {"PASS_FAIL", "CHOICE", "CHOICES", "SCORE"}:
+            output_type = normalized_output
+
+    if output_type == "PASS_FAIL":
+        return [
+            {"value": "Passed", "label": "Passed"},
+            {"value": "Failed", "label": "Failed"},
+        ]
+    if output_type in {"CHOICE", "CHOICES"}:
+        return list(configured_value_options(eval_template.choices))
+    # Score evals use numeric entry rather than a misleading categorical
+    # vocabulary.
+    return []
 
 
 def _filter_value_content_digest(values) -> str:
@@ -2602,7 +2639,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         in set(
                             getattr(
                                 settings,
-                                "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST",
+                                "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST"
+                                if getattr(
+                                    settings,
+                                    "PROPERTY_CATALOG_READ_DEPLOYMENT",
+                                    None,
+                                )
+                                == "prod"
+                                else "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST",
                                 (),
                             )
                         )
@@ -2672,11 +2716,21 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 "search": query_params.get("search", ""),
             }
             try:
+                catalog_executor = PropertyCatalogReadExecutor(
+                    max_wall_ms=read_deadline.remaining_ms(floor_ms=1),
+                )
                 catalog_page = PropertyCatalogReader(
-                    PropertyCatalogReadExecutor(
-                        max_wall_ms=read_deadline.remaining_ms(floor_ms=1),
-                    ),
+                    catalog_executor,
                     catalog_database=settings.PROPERTY_CATALOG_DATABASE,
+                    activation_selector=activation_control_selector_for_deployment(
+                        catalog_executor,
+                        database=settings.PROPERTY_CATALOG_DATABASE,
+                        deployment=getattr(
+                            settings,
+                            "PROPERTY_CATALOG_READ_DEPLOYMENT",
+                            None,
+                        ),
+                    ),
                 ).read_page(
                     scope=cursor_scope,
                     query=cursor_query,
@@ -4484,7 +4538,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             ),
                         )
                         values = [
-                            {"value": row["val"], "label": row["val"]}
+                            {"value": row["val"], "label": str(row["val"])}
                             for row in result.data
                         ]
                     except Exception as exc:
@@ -4756,35 +4810,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
                     )
 
-                eval_template = eval_config.eval_template
-                template_config = eval_template.config or {}
-                output_type = "SCORE"
-                if isinstance(template_config, dict):
-                    normalized_output = (
-                        (template_config.get("output") or "")
-                        .upper()
-                        .replace("/", "_")
-                        .replace(" ", "_")
-                    )
-                    if normalized_output in {
-                        "PASS_FAIL",
-                        "CHOICE",
-                        "CHOICES",
-                        "SCORE",
-                    }:
-                        output_type = normalized_output
-
-                if output_type == "PASS_FAIL":
-                    values = [
-                        {"value": "Passed", "label": "Passed"},
-                        {"value": "Failed", "label": "Failed"},
-                    ]
-                elif output_type in {"CHOICE", "CHOICES"}:
-                    values = list(configured_value_options(eval_template.choices))
-                else:
-                    # Score evals use numeric entry rather than a misleading
-                    # categorical vocabulary.
-                    values = []
+                values = _configured_eval_template_filter_values(
+                    eval_config.eval_template
+                )
 
                 if page_size is not None:
                     if batched_eval_cursor is not None:
@@ -6171,7 +6199,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                 )
                 values = [
-                    {"value": row["val"], "label": row["val"]} for row in result.data
+                    {"value": row["val"], "label": str(row["val"])}
+                    for row in result.data
                 ]
             else:
                 return self._gm.bad_request(
@@ -6419,6 +6448,60 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     ):
         """Return an exact finite value page for a simulation property."""
         try:
+            if metric_type == "eval_metric":
+                from simulate.models import SimulateEvalConfig
+
+                property_kind = query_params.get("_property_kind")
+
+                def eval_config_queryset():
+                    return SimulateEvalConfig.all_objects.filter(
+                        run_test__workspace=request.workspace,
+                        run_test__deleted=False,
+                        run_test__agent_definition_id__isnull=False,
+                        run_test__agent_definition__workspace=request.workspace,
+                        run_test__agent_definition__deleted=False,
+                        eval_template__deleted=False,
+                        deleted=False,
+                    ).select_related("eval_template")
+
+                def read_eval_config():
+                    queryset = eval_config_queryset()
+                    if property_kind == "eval_template":
+                        return queryset.filter(eval_template_id=metric_name).first()
+                    config = queryset.filter(id=metric_name).first()
+                    if config is None and property_kind is None:
+                        # Compatibility for saved widgets created before stable
+                        # registry ids distinguished config and template ids.
+                        config = queryset.filter(eval_template_id=metric_name).first()
+                    return config
+
+                eval_config = _run_filter_value_pg_read(deadline, read_eval_config)
+                values = (
+                    _configured_eval_template_filter_values(eval_config.eval_template)
+                    if eval_config is not None
+                    else []
+                )
+                if query_params.get("page_size") is None:
+                    values = _filter_value_options_for_search(
+                        values,
+                        query_params.get("search", ""),
+                    )
+                return self._finite_native_filter_values_response(
+                    request,
+                    query_params=query_params,
+                    values=values,
+                    query={
+                        "source": "simulation",
+                        "metric_name": metric_name,
+                        "metric_type": metric_type,
+                        **(
+                            {"property_id": query_params["property_id"]}
+                            if query_params.get("property_id")
+                            else {}
+                        ),
+                    },
+                )
+
             if not is_clickhouse_enabled():
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -6475,7 +6558,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     },
                 )
                 values = [
-                    {"value": row["val"], "label": row["val"]} for row in result.data
+                    {"value": row["val"], "label": str(row["val"])}
+                    for row in result.data
                 ]
             else:
                 return self._gm.bad_request(
@@ -6491,6 +6575,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "metric_name": metric_name,
                     "metric_type": metric_type,
                 },
+            )
+        except ReadDeadlineExceeded:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code="service_unavailable",
             )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):

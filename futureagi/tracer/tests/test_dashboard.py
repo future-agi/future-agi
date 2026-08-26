@@ -7180,7 +7180,7 @@ class TestDashboardQueryExecution:
     ):
         mock_service = MagicMock()
         mock_result = MagicMock()
-        mock_result.data = []
+        mock_result.data = [{"val": 12.5}]
         mock_service.execute_ch_query.return_value = mock_result
         mock_analytics_cls.return_value = mock_service
 
@@ -7193,6 +7193,71 @@ class TestDashboardQueryExecution:
         assert "c.deleted = 0" in sql
         assert "c.duration_seconds IS NOT NULL" in sql
         assert "c.duration_seconds != ''" not in sql
+        assert response.json()["result"]["values"] == [{"value": 12.5, "label": "12.5"}]
+
+    @pytest.mark.django_db
+    def test_filter_values_simulation_eval_metric_pages_configured_values(
+        self,
+        auth_client,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.evals_metric import EvalTemplate
+        from simulate.models import AgentDefinition
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.models.run_test import RunTest
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Filter Value Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1234567002",
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        run_test = RunTest.objects.create(
+            name="Filter Value Test",
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        template = EvalTemplate.objects.create(
+            name="Filter Value Eval",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "pass_fail"},
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Filter Value Eval Config",
+            eval_template=template,
+            run_test=run_test,
+        )
+        params = {
+            "source": "simulation",
+            "metric_name": str(eval_config.id),
+            "metric_type": "eval_metric",
+            "page_size": 1,
+        }
+
+        first = auth_client.get("/tracer/dashboard/filter_values/", params)
+
+        assert first.status_code == 200
+        first_result = first.json()["result"]
+        assert first_result["values"] == [{"value": "Passed", "label": "Passed"}]
+        assert first_result["has_more"] is True
+        assert first_result["next_cursor"]
+
+        second = auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {**params, "cursor": first_result["next_cursor"]},
+        )
+
+        assert second.status_code == 200
+        second_result = second.json()["result"]
+        assert second_result["values"] == [{"value": "Failed", "label": "Failed"}]
+        assert second_result["has_more"] is False
+        assert second_result["next_cursor"] is None
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
