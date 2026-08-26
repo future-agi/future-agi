@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { STATUS_TYPES } from "src/utils/statusUtils";
 import {
+  adjustmentStatus,
   agentTypeIcon,
   jobProgress,
   readable,
@@ -14,6 +15,8 @@ import {
   shortRunId,
   STAGE_STATE,
   stageElapsed,
+  tabState,
+  TAB_STATE,
   stageState,
   stageStatus,
   stages,
@@ -396,5 +399,65 @@ describe("shortRunId", () => {
     expect(shortRunId("harness")).toBe("harness");
     expect(shortRunId("")).toBe("");
     expect(shortRunId(undefined)).toBe("");
+  });
+});
+
+describe("adjustmentStatus", () => {
+  const pending = { status: "pending", target_stage: "environment" };
+
+  it("names the stage a change landed at", () => {
+    expect(
+      adjustmentStatus(
+        { status: "applied", target_stage: "understand", applied_stage: "environment" },
+        "completed",
+      ),
+    ).toBe("Applied at Environment");
+  });
+
+  it("still promises delivery while the run is alive", () => {
+    expect(adjustmentStatus(pending, "generating_environment")).toBe(
+      "Pending · will land at Environment",
+    );
+  });
+
+  // ALK leaves an unreached change at "pending" forever, so the job's own outcome is the
+  // only thing that says it will never land.
+  it.each([
+    ["canceled", "Not applied — the run was canceled first"],
+    ["failed", "Not applied — the run failed first"],
+    ["completed", "Not applied — the run finished first"],
+  ])("reports a change stranded by a %s run", (stage, expected) => {
+    expect(adjustmentStatus(pending, stage)).toBe(expected);
+  });
+});
+
+describe("tabState", () => {
+  const at = (stage) => ({ stage });
+
+  it("spins the tab the runner is inside", () => {
+    expect(tabState("contract", at("understanding_agent"))).toBe(TAB_STATE.WORKING);
+  });
+
+  // Environment covers four checklist stages, three of which never emit an event.
+  it("spins Environment on a stage that is never reported", () => {
+    expect(tabState("environment", at("building_environment"))).toBe(TAB_STATE.WORKING);
+  });
+
+  it("ticks a tab the run has moved past", () => {
+    expect(tabState("contract", at("generating_scenarios"))).toBe(TAB_STATE.DONE);
+  });
+
+  it("leaves a tab bare until its turn", () => {
+    expect(tabState("scenarios", at("understanding_agent"))).toBe(TAB_STATE.PENDING);
+  });
+
+  // An artifact is proof on its own: Runs is the catch-all and holds outputs from stages the
+  // checklist never reaches in order.
+  it("ticks a tab holding an artifact regardless of stage", () => {
+    expect(tabState("runs", at("understanding_agent"), [], true)).toBe(TAB_STATE.DONE);
+  });
+
+  it("stops spinning once the run is terminal", () => {
+    expect(tabState("environment", at("canceled"), [])).not.toBe(TAB_STATE.WORKING);
   });
 });

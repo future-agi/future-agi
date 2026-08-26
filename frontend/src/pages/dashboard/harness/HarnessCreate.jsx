@@ -7,6 +7,9 @@ import {
   ButtonBase,
   Chip,
   CircularProgress,
+  Collapse,
+  IconButton,
+  InputAdornment,
   LinearProgress,
   MenuItem,
   Paper,
@@ -153,6 +156,8 @@ export default function HarnessCreate() {
   // A changed input does not invalidate what preflight already told us — it just means the
   // answer may be out of date. Hiding the panel loses the findings the user was reading.
   const [preflightDirty, setPreflightDirty] = useState(false);
+  const [showDetected, setShowDetected] = useState(false);
+  const [revealedSecrets, setRevealedSecrets] = useState(() => new Set());
   // A credential FILE cannot travel as an environment value. It is uploaded on its own and
   // referenced by an opaque handle, so the contents never reach a job body, log or artifact.
   const [secretFileRefs, setSecretFileRefs] = useState({});
@@ -370,6 +375,114 @@ export default function HarnessCreate() {
     ) && unsatisfiedChoices.length === 0;
   const requiredInputCount =
     missingRequirements.length + unsatisfiedChoices.length;
+  // Only "missing" rows take a value; everything else is read-only detail that
+  // would otherwise bury them at equal visual weight.
+  const requirementsNeedingValue = requirements.filter(
+    (item) => item.status === "missing",
+  );
+  const detectedRequirements = requirements.filter(
+    (item) => item.status !== "missing",
+  );
+  const toggleSecret = (name) =>
+    setRevealedSecrets((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  // Blocking and optional variables get the same row, so an optional one can be
+  // set without hunting for somewhere else to put it.
+  const renderCredentialRow = (item, index) => {
+    const isSecret = item.kind === "secret";
+    const revealed = revealedSecrets.has(item.environment_name);
+    return (
+      <Stack
+        key={item.id}
+        direction={{ xs: "column", md: "row" }}
+        spacing={{ xs: 1, md: 3 }}
+        alignItems={{ md: "center" }}
+        sx={{
+          p: 1.5,
+          borderTop: index === 0 ? 0 : "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box sx={{ width: { md: 280 }, flexShrink: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={600}
+            sx={{ fontFamily: "monospace", wordBreak: "break-all" }}
+          >
+            {item.environment_name}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {item.provider} · {item.purpose}
+          </Typography>
+        </Box>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder={
+            item.status === "missing"
+              ? isSecret
+                ? "Paste secret"
+                : "Enter value"
+              : readable(item.status)
+          }
+          type={isSecret && !revealed ? "password" : "text"}
+          // One logical value per variable. Reading and writing through the
+          // helpers keeps it out of both maps at once, which is what left a
+          // stale entry showing after a paste.
+          value={credentialValue(
+            environmentValues,
+            configurationValues,
+            item.environment_name,
+          )}
+          onChange={(event) => {
+            const next = updateCredential(
+              environmentValues,
+              configurationValues,
+              {
+                name: item.environment_name,
+                value: event.target.value,
+                kind: item.kind,
+              },
+            );
+            setEnvironmentValues(next.environmentValues);
+            setConfigurationValues(next.configurationValues);
+            setPreflightDirty(Boolean(preflight));
+          }}
+          InputProps={
+            isSecret
+              ? {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        size="small"
+                        edge="end"
+                        onClick={() => toggleSecret(item.environment_name)}
+                        aria-label={`${revealed ? "Hide" : "Show"} ${item.environment_name}`}
+                      >
+                        <Iconify
+                          icon={
+                            revealed
+                              ? "solar:eye-closed-linear"
+                              : "solar:eye-linear"
+                          }
+                          width={16}
+                        />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }
+              : undefined
+          }
+        />
+      </Stack>
+    );
+  };
+
   const hasSource =
     sourceMode === "upload"
       ? Boolean(uploadedSource?.source_id)
@@ -634,31 +747,159 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
-              <Section
-                title="Run settings"
-                description="How much of the agent to exercise in this run."
-              >
+              <Paper variant="outlined" sx={{ p: 2 }}>
                 <Stack
-                  direction={{ xs: "column", sm: "row" }}
+                  direction="row"
                   spacing={1.5}
-                  alignItems={{ sm: "center" }}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  useFlexGap
                 >
-                  <TextField
-                    size="small"
-                    label="Scenarios"
-                    type="number"
-                    value={scenarioCount}
-                    onChange={(event) => setScenarioCount(event.target.value)}
-                    inputProps={{ min: 1, max: 100 }}
-                    sx={{ width: 140, flexShrink: 0 }}
-                  />
+                  <Button
+                    variant="outlined"
+                    disabled={checking || !hasSource}
+                    onClick={inspect}
+                    startIcon={
+                      checking ? (
+                        <CircularProgress size={16} />
+                      ) : (
+                        <Iconify icon="solar:magnifer-linear" />
+                      )
+                    }
+                    sx={{ flexShrink: 0 }}
+                  >
+                    {preflight ? "Check again" : "Preflight"}
+                  </Button>
                   <Typography variant="caption" color="text.secondary">
-                    Each scenario is one generated conversation the agent is put
-                    through, then graded. More scenarios means broader coverage
-                    and a longer run.
+                    {hasSource
+                      ? "Check the agent's requirements before entering values."
+                      : "Select an agent source to check its requirements."}
                   </Typography>
                 </Stack>
-              </Section>
+
+                {preflight && (
+                  <Stack spacing={1.5} sx={{ mt: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <StatusChip
+                        status={
+                          // Stale beats ready: a result from before the last edit should not
+                          // claim the run is good to go.
+                          preflightDirty
+                            ? null
+                            : requirementsConfigured
+                              ? STATUS_TYPES.PASS
+                              : STATUS_TYPES.RUNNING
+                        }
+                        label={
+                          preflightDirty
+                            ? "Something changed — check again"
+                            : requirementsConfigured
+                              ? "Ready to run"
+                              : `${requiredInputCount} credential choice${requiredInputCount === 1 ? "" : "s"} needed`
+                        }
+                      />
+                      <Typography variant="caption" color="text.secondary">
+                        {preflight.credentials?.scanned_files || 0} files
+                        scanned ·{" "}
+                        {(
+                          preflight.credentials?.detected_connectors || []
+                        ).join(", ") || "connector discovered after checkout"}
+                      </Typography>
+                    </Stack>
+                    {(preflight.packaging?.notes || []).map((note) => (
+                      <Alert key={note} severity="warning" variant="outlined">
+                        {note}
+                      </Alert>
+                    ))}
+                    {(preflight.packaging?.candidates || [])
+                      .flatMap((candidate) =>
+                        (candidate.findings || [])
+                          .filter((finding) => finding.blocking)
+                          .map((finding) => ({
+                            ...finding,
+                            path: candidate.path,
+                          })),
+                      )
+                      .map((finding) => (
+                        <Alert
+                          key={`${finding.path}-${finding.code}`}
+                          severity="error"
+                          variant="outlined"
+                        >
+                          {finding.path}: {finding.message}
+                        </Alert>
+                      ))}
+                    {preflight.packaging?.selected_path && (
+                      <Alert severity="success" variant="outlined">
+                        Will package {preflight.packaging.selected_path}
+                      </Alert>
+                    )}
+                    {unsatisfiedChoices.map((choice) => (
+                      <Alert key={choice.id} severity="info" variant="outlined">
+                        {choice.purpose}: choose{" "}
+                        {choice.options
+                          .map((option) => option.join(" + "))
+                          .join(" or ")}
+                      </Alert>
+                    ))}
+                    {requirementsNeedingValue.length > 0 && (
+                      <Box>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          alignItems="baseline"
+                          flexWrap="wrap"
+                          useFlexGap
+                          sx={{ mb: 1 }}
+                        >
+                          <Typography variant="subtitle2">
+                            Needs a value
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Used for this run only, then discarded.
+                          </Typography>
+                        </Stack>
+
+                        <Paper variant="outlined">
+                          {requirementsNeedingValue.map(renderCredentialRow)}
+                        </Paper>
+                      </Box>
+                    )}
+
+                    {detectedRequirements.length > 0 && (
+                      <Box>
+                        <Button
+                          size="small"
+                          onClick={() => setShowDetected((open) => !open)}
+                          startIcon={
+                            <Iconify
+                              icon={
+                                showDetected
+                                  ? "solar:alt-arrow-down-linear"
+                                  : "solar:alt-arrow-right-linear"
+                              }
+                              width={16}
+                            />
+                          }
+                          sx={{
+                            px: 0.5,
+                            fontWeight: 400,
+                            color: "text.secondary",
+                          }}
+                        >
+                          {detectedRequirements.length} optional or provided —
+                          set them if you want to override a default
+                        </Button>
+                        <Collapse in={showDetected}>
+                          <Paper variant="outlined" sx={{ mt: 1 }}>
+                            {detectedRequirements.map(renderCredentialRow)}
+                          </Paper>
+                        </Collapse>
+                      </Box>
+                    )}
+                  </Stack>
+                )}
+              </Paper>
 
               <Section
                 title="Environment values"
@@ -781,130 +1022,31 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
-              {preflight && (
-                <Section title="Preflight">
-                  <Stack spacing={1.5}>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <StatusChip
-                        status={
-                          // Stale beats ready: a result from before the last edit should not
-                          // claim the run is good to go.
-                          preflightDirty
-                            ? null
-                            : requirementsConfigured
-                              ? STATUS_TYPES.PASS
-                              : STATUS_TYPES.RUNNING
-                        }
-                        label={
-                          preflightDirty
-                            ? "Something changed — check again"
-                            : requirementsConfigured
-                              ? "Ready to run"
-                              : `${requiredInputCount} credential choice${requiredInputCount === 1 ? "" : "s"} needed`
-                        }
-                      />
-                      <Typography variant="caption" color="text.secondary">
-                        {preflight.credentials?.scanned_files || 0} files
-                        scanned ·{" "}
-                        {(
-                          preflight.credentials?.detected_connectors || []
-                        ).join(", ") || "connector discovered after checkout"}
-                      </Typography>
-                    </Stack>
-                    {(preflight.packaging?.notes || []).map((note) => (
-                      <Alert key={note} severity="warning" variant="outlined">
-                        {note}
-                      </Alert>
-                    ))}
-                    {(preflight.packaging?.candidates || [])
-                      .flatMap((candidate) =>
-                        (candidate.findings || [])
-                          .filter((finding) => finding.blocking)
-                          .map((finding) => ({ ...finding, path: candidate.path })),
-                      )
-                      .map((finding) => (
-                        <Alert
-                          key={`${finding.path}-${finding.code}`}
-                          severity="error"
-                          variant="outlined"
-                        >
-                          {finding.path}: {finding.message}
-                        </Alert>
-                      ))}
-                    {preflight.packaging?.selected_path && (
-                      <Alert severity="success" variant="outlined">
-                        Will package {preflight.packaging.selected_path}
-                      </Alert>
-                    )}
-                    {unsatisfiedChoices.map((choice) => (
-                      <Alert key={choice.id} severity="info" variant="outlined">
-                        {choice.purpose}: choose{" "}
-                        {choice.options
-                          .map((option) => option.join(" + "))
-                          .join(" or ")}
-                      </Alert>
-                    ))}
-                    {requirements.map((item) => (
-                      <Stack
-                        key={item.id}
-                        direction={{ xs: "column", md: "row" }}
-                        spacing={1.5}
-                        alignItems={{ md: "center" }}
-                      >
-                        <Box sx={{ minWidth: 260 }}>
-                          <Typography variant="body2" fontWeight={600}>
-                            {item.environment_name}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {item.provider} · {item.purpose} ·{" "}
-                            {readable(item.status)}
-                          </Typography>
-                        </Box>
-                        {item.status === "missing" && (
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label={
-                              item.kind === "secret"
-                                ? "Secret value (used for this run only)"
-                                : "Configuration value"
-                            }
-                            type={item.kind === "secret" ? "password" : "text"}
-                            // One logical value per variable. Reading and writing through the
-                            // helpers keeps it out of both maps at once, which is what left a
-                            // stale entry showing after a paste.
-                            value={credentialValue(
-                              environmentValues,
-                              configurationValues,
-                              item.environment_name,
-                            )}
-                            onChange={(event) => {
-                              const next = updateCredential(
-                                environmentValues,
-                                configurationValues,
-                                {
-                                  name: item.environment_name,
-                                  value: event.target.value,
-                                  kind: item.kind,
-                                },
-                              );
-                              setEnvironmentValues(next.environmentValues);
-                              setConfigurationValues(next.configurationValues);
-                              setPreflightDirty(Boolean(preflight));
-                            }}
-                            helperText={
-                              item.kind === "secret"
-                                ? "Injected ephemerally and removed when the run finishes"
-                                : undefined
-                            }
-                            FormHelperTextProps={{ sx: { mx: 0 } }}
-                          />
-                        )}
-                      </Stack>
-                    ))}
-                  </Stack>
-                </Section>
-              )}
+              <Section
+                title="Run settings"
+                description="How much of the agent to exercise in this run."
+              >
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.5}
+                  alignItems={{ sm: "center" }}
+                >
+                  <TextField
+                    size="small"
+                    label="Scenarios"
+                    type="number"
+                    value={scenarioCount}
+                    onChange={(event) => setScenarioCount(event.target.value)}
+                    inputProps={{ min: 1, max: 100 }}
+                    sx={{ width: 140, flexShrink: 0 }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    Each scenario is one generated conversation the agent is put
+                    through, then graded. More scenarios means broader coverage
+                    and a longer run.
+                  </Typography>
+                </Stack>
+              </Section>
 
               {error && (
                 <Alert severity="error" variant="outlined">
@@ -913,20 +1055,6 @@ export default function HarnessCreate() {
               )}
 
               <Stack direction="row" spacing={1.5} sx={{ pb: 4 }}>
-                <Button
-                  variant="outlined"
-                  disabled={checking || !hasSource}
-                  onClick={inspect}
-                  startIcon={
-                    checking ? (
-                      <CircularProgress size={16} />
-                    ) : (
-                      <Iconify icon="solar:magnifer-linear" />
-                    )
-                  }
-                >
-                  Preflight
-                </Button>
                 <Button
                   variant="contained"
                   disabled={

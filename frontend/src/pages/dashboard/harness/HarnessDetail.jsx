@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -6,8 +6,8 @@ import {
   CircularProgress,
   Divider,
   IconButton,
+  InputBase,
   LinearProgress,
-  TextField,
   Paper,
   Stack,
   Tab,
@@ -35,6 +35,7 @@ import {
 import { paths } from "src/routes/paths";
 
 import {
+  adjustmentStatus,
   completedStageCount,
   errorMessage,
   eventTime,
@@ -43,6 +44,8 @@ import {
   shortRunId,
   STAGE_STATE,
   stageElapsed,
+  tabState,
+  TAB_STATE,
   stageState,
   eventMessage,
   jobProgress,
@@ -51,6 +54,23 @@ import {
   stageStatus,
   terminalStages,
 } from "./harnessShared";
+
+// A tab says where the run is: spinning while its stage is being worked, ticked once it has
+// something to show, bare until then.
+const tabIcon = (state) => {
+  if (state === TAB_STATE.WORKING) return <CircularProgress size={13} />;
+  if (state === TAB_STATE.DONE)
+    return (
+      <Iconify
+        // Outline, not filled: a solid glyph carries as much ink as the label beside it,
+        // which is too much for a secondary marker.
+        icon="solar:check-circle-linear"
+        color="accent.pass"
+        width={14}
+      />
+    );
+  return undefined;
+};
 
 const DETAIL_TABS = [
   { value: "contract", label: "Contract" },
@@ -70,6 +90,15 @@ export default function HarnessDetail() {
   const [copiedId, setCopiedId] = useState(false);
   const [detailTab, setDetailTab] = useState("contract");
   const [adjustment, setAdjustment] = useState("");
+  const feedRef = useRef(null);
+  // Whether the reader is sitting at the end of the feed. New activity follows the end
+  // only while they are; someone who scrolled up to read history is left where they are.
+  const pinnedToEnd = useRef(true);
+  // Arriving at the tab is a jump; new activity is a slide. Told apart so a first paint
+  // does not animate through the whole history.
+  const arriving = useRef(true);
+  const lastScrollTop = useRef(0);
+  const following = useRef(true);
   const [adjustError, setAdjustError] = useState("");
 
   const {
@@ -132,7 +161,6 @@ export default function HarnessDetail() {
   const { mutate: adjust, isPending: adjusting } = useMutation({
     mutationFn: () => {
       const instruction = adjustment.trim();
-      if (!jobId || !instruction) throw new Error("Nothing to send.");
       // client_request_id is optional; window.crypto.randomUUID is undefined on an
       // insecure origin, so the key is omitted rather than sent as undefined.
       const requestId = window.crypto?.randomUUID?.();
@@ -145,6 +173,10 @@ export default function HarnessDetail() {
     onSuccess: (value) => {
       queryClient.setQueryData(["harness-job", jobId], value);
       setAdjustment("");
+      // The change lands in the timeline, so go to where it lands — including when the
+      // reader is already on the tab but scrolled back through history.
+      pinnedToEnd.current = true;
+      setDetailTab("runs");
     },
     onError: (requestError) => {
       // eslint-disable-next-line no-console
@@ -177,7 +209,6 @@ export default function HarnessDetail() {
 
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
-  const adjustments = current?.adjustments || [];
   const stageOutputs = current?.stage_outputs || [];
   const selectedOutputs = stageOutputs.filter((output) =>
     detailTab === "runs"
@@ -190,6 +221,30 @@ export default function HarnessDetail() {
       : "runs";
     return { ...counts, [key]: (counts[key] || 0) + 1 };
   }, {});
+
+  const tabStates = DETAIL_TABS.reduce(
+    (states, tab) => ({
+      ...states,
+      [tab.value]: tabState(
+        tab.value,
+        status,
+        current?.events,
+        Boolean(outputCounts[tab.value]),
+      ),
+    }),
+    {},
+  );
+  const workingTab = DETAIL_TABS.find(
+    (tab) => tabStates[tab.value] === TAB_STATE.WORKING,
+  )?.value;
+
+  // The page follows the run from stage to stage on its own, so watching a job does not mean
+  // clicking tabs to find where the work moved. Choosing a tab that is not the live one is a
+  // decision to stay put; coming back to the live one resumes the follow.
+  useEffect(() => {
+    if (!following.current || !workingTab) return;
+    setDetailTab(workingTab);
+  }, [workingTab]);
 
   // The live seconds counter is a heartbeat: it says the run is still being watched. Once
   // the run is terminal there is nothing left to watch, so the tick stops and the label
@@ -210,15 +265,60 @@ export default function HarnessDetail() {
       ? `Updated ${formatDistanceToNow(updatedAt, { addSuffix: true })}`
       : `Updated ${secondsSinceUpdate ?? 0}s ago`;
 
-  const messages = useMemo(() => {
+  // One timeline, not two lists. A correction you send is part of the run's story and belongs
+  // beside the stages it lands between, so events and adjustments are merged and sorted by
+  // the moment each happened.
+  const timeline = useMemo(() => {
     const seen = new Set();
-    return (current?.events || []).filter((event) => {
-      const key = event.event_id || JSON.stringify(event);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }, [current?.events]);
+    const events = (current?.events || [])
+      .filter((event) => {
+        const key = event.event_id || JSON.stringify(event);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((event) => ({
+        kind: "event",
+        id: event.event_id,
+        at: event.wall_time,
+        event,
+      }));
+    const changes = (current?.adjustments || []).map((item) => ({
+      kind: "adjustment",
+      id: item.adjustment_id,
+      at: item.created_at,
+      item,
+    }));
+    return [...events, ...changes].sort(
+      (a, b) => new Date(a.at || 0) - new Date(b.at || 0),
+    );
+  }, [current?.events, current?.adjustments]);
+
+  // Arriving at the feed always lands at the newest entry, whatever the reader was doing
+  // on a previous visit.
+  useLayoutEffect(() => {
+    if (detailTab !== "runs") return;
+    pinnedToEnd.current = true;
+    arriving.current = true;
+  }, [detailTab]);
+
+  useLayoutEffect(() => {
+    const feed = feedRef.current;
+    if (!feed || detailTab !== "runs" || !pinnedToEnd.current) return;
+    const reducedMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    )?.matches;
+    // A new entry slides into view so it reads as an arrival. Landing on the tab jumps,
+    // because animating through two thousand pixels of history looks like a fault.
+    // jsdom has no scrollTo, so the fallback keeps the component renderable under test.
+    if (typeof feed.scrollTo === "function")
+      feed.scrollTo({
+        top: feed.scrollHeight,
+        behavior: arriving.current || reducedMotion ? "auto" : "smooth",
+      });
+    else feed.scrollTop = feed.scrollHeight;
+    arriving.current = false;
+  }, [detailTab, timeline.length, selectedOutputs.length]);
 
   const copyRunId = async () => {
     const runId = current?.job?.run_id;
@@ -579,100 +679,6 @@ export default function HarnessDetail() {
                 );
               })}
             </Stack>
-
-            {/* Corrections are queued, not applied instantly — the runner picks them up at the
-                next stage boundary, so this is only offered while a run can still act on one. */}
-            {!isTerminal && (
-              <Paper variant="outlined" sx={{ mt: 2.5, p: 1.5, bgcolor: "background.default" }}>
-                <Stack spacing={1}>
-                  <Box>
-                    <Typography variant="subtitle2">Change this run</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Applied at the next safe stage boundary.
-                    </Typography>
-                  </Box>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    multiline
-                    minRows={2}
-                    maxRows={5}
-                    placeholder="Add scenarios covering payment failures"
-                    value={adjustment}
-                    onChange={(event) => setAdjustment(event.target.value)}
-                    onKeyDown={(event) => {
-                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter")
-                        adjust();
-                    }}
-                  />
-                  <Button
-                    fullWidth
-                    size="small"
-                    variant="outlined"
-                    color="inherit"
-                    disabled={adjusting || !adjustment.trim()}
-                    onClick={() => adjust()}
-                    startIcon={
-                      adjusting ? (
-                        <CircularProgress size={14} color="inherit" />
-                      ) : (
-                        <Iconify icon="solar:pen-new-square-linear" width={16} />
-                      )
-                    }
-                  >
-                    {adjusting ? "Sending…" : "Send change"}
-                  </Button>
-                  {adjustError && (
-                    <Alert
-                      severity="error"
-                      variant="outlined"
-                      onClose={() => setAdjustError("")}
-                    >
-                      {adjustError}
-                    </Alert>
-                  )}
-                </Stack>
-              </Paper>
-            )}
-
-            {Boolean(adjustments.length) && (
-              <Stack spacing={1} sx={{ mt: 2 }}>
-                <Typography variant="overline" color="text.secondary">
-                  Changes requested
-                </Typography>
-                {adjustments.map((item) => (
-                  <Paper
-                    key={item.adjustment_id}
-                    variant="outlined"
-                    sx={{ p: 1.25, bgcolor: "background.default" }}
-                  >
-                    <Stack direction="row" spacing={1} alignItems="flex-start">
-                      <Iconify
-                        icon={
-                          item.status === "applied"
-                            ? "solar:check-circle-bold"
-                            : "solar:clock-circle-linear"
-                        }
-                        color={
-                          item.status === "applied" ? "accent.pass" : "accent.info"
-                        }
-                        width={16}
-                        sx={{ mt: "2px", flexShrink: 0 }}
-                      />
-                      <Box sx={{ minWidth: 0 }}>
-                        <Typography variant="body2">{item.instruction}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {item.status}
-                          {item.target_stage
-                            ? ` · at ${readable(item.target_stage)}`
-                            : ""}
-                        </Typography>
-                      </Box>
-                    </Stack>
-                  </Paper>
-                ))}
-              </Stack>
-            )}
           </Box>
 
           <Box
@@ -697,7 +703,10 @@ export default function HarnessDetail() {
             >
               <Tabs
                 value={detailTab}
-                onChange={(_, value) => setDetailTab(value)}
+                onChange={(_, value) => {
+                  following.current = value === workingTab;
+                  setDetailTab(value);
+                }}
                 variant="scrollable"
                 scrollButtons={false}
                 sx={(theme) => ({
@@ -716,6 +725,11 @@ export default function HarnessDetail() {
                     opacity: theme.palette.mode === "light" ? 0.9 : 0.5,
                   },
                   "& .Mui-selected .MuiTab-iconWrapper": { opacity: 1 },
+                  // The tick is a marker and can sit back; a spinner is the live signal on
+                  // the page and has to hold its weight on every tab, selected or not.
+                  "& .MuiTab-iconWrapper:has(.MuiCircularProgress-root)": {
+                    opacity: 1,
+                  },
                   "& .MuiTab-root": {
                     minHeight: 38,
                     minWidth: "auto",
@@ -735,17 +749,7 @@ export default function HarnessDetail() {
                     key={tab.value}
                     value={tab.value}
                     label={tab.label}
-                    icon={
-                      outputCounts[tab.value] ? (
-                        <Iconify
-                          // Outline, not filled: a solid glyph carries as much ink as the
-                          // label beside it, which is too much for a secondary marker.
-                          icon="solar:check-circle-linear"
-                          color="accent.pass"
-                          width={14}
-                        />
-                      ) : undefined
-                    }
+                    icon={tabIcon(tabStates[tab.value])}
                     // Leading, and tight against the label: the tick marks the tab, so it
                     // reads as part of the name rather than a badge trailing after it.
                     iconPosition="start"
@@ -760,7 +764,23 @@ export default function HarnessDetail() {
                 ))}
               </Tabs>
             </Box>
-            <Box sx={{ px: 2, py: 1.5, overflow: "auto", minHeight: 0 }}>
+            <Box
+              ref={feedRef}
+              onScroll={() => {
+                const feed = feedRef.current;
+                if (!feed) return;
+                const atEnd =
+                  feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+                const scrolledUp = feed.scrollTop < lastScrollTop.current;
+                lastScrollTop.current = feed.scrollTop;
+                // Only scrolling *up* breaks the follow. A smooth scroll fires this
+                // handler at every intermediate position on its way down, and treating
+                // those as "not at the end" would cancel the follow mid-animation.
+                if (atEnd) pinnedToEnd.current = true;
+                else if (scrolledUp) pinnedToEnd.current = false;
+              }}
+              sx={{ flex: 1, px: 2, py: 1.5, overflow: "auto", minHeight: 0 }}
+            >
               {detailTab !== "runs" ? (
                 <Stack spacing={1.5}>
                   {selectedOutputs.length ? (
@@ -777,6 +797,9 @@ export default function HarnessDetail() {
                 </Stack>
               ) : (
               <Stack spacing={1.5}>
+                {selectedOutputs.map((output) => (
+                  <StageOutput key={output.id} output={output} />
+                ))}
                 {current.credentials && (
                   <Paper
                     variant="outlined"
@@ -796,29 +819,82 @@ export default function HarnessDetail() {
                     </Typography>
                   </Paper>
                 )}
-                {messages.map((event) => (
+                {timeline.map((entry) =>
+                  entry.kind === "adjustment" ? (
+                    // A correction you asked for, in the run's own voice: indented and
+                    // accented so it is legible as yours without leaving the timeline.
+                    <Paper
+                      key={entry.id}
+                      variant="outlined"
+                      sx={{
+                        p: 1.5,
+                        ml: 3,
+                        bgcolor: "background.default",
+                        borderColor: "accent.info",
+                      }}
+                    >
+                      <Stack direction="row" justifyContent="space-between">
+                        <Typography variant="caption" color="accent.info">
+                          You asked for a change
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          title={entry.at || ""}
+                        >
+                          {eventTime(entry.at)}
+                        </Typography>
+                      </Stack>
+                      <Typography variant="body2">
+                        {entry.item.instruction}
+                      </Typography>
+                      <Stack
+                        direction="row"
+                        spacing={0.75}
+                        alignItems="center"
+                      >
+                        {/* A change that has not landed by the time the run stops never
+                            will. ALK leaves it at "pending" forever, so a spinner and a
+                            "will land at" would promise work that cannot happen. */}
+                        {entry.item.status !== "applied" && !isTerminal && (
+                          <CircularProgress size={10} />
+                        )}
+                        <Typography
+                          variant="caption"
+                          color={
+                            entry.item.status !== "applied" && isTerminal
+                              ? "text.disabled"
+                              : "text.secondary"
+                          }
+                        >
+                          {adjustmentStatus(entry.item, status?.stage)}
+                        </Typography>
+                      </Stack>
+                    </Paper>
+                  ) : (
                   <Paper
-                    key={event.event_id}
+                    key={entry.id}
                     variant="outlined"
                     sx={{ p: 1.5, bgcolor: "background.default" }}
                   >
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="caption" color="accent.brand">
-                        {readable(event.payload?.stage || event.type)}
+                        {readable(entry.event.payload?.stage || entry.event.type)}
                       </Typography>
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        title={event.wall_time || ""}
+                        title={entry.event.wall_time || ""}
                       >
-                        {eventTime(event.wall_time)}
+                        {eventTime(entry.event.wall_time)}
                       </Typography>
                     </Stack>
                     <Typography variant="body2">
-                      {eventMessage(event)}
+                      {eventMessage(entry.event)}
                     </Typography>
                   </Paper>
-                ))}
+                  ),
+                )}
                 {status?.failure && (
                   <Alert severity="error" variant="outlined">
                     <Typography variant="subtitle2">
@@ -835,6 +911,11 @@ export default function HarnessDetail() {
                     {status.detail}
                   </Alert>
                 )}
+                {isTerminal && !timeline.length && (
+                  <Typography variant="body2" color="text.secondary">
+                    This run recorded no activity.
+                  </Typography>
+                )}
                 {!terminalStages.has(status?.stage) && (
                   <Stack direction="row" spacing={1} alignItems="center">
                     <CircularProgress size={16} />
@@ -846,6 +927,96 @@ export default function HarnessDetail() {
               </Stack>
               )}
             </Box>
+
+            {/* Docked at the foot of the pane on every tab, because a correction is
+                about the run, not about whichever tab you happen to be reading. Only
+                while the run can still act on one. Full width, because a sentence of
+                instruction does not belong in a 264px rail. */}
+            {!isTerminal && (
+              <Box
+                sx={{
+                  flexShrink: 0,
+                  px: 2,
+                  py: 1.5,
+                  borderTop: 1,
+                  borderColor: "divider",
+                }}
+              >
+                <Box
+                  sx={{
+                    // 8px, the same radius the timeline cards carry, so the composer
+                    // belongs to the panel rather than reading as a pill dropped on it.
+                    borderRadius: 1,
+                    border: 1,
+                    borderColor: "divider",
+                    bgcolor: "background.paper",
+                    // The whole box is the control, so the focus ring belongs to the box
+                    // rather than to the bare input sitting inside it.
+                    "&:focus-within": { borderColor: "text.disabled" },
+                  }}
+                >
+                  <InputBase
+                    fullWidth
+                    multiline
+                    maxRows={8}
+                    placeholder="Tell the run what to change…"
+                    value={adjustment}
+                    onChange={(event) => setAdjustment(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Enter sends and Shift+Enter breaks the line, the way every
+                      // message box behaves. ⌘/Ctrl+Enter sends too, for the habit.
+                      if (event.key !== "Enter" || event.shiftKey) return;
+                      event.preventDefault();
+                      // An empty box is not an error to report, it is nothing to do.
+                      if (adjusting || !adjustment.trim()) return;
+                      adjust();
+                    }}
+                    sx={{ px: 1.5, pt: 1.25, typography: "body2" }}
+                  />
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    sx={{ px: 1.5, pb: 1, pt: 0.5 }}
+                  >
+                    <Typography variant="caption" color="text.disabled">
+                      Applied at the next stage boundary
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={() => adjust()}
+                      disabled={adjusting || !adjustment.trim()}
+                      aria-label="Send"
+                      sx={{
+                        bgcolor: "accent.brand",
+                        color: "common.white",
+                        "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
+                        "&.Mui-disabled": {
+                          bgcolor: "action.disabledBackground",
+                          color: "text.disabled",
+                        },
+                      }}
+                    >
+                      {adjusting ? (
+                        <CircularProgress size={14} color="inherit" />
+                      ) : (
+                        <Iconify icon="solar:plain-linear" width={15} />
+                      )}
+                    </IconButton>
+                  </Stack>
+                </Box>
+                {adjustError && (
+                  <Alert
+                    severity="error"
+                    variant="outlined"
+                    onClose={() => setAdjustError("")}
+                    sx={{ mt: 1 }}
+                  >
+                    {adjustError}
+                  </Alert>
+                )}
+              </Box>
+            )}
           </Box>
         </Box>
       </Box>
