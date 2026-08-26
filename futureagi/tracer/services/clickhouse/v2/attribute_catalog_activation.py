@@ -19,8 +19,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 CATALOG_ACTIVATION_ENVIRONMENT = "development"
-CATALOG_ACTIVATION_ACK = "TH7247_DEV_ACTIVATE_FROZEN_CATALOG_EPOCH"
-CATALOG_ACTIVATION_SUPERSESSION_ACK = "TH7247_DEV_SUPERSEDE_FROZEN_CATALOG_V1_WITH_V2"
+CATALOG_ACTIVATION_ACK = "FI_DEV_ACTIVATE_FROZEN_CATALOG_EPOCH"
+CATALOG_ACTIVATION_SUPERSESSION_ACK = "FI_DEV_SUPERSEDE_FROZEN_CATALOG_V1_WITH_V2"
 CATALOG_ACTIVATION_MAX_HOURS = 366 * 24
 CATALOG_ACTIVATION_MAX_RESULT_ROWS = CATALOG_ACTIVATION_MAX_HOURS + 1
 CATALOG_ACTIVATION_QUERY_TIMEOUT_MS = 8_000
@@ -827,7 +827,7 @@ def _write_settings(suffix: Literal["source-stream", "activation"]) -> dict[str,
         "async_insert": 0,
         "wait_for_async_insert": 1,
         "insert_quorum": 1,
-        "query_id": f"th7247-dev-catalog-{suffix}",
+        "query_id": f"fi-dev-catalog-{suffix}",
     }
 
 

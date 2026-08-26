@@ -21,7 +21,7 @@ func directRuntimeConfig(t *testing.T, url string) catalogwriter.RuntimeConfig {
 		Mode: catalogwriter.ModeDirect, Environment: "development", CatalogEpoch: 101,
 		ProducerStream: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", SpoolDir: t.TempDir(),
 		ClickHouse: catalogwriter.ClickHouseSinkConfig{
-			URL: url, Database: "th7247_catalog_dev", Username: "catalog_dev",
+			URL: url, Database: "fi_catalog_dev", Username: "catalog_dev",
 			RequestTimeout: time.Second,
 		},
 	}

@@ -119,7 +119,7 @@ func TestCatalogEnvironmentOverridesAreFailClosedAndExclusive(t *testing.T) {
 	t.Setenv("FI_CATALOG_PRODUCER_STREAM_ID", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 	t.Setenv("FI_CATALOG_SPOOL_DIR", t.TempDir())
 	t.Setenv("FI_CATALOG_CH_URL", "http://clickhouse:8123")
-	t.Setenv("FI_CATALOG_CH_DATABASE", "th7247_catalog_dev")
+	t.Setenv("FI_CATALOG_CH_DATABASE", "fi_catalog_dev")
 	t.Setenv("FI_CATALOG_CH_USERNAME", "catalog_dev")
 	var cfg rootConfig
 	if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
@@ -152,7 +152,7 @@ func TestCatalogEnvironmentRejectsInvalidEpochAndMixedModes(t *testing.T) {
 	t.Setenv("FI_CATALOG_PRODUCER_STREAM_ID", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 	t.Setenv("FI_CATALOG_SPOOL_DIR", t.TempDir())
 	t.Setenv("FI_CATALOG_CH_URL", "http://clickhouse:8123")
-	t.Setenv("FI_CATALOG_CH_DATABASE", "th7247_catalog_dev")
+	t.Setenv("FI_CATALOG_CH_DATABASE", "fi_catalog_dev")
 	t.Setenv("FI_CATALOG_CH_USERNAME", "catalog_dev")
 	t.Setenv("FI_CATALOG_KAFKA_BROKERS", "kafka-a:9092,kafka-b:9092")
 	t.Setenv("FI_CATALOG_KAFKA_TOPIC", "catalog")

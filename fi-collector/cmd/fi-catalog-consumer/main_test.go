@@ -221,7 +221,7 @@ func TestValidDevelopmentConfigurationRunsAndClosesConsumer(t *testing.T) {
 		if got := strings.Join(cfg.Brokers, ","); got != "kafka-1:9092,kafka-2:9092" {
 			t.Fatalf("brokers = %q", got)
 		}
-		if cfg.Topic != "th7247.catalog.v1" || cfg.GroupID != "th7247.catalog.consumer" {
+		if cfg.Topic != "futureagi.catalog.v1" || cfg.GroupID != "futureagi.catalog.consumer" {
 			t.Fatalf("unexpected Kafka config: %+v", cfg)
 		}
 		if handler == nil || validator == nil {
@@ -360,12 +360,12 @@ func validEnvironment() map[string]string {
 	return map[string]string{
 		envEnvironment:        developmentEnvironment,
 		envClickHouseURL:      "http://clickhouse:8123",
-		envClickHouseDatabase: "th7247_catalog_dev",
+		envClickHouseDatabase: "fi_catalog_dev",
 		envClickHouseUsername: "default",
 		envClickHousePassword: "",
 		envKafkaBrokers:       "kafka-1:9092,kafka-2:9092",
-		envKafkaTopic:         "th7247.catalog.v1",
-		envKafkaConsumerGroup: "th7247.catalog.consumer",
+		envKafkaTopic:         "futureagi.catalog.v1",
+		envKafkaConsumerGroup: "futureagi.catalog.consumer",
 	}
 }
 
@@ -373,7 +373,7 @@ func validLedgerEnvironment(url string) map[string]string {
 	environment := validEnvironment()
 	environment[envClickHouseURL] = url
 	environment[envLedgerURL] = url
-	environment[envLedgerDatabase] = "th7247_catalog_dev"
+	environment[envLedgerDatabase] = "fi_catalog_dev"
 	environment[envLedgerUsername] = "ledger-reader"
 	environment[envLedgerPassword] = "read-secret"
 	return environment

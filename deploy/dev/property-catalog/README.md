@@ -12,7 +12,7 @@ Stop if any statement below is not true.
 - The configuration contains exactly one organization/workspace pair and an
   explicit, sorted project allowlist.
 - The target ClickHouse database is a new, isolated
-  `th7247_catalog_dev_<name>` database. The source and target databases differ.
+  `fi_catalog_dev_<name>` database. The source and target databases differ.
 - Every image is pinned by `@sha256:<64 lowercase hex characters>`.
 - The consumer image is byte-for-byte the same reference as the live collector
   image.
@@ -134,7 +134,7 @@ Review all of the following before rendering:
 - a bounded half-open backfill window expressed as UTC whole hours, no longer
   than 366 days;
 - a DEV source database and a different, empty
-  `th7247_catalog_dev_<name>` target database;
+  `fi_catalog_dev_<name>` target database;
 - six exact remote-provenance values captured through the reviewed DEV
   identities: write/source ClickHouse `hostName()`, PostgreSQL
   `current_database()`/`current_user()`, canonical literal

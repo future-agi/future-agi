@@ -38,9 +38,9 @@ DRAIN_PROOF_FILE = f"{CONTAINER_SPOOL_DIRECTORY}/producer-drain-proof-v2.json"
 PRODUCER_RETIREMENT_FILE = (
     f"{CONTAINER_SPOOL_DIRECTORY}/producer-state-retirements-v1.json"
 )
-ROLLOUT_ACK = "TH7247_UNIFIED_PROPERTY_CATALOG_DEV"
-SIDECAR_ACK = "TH7247_PROPERTY_CATALOG_PYTHON_GO_SIDECAR_V1"
-GO_DEV_ACK = "TH7247_UNIFIED_PROPERTY_CATALOG_V1_DEV_ONLY"
+ROLLOUT_ACK = "FI_UNIFIED_PROPERTY_CATALOG_DEV"
+SIDECAR_ACK = "FI_PROPERTY_CATALOG_PYTHON_GO_SIDECAR_V1"
+GO_DEV_ACK = "FI_UNIFIED_PROPERTY_CATALOG_V1_DEV_ONLY"
 RUNTIME_FACTORY = (
     "tracer.services.clickhouse.v2.property_catalog.dev_runtime."
     "configured_property_catalog_dev_runtime"
@@ -126,7 +126,7 @@ _SAFE_DEPLOYMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,39}$")
 _SAFE_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$", re.I)
 _SAFE_DOCKER_NAME_RE = re.compile(r"^[a-z0-9](?:[-_a-z0-9.]{0,126}[a-z0-9])?$", re.I)
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_DEV_DATABASE_RE = re.compile(r"^th7247_catalog_dev_[a-z0-9][a-z0-9_]*$")
+_DEV_DATABASE_RE = re.compile(r"^fi_catalog_dev_[a-z0-9][a-z0-9_]*$")
 _DEV_IDENTITY_RE = re.compile(r"^dev:property-catalog/[a-z0-9][a-z0-9._:/-]{2,96}$")
 _IMAGE_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HOST_PORT_RE = re.compile(
@@ -375,7 +375,7 @@ def load_config(path: os.PathLike[str] | str) -> DeploymentConfig:
     provenance = _mapping(top["provenance"], "provenance", _PROVENANCE_FIELDS)
 
     host_root = _text(host["root"], "host.root")
-    expected_root = f"/home/ubuntu/th7247-{deployment_id}"
+    expected_root = f"/home/ubuntu/fi-{deployment_id}"
     if (
         host_root != expected_root
         or not Path(host_root).is_absolute()
@@ -401,7 +401,7 @@ def load_config(path: os.PathLike[str] | str) -> DeploymentConfig:
 
     source_database = _text(catalog["source_database"], "catalog.source_database")
     target_database = _text(catalog["target_database"], "catalog.target_database")
-    expected_database = f"th7247_catalog_dev_{deployment_id.replace('-', '_')}"
+    expected_database = f"fi_catalog_dev_{deployment_id.replace('-', '_')}"
     if source_database != "futureagi":
         raise DeploymentValidationError("catalog.source_database must equal futureagi")
     if (
@@ -494,7 +494,7 @@ def load_config(path: os.PathLike[str] | str) -> DeploymentConfig:
             images["collector_runtime"], "images.collector_runtime"
         ),
         operator_image=_image(
-            images["operator"], "images.operator", required_token="th7247"
+            images["operator"], "images.operator", required_token="fi"
         ),
         host_root=host_root,
         organization_id=_uuid4(
@@ -594,7 +594,7 @@ def _common_service(config: DeploymentConfig, component: str) -> dict[str, Any]:
         },
         "labels": {
             "futureagi.environment": "development",
-            "futureagi.change": "TH-7247",
+            "futureagi.change": "CATALOG",
             "futureagi.production-use": "forbidden",
             "futureagi.property-catalog-deployment": config.deployment_id,
             "futureagi.component": component,
@@ -826,7 +826,7 @@ def render_compose(config: DeploymentConfig) -> dict[str, Any]:
     )
 
     compose = {
-        "name": f"th7247-property-catalog-{config.deployment_id}",
+        "name": f"fi-property-catalog-{config.deployment_id}",
         "services": {
             "property-catalog-producer": producer,
             "property-catalog-consumer": consumer,
@@ -849,7 +849,7 @@ def render_compose(config: DeploymentConfig) -> dict[str, Any]:
 
 def _validate_compose(compose: Any, config: DeploymentConfig) -> None:
     top = _mapping(compose, "rendered Compose", ("name", "services", "networks"))
-    expected_name = f"th7247-property-catalog-{config.deployment_id}"
+    expected_name = f"fi-property-catalog-{config.deployment_id}"
     if top["name"] != expected_name:
         raise DeploymentValidationError(
             "Compose project name escaped the deployment scope"

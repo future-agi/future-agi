@@ -17,7 +17,7 @@ catalog:
   projection_version: 1
   hot_producer_stream_id: REPLACE_WITH_STABLE_PRODUCER_STREAM_UUIDV4
   source_database: futureagi
-  target_database: th7247_catalog_dev_REPLACE_WITH_SUFFIX
+  target_database: fi_catalog_dev_REPLACE_WITH_SUFFIX
   span_since: "2026-08-14T00:00:00Z"
   span_until: "2026-08-15T00:00:00Z"
   otlp_traffic_authorized: false

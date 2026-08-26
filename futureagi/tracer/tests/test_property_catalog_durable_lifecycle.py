@@ -127,7 +127,7 @@ def test_clickhouse_activation_projection_returns_unqualified_mapping_keys() -> 
     queries: list[str] = []
 
     class Client:
-        catalog_database = "th7247_catalog_dev_unit"
+        catalog_database = "fi_catalog_dev_unit"
 
         def query(
             self,
@@ -150,7 +150,7 @@ def test_clickhouse_activation_projection_returns_unqualified_mapping_keys() -> 
 
     reader = ClickHouseLifecycleStateReader(
         Client(),  # type: ignore[arg-type]
-        database="th7247_catalog_dev_unit",
+        database="fi_catalog_dev_unit",
         checkpoint_store=Checkpoints(),  # type: ignore[arg-type]
     )
 
@@ -175,7 +175,7 @@ def test_clickhouse_reservation_projections_alias_qualified_columns() -> None:
     queries: list[str] = []
 
     class Client:
-        catalog_database = "th7247_catalog_dev_unit"
+        catalog_database = "fi_catalog_dev_unit"
 
         def query(
             self,
@@ -196,7 +196,7 @@ def test_clickhouse_reservation_projections_alias_qualified_columns() -> None:
 
     reader = ClickHouseLifecycleStateReader(
         Client(),  # type: ignore[arg-type]
-        database="th7247_catalog_dev_unit",
+        database="fi_catalog_dev_unit",
         checkpoint_store=Checkpoints(),  # type: ignore[arg-type]
     )
 

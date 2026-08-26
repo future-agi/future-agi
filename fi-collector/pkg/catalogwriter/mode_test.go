@@ -13,7 +13,7 @@ func validRuntimeMode(mode Mode) RuntimeConfig {
 	}
 	if mode == ModeDirect {
 		cfg.ClickHouse = ClickHouseSinkConfig{
-			URL: "http://clickhouse:8123", Database: "th7247_catalog_dev", Username: "catalog_dev",
+			URL: "http://clickhouse:8123", Database: "fi_catalog_dev", Username: "catalog_dev",
 		}
 	}
 	return cfg

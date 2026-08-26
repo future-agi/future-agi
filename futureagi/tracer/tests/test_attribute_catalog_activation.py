@@ -47,7 +47,7 @@ def _config(**overrides):
         "catalog_epoch": 7,
         "since": SINCE,
         "until": UNTIL,
-        "target_database": "th7247_catalog_dev",
+        "target_database": "fi_catalog_dev",
     }
     values.update(overrides)
     return CatalogActivationConfig(**values)
@@ -120,8 +120,8 @@ def test_frozen_epoch_activation_audits_then_writes_only_new_state_tables():
     assert summary.rows_written == 2
     assert len(summary.source_fence_digest) == 64
     assert [call[0] for call in io.inserts] == [
-        "`th7247_catalog_dev`.`span_attribute_catalog_source_streams`",
-        "`th7247_catalog_dev`.`span_attribute_catalog_activations`",
+        "`fi_catalog_dev`.`span_attribute_catalog_source_streams`",
+        "`fi_catalog_dev`.`span_attribute_catalog_activations`",
     ]
     assert all("spans" not in sql.lower().split() for sql, _, _ in io.selects)
     assert all(settings["readonly"] == 1 for _, _, settings in io.selects)

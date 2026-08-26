@@ -22,10 +22,10 @@ const (
 	ProductionEnvironment  = "production"
 	// DevelopmentAcknowledgement is deliberately long and version-specific so
 	// copying only FI_PROPERTY_CATALOG_MODE cannot activate the writer.
-	DevelopmentAcknowledgement = "TH7247_UNIFIED_PROPERTY_CATALOG_V1_DEV_ONLY"
+	DevelopmentAcknowledgement = "FI_UNIFIED_PROPERTY_CATALOG_V1_DEV_ONLY"
 	// ProductionAcknowledgement is deliberately distinct from the DEV gate. A
 	// copied DEV deployment cannot target the production-only catalog prefix.
-	ProductionAcknowledgement = "TH7247_UNIFIED_PROPERTY_CATALOG_V1_PRODUCTION"
+	ProductionAcknowledgement = "FI_UNIFIED_PROPERTY_CATALOG_V1_PRODUCTION"
 
 	defaultReplayInterval               = time.Second
 	defaultShutdownTimeout              = 10 * time.Second

@@ -56,10 +56,10 @@ from tracer.utils.attribute_suggestion_contract import (
     TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
 )
 
-CATALOG_BACKFILL_ACK = "TH7247_DEV_CATALOG_BACKFILL"
+CATALOG_BACKFILL_ACK = "FI_DEV_CATALOG_BACKFILL"
 CATALOG_BACKFILL_ENVIRONMENT = "development"
 CATALOG_BACKFILL_CLOUD_DEPLOYMENT = "DEV"
-CATALOG_DATABASE_PREFIX = "th7247_catalog_dev_"
+CATALOG_DATABASE_PREFIX = "fi_catalog_dev_"
 CATALOG_PROJECTION_VERSION = 2
 
 SOURCE_TABLE = "spans"
@@ -1104,7 +1104,7 @@ class TimedCatalogBackfillIO:
 
     def _new_query_id(self, purpose: str) -> str:
         token = self._query_id_factory()
-        query_id = f"th7247_catalog_backfill_{purpose}_{token}"
+        query_id = f"fi_catalog_backfill_{purpose}_{token}"
         if len(query_id) > 128 or re.fullmatch(r"[A-Za-z0-9_-]+", query_id) is None:
             raise CatalogBackfillError("query_id_factory returned an unsafe query id")
         return query_id

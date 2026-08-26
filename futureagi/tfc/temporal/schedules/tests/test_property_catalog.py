@@ -46,7 +46,7 @@ def _settings(**overrides: object) -> SimpleNamespace:
             property_catalog.CHECKED_IN_DEV_RUNTIME_FACTORY_PATH
         ),
         "PROPERTY_CATALOG_DEV_SOURCE_DATABASE": "futureagi",
-        "PROPERTY_CATALOG_DEV_TARGET_DATABASE": "th7247_catalog_dev_clean",
+        "PROPERTY_CATALOG_DEV_TARGET_DATABASE": "fi_catalog_dev_clean",
         "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": (WORKSPACE_A,),
     }
     values.update(overrides)

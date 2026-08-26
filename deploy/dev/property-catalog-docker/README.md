@@ -29,7 +29,7 @@ schedule. With no extra argument it performs the command's zero-I/O dry run.
 - Environment is exactly `development`; cloud deployment is exactly `DEV`.
 - The source database is exactly `futureagi`.
 - The only writable catalog target is
-  `th7247_catalog_dev_<deployment-id-with-underscores>`.
+  `fi_catalog_dev_<deployment-id-with-underscores>`.
 - Public property-catalog reads, the legacy catalog, snapshot reads, periodic
   reconciliation, and OTLP traffic authorization are all forced off.
 - Sentry, OpenTelemetry export, deployment telemetry, and integrations are
@@ -65,17 +65,17 @@ futureagi.dev.property-catalog.consumer.<deployment_id>
 ```
 
 For `deployment_id: kartik-0815a`, the target is
-`th7247_catalog_dev_kartik_0815a`, the topic is
+`fi_catalog_dev_kartik_0815a`, the topic is
 `futureagi.dev.property-catalog.kartik-0815a`, and the group is
 `futureagi.dev.property-catalog.consumer.kartik-0815a`.
 
 ## Host layout
 
-The renderer accepts only `/home/ubuntu/th7247-<deployment_id>` as the host
+The renderer accepts only `/home/ubuntu/fi-<deployment_id>` as the host
 root. For the example configuration, prepare this exact layout:
 
 ```text
-/home/ubuntu/th7247-kartik-0815a/
+/home/ubuntu/fi-kartik-0815a/
 ├── private/
 │   ├── producer.env
 │   ├── operator-runtime.env
@@ -94,7 +94,7 @@ root. For the example configuration, prepare this exact layout:
 Prepare directories without following symlinks:
 
 ```bash
-DEPLOYMENT_ROOT=/home/ubuntu/th7247-kartik-0815a
+DEPLOYMENT_ROOT=/home/ubuntu/fi-kartik-0815a
 install -d -m 0700 "$DEPLOYMENT_ROOT" "$DEPLOYMENT_ROOT/private"
 sudo install -d -o ubuntu -g 65532 -m 0770 \
   "$DEPLOYMENT_ROOT/runtime" \
@@ -155,8 +155,8 @@ organization, workspace, dense/sparse test projects, 365-day window, and
 isolated target name.
 
 ```bash
-CONFIG=/home/ubuntu/th7247-kartik-0815a/reviewed-config.yaml
-COMPOSE=/home/ubuntu/th7247-kartik-0815a/compose.yaml
+CONFIG=/home/ubuntu/fi-kartik-0815a/reviewed-config.yaml
+COMPOSE=/home/ubuntu/fi-kartik-0815a/compose.yaml
 PYTHON=futureagi/.venv/bin/python
 
 "$PYTHON" deploy/dev/property-catalog-docker/render.py \
@@ -191,9 +191,9 @@ not include the administration scripts, so use the separately installed
 
 ```bash
 TOPIC=futureagi.dev.property-catalog.kartik-0815a
-KAFKA_NETWORK=th7247-catalog-dev_default
+KAFKA_NETWORK=fi-catalog-dev_default
 KAFKA_CLI_IMAGE=apache/kafka:4.1.0
-KAFKA_BROKER=th7247-catalog-kafka-dev:9092
+KAFKA_BROKER=fi-catalog-kafka-dev:9092
 
 docker run --rm --network "$KAFKA_NETWORK" "$KAFKA_CLI_IMAGE" \
   /opt/kafka/bin/kafka-topics.sh \
@@ -298,13 +298,13 @@ does not create or alter a table and does not write a source or catalog row.
 
 ```bash
 ACTIVATION_SHA256='<exact 64-character active activation digest>'
-ROOT=/home/ubuntu/th7247-kartik-0816h
+ROOT=/home/ubuntu/fi-kartik-0816h
 
 python deploy/dev/property-catalog-docker/provision_existing_steady.py \
   --suffix 0816h \
   --bootstrap-activation-sha256 "$ACTIVATION_SHA256"
 
-TH7247_STEADY_ACK=TH7247_ENABLE_EXISTING_DEV_CATALOG_STEADY_STATE \
+FI_STEADY_ACK=FI_ENABLE_EXISTING_DEV_CATALOG_STEADY_STATE \
 python deploy/dev/property-catalog-docker/provision_existing_steady.py \
   --suffix 0816h \
   --bootstrap-activation-sha256 "$ACTIVATION_SHA256" \

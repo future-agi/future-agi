@@ -102,7 +102,7 @@ class CatalogDevSchemaTests(unittest.TestCase):
         "MergeTree",
         "CREATE TABLE default.spans (id UUID) ENGINE = MergeTree ORDER BY id",
     )
-    _target = "th7247_catalog_dev_unit_20260813"
+    _target = "fi_catalog_dev_unit_20260813"
 
     def _server_create_query(self, table: str, sql: str) -> str:
         return re.sub(
@@ -206,7 +206,7 @@ class CatalogDevSchemaTests(unittest.TestCase):
                 "development_sentinel": catalog_dev_schema.DEVELOPMENT_SENTINEL,
             },
             {
-                "target_database": "th7247_catalog_dev_bad-name",
+                "target_database": "fi_catalog_dev_bad-name",
                 "development_sentinel": catalog_dev_schema.DEVELOPMENT_SENTINEL,
             },
         )

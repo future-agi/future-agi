@@ -23,11 +23,11 @@ import yaml
 
 APPLICATION_SERVICE = "fi-collector"
 KAFKA_NETWORK_KEY = "property-catalog-kafka-existing"
-KAFKA_NETWORK_NAME = "th7247-catalog-dev_default"
+KAFKA_NETWORK_NAME = "fi-catalog-dev_default"
 PRODUCER_SERVICE = "property-catalog-producer"
 RUNTIME_DESTINATION = "/var/lib/property-catalog-runtime"
 _IMAGE_RE = re.compile(r"sha256:[0-9a-f]{64}")
-_RUNTIME_SOURCE_RE = re.compile(r"/home/ubuntu/th7247-kartik-[a-z0-9-]+/runtime")
+_RUNTIME_SOURCE_RE = re.compile(r"/home/ubuntu/fi-kartik-[a-z0-9-]+/runtime")
 
 _CATALOG_ENV_KEYS = (
     "FI_CATALOG_MODE",
@@ -84,7 +84,7 @@ def _load_bootstrap(path: Path) -> Mapping[str, Any]:
     top = _mapping(value, "bootstrap Compose")
     name = top.get("name")
     if not isinstance(name, str) or not name.startswith(
-        "th7247-property-catalog-kartik-"
+        "fi-property-catalog-kartik-"
     ):
         raise LiveCollectorHandoffError("bootstrap Compose is outside Kartik DEV")
     services = _mapping(top.get("services"), "bootstrap services")

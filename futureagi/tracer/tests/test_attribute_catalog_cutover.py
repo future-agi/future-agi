@@ -231,8 +231,8 @@ def test_public_cutover_rejects_non_dev_deployment_combinations(
     SPAN_ATTRIBUTE_CATALOG_HANDOFF_START=WINDOW_START,
     SPAN_ATTRIBUTE_CATALOG_HANDOFF_END=NOW,
     SPAN_ATTRIBUTE_CATALOG_EPOCH=7,
-    SPAN_ATTRIBUTE_CATALOG_DATABASE="th7247_catalog_dev",
-    SPAN_ATTRIBUTE_CATALOG_CH_DATABASE="th7247_catalog_dev",
+    SPAN_ATTRIBUTE_CATALOG_DATABASE="fi_catalog_dev",
+    SPAN_ATTRIBUTE_CATALOG_CH_DATABASE="fi_catalog_dev",
 )
 def test_staging_dev_cloud_deployment_passes_catalog_specific_guard(monkeypatch):
     class Reader:
@@ -264,8 +264,8 @@ def test_staging_dev_cloud_deployment_passes_catalog_specific_guard(monkeypatch)
     SPAN_ATTRIBUTE_CATALOG_HANDOFF_START=WINDOW_START,
     SPAN_ATTRIBUTE_CATALOG_HANDOFF_END=NOW,
     SPAN_ATTRIBUTE_CATALOG_EPOCH=7,
-    SPAN_ATTRIBUTE_CATALOG_DATABASE="th7247_catalog_dev",
-    SPAN_ATTRIBUTE_CATALOG_CH_DATABASE="th7247_catalog_dev",
+    SPAN_ATTRIBUTE_CATALOG_DATABASE="fi_catalog_dev",
+    SPAN_ATTRIBUTE_CATALOG_CH_DATABASE="fi_catalog_dev",
 )
 def test_dev_read_routes_only_the_authorized_frozen_scope(monkeypatch):
     captured: dict[str, Any] = {}
@@ -301,7 +301,7 @@ def test_dev_read_routes_only_the_authorized_frozen_scope(monkeypatch):
         "catalog_epoch": 7,
         "window_start": WINDOW_START,
         "window_end": NOW,
-        "catalog_database": "th7247_catalog_dev",
+        "catalog_database": "fi_catalog_dev",
     }
     assert captured["read"]["search"] == "ss"
 

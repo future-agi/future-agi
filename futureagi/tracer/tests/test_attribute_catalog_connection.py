@@ -17,7 +17,7 @@ from tracer.services.clickhouse.v2.attribute_catalog_reader import (
     AttributeCatalogReader,
 )
 
-CATALOG_DATABASE = "th7247_catalog_dev"
+CATALOG_DATABASE = "fi_catalog_dev"
 CATALOG_PASSWORD = "catalog-password-must-stay-secret"
 CATALOG_QUERY = f"""
 SELECT attribute_key

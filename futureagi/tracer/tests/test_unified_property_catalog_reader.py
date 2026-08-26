@@ -69,7 +69,7 @@ def test_clickhouse25_aggregate_inputs_are_raw_qualified() -> None:
     ):
         assert f"active_candidates.{column} AS {column}" in _ACTIVATION_SQL
 
-    definitions_sql = _definition_ctes("th7247_catalog_dev_test")
+    definitions_sql = _definition_ctes("fi_catalog_dev_test")
     assert "FROM lineage_versioned AS versioned_rows" in definitions_sql
     assert "FROM latest_binding_rows AS binding" in definitions_sql
     assert "any(binding.property_id) AS property_id" in definitions_sql
@@ -80,11 +80,11 @@ def test_clickhouse25_aggregate_inputs_are_raw_qualified() -> None:
 def test_property_reader_accepts_isolated_production_database_namespace() -> None:
     reader = PropertyCatalogReader(
         FakeExecutor([]),
-        catalog_database="th7247_catalog_prod_reader",
+        catalog_database="fi_catalog_prod_reader",
     )
 
-    assert "`th7247_catalog_prod_reader`" in reader._activation_sql
-    assert "`th7247_catalog_prod_reader`" in reader._page_sql
+    assert "`fi_catalog_prod_reader`" in reader._activation_sql
+    assert "`fi_catalog_prod_reader`" in reader._page_sql
 
 
 def _scope(*, project_ids=(PROJECT_ID,), workspace_scope=False):
@@ -358,7 +358,7 @@ def test_catalog_reader_returns_signed_keyset_page(settings):
             [_property_row("customer.plan", 1), _property_row("customer.tier", 1)],
         ]
     )
-    reader = PropertyCatalogReader(executor, catalog_database="th7247_catalog_dev_test")
+    reader = PropertyCatalogReader(executor, catalog_database="fi_catalog_dev_test")
 
     page = reader.read_page(scope=_scope(), query=QUERY, page_size=1, cursor_token=None)
 
@@ -407,7 +407,7 @@ def test_catalog_reader_returns_signed_keyset_page(settings):
     assert executor.calls[1]["query"].count("FROM resolved_bindings") == 1
     assert executor.calls[1]["query"].count("FROM resolved_properties") == 1
     assert (
-        "`th7247_catalog_dev_test`.`property_definition_catalog`"
+        "`fi_catalog_dev_test`.`property_definition_catalog`"
         in executor.calls[1]["query"]
     )
     assert "any(binding.definition_json)" not in executor.calls[1]["query"]
@@ -428,7 +428,7 @@ def test_catalog_reader_rejects_inconsistent_category_counts(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=20)
 
     assert exc_info.value.reason == "category_count_mismatch"
@@ -446,7 +446,7 @@ def test_span_catalog_includes_trace_defined_attributes(settings):
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(),
         query={
@@ -475,7 +475,7 @@ def test_voice_call_catalog_bridges_shared_and_trace_derived_families(settings):
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(),
         query={
@@ -508,7 +508,7 @@ def test_prompt_catalog_bridges_trace_backed_custom_attributes(settings):
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(),
         query={
@@ -539,7 +539,7 @@ def test_exact_custom_attribute_query_normalizes_supported_aliases(settings, sou
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(scope=_scope(), query={**QUERY, "source": source}, page_size=20)
 
     assert executor.calls[1]["params"]["catalog_source"] == "traces"
@@ -555,7 +555,7 @@ def test_exact_custom_attribute_query_rejects_unsupported_sources(settings, sour
 
     with pytest.raises(ValueError, match="custom_attribute is not compatible"):
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query={**QUERY, "source": source}, page_size=20)
 
     assert executor.calls == []
@@ -572,7 +572,7 @@ def test_catalog_reader_scopes_counts_and_page_membership_by_role(settings):
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(),
         query={**QUERY, "role": "dimension"},
@@ -590,7 +590,7 @@ def test_catalog_reader_rejects_pages_above_cursor_contract(settings):
 
     with pytest.raises(ValueError, match="between 1 and 50"):
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=51)
 
     assert executor.calls == []
@@ -616,7 +616,7 @@ def test_catalog_reader_prefers_new_epoch_when_activation_sequences_restart(sett
     )
 
     page = PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(scope=_scope(), query=QUERY, page_size=1)
 
     assert page.catalog_epoch == 4
@@ -631,7 +631,7 @@ def test_catalog_reader_rejects_duplicate_sequence_inside_one_epoch(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=1)
 
     assert exc_info.value.reason == "activation_sequence_conflict"
@@ -648,7 +648,7 @@ def test_catalog_cursor_continuation_pins_activation_and_last_tuple(settings):
         ]
     )
     first = PropertyCatalogReader(
-        first_executor, catalog_database="th7247_catalog_dev_test"
+        first_executor, catalog_database="fi_catalog_dev_test"
     ).read_page(scope=_scope(), query=QUERY, page_size=1)
 
     second_executor = FakeExecutor(
@@ -659,7 +659,7 @@ def test_catalog_cursor_continuation_pins_activation_and_last_tuple(settings):
         ]
     )
     second = PropertyCatalogReader(
-        second_executor, catalog_database="th7247_catalog_dev_test"
+        second_executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(),
         query=QUERY,
@@ -692,7 +692,7 @@ def test_catalog_cursor_missing_pinned_activation_is_generic_fail_closed(setting
         ]
     )
     token = (
-        PropertyCatalogReader(issuer, catalog_database="th7247_catalog_dev_test")
+        PropertyCatalogReader(issuer, catalog_database="fi_catalog_dev_test")
         .read_page(scope=_scope(), query=QUERY, page_size=1)
         .next_cursor
     )
@@ -700,7 +700,7 @@ def test_catalog_cursor_missing_pinned_activation_is_generic_fail_closed(setting
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            continuation, catalog_database="th7247_catalog_dev_test"
+            continuation, catalog_database="fi_catalog_dev_test"
         ).read_page(
             scope=_scope(),
             query=QUERY,
@@ -723,7 +723,7 @@ def test_catalog_cursor_mismatch_fails_before_clickhouse(settings):
         ]
     )
     token = (
-        PropertyCatalogReader(issuer, catalog_database="th7247_catalog_dev_test")
+        PropertyCatalogReader(issuer, catalog_database="fi_catalog_dev_test")
         .read_page(scope=_scope(), query=QUERY, page_size=1)
         .next_cursor
     )
@@ -731,7 +731,7 @@ def test_catalog_cursor_mismatch_fails_before_clickhouse(settings):
 
     with pytest.raises(PropertyCatalogCursorError) as exc_info:
         PropertyCatalogReader(
-            continuation, catalog_database="th7247_catalog_dev_test"
+            continuation, catalog_database="fi_catalog_dev_test"
         ).read_page(
             scope=_scope(project_ids=()),
             query=QUERY,
@@ -760,7 +760,7 @@ def test_catalog_reader_rejects_any_qualified_state_conflict(settings, conflicts
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "definition_conflict"
@@ -785,7 +785,7 @@ def test_catalog_reader_classifies_genuine_activation_readiness(
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == reason
@@ -806,7 +806,7 @@ def test_catalog_reader_classifies_older_valid_projection_as_not_ready(
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "projection_incompatible"
@@ -822,7 +822,7 @@ def test_catalog_reader_rejects_inactive_or_conflicting_activation(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "activation_conflict"
@@ -835,7 +835,7 @@ def test_catalog_reader_rejects_multiple_active_builds_for_one_revision(settings
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
             executor,
-            catalog_database="th7247_catalog_dev_test",
+            catalog_database="fi_catalog_dev_test",
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "activation_conflict"
@@ -872,7 +872,7 @@ def test_catalog_reader_rejects_invalid_lifecycle_anchor(settings, activation, r
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == reason
@@ -896,7 +896,7 @@ def test_catalog_reader_rejects_definition_identity_drift(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "definition_identity_mismatch"
@@ -916,7 +916,7 @@ def test_catalog_reader_rejects_folded_order_drift(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "definition_fold_mismatch"
@@ -934,7 +934,7 @@ def test_catalog_reader_workspace_custom_query_uses_activated_snapshot(settings,
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(project_ids=(PROJECT_ID,), workspace_scope=True),
         query={**QUERY, "role": role},
@@ -964,7 +964,7 @@ def test_catalog_reader_workspace_category_filter_uses_same_snapshot(settings):
     }
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(project_ids=(PROJECT_ID,), workspace_scope=True),
         query=query,
@@ -999,7 +999,7 @@ def test_catalog_reader_workspace_system_manifest_query_keeps_workspace_visibili
     }
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(
         scope=_scope(project_ids=(PROJECT_ID,), workspace_scope=True),
         query=query,
@@ -1018,7 +1018,7 @@ def test_catalog_reader_rejects_partial_workspace_activation_coverage(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(
             scope=_scope(
                 project_ids=(PROJECT_ID, OTHER_PROJECT_ID),
@@ -1038,7 +1038,7 @@ def test_catalog_reader_rejects_unproven_empty_project_scope(settings):
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(project_ids=()), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == "activation_scope_incomplete"
@@ -1068,7 +1068,7 @@ def test_catalog_reader_rejects_project_missing_from_immutable_build_scope(
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=query, page_size=50)
 
     assert exc_info.value.reason == "activation_scope_incomplete"
@@ -1093,7 +1093,7 @@ def test_catalog_reader_rejects_untrusted_activation_scope_metadata(
 
     with pytest.raises(PropertyCatalogUnavailable) as exc_info:
         PropertyCatalogReader(
-            executor, catalog_database="th7247_catalog_dev_test"
+            executor, catalog_database="fi_catalog_dev_test"
         ).read_page(scope=_scope(), query=QUERY, page_size=50)
 
     assert exc_info.value.reason == reason
@@ -1112,7 +1112,7 @@ def test_catalog_reader_hides_workspace_defaults_for_project_scope(settings):
     )
 
     PropertyCatalogReader(
-        executor, catalog_database="th7247_catalog_dev_test"
+        executor, catalog_database="fi_catalog_dev_test"
     ).read_page(scope=_scope(project_ids=(PROJECT_ID,)), query=QUERY, page_size=50)
 
     params = executor.calls[1]["params"]

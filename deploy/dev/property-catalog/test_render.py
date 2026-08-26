@@ -56,7 +56,7 @@ def valid_raw() -> dict[str, Any]:
             "projection_version": 1,
             "hot_producer_stream_id": HOT_STREAM,
             "source_database": "futureagi",
-            "target_database": "th7247_catalog_dev_workspace_a",
+            "target_database": "fi_catalog_dev_workspace_a",
             "span_since": "2026-08-14T00:00:00Z",
             "span_until": "2026-08-15T00:00:00Z",
             "otlp_traffic_authorized": False,

@@ -40,7 +40,7 @@ PROPERTY_CATALOG_TABLES = frozenset(
         "property_catalog_source_streams",
     }
 )
-DEV_CATALOG_DATABASE_RE = re.compile(r"^th7247_catalog_dev_[a-z0-9][a-z0-9_]*$")
+DEV_CATALOG_DATABASE_RE = re.compile(r"^fi_catalog_dev_[a-z0-9][a-z0-9_]*$")
 _ENVELOPE_WRITE_TABLES = frozenset(
     {
         "property_definition_catalog",
@@ -712,7 +712,7 @@ def require_dev_catalog_database(database: str) -> str:
         or DEV_CATALOG_DATABASE_RE.fullmatch(database) is None
     ):
         raise PropertyCatalogPublishError(
-            "catalog database must match ^th7247_catalog_dev_[a-z0-9][a-z0-9_]*$"
+            "catalog database must match ^fi_catalog_dev_[a-z0-9][a-z0-9_]*$"
         )
     return database
 

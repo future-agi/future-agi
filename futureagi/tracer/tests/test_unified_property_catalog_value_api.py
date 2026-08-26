@@ -83,7 +83,7 @@ def _page():
 
 def _enable(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
 
 

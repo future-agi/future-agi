@@ -32,10 +32,10 @@ import (
 
 const (
 	devEnvironment     = "development"
-	devAcknowledgement = "TH7247_DEV_CATALOG_ONLY"
-	devDatabasePrefix  = "th7247_catalog_dev_"
-	devPathMarker      = "th7247-catalog-dev"
-	devTopicPrefix     = "th7247.dev."
+	devAcknowledgement = "FI_DEV_CATALOG_ONLY"
+	devDatabasePrefix  = "fi_catalog_dev_"
+	devPathMarker      = "fi-catalog-dev"
+	devTopicPrefix     = "futureagi.dev."
 	evidenceFormat     = "futureagi.span-attribute-catalog-dev-smoke"
 	evidenceVersion    = uint16(1)
 	maxSmokeTimeout    = 15 * time.Second
@@ -205,10 +205,10 @@ func parseCLI(arguments []string) (cliConfig, error) {
 	flags.StringVar(&config.stateDirectory, "state-dir", "", "dedicated absolute Kafka publisher-state directory")
 	flags.DurationVar(&config.timeout, "timeout", config.timeout, "whole-command timeout (maximum 15s)")
 	flags.StringVar(&config.clickHouseURL, "clickhouse-url", "", "loopback ClickHouse HTTP endpoint")
-	flags.StringVar(&config.database, "database", "", "isolated th7247_catalog_dev_* database")
+	flags.StringVar(&config.database, "database", "", "isolated fi_catalog_dev_* database")
 	flags.StringVar(&config.username, "username", "", "ClickHouse username")
 	flags.StringVar(&rawBrokers, "kafka-brokers", "", "comma-separated loopback Kafka brokers")
-	flags.StringVar(&config.topic, "kafka-topic", "", "isolated th7247.dev.* topic")
+	flags.StringVar(&config.topic, "kafka-topic", "", "isolated futureagi.dev.* topic")
 	flags.BoolVar(&config.resumeOnly, "resume-only", false, "replay the existing durable spool without staging new fixtures")
 	if err := flags.Parse(arguments); err != nil {
 		return cliConfig{}, err
@@ -235,7 +235,7 @@ func validateCLI(config cliConfig) error {
 		return errors.New("environment must be exactly development")
 	}
 	if config.acknowledgement != devAcknowledgement {
-		return errors.New("missing exact TH7247 development-only acknowledgement")
+		return errors.New("missing exact CATALOG development-only acknowledgement")
 	}
 	if config.epoch == 0 {
 		return errors.New("catalog epoch must be non-zero")

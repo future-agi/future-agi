@@ -41,7 +41,7 @@ def _argv(*extra: str, write: bool = False) -> list[str]:
         "--catalog-url",
         "https://catalog-dev:8443",
         "--catalog-database",
-        "th7247_catalog_dev_unit",
+        "fi_catalog_dev_unit",
         "--catalog-username",
         "catalog_writer",
         "--execute-writes" if write else "--dry-run",
@@ -71,7 +71,7 @@ def test_parse_config_requires_explicit_dev_scope_and_distinct_endpoints() -> No
     assert parsed.catalog.host == "catalog-dev"
     assert parsed.catalog.port == 8443
     assert parsed.catalog.secure
-    assert parsed.catalog.database == "th7247_catalog_dev_unit"
+    assert parsed.catalog.database == "fi_catalog_dev_unit"
 
 
 def test_execute_writes_mode_is_explicit_and_never_inferred() -> None:
@@ -220,7 +220,7 @@ def test_run_builds_four_bounded_clients_closes_all_and_renders_json() -> None:
     assert clients[1].kwargs["host"] == "catalog-dev"
     assert clients[1].kwargs["secure"] is True
     assert clients[1].kwargs["password"] == "catalog-secret"
-    assert clients[1].kwargs["database"] == "th7247_catalog_dev_unit"
+    assert clients[1].kwargs["database"] == "fi_catalog_dev_unit"
     assert clients[2].kwargs == clients[0].kwargs
     assert clients[3].kwargs == clients[1].kwargs
     assert len(runner_inputs) == 1

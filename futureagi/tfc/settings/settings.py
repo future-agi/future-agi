@@ -1157,8 +1157,8 @@ PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT = (
 )
 PROPERTY_CATALOG_MAX_READ_WORKSPACES = 256
 _PROPERTY_CATALOG_DATABASE_PATTERNS = {
-    "dev": re.compile(r"\Ath7247_catalog_dev_[a-z0-9][a-z0-9_]*\Z"),
-    "prod": re.compile(r"\Ath7247_catalog_prod_[a-z0-9_]+\Z"),
+    "dev": re.compile(r"\Afi_catalog_dev_[a-z0-9][a-z0-9_]*\Z"),
+    "prod": re.compile(r"\Afi_catalog_prod_[a-z0-9_]+\Z"),
 }
 
 
@@ -1199,7 +1199,7 @@ def validate_property_catalog_database(
         or len(database.encode("utf-8")) > 128
     ):
         raise ValueError(
-            "property catalog database must be an isolated TH-7247 identifier"
+            "property catalog database must be an isolated CATALOG identifier"
         )
     matches = {
         candidate
@@ -1208,7 +1208,7 @@ def validate_property_catalog_database(
     }
     if len(matches) != 1:
         raise ValueError(
-            "property catalog database must be an isolated TH-7247 identifier"
+            "property catalog database must be an isolated CATALOG identifier"
         )
     resolved_deployment = next(iter(matches))
     if deployment is not None and deployment != resolved_deployment:

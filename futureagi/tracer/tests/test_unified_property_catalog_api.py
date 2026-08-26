@@ -284,7 +284,7 @@ def test_filter_values_page_size_honors_both_configured_maxima(
 
 def test_filter_values_maps_reader_value_error_to_400(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     reader = Mock()
     reader.read_page.side_effect = ValueError("page_size must be between 1 and 25")
@@ -319,7 +319,7 @@ def test_filter_values_maps_reader_value_error_to_400(settings):
 
 def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     page = SimpleNamespace(
         metrics=(
@@ -391,7 +391,7 @@ def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
 
 def test_metrics_workspace_scope_binds_full_authorized_project_set(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     reader = Mock()
     reader.read_page.return_value = SimpleNamespace(
@@ -447,7 +447,7 @@ def test_metrics_cursor_mode_fails_closed_before_reader_when_not_allowlisted(set
 
 def test_metrics_cursor_error_is_sanitized_400(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     reader = Mock()
     reader.read_page.side_effect = PropertyCatalogCursorError(
@@ -483,7 +483,7 @@ def test_metrics_cursor_maps_only_genuine_activation_readiness_to_typed_503(
     settings, reason
 ):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     reader = Mock()
     reader.read_page.side_effect = PropertyCatalogUnavailable(reason)
@@ -518,7 +518,7 @@ def test_metrics_cursor_maps_only_genuine_activation_readiness_to_typed_503(
 )
 def test_metrics_cursor_keeps_conflicts_and_query_defects_generic(settings, reason):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     reader = Mock()
     reader.read_page.side_effect = PropertyCatalogUnavailable(reason)
@@ -541,7 +541,7 @@ def test_metrics_cursor_keeps_conflicts_and_query_defects_generic(settings, reas
 
 def test_metrics_cursor_rejects_foreign_project_before_clickhouse(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
 
     with (
@@ -561,7 +561,7 @@ def test_metrics_cursor_rejects_foreign_project_before_clickhouse(settings):
 
 def test_metrics_cursor_rejects_foreign_agent_before_clickhouse(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DATABASE = "fi_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     agent_id = "44444444-4444-4444-4444-444444444444"
 

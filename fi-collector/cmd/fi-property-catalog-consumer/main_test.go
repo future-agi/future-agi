@@ -23,16 +23,16 @@ func validEnvironment() map[string]string {
 		envEnvironment:        propertycatalog.DevelopmentEnvironment,
 		envDevAck:             propertycatalog.DevelopmentAcknowledgement,
 		envClickHouseURL:      "http://catalog-clickhouse:8123",
-		envClickHouseDatabase: "th7247_catalog_dev_consumer_test",
+		envClickHouseDatabase: "fi_catalog_dev_consumer_test",
 		envClickHouseUsername: "property-writer",
 		envClickHousePassword: "write-secret",
 		envLedgerURL:          "http://catalog-clickhouse:8123",
-		envLedgerDatabase:     "th7247_catalog_dev_consumer_test",
+		envLedgerDatabase:     "fi_catalog_dev_consumer_test",
 		envLedgerUsername:     "property-ledger-reader",
 		envLedgerPassword:     "read-secret",
 		envKafkaBrokers:       "kafka-1:9092,kafka-2:9092",
-		envKafkaTopic:         "th7247.property-catalog.v1.dev",
-		envKafkaGroup:         "th7247.property-catalog.consumer.v1.dev",
+		envKafkaTopic:         "futureagi.property-catalog.v1.dev",
+		envKafkaGroup:         "futureagi.property-catalog.consumer.v1.dev",
 	}
 }
 
@@ -45,8 +45,8 @@ func productionEnvironment() map[string]string {
 	values[envEnvironment] = propertycatalog.ProductionEnvironment
 	delete(values, envDevAck)
 	values[envProdAck] = propertycatalog.ProductionAcknowledgement
-	values[envClickHouseDatabase] = "th7247_catalog_prod_20260823a"
-	values[envLedgerDatabase] = "th7247_catalog_prod_20260823a"
+	values[envClickHouseDatabase] = "fi_catalog_prod_20260823a"
+	values[envLedgerDatabase] = "fi_catalog_prod_20260823a"
 	values[envKafkaTopic] = "futureagi.prod.property-catalog.v1"
 	values[envKafkaGroup] = "futureagi.prod.property-catalog.consumer.v1"
 	return values
@@ -114,7 +114,7 @@ func TestProductionConsumerRequiresExactGateMatchingDatabaseAndLedgerSeed(t *tes
 		t.Fatal(err)
 	}
 	if cfg.write.Environment != propertycatalog.ProductionEnvironment ||
-		cfg.write.Database != "th7247_catalog_prod_20260823a" ||
+		cfg.write.Database != "fi_catalog_prod_20260823a" ||
 		cfg.kafka.ClientID != "fi-property-catalog-consumer-v1-prod" ||
 		cfg.seed != seedDeliveryLedger {
 		t.Fatalf("production config=%+v", cfg)
@@ -127,7 +127,7 @@ func TestProductionConsumerRequiresExactGateMatchingDatabaseAndLedgerSeed(t *tes
 
 	for name, mutate := range map[string]func(map[string]string){
 		"dev database": func(values map[string]string) {
-			values[envClickHouseDatabase] = "th7247_catalog_dev_wrong"
+			values[envClickHouseDatabase] = "fi_catalog_dev_wrong"
 		},
 		"dev acknowledgement": func(values map[string]string) {
 			values[envDevAck] = propertycatalog.DevelopmentAcknowledgement
@@ -223,7 +223,7 @@ func TestKnownEmptyModeProvesEmptyLedgerBeforeKafka(t *testing.T) {
 		) (runningConsumer, error) {
 			consumerCalls++
 			if cfg.CheckpointLoader != loader || handler == nil || validator == nil ||
-				cfg.Topic != "th7247.property-catalog.v1.dev" {
+				cfg.Topic != "futureagi.property-catalog.v1.dev" {
 				t.Fatalf("consumer config=%+v handler=%v validator=%v", cfg, handler, validator)
 			}
 			return runner, nil

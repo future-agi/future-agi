@@ -1,0 +1,4 @@
+services:
+  property-catalog-operator:
+    image: ${FI_OPERATOR_IMAGE:?set FI_OPERATOR_IMAGE to the tested DEV operator image}
+    pull_policy: never

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision only a fresh, suffix-isolated TH-7247 DEV catalog."""
+"""Provision only a fresh, suffix-isolated CATALOG DEV catalog."""
 
 from __future__ import annotations
 
@@ -15,32 +15,32 @@ import urllib.parse
 import uuid
 
 
-SUFFIX = os.environ.get("TH7247_ROLLOUT_SUFFIX", "0816d")
+SUFFIX = os.environ.get("FI_ROLLOUT_SUFFIX", "0816d")
 if re.fullmatch(r"[0-9]{4}[a-z]", SUFFIX) is None:
-    raise RuntimeError("TH7247_ROLLOUT_SUFFIX must match NNNNx")
-CATALOG_EPOCH = int(os.environ.get("TH7247_CATALOG_EPOCH", "2"))
+    raise RuntimeError("FI_ROLLOUT_SUFFIX must match NNNNx")
+CATALOG_EPOCH = int(os.environ.get("FI_CATALOG_EPOCH", "2"))
 if not 1 <= CATALOG_EPOCH <= 65535:
-    raise RuntimeError("TH7247_CATALOG_EPOCH must be between 1 and 65535")
+    raise RuntimeError("FI_CATALOG_EPOCH must be between 1 and 65535")
 ORGANIZATION_ID = os.environ.get(
-    "TH7247_ORGANIZATION_ID", "36ab6a86-28ef-484e-9fa2-0aade2cde52d"
+    "FI_ORGANIZATION_ID", "36ab6a86-28ef-484e-9fa2-0aade2cde52d"
 )
 WORKSPACE_ID = os.environ.get(
-    "TH7247_WORKSPACE_ID", "f7f5533e-44a1-438b-9e6d-6f4747f1eb16"
+    "FI_WORKSPACE_ID", "f7f5533e-44a1-438b-9e6d-6f4747f1eb16"
 )
 PROJECT_IDS = tuple(
     value.strip()
     for value in os.environ.get(
-        "TH7247_PROJECT_IDS",
+        "FI_PROJECT_IDS",
         "5272afb0-4b6e-4cc5-8415-d41b297f6a20,"
         "d9d8498f-abab-42e0-9794-bb75a7f27350",
     ).split(",")
     if value.strip()
 )
-SPAN_SINCE = os.environ.get("TH7247_SPAN_SINCE", "2025-08-16T07:00:00Z")
-SPAN_UNTIL = os.environ.get("TH7247_SPAN_UNTIL", "2026-08-16T07:00:00Z")
+SPAN_SINCE = os.environ.get("FI_SPAN_SINCE", "2025-08-16T07:00:00Z")
+SPAN_UNTIL = os.environ.get("FI_SPAN_UNTIL", "2026-08-16T07:00:00Z")
 for field_name, value in (
-    ("TH7247_ORGANIZATION_ID", ORGANIZATION_ID),
-    ("TH7247_WORKSPACE_ID", WORKSPACE_ID),
+    ("FI_ORGANIZATION_ID", ORGANIZATION_ID),
+    ("FI_WORKSPACE_ID", WORKSPACE_ID),
 ):
     try:
         parsed = uuid.UUID(value)
@@ -49,40 +49,40 @@ for field_name, value in (
     if parsed.version != 4 or str(parsed) != value:
         raise RuntimeError(f"{field_name} must be a canonical UUIDv4")
 if not 1 <= len(PROJECT_IDS) <= 256 or PROJECT_IDS != tuple(sorted(set(PROJECT_IDS))):
-    raise RuntimeError("TH7247_PROJECT_IDS must contain 1..256 sorted unique UUIDv4s")
+    raise RuntimeError("FI_PROJECT_IDS must contain 1..256 sorted unique UUIDv4s")
 for project_id in PROJECT_IDS:
     parsed = uuid.UUID(project_id)
     if parsed.version != 4 or str(parsed) != project_id:
-        raise RuntimeError("TH7247_PROJECT_IDS must contain canonical UUIDv4s")
-ROOT = Path(f"/home/ubuntu/th7247-kartik-{SUFFIX}")
+        raise RuntimeError("FI_PROJECT_IDS must contain canonical UUIDv4s")
+ROOT = Path(f"/home/ubuntu/fi-kartik-{SUFFIX}")
 PRIVATE = ROOT / "private"
 RUNTIME = ROOT / "runtime"
 EVIDENCE = ROOT / "evidence"
-TARGET = f"th7247_catalog_dev_kartik_{SUFFIX}"
+TARGET = f"fi_catalog_dev_kartik_{SUFFIX}"
 OP_IMAGE = os.environ.get(
-    "TH7247_OPERATOR_IMAGE",
+    "FI_OPERATOR_IMAGE",
     "sha256:a64747143de3c0865babbc5bf0d161be03ac6eec784e4d49be416e8b202b209f",
 )
 if re.fullmatch(r"sha256:[0-9a-f]{64}", OP_IMAGE) is None:
-    raise RuntimeError("TH7247_OPERATOR_IMAGE must be an exact image ID")
+    raise RuntimeError("FI_OPERATOR_IMAGE must be an exact image ID")
 OP_RUNTIME_IMAGE = os.environ.get(
-    "TH7247_OPERATOR_RUNTIME_IMAGE",
-    "th7247-current-select:0816d-7a7dc207",
+    "FI_OPERATOR_RUNTIME_IMAGE",
+    "fi-current-select:0816d-7a7dc207",
 )
-if re.fullmatch(r"th7247-current-select:[0-9a-z-]+", OP_RUNTIME_IMAGE) is None:
-    raise RuntimeError("TH7247_OPERATOR_RUNTIME_IMAGE must be a TH-7247 DEV tag")
+if re.fullmatch(r"fi-current-select:[0-9a-z-]+", OP_RUNTIME_IMAGE) is None:
+    raise RuntimeError("FI_OPERATOR_RUNTIME_IMAGE must be a CATALOG DEV tag")
 GO_IMAGE = os.environ.get(
-    "TH7247_GO_IMAGE",
+    "FI_GO_IMAGE",
     "sha256:84c45a5c36b71430e1cc5845ab8ce4f0da84332eb97dc8903bfd9c33bd2be1c1",
 )
 if re.fullmatch(r"sha256:[0-9a-f]{64}", GO_IMAGE) is None:
-    raise RuntimeError("TH7247_GO_IMAGE must be an exact image ID")
-SOURCE_USER = f"th7247_catalog_source_ro_{SUFFIX}"
-CONTROL_USER = f"th7247_catalog_control_rw_{SUFFIX}"
-CONSUMER_USER = f"th7247_catalog_consumer_rw_{SUFFIX}"
-LEDGER_USER = f"th7247_catalog_ledger_ro_{SUFFIX}"
-API_USER = f"th7247_catalog_api_ro_{SUFFIX}"
-PG_USER = f"th7247_catalog_pg_ro_{SUFFIX}"
+    raise RuntimeError("FI_GO_IMAGE must be an exact image ID")
+SOURCE_USER = f"fi_catalog_source_ro_{SUFFIX}"
+CONTROL_USER = f"fi_catalog_control_rw_{SUFFIX}"
+CONSUMER_USER = f"fi_catalog_consumer_rw_{SUFFIX}"
+LEDGER_USER = f"fi_catalog_ledger_ro_{SUFFIX}"
+API_USER = f"fi_catalog_api_ro_{SUFFIX}"
+PG_USER = f"fi_catalog_pg_ro_{SUFFIX}"
 USERS = (SOURCE_USER, CONTROL_USER, CONSUMER_USER, LEDGER_USER, API_USER)
 SCHEMA = (
     (
@@ -449,7 +449,7 @@ catalog:
   dev_identity: dev:property-catalog/kartik-{SUFFIX}
 infrastructure:
   application_docker_network: futureagi_default
-  kafka_docker_network: th7247-catalog-dev_default
+  kafka_docker_network: fi-catalog-dev_default
   source_clickhouse_host: clickhouse
   source_clickhouse_native_port: 9000
   source_clickhouse_http_port: 8123
@@ -457,7 +457,7 @@ infrastructure:
   target_clickhouse_native_port: 9000
   target_clickhouse_http_port: 8123
   kafka_brokers:
-    - th7247-catalog-kafka-dev:9092
+    - fi-catalog-kafka-dev:9092
 provenance:
   write_clickhouse_hostname: 7c7e694b9c13
   source_clickhouse_hostname: 7c7e694b9c13

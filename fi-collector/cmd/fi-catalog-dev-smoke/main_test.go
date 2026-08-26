@@ -58,7 +58,7 @@ func (s *fakeCatalogSink) InsertDelivery(_ context.Context, rows []map[string]an
 }
 
 func TestDirectResumeOnlyRecoversPendingWALWithoutRestaging(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "th7247-catalog-dev-resume")
+	root := filepath.Join(t.TempDir(), "fi-catalog-dev-resume")
 	args := validDirectArgs(filepath.Join(root, "spool"))
 	failing := &fakeCatalogSink{deliveryErr: errors.New("ledger unavailable")}
 	dependencies := runtimeDependencies{
@@ -115,7 +115,7 @@ func (p *fakeEnvelopeProducer) Close() { p.closed = true }
 
 func TestDirectSmokeUsesActualBuilderAndOnlyCatalogTables(t *testing.T) {
 	t.Parallel()
-	root := filepath.Join(t.TempDir(), "th7247-catalog-dev-direct")
+	root := filepath.Join(t.TempDir(), "fi-catalog-dev-direct")
 	spool := filepath.Join(root, "spool")
 	args := validDirectArgs(spool)
 
@@ -152,7 +152,7 @@ func TestDirectSmokeUsesActualBuilderAndOnlyCatalogTables(t *testing.T) {
 
 func TestKafkaProduceSmokePublishesProjectScopedV3EnvelopesWithoutClickHouse(t *testing.T) {
 	t.Parallel()
-	root := filepath.Join(t.TempDir(), "th7247-catalog-dev-kafka")
+	root := filepath.Join(t.TempDir(), "fi-catalog-dev-kafka")
 	spool := filepath.Join(root, "spool")
 	state := filepath.Join(root, "state")
 	producer := &fakeEnvelopeProducer{}
@@ -173,7 +173,7 @@ func TestKafkaProduceSmokePublishesProjectScopedV3EnvelopesWithoutClickHouse(t *
 		"--sparse-project-id", testSparseProject, "--dense-project-id", testDenseProject,
 		"--producer-stream-id", testStreamID, "--spool-dir", spool,
 		"--state-dir", state, "--kafka-brokers", "127.0.0.1:29092",
-		"--kafka-topic", "th7247.dev.span-attribute-catalog.v1", "--timeout", "10s",
+		"--kafka-topic", "futureagi.dev.span-attribute-catalog.v1", "--timeout", "10s",
 	}
 	var output bytes.Buffer
 	if err := runCLI(args, &output, dependencies); err != nil {
@@ -211,7 +211,7 @@ func TestKafkaProduceSmokePublishesProjectScopedV3EnvelopesWithoutClickHouse(t *
 	}
 
 	evidence := decodeEvidence(t, output.Bytes())
-	if evidence.Mode != modeKafkaProduce || evidence.Topic != "th7247.dev.span-attribute-catalog.v1" ||
+	if evidence.Mode != modeKafkaProduce || evidence.Topic != "futureagi.dev.span-attribute-catalog.v1" ||
 		evidence.Database != "" || evidence.ReplayAttempted != 2 || evidence.ReplayDelivered != 2 ||
 		len(evidence.Envelopes) != 2 || len(evidence.TablesWritten) != 0 {
 		t.Fatalf("unexpected Kafka evidence: %#v", evidence)
@@ -236,7 +236,7 @@ func TestKafkaProduceSmokePublishesProjectScopedV3EnvelopesWithoutClickHouse(t *
 
 func TestSmokeFailsClosedBeforeNetwork(t *testing.T) {
 	t.Parallel()
-	base := filepath.Join(t.TempDir(), "th7247-catalog-dev-guard", "spool")
+	base := filepath.Join(t.TempDir(), "fi-catalog-dev-guard", "spool")
 	valid := validDirectArgs(base)
 	tests := []struct {
 		name    string
@@ -248,7 +248,7 @@ func TestSmokeFailsClosedBeforeNetwork(t *testing.T) {
 		{"remote ClickHouse", replaceFlag("--clickhouse-url", "http://192.0.2.1:18123"), "loopback"},
 		{"non-isolated database", replaceFlag("--database", "futureagi"), "isolated"},
 		{"long timeout", replaceFlag("--timeout", "16s"), "timeout"},
-		{"relative spool", replaceFlag("--spool-dir", "th7247-catalog-dev-spool"), "absolute"},
+		{"relative spool", replaceFlag("--spool-dir", "fi-catalog-dev-spool"), "absolute"},
 		{"same fixture tenant", replaceFlag("--dense-project-id", testSparseProject), "different"},
 	}
 	for _, test := range tests {
@@ -264,14 +264,14 @@ func TestSmokeFailsClosedBeforeNetwork(t *testing.T) {
 
 func TestKafkaGuardsRejectRemoteAndMixedSettings(t *testing.T) {
 	t.Parallel()
-	root := filepath.Join(t.TempDir(), "th7247-catalog-dev-kafka-guard")
+	root := filepath.Join(t.TempDir(), "fi-catalog-dev-kafka-guard")
 	valid := []string{
 		"--mode", "kafka-produce", "--environment", devEnvironment,
 		"--ack", devAcknowledgement, "--epoch", "91",
 		"--sparse-project-id", testSparseProject, "--dense-project-id", testDenseProject,
 		"--producer-stream-id", testStreamID,
 		"--spool-dir", filepath.Join(root, "spool"), "--state-dir", filepath.Join(root, "state"),
-		"--kafka-brokers", "localhost:29092", "--kafka-topic", "th7247.dev.catalog.v1",
+		"--kafka-brokers", "localhost:29092", "--kafka-topic", "futureagi.dev.catalog.v1",
 	}
 	if _, err := parseCLI(valid); err != nil {
 		t.Fatalf("valid Kafka config rejected: %v", err)
@@ -288,7 +288,7 @@ func TestKafkaGuardsRejectRemoteAndMixedSettings(t *testing.T) {
 
 func TestDevDirectoryRejectsSymlinkTarget(t *testing.T) {
 	t.Parallel()
-	root := filepath.Join(t.TempDir(), "th7247-catalog-dev-symlink")
+	root := filepath.Join(t.TempDir(), "fi-catalog-dev-symlink")
 	realDirectory := filepath.Join(root, "real")
 	if err := os.MkdirAll(realDirectory, 0o700); err != nil {
 		t.Fatal(err)
@@ -308,7 +308,7 @@ func validDirectArgs(spool string) []string {
 		"--epoch", "91", "--sparse-project-id", testSparseProject,
 		"--dense-project-id", testDenseProject, "--producer-stream-id", testStreamID,
 		"--spool-dir", spool, "--clickhouse-url", "http://127.0.0.1:18123",
-		"--database", "th7247_catalog_dev_test", "--timeout", "10s",
+		"--database", "fi_catalog_dev_test", "--timeout", "10s",
 	}
 }
 
@@ -345,7 +345,7 @@ func assertDirectEvidence(t *testing.T, evidence smokeEvidence, wantSequence uin
 	t.Helper()
 	if evidence.Format != evidenceFormat || evidence.Version != evidenceVersion ||
 		evidence.Environment != devEnvironment || evidence.Mode != modeDirect ||
-		evidence.CatalogEpoch != 91 || evidence.Database != "th7247_catalog_dev_test" ||
+		evidence.CatalogEpoch != 91 || evidence.Database != "fi_catalog_dev_test" ||
 		evidence.Topic != "" || evidence.ProducerStreamID != testStreamID ||
 		evidence.ReplayAttempted != 2 || evidence.ReplayDelivered != 2 || len(evidence.Fixtures) != 2 ||
 		len(evidence.Envelopes) != 2 || evidence.ElapsedMilliseconds != 0 {

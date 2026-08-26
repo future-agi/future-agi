@@ -39,9 +39,9 @@ RUNTIME_DIRECTORY = "/var/lib/property-catalog-runtime"
 REVISION_FENCE_FILE = f"{RUNTIME_DIRECTORY}/revision-fence-v2.json"
 DRAIN_PROOF_FILE = f"{RUNTIME_DIRECTORY}/producer-drain-proof-v2.json"
 PRODUCER_RETIREMENT_FILE = f"{RUNTIME_DIRECTORY}/producer-state-retirements-v1.json"
-ROLLOUT_ACK = "TH7247_UNIFIED_PROPERTY_CATALOG_DEV"
-SIDECAR_ACK = "TH7247_PROPERTY_CATALOG_PYTHON_GO_SIDECAR_V1"
-GO_DEV_ACK = "TH7247_UNIFIED_PROPERTY_CATALOG_V1_DEV_ONLY"
+ROLLOUT_ACK = "FI_UNIFIED_PROPERTY_CATALOG_DEV"
+SIDECAR_ACK = "FI_PROPERTY_CATALOG_PYTHON_GO_SIDECAR_V1"
+GO_DEV_ACK = "FI_UNIFIED_PROPERTY_CATALOG_V1_DEV_ONLY"
 RUNTIME_FACTORY = (
     "tracer.services.clickhouse.v2.property_catalog.dev_runtime."
     "configured_property_catalog_dev_runtime"
@@ -130,7 +130,7 @@ _SECRET_FIELDS = (
 
 _SAFE_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-_DEV_DATABASE_RE = re.compile(r"^th7247_catalog_dev_[a-z0-9][a-z0-9_]*$")
+_DEV_DATABASE_RE = re.compile(r"^fi_catalog_dev_[a-z0-9][a-z0-9_]*$")
 _DEV_IDENTITY_RE = re.compile(r"^dev:[a-z0-9][a-z0-9._:/-]{2,127}$")
 _KAFKA_IDENTITY_RE = re.compile(r"^[a-zA-Z0-9._-]{1,249}$")
 _IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._:/-]*@[s]ha256:(?P<digest>[0-9a-f]{64})$")
@@ -447,7 +447,7 @@ def validate_config(raw: Mapping[str, Any]) -> WorkloadConfig:
     target_database = _text(catalog["target_database"], "target database")
     if _DEV_DATABASE_RE.fullmatch(target_database) is None:
         raise WorkloadValidationError(
-            "target database must use the isolated th7247_catalog_dev_ prefix"
+            "target database must use the isolated fi_catalog_dev_ prefix"
         )
     if source_database == target_database:
         raise WorkloadValidationError("source and target databases must differ")

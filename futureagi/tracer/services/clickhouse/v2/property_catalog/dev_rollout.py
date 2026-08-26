@@ -30,8 +30,8 @@ from .publisher import (
 from .reconciler import ReconcileMode
 from .source_adapters import DefinitionSourceAdapter
 
-DEV_ROLLOUT_ACK = "TH7247_UNIFIED_PROPERTY_CATALOG_DEV"
-DEV_DATABASE_PREFIX = "th7247_catalog_dev_"
+DEV_ROLLOUT_ACK = "FI_UNIFIED_PROPERTY_CATALOG_DEV"
+DEV_DATABASE_PREFIX = "fi_catalog_dev_"
 DEV_ENVIRONMENT = "development"
 DEV_CLOUD_DEPLOYMENT = "DEV"
 DEV_STANDARD_MAX_WALL_MS = settings.PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS

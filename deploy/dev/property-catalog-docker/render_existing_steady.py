@@ -24,7 +24,7 @@ import yaml
 TASK_QUEUE_PREFIX = "property_catalog_dev_sidecar_"
 SCHEDULED_RECONCILE_WALL_MS = "1200000"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
-_TARGET_RE = re.compile(r"th7247_catalog_dev_[a-z0-9][a-z0-9_]*")
+_TARGET_RE = re.compile(r"fi_catalog_dev_[a-z0-9][a-z0-9_]*")
 _UUID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
@@ -67,7 +67,7 @@ def _load_base(path: Path) -> Mapping[str, Any]:
     top = _mapping(raw, "bootstrap Compose")
     name = top.get("name")
     if not isinstance(name, str) or not name.startswith(
-        "th7247-property-catalog-kartik-"
+        "fi-property-catalog-kartik-"
     ):
         raise SteadyStateRenderError("bootstrap Compose project is outside Kartik DEV")
     services = _mapping(top.get("services"), "bootstrap services")

@@ -1,4 +1,4 @@
-"""Checked-in infrastructure for the isolated TH-7247 DEV runtime.
+"""Checked-in infrastructure for the isolated CATALOG DEV runtime.
 
 The module deliberately separates the write-capable catalog identity from the
 SELECT-only canonical-span identity.  Python fence files and Go drain proofs
@@ -149,7 +149,7 @@ _CREATE_TABLE_RE = re.compile(
     r"^CREATE TABLE IF NOT EXISTS ([A-Za-z_][A-Za-z0-9_]*)\s*\(",
     re.IGNORECASE,
 )
-DEV_SIDECAR_ACK = "TH7247_PROPERTY_CATALOG_PYTHON_GO_SIDECAR_V1"
+DEV_SIDECAR_ACK = "FI_PROPERTY_CATALOG_PYTHON_GO_SIDECAR_V1"
 CHECKED_IN_DEV_RUNTIME_FACTORY_PATH = (
     "tracer.services.clickhouse.v2.property_catalog.dev_runtime."
     "configured_property_catalog_dev_runtime"

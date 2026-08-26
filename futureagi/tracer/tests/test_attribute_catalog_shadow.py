@@ -139,7 +139,7 @@ def test_shadow_qualification_fails_closed_when_activation_is_missing(monkeypatc
 @override_settings(
     SPAN_ATTRIBUTE_CATALOG_READ_MODE="shadow",
     SPAN_ATTRIBUTE_CATALOG_EPOCH=7,
-    SPAN_ATTRIBUTE_CATALOG_DATABASE="th7247_catalog_dev_normal_0813b",
+    SPAN_ATTRIBUTE_CATALOG_DATABASE="fi_catalog_dev_normal_0813b",
 )
 def test_shadow_routes_reader_to_isolated_catalog_database(monkeypatch):
     captured: dict[str, Any] = {}
@@ -158,7 +158,7 @@ def test_shadow_routes_reader_to_isolated_catalog_database(monkeypatch):
     )
 
     assert observed is not None
-    assert captured["catalog_database"] == "th7247_catalog_dev_normal_0813b"
+    assert captured["catalog_database"] == "fi_catalog_dev_normal_0813b"
 
 
 @pytest.mark.unit

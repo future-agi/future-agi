@@ -171,7 +171,7 @@ func checkpointLoaderForResponse(t *testing.T, body string, inspect func(*http.R
 		}, nil
 	})
 	loader, err := NewClickHouseCheckpointLoader(ClickHouseSinkConfig{
-		URL: "http://clickhouse:8123", Database: "th7247_catalog_dev_checkpoint_test",
+		URL: "http://clickhouse:8123", Database: "fi_catalog_dev_checkpoint_test",
 		Environment: DevelopmentEnvironment,
 		Username:    "ledger_reader", Password: "secret", RequestTimeout: time.Second,
 		RoundTripper: transport,
@@ -187,7 +187,7 @@ func checkpointLoaderForTransport(
 ) *ClickHouseCheckpointLoader {
 	t.Helper()
 	loader, err := NewClickHouseCheckpointLoader(ClickHouseSinkConfig{
-		URL: "http://clickhouse:8123", Database: "th7247_catalog_dev_checkpoint_test",
+		URL: "http://clickhouse:8123", Database: "fi_catalog_dev_checkpoint_test",
 		Environment: DevelopmentEnvironment,
 		Username:    "ledger_reader", Password: "secret", RequestTimeout: time.Second,
 		RoundTripper: roundTripFunc(transport),
@@ -628,7 +628,7 @@ func TestDeliveryLeaseGuardReadsExactBoundedManifestStreamLease(t *testing.T) {
 		}
 		values := request.URL.Query()
 		for name, want := range map[string]string{
-			"database": "th7247_catalog_dev_checkpoint_test", "param_organization_id": testOrganization,
+			"database": "fi_catalog_dev_checkpoint_test", "param_organization_id": testOrganization,
 			"param_workspace_id": testWorkspace, "param_catalog_epoch": "3",
 			"param_catalog_revision": "17", "param_build_token": testBuildToken,
 			"param_source_adapter": string(AdapterSpanAttribute), "param_producer_stream_id": testStream,

@@ -48,7 +48,7 @@ STREAM = "44444444-4444-4444-8444-444444444444"
 NOW = datetime(2026, 8, 14, 12, tzinfo=UTC)
 EMPTY = hashlib.sha256(b"").hexdigest()
 ZERO = "0" * 64
-DATABASE = "th7247_catalog_dev_hot_drain"
+DATABASE = "fi_catalog_dev_hot_drain"
 SOURCE_SCOPE = BuildPlanSourceScope(
     project_ids=(PROJECT,),
     span_since_us=1_723_638_000_000_000,

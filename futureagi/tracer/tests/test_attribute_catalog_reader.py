@@ -193,7 +193,7 @@ def _reader(
 def test_catalog_database_qualifies_only_closed_catalog_tables():
     reader, executor = _reader(
         _successful_responder(key_rows=[_key_row("alpha", "string")]),
-        catalog_database="th7247_catalog_dev_normal_0813b",
+        catalog_database="fi_catalog_dev_normal_0813b",
     )
 
     result = reader.read_key_candidates(page_size=2)
@@ -207,7 +207,7 @@ def test_catalog_database_qualifies_only_closed_catalog_tables():
         "span_attribute_key_catalog",
     )
     for call, table in zip(executor.calls, expected_tables, strict=True):
-        assert f"FROM `th7247_catalog_dev_normal_0813b`.`{table}`" in call.sql
+        assert f"FROM `fi_catalog_dev_normal_0813b`.`{table}`" in call.sql
         assert "FROM spans" not in call.sql
 
 

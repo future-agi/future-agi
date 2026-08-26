@@ -16,8 +16,8 @@ import (
 
 const (
 	maxCatalogInsertBytes     = 16 << 20
-	devCatalogDatabasePrefix  = "th7247_catalog_dev_"
-	prodCatalogDatabasePrefix = "th7247_catalog_prod_"
+	devCatalogDatabasePrefix  = "fi_catalog_dev_"
+	prodCatalogDatabasePrefix = "fi_catalog_prod_"
 )
 
 var definitionColumns = []string{

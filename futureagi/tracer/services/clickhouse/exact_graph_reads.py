@@ -1112,7 +1112,7 @@ def _enumerate_exact_trace_ids(
 
         classify_rows(candidate_rows)
 
-    # TH-7247 cold DEV proof (2026-08-25) for a 12M trace graph with annotator
+    # CATALOG cold DEV proof (2026-08-25) for a 12M trace graph with annotator
     # IS NULL, tokens > 1, and ai_interruption_count > 2 issued 258 sequential
     # CH statements. The first key-only candidate follow-up still hit its 1,001
     # sentinel for ai_interruption_count > 3 and fell back to 259 statements in

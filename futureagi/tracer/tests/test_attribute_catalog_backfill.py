@@ -1102,10 +1102,10 @@ def test_timed_io_enforces_absolute_ten_second_select_deadline() -> None:
         io.select("SELECT 1", {}, role="source", settings={})
     assert time.monotonic() - started < 0.2
     assert source.query_calls[0][1]["transport_settings"] == {
-        "X-ClickHouse-Query-Id": "th7247_catalog_backfill_work_worktoken"
+        "X-ClickHouse-Query-Id": "fi_catalog_backfill_work_worktoken"
     }
     assert cancel.command_call[1]["parameters"] == {
-        "query_id": "th7247_catalog_backfill_work_worktoken"
+        "query_id": "fi_catalog_backfill_work_worktoken"
     }
     assert "KILL QUERY" in cancel.command_call[0][0]
 

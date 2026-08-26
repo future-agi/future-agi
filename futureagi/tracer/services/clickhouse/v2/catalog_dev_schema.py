@@ -27,8 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-DEVELOPMENT_SENTINEL = "TH7247_CATALOG_DEV_ONLY"
-TARGET_DATABASE_PREFIX = "th7247_catalog_dev_"
+DEVELOPMENT_SENTINEL = "FI_CATALOG_DEV_ONLY"
+TARGET_DATABASE_PREFIX = "fi_catalog_dev_"
 
 
 class CatalogDevSchemaError(RuntimeError):
@@ -943,7 +943,7 @@ def ensure_catalog_dev_schema(
 def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Apply only the pinned TH-7247 catalog tables to a loopback-forwarded "
+            "Apply only the pinned CATALOG catalog tables to a loopback-forwarded "
             "ClickHouse 25.3 development server and print JSON evidence."
         )
     )
@@ -960,11 +960,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--username",
-        default=os.environ.get("TH7247_CLICKHOUSE_USER", "default"),
+        default=os.environ.get("FI_CLICKHOUSE_USER", "default"),
     )
     parser.add_argument(
         "--password-env",
-        default="TH7247_CLICKHOUSE_PASSWORD",
+        default="FI_CLICKHOUSE_PASSWORD",
         help="environment variable containing the ClickHouse password",
     )
     parser.add_argument("--timeout-seconds", type=float, default=30.0)

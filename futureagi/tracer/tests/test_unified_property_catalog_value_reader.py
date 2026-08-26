@@ -63,7 +63,7 @@ def test_clickhouse25_aggregate_inputs_are_raw_qualified() -> None:
         _ACTIVATION_SQL
     )
 
-    definitions_sql = _definition_ctes("th7247_catalog_dev_test")
+    definitions_sql = _definition_ctes("fi_catalog_dev_test")
     assert "FROM lineage_versioned AS versioned_rows" in definitions_sql
     assert "FROM latest_binding_rows AS binding" in definitions_sql
     assert "any(binding.property_id) AS property_id" in definitions_sql
@@ -74,11 +74,11 @@ def test_clickhouse25_aggregate_inputs_are_raw_qualified() -> None:
 def test_property_value_reader_accepts_isolated_production_database_namespace() -> None:
     reader = PropertyCatalogValueReader(
         FakeExecutor([]),
-        catalog_database="th7247_catalog_prod_values",
+        catalog_database="fi_catalog_prod_values",
     )
 
-    assert "`th7247_catalog_prod_values`" in reader._activation_sql
-    assert "`th7247_catalog_prod_values`" in reader._value_page_sql
+    assert "`fi_catalog_prod_values`" in reader._activation_sql
+    assert "`fi_catalog_prod_values`" in reader._value_page_sql
 
 
 def test_value_rank_casts_qualified_raw_enum8_before_string_alias_rewrite() -> None:
@@ -431,7 +431,7 @@ class FakeExecutor:
 def _reader(executor):
     return PropertyCatalogValueReader(
         executor,
-        catalog_database="th7247_catalog_dev_test",
+        catalog_database="fi_catalog_dev_test",
     )
 
 
@@ -483,7 +483,7 @@ def test_value_reader_returns_typed_signed_keyset_page_at_active_revision(settin
     )
     assert value_call["params"]["catalog_lineage_anchor_revision"] == 1
     assert (
-        "`th7247_catalog_dev_test`.`span_attribute_value_catalog`"
+        "`fi_catalog_dev_test`.`span_attribute_value_catalog`"
         in value_call["query"]
     )
     assert " OFFSET " not in value_call["query"].upper()

@@ -62,7 +62,7 @@ DESIRED_STREAM_MAX_MEMORY = 512 * 2**20
 # + UPDATE (+ savepoint bookkeeping under the test transaction).
 REAP_PROGRESS_FINALIZE_MAX_PG_QUERIES = 8
 
-# ── TH-7247: exact filtered trace list + graph reads ─────────────────
+# ── CATALOG: exact filtered trace list + graph reads ─────────────────
 # These gates exercise the production CH25 builders against both the ordinary
 # target project and the larger mixed/noise project.  Duration ceilings are
 # deliberately generous for shared CI; row volume, memory, and statement count

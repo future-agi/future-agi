@@ -10,7 +10,7 @@ or another pre-existing table.
 Schema files `025_span_attribute_catalog.sql` and
 `026_span_attribute_catalog_delivery.sql` create six independent tables. The
 dev harness applies their six pinned `CREATE TABLE` statements directly to a
-new `th7247_catalog_dev_*` database; it does not invoke the normal schema runner
+new `fi_catalog_dev_*` database; it does not invoke the normal schema runner
 or write `schema_versions`.
 
 Production currently has one shard and three replicas. A future, separately

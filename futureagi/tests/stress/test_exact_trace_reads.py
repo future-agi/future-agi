@@ -120,7 +120,7 @@ def test_exact_filtered_trace_reads_are_complete_and_project_scoped(stress_datas
         filters = _filters(manifest.session_ids)
         expected_trace_ids = set(manifest.trace_ids)
 
-        list_tag = f"stress:TH7247:exact-trace-list:{dataset_name}"
+        list_tag = f"stress:CATALOG:exact-trace-list:{dataset_name}"
         with ch_query_budget(list_tag) as list_budget:
             analytics = _TaggedAnalytics(list_tag)
             builder = TraceListQueryBuilderV2(
@@ -154,7 +154,7 @@ def test_exact_filtered_trace_reads_are_complete_and_project_scoped(stress_datas
             read_rows_floor=EXACT_TRACE_LIST_READ_ROWS_GRANULE_FLOOR,
         )
 
-        graph_tag = f"stress:TH7247:exact-trace-graph:{dataset_name}"
+        graph_tag = f"stress:CATALOG:exact-trace-graph:{dataset_name}"
         with ch_query_budget(graph_tag) as graph_budget:
             graph = read_exact_system_graph(
                 analytics=_TaggedAnalytics(graph_tag),
@@ -183,4 +183,4 @@ def test_exact_filtered_trace_reads_are_complete_and_project_scoped(stress_datas
             "graph": _metrics(graph_budget),
         }
 
-    print(f"\nTH7247-EXACT-TRACE-READS :: {measurements}")
+    print(f"\nFI-EXACT-TRACE-READS :: {measurements}")
