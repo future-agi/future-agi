@@ -18,10 +18,25 @@ RUNNER_RESERVED_ENVIRONMENT = {
 
 
 class SecretReferenceSerializer(serializers.Serializer):
-    manager = serializers.ChoiceField(choices=("platform-vault",))
+    manager = serializers.ChoiceField(
+        choices=("platform-vault", "harness_environment_file")
+    )
     key = serializers.CharField(max_length=255)
     version = serializers.CharField(max_length=255, required=False, allow_null=True)
-    purpose = serializers.ChoiceField(choices=("target_provider", "source_checkout"))
+    # Vault refs carry a closed purpose vocabulary; the platform's own
+    # credential-file uploads emit a free-text descriptive purpose, so the
+    # vocabulary is enforced per manager in validate().
+    purpose = serializers.CharField(max_length=255)
+
+    def validate(self, attrs):
+        if attrs["manager"] == "platform-vault" and attrs["purpose"] not in (
+            "target_provider",
+            "source_checkout",
+        ):
+            raise serializers.ValidationError(
+                {"purpose": "platform-vault refs accept target_provider or source_checkout"}
+            )
+        return attrs
 
 
 class HarnessSourceSerializer(serializers.Serializer):
@@ -61,10 +76,6 @@ class HarnessSourceSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"endpoint": "required for remote sources"}
             )
-        if set(attrs.get("environment_values", {})) & set(attrs.get("secret_refs", {})):
-            raise serializers.ValidationError(
-                "an environment variable cannot be both uploaded and a secret reference"
-            )
         return attrs
 
 
@@ -74,6 +85,31 @@ class HarnessAgentSerializer(serializers.Serializer):
     secret_refs = serializers.DictField(
         child=SecretReferenceSerializer(), required=False, default=dict
     )
+    # Pasted environment values never ride the persisted job payload: the
+    # provider strips them into encrypted credential storage before the job
+    # row is written, which is what keeps the UI's "never written to jobs,
+    # logs, or artifacts" promise true.
+    environment_values = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        default=dict,
+        write_only=True,
+    )
+
+    def validate_environment_values(self, value):
+        for name in value:
+            if not name or not str(name).replace("_", "").isalnum():
+                raise serializers.ValidationError(
+                    f"invalid environment-variable name: {name!r}"
+                )
+        return value
+
+    def validate(self, attrs):
+        if set(attrs.get("environment_values", {})) & set(attrs.get("secret_refs", {})):
+            raise serializers.ValidationError(
+                "an environment variable cannot be both pasted and a secret reference"
+            )
+        return attrs
 
     def validate_config(self, value):
         if not isinstance(value, dict):
@@ -97,7 +133,10 @@ class HarnessAgentSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"invalid environment-variable alias: {alias!r}"
                 )
-            if reference["purpose"] != "target_provider":
+            if (
+                reference["manager"] == "platform-vault"
+                and reference["purpose"] != "target_provider"
+            ):
                 raise serializers.ValidationError(
                     "agent secret_refs only accept purpose target_provider"
                 )

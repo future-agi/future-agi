@@ -338,13 +338,36 @@ export const adjustmentStatus = (adjustment, jobStage) => {
   return `${readable(adjustment.status)} · will land at ${readable(adjustment.target_stage)}`;
 };
 
+// Nested-contract validation errors arrive as {"agent": {"config": ["…"]}}
+// with no detail key; walk to the first leaf string and keep its field path so
+// a serializer rejection reads as an actionable message, never the fallback.
+const firstLeafError = (value, path = []) => {
+  if (typeof value === "string" && value.trim()) {
+    return path.length ? `${path.join(".")}: ${value}` : value;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstLeafError(item, path);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value)) {
+      if (key === "statusCode") continue;
+      const found = firstLeafError(item, [...path, key]);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
 export const errorMessage = (error) => {
   const detail = error?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
-  // DRF field errors arrive as {field: ["message"]} rather than a string.
-  if (detail && typeof detail === "object") {
-    const first = Object.values(detail).flat().find(Boolean);
-    if (typeof first === "string") return first;
-  }
+  const fromDetail = firstLeafError(detail);
+  if (fromDetail) return fromDetail;
+  const fromBody = firstLeafError(error);
+  if (fromBody) return fromBody;
   return error?.message || "Something went wrong";
 };

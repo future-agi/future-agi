@@ -177,13 +177,45 @@ export default function HarnessCreate() {
     setPreflightDirty(Boolean(preflight));
   };
 
+  // The contract wants "org/repo" with the branch in a separate ref, but the
+  // field invites a pasted GitHub URL — accept both, lift the branch out of a
+  // /tree/ (or /blob/, /commit/) link, and validate against mirrors of the
+  // backend patterns so bad input fails HERE with a usable message instead of
+  // an opaque server 400.
+  const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+  const REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
+
+  const parseGithubSource = (raw) => {
+    const value = raw
+      .trim()
+      .split(/[?#]/)[0]
+      .replace(/\/+$/, "")
+      .replace(/\.git$/, "");
+    const match = value.match(
+      /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/]+\/[^/]+)(?:\/(?:tree|blob|commit)\/(.+))?$/i,
+    );
+    const repository = (match ? match[1] : value).replace(/\.git$/, "");
+    const ref = match ? match[2] || undefined : undefined;
+    if (!REPOSITORY_PATTERN.test(repository) || (ref && !REF_PATTERN.test(ref))) {
+      return {
+        error:
+          "Enter the repository as org/repo, or paste a github.com URL (optionally with /tree/<branch>).",
+      };
+    }
+    return { repository, ref };
+  };
+
   const sourcePayload = () => {
     if (sourceMode === "upload")
-      return { source_id: uploadedSource?.source_id };
+      return { kind: "archive", archive_artifact_id: uploadedSource?.source_id };
+    const parsed = parseGithubSource(githubRepository);
+    if (parsed.error) throw new Error(parsed.error);
     return {
-      github_repository: githubRepository.trim(),
-      github_visibility: githubVisibility,
-      github_installation_id:
+      kind: "github",
+      repository: parsed.repository,
+      ref: parsed.ref,
+      visibility: githubVisibility,
+      installation_id:
         githubVisibility === "private"
           ? githubInstallationId.trim() || undefined
           : undefined,
@@ -226,11 +258,23 @@ export default function HarnessCreate() {
     }
   };
 
+  // The backend speaks the nested futureagi.harness-job.v1 contract: flat
+  // fields are rejected as unknown. Pasted env values travel in the write-only
+  // agent.environment_values channel (stripped into encrypted credential
+  // storage server-side, never persisted on the job) — config carries only
+  // the non-secret connector settings.
   const checkPayload = () => ({
-    ...sourcePayload(),
-    secret_refs: secretFileRefs,
-    connector_config: configurationValues,
-    environment_values: environmentValues,
+    schema_version: "futureagi.harness-job.v1",
+    source: sourcePayload(),
+    agent: {
+      // The real-voice call runner activates only on the explicit livekit
+      // connector; "auto" keeps the typed not-wired fallback.
+      connector: "livekit",
+      config: { ...configurationValues },
+      secret_refs: secretFileRefs,
+      environment_values: environmentValues,
+    },
+    artifacts: { level: "traces" },
   });
 
   const inspect = async () => {
@@ -264,7 +308,6 @@ export default function HarnessCreate() {
       const value = await createHarnessJob({
         ...checkPayload(),
         scenario_count: Number(scenarioCount),
-        connector: "auto",
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));

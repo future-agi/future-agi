@@ -29582,7 +29582,10 @@ export const simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax = 255;
 
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
 
+export const simulateApiHarnessJobsCreateBodyAgentSecretRefsPurposeMax = 255;
+
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {  };
+export const simulateApiHarnessJobsCreateBodyAgentEnvironmentValuesDefault = {  };
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
 export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 10;
 
@@ -29652,11 +29655,12 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
   "connector": zod.enum(['livekit', 'vapi', 'retell', 'auto']),
   "config": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
   "secret_refs": zod.record(zod.string(), zod.object({
-  "manager": zod.enum(['platform-vault']),
+  "manager": zod.enum(['platform-vault', 'harness_environment_file']),
   "key": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax),
   "version": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax).optional(),
-  "purpose": zod.enum(['target_provider', 'source_checkout'])
-})).default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault)
+  "purpose": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyAgentSecretRefsPurposeMax)
+})).default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault),
+  "environment_values": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsCreateBodyAgentEnvironmentValuesDefault)
 }),
   "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyScenarioCountMax).default(simulateApiHarnessJobsCreateBodyScenarioCountDefault),
   "seed": zod.number().optional(),
@@ -29717,7 +29721,10 @@ export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
 
+export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsPurposeMax = 255;
+
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {  };
+export const simulateApiHarnessJobsPreflightBodyAgentEnvironmentValuesDefault = {  };
 export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
 export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 10;
 
@@ -29787,11 +29794,12 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
   "connector": zod.enum(['livekit', 'vapi', 'retell', 'auto']),
   "config": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
   "secret_refs": zod.record(zod.string(), zod.object({
-  "manager": zod.enum(['platform-vault']),
+  "manager": zod.enum(['platform-vault', 'harness_environment_file']),
   "key": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax),
   "version": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax).optional(),
-  "purpose": zod.enum(['target_provider', 'source_checkout'])
-})).default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault)
+  "purpose": zod.string().min(1).max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsPurposeMax)
+})).default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault),
+  "environment_values": zod.record(zod.string(), zod.string()).default(simulateApiHarnessJobsPreflightBodyAgentEnvironmentValuesDefault)
 }),
   "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsPreflightBodyScenarioCountMax).default(simulateApiHarnessJobsPreflightBodyScenarioCountDefault),
   "seed": zod.number().optional(),

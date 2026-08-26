@@ -265,8 +265,35 @@ class HostedSourceAcquirer:
 
 class PlatformSecretResolver:
     def resolve(self, job: HostedHarnessJob) -> dict[str, str]:
+        from simulate.models import HarnessCredentialFile
+        from simulate.models.harness_environment_credentials import (
+            HarnessEnvironmentCredentials,
+        )
+        from simulate.services.harness_credentials import PLATFORM_FILE_MANAGER
+
         resolved: dict[str, str] = {}
         for alias, reference in job.payload["agent"]["secret_refs"].items():
+            if reference["manager"] == PLATFORM_FILE_MANAGER:
+                record = HarnessCredentialFile.objects.filter(
+                    id=reference["key"],
+                    organization=job.organization,
+                    deleted=False,
+                ).first()
+                if record is None:
+                    raise HostedHarnessError(
+                        "secret_not_found",
+                        f"credential file not found for alias {alias}",
+                        status_code=422,
+                    )
+                try:
+                    resolved[alias] = record.get_content().decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise HostedHarnessError(
+                        "secret_not_text",
+                        f"credential file for alias {alias} is not UTF-8 text",
+                        status_code=422,
+                    ) from exc
+                continue
             if reference["manager"] != "platform-vault":
                 raise HostedHarnessError(
                     "secret_manager_unsupported",
@@ -294,6 +321,16 @@ class PlatformSecretResolver:
                     status_code=422,
                 )
             resolved[alias] = secret.get_value()
+        # Pasted environment values were stripped from the persisted payload at
+        # create time; they rejoin the secrets map only here, at launch.
+        profile = HarnessEnvironmentCredentials.objects.filter(
+            harness_job_id=str(job.id),
+            organization=job.organization,
+            deleted=False,
+        ).first()
+        if profile is not None:
+            for name, value in profile.get_environment().items():
+                resolved.setdefault(name, value)
         return resolved
 
 

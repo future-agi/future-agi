@@ -104,12 +104,31 @@ class DaytonaHarnessProvider:
                 {"detail": "Idempotency-Key header is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Pasted environment values must never reach the persisted payload —
+        # they live in encrypted credential storage and are resolved into the
+        # sandbox at launch, alongside vault refs.
+        payload = dict(request.validated_data)
+        agent_cfg = dict(payload.get("agent") or {})
+        environment_values = agent_cfg.pop("environment_values", {}) or {}
+        payload["agent"] = agent_cfg
         try:
             job, _ = create_hosted_job(
                 organization,
-                request.validated_data,
+                payload,
                 idempotency_key=idempotency_key,
             )
+            if environment_values:
+                from simulate.services.harness_credentials import (
+                    save_environment_credentials,
+                )
+
+                save_environment_credentials(
+                    str(job.id),
+                    environment_values=environment_values,
+                    secret_refs=agent_cfg.get("secret_refs", {}) or {},
+                    organization=organization,
+                    workspace=getattr(request, "workspace", None),
+                )
             base_url = getattr(
                 settings, "HARNESS_PUBLIC_BASE_URL", ""
             ) or request.build_absolute_uri("/").rstrip("/")
@@ -267,6 +286,9 @@ class SandboxHarnessProvider:
             "connector": agent.get("connector", "auto"),
             "connector_config": agent.get("config", {}) or {},
             "secret_refs": agent.get("secret_refs", {}) or {},
+            # The sandbox owns the ephemeral-mount semantics for these; they
+            # never persist beyond the run.
+            "environment_values": agent.get("environment_values", {}) or {},
             "platform_run_id": data.get("platform_run_id"),
             "metadata": data.get("metadata", {}) or {},
         }
@@ -296,6 +318,18 @@ class SandboxHarnessProvider:
 
         try:
             payload = self._flatten_source(request.validated_data)
+            if payload.get("secret_refs"):
+                from simulate.services.harness_credentials import (
+                    materialize_secret_refs,
+                )
+
+                # Durable platform file refs become fresh attempt-scoped runner
+                # refs at submission — same conversion the rerun path performs.
+                payload["secret_refs"] = materialize_secret_refs(
+                    payload["secret_refs"],
+                    organization=_organization(request),
+                    client=self._client(),
+                )
             result = self._client().submit(payload)
         except _SandboxMappingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

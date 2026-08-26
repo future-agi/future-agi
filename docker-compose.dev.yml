@@ -4,6 +4,11 @@ x-dev-worker: &dev-worker
   pull_policy: never
   volumes:
     - ./futureagi:/app/backend
+    # Workers run the same nltk-dependent preprocessing as the backend; see
+    # the backend service's mount for why the data comes from the host.
+    # Bootstrap once with:
+    #   python -m nltk.downloader -d ~/.cache/alk-nltk stopwords wordnet omw-1.4 punkt punkt_tab averaged_perceptron_tagger
+    - ${HOME:?HOME must be set}/.cache/alk-nltk:/usr/local/nltk_data:ro
   environment:
     FAST_STARTUP: "true"
 
@@ -35,13 +40,16 @@ services:
       - "${FLOWER_PORT:-5555}:5555"
     volumes:
       - ./futureagi:/app/backend
+      # In-container SSL downloads fail, so nltk data is pre-fetched on the
+      # host; without this mount every recreated container loses the data.
+      - ${HOME:?HOME must be set}/.cache/alk-nltk:/usr/local/nltk_data:ro
     environment:
       FAST_STARTUP: "true"
       ALK_HARNESS_SANDBOX_URL: http://alk-harness-sandbox:8788
-      # The local EE overlay keeps billing.yaml at /app/backend/ee. Without
-      # this, standalone harness evaluations resolve the cloud-only default
-      # path and fail after the model has already produced a valid score.
-      BILLING_CONFIG_PATH: /app/backend/ee/billing.yaml
+      # The dev image reports the cloud flavor, where a missing billing.yaml
+      # fails closed and 500s every entitlement check. Point at the canonical
+      # cloud config; an ee/billing.yaml copy does not exist in this checkout.
+      BILLING_CONFIG_PATH: /app/backend/ee/cloud/billing.yaml
 
   # Local implementation of the hosted ALK sandbox contract. It is reachable by the
   # backend over the private Compose network; its host port is loopback-only.
@@ -148,6 +156,8 @@ services:
     working_dir: /app/backend
     volumes:
       - ./futureagi:/app/backend
+      # Same host-fetched nltk data as every other container of this image.
+      - ${HOME:?HOME must be set}/.cache/alk-nltk:/usr/local/nltk_data:ro
     environment:
       FAST_STARTUP: "true"
       PYTHONUNBUFFERED: "1"

@@ -15961,14 +15961,7 @@ export type SecretReferenceApiManager = typeof SecretReferenceApiManager[keyof t
 
 export const SecretReferenceApiManager = {
   'platform-vault': 'platform-vault',
-} as const;
-
-export type SecretReferenceApiPurpose = typeof SecretReferenceApiPurpose[keyof typeof SecretReferenceApiPurpose];
-
-
-export const SecretReferenceApiPurpose = {
-  target_provider: 'target_provider',
-  source_checkout: 'source_checkout',
+  harness_environment_file: 'harness_environment_file',
 } as const;
 
 export interface SecretReferenceApi {
@@ -15983,17 +15976,24 @@ export interface SecretReferenceApi {
      * @maxLength 255
      */
   version?: string;
-  purpose: SecretReferenceApiPurpose;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  purpose: string;
 }
 
 export type HarnessAgentApiConfig = {[key: string]: string};
 
 export type HarnessAgentApiSecretRefs = {[key: string]: SecretReferenceApi};
 
+export type HarnessAgentApiEnvironmentValues = {[key: string]: string};
+
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
+  environment_values?: HarnessAgentApiEnvironmentValues;
 }
 
 export type HarnessRuntimeApiIsolation = typeof HarnessRuntimeApiIsolation[keyof typeof HarnessRuntimeApiIsolation];

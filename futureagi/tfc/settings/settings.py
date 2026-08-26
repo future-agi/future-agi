@@ -94,6 +94,9 @@ CORS_ALLOW_HEADERS = (
         "x-workspace-slug",
         "x-project-id",
         "x-organization-id",
+        # The harness create endpoint requires this header; without it here the
+        # browser's CORS preflight blocks the call before it leaves the page.
+        "idempotency-key",
         "sentry-trace",
         "baggage",
         "traceparent",

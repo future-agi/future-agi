@@ -85145,6 +85145,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/SecretReference"
           },
           "default": {}
+        },
+        "environment_values": {
+          "title": "Environment values",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
         }
       }
     },
@@ -85632,7 +85640,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Manager",
           "type": "string",
           "enum": [
-            "platform-vault"
+            "platform-vault",
+            "harness_environment_file"
           ]
         },
         "key": {
@@ -85651,10 +85660,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "purpose": {
           "title": "Purpose",
           "type": "string",
-          "enum": [
-            "target_provider",
-            "source_checkout"
-          ]
+          "maxLength": 255,
+          "minLength": 1
         }
       }
     },
