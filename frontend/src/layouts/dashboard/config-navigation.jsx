@@ -210,7 +210,7 @@ export function useNavData() {
         items: [
           {
             title: "RL Environment",
-            path: paths.dashboard.simulate.harness,
+            path: paths.dashboard.simulate.harness.root,
             icon: <Iconify icon="solar:server-square-cloud-linear" />,
           },
           {
