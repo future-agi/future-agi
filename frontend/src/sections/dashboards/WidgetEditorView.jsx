@@ -65,7 +65,7 @@ import { useSnackbar } from "src/components/snackbar";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetDescriptionPopover from "./WidgetDescriptionPopover";
-import useIsTruncated from "./hooks/useIsTruncated";
+import TruncatedTooltipText from "./TruncatedTooltipText";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
@@ -97,7 +97,6 @@ import {
   ALL_AGGREGATIONS,
   PERCENTILE_OPTIONS,
   DATE_PRESETS,
-  DESCRIPTION_TOOLTIP_SX,
 } from "./constants";
 
 const escapeCsvField = (field) => {
@@ -1109,7 +1108,7 @@ export default function WidgetEditorView() {
   const [editingName, setEditingName] = useState(false);
   const [descOpen, setDescOpen] = useState(false);
   const descSlotRef = useRef(null);
-  const [descRef, isDescTruncated] = useIsTruncated(chartDescription);
+  const trimmedDescription = (chartDescription || "").trim();
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
@@ -2913,62 +2912,62 @@ export default function WidgetEditorView() {
         {/* Description — a capped preview in the bar; the full text is read
             and edited in a popover, so the bar can't be blown out by length. */}
         <Box ref={descSlotRef} sx={{ display: "flex", minWidth: 0 }}>
-          {chartDescription ? (
-            <CustomTooltip
-              show={isDescTruncated}
-              title={chartDescription}
-              size="small"
-              placement="bottom-start"
-              slotProps={{ tooltip: { sx: DESCRIPTION_TOOLTIP_SX } }}
-            >
-              <Stack
-                direction="row"
-                alignItems="center"
-                gap={0.5}
-                role={isReadOnly ? undefined : "button"}
-                tabIndex={isReadOnly ? undefined : 0}
-                aria-label={isReadOnly ? undefined : "Edit description"}
-                onClick={() => !isReadOnly && setDescOpen(true)}
-                onKeyDown={(e) => {
-                  if (isReadOnly) return;
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setDescOpen(true);
+          {trimmedDescription ? (
+            <TruncatedTooltipText text={trimmedDescription}>
+              {(measureRef) => (
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  gap={0.5}
+                  role={isReadOnly ? undefined : "button"}
+                  tabIndex={isReadOnly ? undefined : 0}
+                  aria-label={
+                    isReadOnly
+                      ? undefined
+                      : `Edit description: ${trimmedDescription}`
                   }
-                }}
-                sx={{
-                  minWidth: 0,
-                  maxWidth: 260,
-                  px: 0.75,
-                  py: 0.25,
-                  borderRadius: 1,
-                  color: "text.secondary",
-                  cursor: isReadOnly ? "default" : "pointer",
-                  transition: "background-color 0.15s, color 0.15s",
-                  "&:hover": isReadOnly
-                    ? undefined
-                    : { bgcolor: "action.hover", color: "text.primary" },
-                  "&:focus-visible": {
-                    outline: "2px solid",
-                    outlineColor: "primary.main",
-                    outlineOffset: 2,
-                  },
-                }}
-              >
-                <Iconify
-                  icon="mdi:text-box-outline"
-                  width={14}
-                  sx={{ flexShrink: 0 }}
-                />
-                <Typography
-                  ref={descRef}
-                  noWrap
-                  sx={{ fontSize: "13px", minWidth: 0 }}
+                  onClick={() => !isReadOnly && setDescOpen(true)}
+                  onKeyDown={(e) => {
+                    if (isReadOnly) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setDescOpen(true);
+                    }
+                  }}
+                  sx={{
+                    minWidth: 0,
+                    maxWidth: 260,
+                    px: 0.75,
+                    py: 0.25,
+                    borderRadius: 1,
+                    color: "text.secondary",
+                    cursor: isReadOnly ? "default" : "pointer",
+                    transition: "background-color 0.15s, color 0.15s",
+                    "&:hover": isReadOnly
+                      ? undefined
+                      : { bgcolor: "action.hover", color: "text.primary" },
+                    "&:focus-visible": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      outlineOffset: 2,
+                    },
+                  }}
                 >
-                  {chartDescription}
-                </Typography>
-              </Stack>
-            </CustomTooltip>
+                  <Iconify
+                    icon="mdi:text-box-outline"
+                    width={14}
+                    sx={{ flexShrink: 0 }}
+                  />
+                  <Typography
+                    ref={measureRef}
+                    noWrap
+                    sx={{ fontSize: "13px", minWidth: 0 }}
+                  >
+                    {trimmedDescription}
+                  </Typography>
+                </Stack>
+              )}
+            </TruncatedTooltipText>
           ) : (
             !isReadOnly && (
               <Button

@@ -244,4 +244,21 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
     );
     expect(header.children).toHaveLength(1);
   });
+
+  it("treats a whitespace-only description as no description", () => {
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "   ",
+        position: 0,
+        width: 12,
+      },
+    ];
+    const { container } = render(<DashboardDetailView />);
+    const header = container.querySelector(
+      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+    );
+    expect(header.children).toHaveLength(1);
+  });
 });

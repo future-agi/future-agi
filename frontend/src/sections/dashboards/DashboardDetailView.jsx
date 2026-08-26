@@ -49,7 +49,6 @@ import {
   MIN_WIDGET_HEIGHT,
   DEFAULT_WIDGET_HEIGHT,
   DATE_CHIP_SX,
-  DESCRIPTION_TOOLTIP_SX,
 } from "./constants";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -58,7 +57,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
-import useIsTruncated from "./hooks/useIsTruncated";
+import TruncatedTooltipText from "./TruncatedTooltipText";
 import {
   DndContext,
   DragOverlay,
@@ -452,7 +451,7 @@ function DraggableWidgetCard({
     data: { widget },
     disabled: isReadOnly,
   });
-  const [descRef, isDescTruncated] = useIsTruncated(widget.description);
+  const description = widget.description?.trim();
 
   const widgetHeight =
     rowHeight ||
@@ -579,28 +578,25 @@ function DraggableWidgetCard({
               )}
             </div>
 
-            {widget.description && (
-              <CustomTooltip
-                show={isDescTruncated}
-                title={widget.description}
-                size="small"
-                placement="bottom-start"
-                slotProps={{ tooltip: { sx: DESCRIPTION_TOOLTIP_SX } }}
-              >
-                <Typography
-                  ref={descRef}
-                  variant="caption"
-                  noWrap
-                  sx={{
-                    color: "text.secondary",
-                    pl: isReadOnly ? 0 : "20px",
-                    pr: 1,
-                    mt: 0.25,
-                  }}
-                >
-                  {widget.description}
-                </Typography>
-              </CustomTooltip>
+            {description && (
+              <TruncatedTooltipText text={description}>
+                {(measureRef) => (
+                  <Typography
+                    ref={measureRef}
+                    variant="caption"
+                    noWrap
+                    onPointerDown={(e) => e.stopPropagation()}
+                    sx={{
+                      color: "text.secondary",
+                      pl: isReadOnly ? 0 : "20px",
+                      pr: 1,
+                      mt: 0.25,
+                    }}
+                  >
+                    {description}
+                  </Typography>
+                )}
+              </TruncatedTooltipText>
             )}
           </div>
 

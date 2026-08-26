@@ -1,25 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /** Reports whether a single-line element is clipping its own text, so callers
- *  can offer a tooltip only when there is hidden text to reveal. */
+ *  can offer a tooltip only when there is hidden text to reveal.
+ *
+ *  The measured node is held in state and handed back as a callback ref, not a
+ *  ref object: revealing the tooltip swaps the wrapper around the text, which
+ *  remounts the node underneath it. A ref object would leave the observer
+ *  watching the detached node and freeze the result at whatever it read first. */
 export default function useIsTruncated(text) {
-  const ref = useRef(null);
+  const [node, setNode] = useState(null);
   const [isTruncated, setIsTruncated] = useState(false);
 
   const measure = useCallback(() => {
-    const el = ref.current;
-    if (el) setIsTruncated(el.scrollWidth > el.clientWidth);
-  }, []);
+    if (node) setIsTruncated(node.scrollWidth > node.clientWidth);
+  }, [node]);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
+    if (!node) return undefined;
 
     measure();
     const observer = new ResizeObserver(measure);
-    observer.observe(el);
+    observer.observe(node);
     return () => observer.disconnect();
-  }, [measure, text]);
+  }, [measure, node, text]);
 
-  return [ref, isTruncated];
+  return [setNode, isTruncated];
 }
