@@ -386,7 +386,7 @@ Backend migrations run automatically on startup. Downtime is ~30 seconds for the
 Named Docker volumes hold all state:
 
 ```bash
-docker volume ls | grep future-agi
+docker volume ls | grep futureagi
 # future-agi_postgres-data
 # future-agi_clickhouse-data
 # future-agi_redis-data
