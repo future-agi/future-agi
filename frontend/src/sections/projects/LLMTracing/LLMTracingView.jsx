@@ -689,6 +689,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const [extraFilters, setExtraFiltersRaw] = useState([]);
   const [compareExtraFilters, setCompareExtraFiltersRaw] = useState([]);
+  // Applied free-text search over the trace list (name/input/output).
+  const [traceSearch, setTraceSearch] = useState("");
   const [filterChipsSaved, setFilterChipsSaved] = useState(false);
   // Track which graph the filter panel targets in compare mode: "primary" | "compare"
   const [filterTarget, setFilterTarget] = useState("primary");
@@ -2082,6 +2084,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setExtraFilters(
       hydrateStoredFilterList(activeViewConfig.extra_filters, getRandomId),
     );
+    setTraceSearch(activeViewConfig.display?.search ?? "");
 
     // Compare state — always replace, regardless of current showCompare state.
     const nextCompareFilters = hydrateStoredFilterList(
@@ -2242,6 +2245,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // `filtersStorageKey` restores any non-empty extraFilters it finds.
   const clearPrimaryExtraFilters = useCallback(() => {
     setExtraFilters([]);
+    setTraceSearch("");
     localStorage.removeItem(filtersStorageKey);
   }, [setExtraFilters, filtersStorageKey]);
   const clearCompareExtraFilters = useCallback(() => {
@@ -2332,6 +2336,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           setExtraFiltersRaw(extraFiltersWithIds);
           setFilterChipsSaved(true);
         }
+      }
+      if (saved.search) {
+        setTraceSearch(saved.search);
       }
       if (saved.showCompare) {
         if (saved.compare_filters?.length > 0) {
@@ -2436,6 +2443,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         selectedTab === "trace"
           ? primaryTraceDateFilter
           : primarySpanDateFilter,
+      // search rides inside display for the same whitelist reason.
+      ...(traceSearch ? { search: traceSearch } : {}),
       ...(columnState ? { columnState } : {}),
     };
     const mapFilters = (filters) =>
@@ -2480,6 +2489,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     compareSpansDateFilter,
     extraFilters,
     compareExtraFilters,
+    traceSearch,
     projectSource,
     columns,
     columnKey,
@@ -2579,6 +2589,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setCellHeight(DEFAULT_DISPLAY_CONFIG.cellHeight);
     setShowErrors(DEFAULT_DISPLAY_CONFIG.showErrors);
     setShowNonAnnotated(DEFAULT_DISPLAY_CONFIG.showNonAnnotated);
+    setTraceSearch("");
     // Remove custom columns
     const ck = `${selectedGraph}-${selectedTab === "spans" ? "spans" : "trace"}`;
     setColumns((prev) => ({
@@ -2677,6 +2688,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
 
+    if ((baselineDisplay.search ?? "") !== traceSearch) return true;
+
     const currentDate =
       viewTabType === "trace" ? primaryTraceDateFilter : primarySpanDateFilter;
     if ((currentDate?.dateOption ?? null) !== baselineDateOption) return true;
@@ -2750,6 +2763,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   }, [
     activeViewConfig,
     extraFilters,
+    traceSearch,
     selectedTab,
     primaryTraceDateFilter,
     primarySpanDateFilter,
@@ -3142,8 +3156,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         </Box>
       </Box>
       {/* Active filter chips — in compare mode, only show Clear/Save at top (chips are inline on each graph) */}
-      {!filterChipsSaved && !showCompare && (
+      {(!filterChipsSaved || !!traceSearch) && !showCompare && (
         <FilterChips
+          searchTerm={traceSearch}
+          onRemoveSearch={() => setTraceSearch("")}
           extraFilters={extraFilters.map((f) => ({
             ...f,
             display_name:
@@ -3162,6 +3178,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           onClearAll={() => {
             setExternalFilterAnchor(null);
             setExtraFilters([]);
+            setTraceSearch("");
             try {
               localStorage.removeItem(filtersStorageKey);
             } catch {
@@ -3202,6 +3219,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         : primarySpanFilters,
                     ),
                     extra_filters: extraFilters || [],
+                    ...(traceSearch ? { search: traceSearch } : {}),
                   }),
                 );
               } catch {
@@ -3666,6 +3684,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
               onApplyExtraFilters={setExtraFilters}
+              searchTerm={traceSearch}
+              onSearchApply={setTraceSearch}
               onClearExtraFilters={clearPrimaryExtraFilters}
               graphFilters={selectPanelGraphFilters(
                 filterTarget,
@@ -4587,6 +4607,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     }
                     filters={primaryTraceValidatedFilters}
                     extraFilters={extraFilters}
+                    search={showCompare ? "" : traceSearch}
                     ref={primaryTraceGridRef}
                     setFilters={setPrimaryTraceFilters}
                     setExtraFilters={setExtraFilters}
