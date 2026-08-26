@@ -101,10 +101,17 @@ import { registerInstrumentations } from "@opentelemetry/instrumentation";
 
 const openaiInstrumentation = new OpenAIInstrumentation({});
 
-  registerInstrumentations({
-    instrumentations: [openaiInstrumentation],
-    tracerProvider: tracerProvider,
-  });
+registerInstrumentations({
+  instrumentations: [openaiInstrumentation],
+  tracerProvider: tracerProvider,
+});
+
+// Dynamic import defers loading "openai" until after registerInstrumentations()
+// runs above — a static import would be hoisted and evaluated first, leaving
+// nothing left to patch.
+import("openai").then((openaiModule) => {
+  openaiInstrumentation.manuallyInstrument(openaiModule);
+});
 """,
         },
     },
