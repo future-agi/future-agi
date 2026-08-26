@@ -55,3 +55,12 @@ export function inferPreset(start, end) {
 
   return "Custom";
 }
+
+// Today and Yesterday are matched on the calendar day alone, so any same-day
+// window infers Today and any window straddling one midnight infers Yesterday.
+// Re-anchoring either would rewrite the range the user actually picked, so a
+// measured-out preset only ever carries a relative one.
+export function inferPresetForLegacy(start, end) {
+  const preset = inferPreset(start, end);
+  return preset === "Today" || preset === "Yesterday" ? "Custom" : preset;
+}

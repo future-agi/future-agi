@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { inferPreset } from "../legacyPresetInference";
+import { add, startOfToday, sub } from "date-fns";
+import { inferPreset, inferPresetForLegacy } from "../legacyPresetInference";
 import { TIME_PERIOD_OPTIONS, presetToRange } from "../timeWindowPresets";
 
 describe("inferPreset", () => {
@@ -46,5 +47,44 @@ describe("inferPreset", () => {
     expect(inferPreset(null, null)).toBe("Custom");
     expect(inferPreset("garbage", "garbage")).toBe("Custom");
     expect(inferPreset(undefined, "2026-07-01 00:00:00")).toBe("Custom");
+  });
+});
+
+// The Add Evals entrypoint hands us a window with no stored preset, so the
+// preset has to be measured back out. Today/Yesterday are day-granular
+// matches — any same-day window infers Today, and any window straddling one
+// midnight infers Yesterday — so re-anchoring those would rewrite the user's
+// range. Only relative presets are safe to carry over.
+describe("inferPresetForLegacy", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-08-21T06:00:00Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("keeps a partial same-day window instead of widening it to a full day", () => {
+    const start = add(startOfToday(), { hours: 8 });
+    const end = add(startOfToday(), { hours: 15 });
+    expect(inferPreset(start, end)).toBe("Today");
+    expect(inferPresetForLegacy(start, end)).toBe("Custom");
+  });
+
+  it("keeps a window that straddles midnight instead of snapping it to yesterday", () => {
+    const start = sub(startOfToday(), { hours: 1 });
+    const end = add(startOfToday(), { hours: 23 });
+    expect(inferPreset(start, end)).toBe("Yesterday");
+    expect(inferPresetForLegacy(start, end)).toBe("Custom");
+  });
+
+  it("downgrades the exact Today and Yesterday windows to Custom", () => {
+    expect(inferPresetForLegacy(...presetToRange("Today"))).toBe("Custom");
+    expect(inferPresetForLegacy(...presetToRange("Yesterday"))).toBe("Custom");
+  });
+
+  it("passes every other preset through untouched", () => {
+    for (const { title } of TIME_PERIOD_OPTIONS) {
+      if (title === "Today" || title === "Yesterday") continue;
+      expect(inferPresetForLegacy(...presetToRange(title))).toBe(title);
+    }
   });
 });

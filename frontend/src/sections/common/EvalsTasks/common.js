@@ -1,6 +1,6 @@
 import { endOfToday, sub } from "date-fns";
 import { tokenToPreset } from "src/sections/projects/timeWindowPresets";
-import { inferPreset } from "src/sections/projects/legacyPresetInference";
+import { inferPresetForLegacy } from "src/sections/projects/legacyPresetInference";
 import EvalsAndTasksCustomTooltip from "./Renderers/EvalsAndTasksCustomToolTip";
 import FilterChipsRenderer from "./Renderers/FilterChipsRenderer";
 import RunningStatusRenderer from "./Renderers/RunningStatusRenderer";
@@ -304,13 +304,10 @@ export const getDefaultTaskValues = (data, observeId) => {
       }
     }
 
-    // Without a stored key the task predates the field, so infer — except
-    // Today/Yesterday, which stop being identifiable once their day passes.
+    // Without a stored key the task predates the field, so infer.
     const storedPreset = tokenToPreset(data?.filters_applied?.date_preset);
-    const inferred = inferPreset(values.startDate, values.endDate);
     values.datePreset =
-      storedPreset ||
-      (inferred === "Today" || inferred === "Yesterday" ? "Custom" : inferred);
+      storedPreset || inferPresetForLegacy(values.startDate, values.endDate);
 
     return values;
   } else {

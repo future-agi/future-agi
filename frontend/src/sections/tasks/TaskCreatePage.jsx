@@ -5,7 +5,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { useMutation } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { endOfToday, sub } from "date-fns";
-import { inferPreset } from "src/sections/projects/legacyPresetInference";
+import { inferPresetForLegacy } from "src/sections/projects/legacyPresetInference";
 import { useNavigate } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
@@ -85,13 +85,17 @@ const TaskCreatePage = () => {
     runType: "historical",
   };
 
-  // Drafts predating datePreset would inherit the 12M default from the spread
-  // below, re-anchoring a hand-picked range. Drafts expire after 7 days.
+  // A draft without a preset would inherit the 12M default from the spread
+  // below, re-anchoring a hand-picked range. Add Evals still mints such drafts
+  // for any window it can't label, so this is not only a legacy path.
   const draft =
     draftValues && !draftValues.datePreset
       ? {
           ...draftValues,
-          datePreset: inferPreset(draftValues.startDate, draftValues.endDate),
+          datePreset: inferPresetForLegacy(
+            draftValues.startDate,
+            draftValues.endDate,
+          ),
         }
       : draftValues || {};
 
