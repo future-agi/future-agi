@@ -83,8 +83,10 @@ def _page():
 
 def _enable(settings):
     settings.PROPERTY_CATALOG_READ_MODE = "read"
+    settings.PROPERTY_CATALOG_READ_DEPLOYMENT = "dev"
     settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    settings.PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = ()
 
 
 def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
@@ -94,6 +96,7 @@ def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
     settings.FILTER_VALUES_DEFAULT_LOOKBACK_DAYS = 1
     reader = Mock()
     reader.read_page.return_value = _page()
+    activation_selector = Mock(name="activation_selector")
 
     with (
         patch(
@@ -101,7 +104,13 @@ def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
             return_value=[PROJECT_ID],
         ) as authorize,
         patch("tracer.views.dashboard.PropertyCatalogReadExecutor") as executor,
-        patch("tracer.views.dashboard.PropertyCatalogValueReader", return_value=reader),
+        patch(
+            "tracer.views.dashboard.activation_control_selector_for_deployment",
+            return_value=activation_selector,
+        ) as activation_gate,
+        patch(
+            "tracer.views.dashboard.PropertyCatalogValueReader", return_value=reader
+        ) as reader_factory,
         patch("tracer.views.dashboard.AttributeReadSelector") as legacy,
     ):
         response = inspect.unwrap(DashboardViewSet.filter_values)(
@@ -135,6 +144,12 @@ def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
     assert read_kwargs["window_start"] == datetime(1970, 1, 1, tzinfo=UTC)
     assert read_kwargs["window_start"] < read_kwargs["window_end"]
     assert executor.call_args.kwargs["max_wall_ms"] > 0
+    activation_gate.assert_called_once_with(
+        executor.return_value,
+        database="th7247_catalog_dev_clean",
+        deployment="dev",
+    )
+    assert reader_factory.call_args.kwargs["activation_selector"] is activation_selector
     legacy.assert_not_called()
 
 

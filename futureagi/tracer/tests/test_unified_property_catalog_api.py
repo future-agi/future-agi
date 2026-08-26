@@ -22,6 +22,14 @@ WORKSPACE_ID = "22222222-2222-2222-2222-222222222222"
 PROJECT_ID = "33333333-3333-3333-3333-333333333333"
 
 
+def _enable_catalog_reads(settings):
+    settings.PROPERTY_CATALOG_READ_MODE = "read"
+    settings.PROPERTY_CATALOG_READ_DEPLOYMENT = "dev"
+    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
+    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    settings.PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = ()
+
+
 def _request(**validated_overrides):
     validated = {
         "project_ids": [PROJECT_ID],
@@ -283,9 +291,7 @@ def test_filter_values_page_size_honors_both_configured_maxima(
 
 
 def test_filter_values_maps_reader_value_error_to_400(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     reader = Mock()
     reader.read_page.side_effect = ValueError("page_size must be between 1 and 25")
     request = _request(
@@ -318,9 +324,7 @@ def test_filter_values_maps_reader_value_error_to_400(settings):
 
 
 def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     page = SimpleNamespace(
         metrics=(
             {
@@ -347,6 +351,7 @@ def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
     )
     reader = Mock()
     reader.read_page.return_value = page
+    activation_selector = Mock(name="activation_selector")
 
     with (
         patch(
@@ -354,7 +359,13 @@ def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
             return_value=[PROJECT_ID],
         ) as authorize,
         patch("tracer.views.dashboard.PropertyCatalogReadExecutor") as executor,
-        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
+        patch(
+            "tracer.views.dashboard.activation_control_selector_for_deployment",
+            return_value=activation_selector,
+        ) as activation_gate,
+        patch(
+            "tracer.views.dashboard.PropertyCatalogReader", return_value=reader
+        ) as reader_factory,
         patch("tracer.views.dashboard.build_metrics_catalog_page") as legacy,
     ):
         response = inspect.unwrap(DashboardViewSet.metrics)(
@@ -386,13 +397,17 @@ def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
     assert reader.read_page.call_args.kwargs["scope"]["project_ids"] == [PROJECT_ID]
     assert reader.read_page.call_args.kwargs["query"]["role"] == "metric"
     assert executor.call_args.kwargs["max_wall_ms"] > 0
+    activation_gate.assert_called_once_with(
+        executor.return_value,
+        database="th7247_catalog_dev_clean",
+        deployment="dev",
+    )
+    assert reader_factory.call_args.kwargs["activation_selector"] is activation_selector
     legacy.assert_not_called()
 
 
 def test_metrics_workspace_scope_binds_full_authorized_project_set(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     reader = Mock()
     reader.read_page.return_value = SimpleNamespace(
         metrics=(),
@@ -432,7 +447,7 @@ def test_metrics_workspace_scope_binds_full_authorized_project_set(settings):
 
 
 def test_metrics_cursor_mode_fails_closed_before_reader_when_not_allowlisted(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
+    _enable_catalog_reads(settings)
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = ()
 
     with patch("tracer.views.dashboard.PropertyCatalogReader") as reader:
@@ -446,9 +461,7 @@ def test_metrics_cursor_mode_fails_closed_before_reader_when_not_allowlisted(set
 
 
 def test_metrics_cursor_error_is_sanitized_400(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     reader = Mock()
     reader.read_page.side_effect = PropertyCatalogCursorError(
         "cursor_mismatch", "The property continuation cursor does not match."
@@ -482,9 +495,7 @@ def test_metrics_cursor_error_is_sanitized_400(settings):
 def test_metrics_cursor_maps_only_genuine_activation_readiness_to_typed_503(
     settings, reason
 ):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     reader = Mock()
     reader.read_page.side_effect = PropertyCatalogUnavailable(reason)
 
@@ -517,9 +528,7 @@ def test_metrics_cursor_maps_only_genuine_activation_readiness_to_typed_503(
     ],
 )
 def test_metrics_cursor_keeps_conflicts_and_query_defects_generic(settings, reason):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     reader = Mock()
     reader.read_page.side_effect = PropertyCatalogUnavailable(reason)
 
@@ -540,9 +549,7 @@ def test_metrics_cursor_keeps_conflicts_and_query_defects_generic(settings, reas
 
 
 def test_metrics_cursor_rejects_foreign_project_before_clickhouse(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
 
     with (
         patch(
@@ -560,9 +567,7 @@ def test_metrics_cursor_rejects_foreign_project_before_clickhouse(settings):
 
 
 def test_metrics_cursor_rejects_foreign_agent_before_clickhouse(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_DATABASE = "th7247_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
+    _enable_catalog_reads(settings)
     agent_id = "44444444-4444-4444-4444-444444444444"
 
     with (
