@@ -3436,6 +3436,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         org_scope = bool(org_project_ids)
         filters = list(validated_data.get("filters", []) or [])
+        search = validated_data.get("search") or None
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
         session_id = (
@@ -3523,6 +3524,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
+            search=search,
         )
 
         # Phase 1: Paginated traces (light columns only — no input/output)
