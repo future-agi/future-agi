@@ -149,15 +149,23 @@ async function previousStableTag(version) {
   return idx >= 0 && idx + 1 < stable.length ? stable[idx + 1] : null
 }
 
-async function prNumbersFromCompare(version) {
+// Diff the previous stable tag against this one and harvest, from every commit
+// message: PR numbers (both squash `(#123)` and merge `Merge pull request #123`
+// forms — we just match any `#123`) and any ticket ids in the subject/body.
+// release-please writes commit-SHA links rather than PR refs in the release
+// body, so this compare — not the body — is the reliable source of PRs.
+async function compareData(version) {
   const prev = await previousStableTag(version)
-  if (!prev) return []
+  if (!prev) return { prev: null, prNumbers: [], ids: new Set() }
   const cmp = await gh(`/repos/${OWNER}/${REPO}/compare/${prev}...${version}`)
-  const nums = new Set()
+  const prNumbers = new Set()
+  const ids = new Set()
   for (const c of cmp?.commits ?? []) {
-    for (const m of (c.commit?.message ?? '').matchAll(/\(#(\d+)\)/g)) nums.add(Number(m[1]))
+    const msg = c.commit?.message ?? ''
+    for (const m of msg.matchAll(/#(\d+)/g)) prNumbers.add(Number(m[1]))
+    for (const id of extractIds(msg)) ids.add(id)
   }
-  return [...nums]
+  return { prev, prNumbers: [...prNumbers], ids }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -212,18 +220,19 @@ async function postSlack({ moved, skipped, notFound }) {
 async function main() {
   log(`[linear-release-done] ${VERSION}${DRY ? ' (dry run)' : ''} on ${GITHUB_REPOSITORY}`)
 
+  // PR numbers come from the tag compare (reliable) plus any that happen to be
+  // written into the release body. Ids are unioned from four sources so a ticket
+  // referenced in ANY of them is caught: release body text, commit messages,
+  // and each PR's title + body (the last covers ids that live only in the PR
+  // description — the "one PR closes several tickets" case).
   const body = await getReleaseBody(VERSION)
-  const prNumbers = new Set()
+  const { prev, prNumbers: cmpPrNumbers, ids: cmpIds } = await compareData(VERSION)
+
+  const prNumbers = new Set(cmpPrNumbers)
   for (const m of body.matchAll(/#(\d+)/g)) prNumbers.add(Number(m[1]))
+  log(`[linear-release-done] ${prNumbers.size} PR(s) since ${prev ?? '(no previous tag)'}`)
 
-  if (prNumbers.size === 0) {
-    log('no PR references in release body — falling back to tag compare')
-    for (const n of await prNumbersFromCompare(VERSION)) prNumbers.add(n)
-  }
-  log(`[linear-release-done] ${prNumbers.size} PR(s) in release`)
-
-  // Union of ids found directly in the release body + each PR's title/body.
-  const ids = extractIds(body)
+  const ids = new Set([...extractIds(body), ...cmpIds])
   const prTexts = await mapWithConcurrency([...prNumbers], CONCURRENCY, getPrText)
   for (const t of prTexts) for (const id of extractIds(t)) ids.add(id)
 
