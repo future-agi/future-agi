@@ -23,6 +23,7 @@ const (
 	spoolPrefix     = "catalog-job-"
 	spoolSuffix     = ".json"
 	spoolTempPrefix = ".catalog-tmp-"
+	quarantineDir   = "catalog-quarantine"
 )
 
 type spool struct {
@@ -209,6 +210,11 @@ func (s spool) usage(maxFiles int) (int64, int, error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	quarantined, err := s.enumerateQuarantine(maxFiles - len(files))
+	if err != nil {
+		return 0, 0, err
+	}
+	files = append(files, quarantined...)
 	var total int64
 	for _, file := range files {
 		if file.size > 0 && total > int64(^uint64(0)>>1)-file.size {
@@ -217,6 +223,49 @@ func (s spool) usage(maxFiles int) (int64, int, error) {
 		total += file.size
 	}
 	return total, len(files), nil
+}
+
+func (s spool) enumerateQuarantine(maxFiles int) ([]pendingFile, error) {
+	dir := s.quarantineDirectory()
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("catalogwriter: inspect quarantine directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, errors.New("catalogwriter: quarantine path is not a directory")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("catalogwriter: enumerate quarantine: %w", err)
+	}
+	files := make([]pendingFile, 0, min(len(entries), max(maxFiles, 0)))
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, spoolPrefix) || !strings.HasSuffix(name, spoolSuffix) {
+			continue
+		}
+		entryInfo, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("catalogwriter: inspect quarantine entry %s: %w", name, err)
+		}
+		if !entryInfo.Mode().IsRegular() {
+			continue
+		}
+		files = append(files, pendingFile{
+			name: name, path: filepath.Join(dir, name), size: entryInfo.Size(),
+		})
+		if len(files) > maxFiles {
+			return nil, fmt.Errorf(
+				"catalogwriter: spool file limit exceeded: quarantine exceeds remaining capacity %d",
+				maxFiles,
+			)
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+	return files, nil
 }
 
 func (s spool) enumerate(maxFiles int) ([]pendingFile, error) {
@@ -307,11 +356,62 @@ func (s spool) remove(file pendingFile) (bool, error) {
 	return true, s.syncDirectory()
 }
 
-func (s spool) syncDirectory() error {
-	if s.syncDirFn != nil {
-		return s.syncDirFn(s.dir)
+// quarantine atomically moves one published envelope into a dedicated
+// directory on the same filesystem. The caller deliberately keeps its bytes
+// and file in spool accounting so permanent failures remain bounded.
+func (s spool) quarantine(file pendingFile) (bool, error) {
+	dir, err := s.prepareQuarantineDirectory()
+	if err != nil {
+		return false, err
 	}
-	return syncDirectory(s.dir)
+	destination := filepath.Join(dir, file.name)
+	if _, err := os.Lstat(destination); err == nil {
+		return false, fmt.Errorf("catalogwriter: quarantine envelope %s already exists", file.name)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, fmt.Errorf("catalogwriter: inspect quarantine envelope %s: %w", file.name, err)
+	}
+	if err := os.Rename(file.path, destination); err != nil {
+		return false, fmt.Errorf("catalogwriter: quarantine envelope %s: %w", file.name, err)
+	}
+	var syncErr error
+	if err := s.syncPath(dir); err != nil {
+		syncErr = errors.Join(syncErr, fmt.Errorf("sync quarantine directory: %w", err))
+	}
+	if err := s.syncDirectory(); err != nil {
+		syncErr = errors.Join(syncErr, fmt.Errorf("sync spool directory: %w", err))
+	}
+	return true, syncErr
+}
+
+func (s spool) prepareQuarantineDirectory() (string, error) {
+	dir := s.quarantineDirectory()
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("catalogwriter: create quarantine directory: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("catalogwriter: inspect quarantine directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", errors.New("catalogwriter: quarantine path is not a directory")
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", fmt.Errorf("catalogwriter: secure quarantine directory: %w", err)
+	}
+	return dir, nil
+}
+
+func (s spool) quarantineDirectory() string { return filepath.Join(s.dir, quarantineDir) }
+
+func (s spool) syncDirectory() error {
+	return s.syncPath(s.dir)
+}
+
+func (s spool) syncPath(path string) error {
+	if s.syncDirFn != nil {
+		return s.syncDirFn(path)
+	}
+	return syncDirectory(path)
 }
 
 func randomEnvelopeID() (string, error) {

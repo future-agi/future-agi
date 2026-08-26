@@ -150,7 +150,11 @@ func runCatalogReplay(
 	for {
 		result, err := writer.ReplayTo(ctx, publisher)
 		if err != nil && ctx.Err() == nil {
-			log.Warn("attribute catalog replay failed", "transport", transport, "err", err)
+			log.Warn(
+				"attribute catalog replay failed", "transport", transport,
+				"attempted", result.Attempted, "delivered", result.Delivered,
+				"quarantined", result.Quarantined, "err", err,
+			)
 		} else if result.Delivered > 0 {
 			log.Info("attribute catalog replay", "transport", transport, "delivered", result.Delivered)
 		}
@@ -176,8 +180,21 @@ func logCatalogSubmissionGaps(
 			return
 		case err := <-submitter.Gaps():
 			log.Error("attribute catalog WAL gap; epoch remains unqualified", "err", err)
+		case <-submitter.OverflowWake():
+			if summary, ok := submitter.TakeOverflow(); ok {
+				logCatalogSubmissionOverflow(log, summary)
+			}
 		}
 	}
+}
+
+func logCatalogSubmissionOverflow(log *slog.Logger, summary catalogwriter.SubmissionGapOverflow) {
+	log.Error(
+		"attribute catalog WAL gap overflow; epoch remains unqualified",
+		"suppressed_count", summary.Suppressed,
+		"first_err", summary.First,
+		"last_err", summary.Last,
+	)
 }
 
 func drainCatalogSubmissionGaps(
@@ -191,6 +208,10 @@ func drainCatalogSubmissionGaps(
 		select {
 		case err := <-submitter.Gaps():
 			log.Error("attribute catalog WAL gap; epoch remains unqualified", "err", err)
+		case <-submitter.OverflowWake():
+			if summary, ok := submitter.TakeOverflow(); ok {
+				logCatalogSubmissionOverflow(log, summary)
+			}
 		default:
 			return
 		}

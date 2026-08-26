@@ -927,10 +927,12 @@ func (w *Writer) Pending() ([]Pending, error) {
 }
 
 // ReplayResult reports attempts only; it is intentionally not a catalog
-// coverage/watermark signal.
+// coverage/watermark signal. Quarantined envelopes remain durably retained
+// under the same spool capacity bound for operator inspection.
 type ReplayResult struct {
-	Attempted int
-	Delivered int
+	Attempted   int
+	Delivered   int
+	Quarantined int
 }
 
 // Replay drains pending envelopes in deterministic order. It stops at the
