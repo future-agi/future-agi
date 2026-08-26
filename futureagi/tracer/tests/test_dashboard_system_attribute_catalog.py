@@ -71,16 +71,12 @@ def _checkpoint(value_fingerprint: str = "a" * 64):
 
 
 def _install_common(monkeypatch):
+    snapshot_window = {"value": (SNAPSHOT_START, SNAPSHOT_END)}
     monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
     monkeypatch.setattr(
         dashboard_view,
         "catalog_dev_snapshot_window",
-        lambda: (SNAPSHOT_START, SNAPSHOT_END),
-    )
-    monkeypatch.setattr(
-        dashboard_view,
-        "catalog_dev_snapshot_enabled",
-        lambda: True,
+        lambda: snapshot_window["value"],
     )
     monkeypatch.setattr(
         dashboard_view,
@@ -94,13 +90,14 @@ def _install_common(monkeypatch):
         "persist_attribute_cursor_seen_state",
         lambda prior, appended, **_kwargs: (*prior.digests, *tuple(appended)),
     )
+    return snapshot_window
 
 
 @pytest.mark.unit
 def test_fixed_model_uses_catalog_page_size_and_fails_closed_on_catalog_cursor(
     monkeypatch,
 ):
-    _install_common(monkeypatch)
+    snapshot_window = _install_common(monkeypatch)
     project_id = _uuid(1)
     monkeypatch.setattr(
         dashboard_view,
@@ -158,6 +155,9 @@ def test_fixed_model_uses_catalog_page_size_and_fails_closed_on_catalog_cursor(
     assert calls[0]["window_start"] == SNAPSHOT_START
     assert calls[0]["window_end"] == SNAPSHOT_END
 
+    # Runtime settings govern fresh walks only. A signed continuation must
+    # retain its original frozen-window identity after the flag is disabled.
+    snapshot_window["value"] = None
     resumed = _invoke({**params, "cursor": payload["next_cursor"]})
     assert resumed.status_code == 503
     assert resumed["X-FutureAGI-Attribute-Catalog"] == "fallback"

@@ -283,7 +283,7 @@ def test_resumed_custom_value_cursor_captures_wall_after_state_restore(monkeypat
 
     def decode_cursor(*_args, **_kwargs):
         events.append("decode")
-        return cursor_state
+        return cursor_state, None
 
     def load_seen_state(*_args, **_kwargs):
         events.append("seen_state")
@@ -309,7 +309,11 @@ def test_resumed_custom_value_cursor_captures_wall_after_state_restore(monkeypat
         "cursor_scope_for_request",
         lambda *_args, **_kwargs: {"principal": "unit"},
     )
-    monkeypatch.setattr(dashboard_view, "decode_list_cursor", decode_cursor)
+    monkeypatch.setattr(
+        dashboard_view,
+        "decode_catalog_snapshot_list_cursor",
+        decode_cursor,
+    )
     monkeypatch.setattr(
         dashboard_view,
         "load_attribute_cursor_seen_state",

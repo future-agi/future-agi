@@ -3780,11 +3780,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             else None
                         )
                         cursor_window_mode = None
-                        if configured_snapshot_window is not None or (
-                            cursor_token
-                            and metric_name in CATALOG_SYSTEM_VALUE_METRICS
-                            and catalog_dev_snapshot_enabled()
-                        ):
+                        if configured_snapshot_window is not None and not cursor_token:
                             cursor_window_mode = CATALOG_SNAPSHOT_MODE
                         batch_query = {
                             "metric_name": metric_name,
@@ -4156,11 +4152,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         else None
                     )
                     cursor_window_mode = None
-                    if configured_snapshot_window is not None or (
-                        cursor_token
-                        and metric_name in CATALOG_SYSTEM_VALUE_METRICS
-                        and catalog_dev_snapshot_enabled()
-                    ):
+                    if configured_snapshot_window is not None and not cursor_token:
                         cursor_window_mode = CATALOG_SNAPSHOT_MODE
                         cursor_query["query_window_mode"] = cursor_window_mode
                     cursor_resource = "dashboard_system_filter_values"
