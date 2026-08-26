@@ -33,7 +33,15 @@ export const uploadHarnessSecretFile = async (formData) =>
     })
   ).data;
 export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;
-export const cancelHarnessJob = async (id) =>
-  (await axios.post(cancelPath(id))).data;
+// The contract marks this endpoint runtimeRequestValidation: true against
+// HarnessJobAction, so it must be sent an object. Posting no body at all makes the
+// validator parse `undefined`, which fails before the request ever leaves the browser.
+// `reason` is optional, so it is omitted rather than sent empty.
+export const cancelHarnessJob = async (id, reason) => {
+  const body = {};
+  const trimmed = typeof reason === "string" ? reason.trim() : "";
+  if (trimmed) body.reason = trimmed.slice(0, 500);
+  return (await axios.post(cancelPath(id), body)).data;
+};
 export const adjustHarnessJob = async (id, payload) =>
   (await axios.post(adjustPath(id), payload)).data;
