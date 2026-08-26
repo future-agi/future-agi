@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/future-agi/future-agi/fi-collector/pkg/attributecatalog"
 )
 
 const testWorkspaceTwo = "77777777-7777-4777-8777-777777777777"
@@ -302,6 +304,64 @@ func TestHotValueCasefoldExpansionBecomesDurableGapInsteadOfPoison(t *testing.T)
 	if snapshot.Payload.Outcome != OutcomeGap || snapshot.Payload.ValueRows != 0 ||
 		len(snapshot.Payload.GapReasons) != 1 || snapshot.Payload.GapReasons[0] != "max_encoded_bytes" {
 		t.Fatalf("casefold expansion result=%+v", snapshot.Payload)
+	}
+}
+
+func TestHotValueOverJSONLimitKeepsLaterBoundedValue(t *testing.T) {
+	cfg := validRuntimeConfig(t).WithDefaults()
+	// Exercise the property wire cap independently of the configurable
+	// per-span builder budget.
+	cfg.MaxEncodedBytesPerSpan = 4 * MaxValueJSONBytes
+	oversized := strings.Repeat("x", MaxValueJSONBytes+1)
+	groups, errs := collectHotGroups(cfg, []ScopedSpan{scopedHotRow(
+		testWorkspace, testProject,
+		hotRow(testProject, testSeen, map[string]string{
+			"a_oversized": oversized,
+			"z_retained":  "ok",
+		}, map[string]float64{}),
+	)})
+	if len(errs) != 0 || len(groups) != 1 {
+		t.Fatalf("groups=%d errs=%v", len(groups), errs)
+	}
+	if len(groups[0].values) != 1 {
+		t.Fatalf("retained values=%+v", groups[0].values)
+	}
+	for _, value := range groups[0].values {
+		if value.AttributeKey != "z_retained" || value.ValueJSON != `"ok"` {
+			t.Fatalf("unexpected retained value=%+v", value)
+		}
+	}
+	if _, present := groups[0].gaps[attributecatalog.GapMaxEncodedBytes]; !present {
+		t.Fatalf("oversized JSON gap missing: %+v", groups[0].gaps)
+	}
+}
+
+func TestHotValueOverSearchLimitKeepsLaterBoundedValue(t *testing.T) {
+	cfg := validRuntimeConfig(t).WithDefaults()
+	oversizedSearch := strings.Repeat("s", MaxValueSearchTextBytes+1)
+	if len(oversizedSearch)+2 > MaxValueJSONBytes {
+		t.Fatal("search-limit fixture unexpectedly exceeds the JSON limit")
+	}
+	groups, errs := collectHotGroups(cfg, []ScopedSpan{scopedHotRow(
+		testWorkspace, testProject,
+		hotRow(testProject, testSeen, map[string]string{
+			"a_oversized": oversizedSearch,
+			"z_retained":  "ok",
+		}, map[string]float64{}),
+	)})
+	if len(errs) != 0 || len(groups) != 1 {
+		t.Fatalf("groups=%d errs=%v", len(groups), errs)
+	}
+	if len(groups[0].values) != 1 {
+		t.Fatalf("retained values=%+v", groups[0].values)
+	}
+	for _, value := range groups[0].values {
+		if value.AttributeKey != "z_retained" || value.ValueSearchTextFolded != "ok" {
+			t.Fatalf("unexpected retained value=%+v", value)
+		}
+	}
+	if _, present := groups[0].gaps[attributecatalog.GapMaxEncodedBytes]; !present {
+		t.Fatalf("oversized search gap missing: %+v", groups[0].gaps)
 	}
 }
 

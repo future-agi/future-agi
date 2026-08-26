@@ -3,9 +3,11 @@ package attributecatalog
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,6 +156,68 @@ func TestBuilderReportsEveryLimitWithoutSilentCompletion(t *testing.T) {
 	want := []string{GapMaxKeys, GapMaxArrayMembers, GapMaxEncodedBytes}
 	if result.Metadata.Complete || !result.Metadata.Truncated || !reflect.DeepEqual(result.Metadata.GapReasons, want) {
 		t.Fatalf("limit was not explicit: %#v", result.Metadata)
+	}
+}
+
+func TestBuilderPreservesWideSpanKeysAfterOversizedValue(t *testing.T) {
+	const wideKeyCount = 128
+	limits := BuildLimits{
+		MaxKeys: wideKeyCount, MaxArrayMembers: 0, MaxEncodedBytes: 32 << 10,
+	}
+	attrs := make(map[string]string, wideKeyCount)
+	attrs["a_oversized"] = strings.Repeat("x", limits.MaxEncodedBytes+1)
+	for index := 0; index < wideKeyCount-1; index++ {
+		attrs[fmt.Sprintf("key_%03d", index)] = "ok"
+	}
+
+	result, err := BuildRows(Scope{}, SpanAttributeMaps{Strings: attrs}, limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Metadata.Complete || !result.Metadata.Truncated ||
+		!reflect.DeepEqual(result.Metadata.GapReasons, []string{GapMaxEncodedBytes}) {
+		t.Fatalf("oversized value gap was not explicit: %#v", result.Metadata)
+	}
+	if result.Metadata.KeyRowsEmitted != wideKeyCount || result.Metadata.KeysOmitted != 0 ||
+		len(result.KeyRows) != wideKeyCount {
+		t.Fatalf("wide-span key discovery was truncated: %#v", result.Metadata)
+	}
+	if result.Metadata.ValueRowsEmitted != wideKeyCount-1 || len(result.ValueRows) != wideKeyCount-1 {
+		t.Fatalf("later bounded values were not retained: %#v", result.Metadata)
+	}
+	if result.KeyRows[0].AttributeKey != "a_oversized" || result.KeyRows[0].AttributeType != AttributeTypeString ||
+		result.KeyRows[len(result.KeyRows)-1].AttributeKey != "key_126" ||
+		result.ValueRows[len(result.ValueRows)-1].AttributeKey != "key_126" {
+		t.Fatalf("canonical later keys/values are missing: keys=%v values=%v", result.KeyRows, result.ValueRows)
+	}
+	if result.Metadata.EncodedBytes > limits.MaxEncodedBytes {
+		t.Fatalf("encoded bytes exceeded configured bound: %d > %d", result.Metadata.EncodedBytes, limits.MaxEncodedBytes)
+	}
+}
+
+func TestBuilderContinuesAfterOversizedArrayMember(t *testing.T) {
+	limits := BuildLimits{MaxKeys: 2, MaxArrayMembers: 2, MaxEncodedBytes: 4 << 10}
+	result, err := BuildRows(
+		Scope{},
+		SpanAttributeMaps{
+			Strings: map[string]string{"z_later_key": "later-value"},
+			Extra: map[string]any{
+				"a_array": []any{strings.Repeat("x", limits.MaxEncodedBytes+1), "later-member"},
+			},
+		},
+		limits,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Metadata.GapReasons, []string{GapMaxEncodedBytes}) ||
+		result.Metadata.KeyRowsEmitted != 2 || result.Metadata.KeysOmitted != 0 ||
+		result.Metadata.ArrayMembersInspected != 2 || len(result.ValueRows) != 2 {
+		t.Fatalf("array overflow truncated later data: %#v", result)
+	}
+	if result.ValueRows[0].AttributeKey != "a_array" || result.ValueRows[0].ValueSearchText != "later-member" ||
+		result.ValueRows[1].AttributeKey != "z_later_key" || result.ValueRows[1].ValueSearchText != "later-value" {
+		t.Fatalf("later array member/key values missing: %#v", result.ValueRows)
 	}
 }
 

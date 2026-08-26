@@ -174,8 +174,9 @@ type valueIdentity struct {
 //   - value row: key + attribute type + fingerprint + value JSON + search text
 //
 // Fixed-width UUID/time/epoch columns are excluded. A row is atomic: if its
-// dynamic payload does not fit, it is not emitted and the remaining canonical
-// prefix is reported as GapMaxEncodedBytes.
+// dynamic payload does not fit, it is not emitted and GapMaxEncodedBytes is
+// reported. Key/type discovery is completed before value retention, so an
+// oversized value cannot hide a later attribute key that still fits.
 func BuildRows(
 	scope Scope,
 	attrs SpanAttributeMaps,
@@ -222,15 +223,18 @@ func BuildRowsForSource(
 	}
 
 	result := BuildResult{KeyRows: make([]KeyRow, 0, len(selected))}
+	valueCandidates := make([]attributeCandidate, 0, len(selected))
 	seenValues := make(map[valueIdentity]struct{})
 
-candidateLoop:
+	// Key/type discovery has priority over optional retained values. Keeping
+	// this as a separate bounded pass prevents an early large value from
+	// consuming the budget needed to describe later properties.
 	for _, candidate := range selected {
 		remaining := limits.MaxEncodedBytes - metadata.EncodedBytes
 		keyCost, fits := keyRowEncodedSize(candidate.key, candidate.attributeType, remaining)
 		if !fits {
 			reasons[GapMaxEncodedBytes] = struct{}{}
-			break
+			continue
 		}
 
 		result.KeyRows = append(result.KeyRows, KeyRow{
@@ -244,7 +248,10 @@ candidateLoop:
 			CatalogEpoch:  scope.CatalogEpoch,
 		})
 		metadata.EncodedBytes += keyCost
+		valueCandidates = append(valueCandidates, candidate)
+	}
 
+	for _, candidate := range valueCandidates {
 		switch candidate.attributeType {
 		case AttributeTypeMap, AttributeTypeJSON:
 			// Intentional key-only shapes, not a coverage gap.
@@ -272,7 +279,6 @@ candidateLoop:
 				reasons[GapInvalidScalar] = struct{}{}
 			case scalarByteLimit:
 				reasons[GapMaxEncodedBytes] = struct{}{}
-				break candidateLoop
 			}
 		case AttributeTypeArray:
 			remainingMembers := limits.MaxArrayMembers - metadata.ArrayMembersInspected
@@ -299,7 +305,6 @@ candidateLoop:
 					reasons[GapInvalidScalar] = struct{}{}
 				case scalarByteLimit:
 					reasons[GapMaxEncodedBytes] = struct{}{}
-					break candidateLoop
 				}
 			}
 		default:
@@ -319,7 +324,6 @@ candidateLoop:
 				reasons[GapInvalidScalar] = struct{}{}
 			case scalarByteLimit:
 				reasons[GapMaxEncodedBytes] = struct{}{}
-				break candidateLoop
 			}
 		}
 	}

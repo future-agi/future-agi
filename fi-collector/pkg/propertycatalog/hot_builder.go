@@ -190,8 +190,15 @@ func hotAttributeMaps(row map[string]any) (attributecatalog.SpanAttributeMaps, b
 
 func mergeBuiltRows(group *hotGroup, built attributecatalog.BuildResult, key hotGroupKey, kind PropertyKind) {
 	for _, row := range built.ValueRows {
+		// Reject the retained value before case folding when its canonical JSON
+		// already exceeds the wire contract. BuildRows still reports its key/type,
+		// and later bounded values remain eligible for this group.
+		if len(row.ValueJSON) > MaxValueJSONBytes {
+			group.gaps[attributecatalog.GapMaxEncodedBytes] = struct{}{}
+			continue
+		}
 		foldedSearchText := foldPropertyText(row.ValueSearchText)
-		if len(row.ValueJSON) > MaxValueJSONBytes || len(foldedSearchText) > MaxValueSearchTextBytes {
+		if len(foldedSearchText) > MaxValueSearchTextBytes {
 			group.gaps[attributecatalog.GapMaxEncodedBytes] = struct{}{}
 			continue
 		}
