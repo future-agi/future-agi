@@ -97,6 +97,7 @@ import {
   ALL_AGGREGATIONS,
   PERCENTILE_OPTIONS,
   DATE_PRESETS,
+  DEFAULT_WIDGET_HEIGHT,
 } from "./constants";
 
 const escapeCsvField = (field) => {
@@ -3053,11 +3054,19 @@ export default function WidgetEditorView() {
             <MenuItem
               onClick={() => {
                 setMoreMenuAnchor(null);
+                const source = dashboard?.widgets?.find(
+                  (w) => w.id === widgetId,
+                );
                 const dupData = {
                   name: `${chartName || "Untitled widget"} (copy)`,
-                  width: 12,
-                  height: 1,
-                  position: 0,
+                  description: trimmedDescription,
+                  // Carry the source widget's own layout and sit the copy next
+                  // to it, as the backend's duplicate endpoint does. The
+                  // hardcoded height of 1 fell under the card's >50 guard, so
+                  // it silently rendered at the default height instead.
+                  width: source?.width || 12,
+                  height: source?.height || DEFAULT_WIDGET_HEIGHT,
+                  position: (source?.position ?? 0) + 1,
                   query_config: buildQueryConfig(),
                   chart_config: {
                     chart_type: chartType,
