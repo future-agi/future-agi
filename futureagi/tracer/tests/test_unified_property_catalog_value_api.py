@@ -153,6 +153,32 @@ def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
     legacy.assert_not_called()
 
 
+def test_filter_values_shadow_executes_catalog_then_returns_native_response(settings):
+    _enable(settings)
+    settings.PROPERTY_CATALOG_READ_MODE = "shadow"
+    sentinel = Response({"status": True, "result": {"values": ["native"]}})
+    view = DashboardViewSet()
+    view._filter_values_dataset_column = Mock(return_value=sentinel)
+    request = _request(
+        property_id="dataset_column:44444444-4444-4444-4444-444444444444",
+        _property_kind="dataset_column",
+        metric_name="44444444-4444-4444-4444-444444444444",
+        metric_type="custom_column",
+        source="datasets",
+        dataset_id="55555555-5555-4555-8555-555555555555",
+    )
+
+    with patch(
+        "tracer.views.dashboard._read_property_catalog_value_page",
+        return_value=_page(),
+    ) as shadow_read:
+        response = inspect.unwrap(DashboardViewSet.filter_values)(view, request)
+
+    assert response is sentinel
+    shadow_read.assert_called_once()
+    view._filter_values_dataset_column.assert_called_once()
+
+
 def test_filter_values_workspace_scope_binds_full_authorized_project_set(settings):
     _enable(settings)
     reader = Mock()

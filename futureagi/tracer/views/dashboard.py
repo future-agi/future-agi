@@ -188,13 +188,24 @@ from tracer.views.span_attributes import (
 logger = structlog.get_logger(__name__)
 
 
-def _property_catalog_read_enabled_for_workspace(workspace) -> bool:
-    if getattr(settings, "PROPERTY_CATALOG_READ_MODE", "off") != "read":
-        return False
-    workspace_id = getattr(workspace, "id", None)
-    return workspace_id is not None and str(workspace_id) in set(
-        property_catalog_read_workspace_allowlist(settings)
+def _property_catalog_read_mode_for_workspace(workspace) -> str:
+    configured_mode = (
+        str(getattr(settings, "PROPERTY_CATALOG_READ_MODE", "off") or "off")
+        .strip()
+        .lower()
     )
+    if configured_mode not in {"read", "shadow"}:
+        return "off"
+    workspace_id = getattr(workspace, "id", None)
+    if workspace_id is None or str(workspace_id) not in set(
+        property_catalog_read_workspace_allowlist(settings)
+    ):
+        return "off"
+    return configured_mode
+
+
+def _property_catalog_read_enabled_for_workspace(workspace) -> bool:
+    return _property_catalog_read_mode_for_workspace(workspace) == "read"
 
 
 class _PropertyCatalogValueRequestError(ValueError):
@@ -2628,7 +2639,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         read_deadline = ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS)
 
         if query_params.get("cursor_mode", False):
-            if not _property_catalog_read_enabled_for_workspace(workspace):
+            catalog_read_mode = _property_catalog_read_mode_for_workspace(workspace)
+
+            def catalog_not_ready_response():
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "The unified property catalog is not ready for this workspace.",
+                    code="property_catalog_not_ready",
+                )
+
+            if catalog_read_mode == "off":
                 workspace_id = getattr(workspace, "id", None)
                 logger.warning(
                     "property_catalog_gate_closed",
@@ -2655,11 +2675,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
                     ),
                 )
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "The unified property catalog is not ready for this workspace.",
-                    code="property_catalog_not_ready",
-                )
+                return catalog_not_ready_response()
             try:
                 raw_project_ids = query_params.get("project_ids", [])
                 workspace_scope = not raw_project_ids
@@ -2692,6 +2708,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         ),
                         workspace_id=str(workspace.id),
                     )
+                    if catalog_read_mode == "shadow":
+                        return catalog_not_ready_response()
                     return self._gm.custom_error_response(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
                         "Dashboard properties are temporarily unavailable. Please retry.",
@@ -2753,6 +2771,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     reason=getattr(exc, "reason", "deadline_exceeded"),
                     workspace_id=str(workspace.id),
                 )
+                if catalog_read_mode == "shadow":
+                    return catalog_not_ready_response()
                 if is_property_catalog_not_ready_error(exc):
                     return self._gm.custom_error_response(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2770,11 +2790,23 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     error_type=type(exc).__name__,
                     workspace_id=str(workspace.id),
                 )
+                if catalog_read_mode == "shadow":
+                    return catalog_not_ready_response()
                 return self._gm.custom_error_response(
                     status.HTTP_500_INTERNAL_SERVER_ERROR,
                     "Dashboard properties could not be loaded.",
                     code="server_error",
                 )
+            if catalog_read_mode == "shadow":
+                logger.info(
+                    "property_catalog_shadow_read_succeeded",
+                    workspace_id=str(workspace.id),
+                    metric_count=len(catalog_page.metrics),
+                    catalog_epoch=catalog_page.catalog_epoch,
+                    catalog_revision=catalog_page.catalog_revision,
+                    has_more=catalog_page.has_more,
+                )
+                return catalog_not_ready_response()
             return self._gm.success_response(
                 {
                     "metrics": list(catalog_page.metrics),
@@ -3223,9 +3255,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
         )
 
-        if _property_catalog_read_enabled_for_workspace(
+        catalog_read_mode = _property_catalog_read_mode_for_workspace(
             getattr(request, "workspace", None)
-        ):
+        )
+        if catalog_read_mode in {"read", "shadow"}:
             try:
                 catalog_page = _read_property_catalog_value_page(
                     request,
@@ -3239,15 +3272,39 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # into the established source-specific readers below.
                 pass
             except _PropertyCatalogValueRequestError as exc:
-                return self._gm.bad_request(str(exc))
+                if catalog_read_mode == "shadow":
+                    logger.warning(
+                        "property_catalog_value_shadow_skipped",
+                        reason="request_error",
+                        workspace_id=str(request.workspace.id),
+                        property_id=property_id,
+                    )
+                else:
+                    return self._gm.bad_request(str(exc))
             except PropertyCatalogValueCursorError as exc:
-                return self._gm.custom_error_response(
-                    status.HTTP_400_BAD_REQUEST,
-                    str(exc),
-                    code=exc.code,
-                )
+                if catalog_read_mode == "shadow":
+                    logger.warning(
+                        "property_catalog_value_shadow_skipped",
+                        reason=exc.code,
+                        workspace_id=str(request.workspace.id),
+                        property_id=property_id,
+                    )
+                else:
+                    return self._gm.custom_error_response(
+                        status.HTTP_400_BAD_REQUEST,
+                        str(exc),
+                        code=exc.code,
+                    )
             except ValueError as exc:
-                return self._gm.bad_request(str(exc))
+                if catalog_read_mode == "shadow":
+                    logger.warning(
+                        "property_catalog_value_shadow_skipped",
+                        reason="invalid_request",
+                        workspace_id=str(request.workspace.id),
+                        property_id=property_id,
+                    )
+                else:
+                    return self._gm.bad_request(str(exc))
             except (PropertyCatalogValueUnavailable, ReadDeadlineExceeded) as exc:
                 logger.warning(
                     "property_catalog_value_read_unavailable",
@@ -3255,11 +3312,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     workspace_id=str(request.workspace.id),
                     property_id=property_id,
                 )
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
-                )
+                if catalog_read_mode != "shadow":
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Filter values are temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
             except Exception as exc:
                 logger.exception(
                     "property_catalog_value_read_failed",
@@ -3267,56 +3325,70 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     workspace_id=str(request.workspace.id),
                     property_id=property_id,
                 )
-                return self._gm.custom_error_response(
-                    status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    "Filter values could not be loaded",
-                    code="server_error",
-                )
+                if catalog_read_mode != "shadow":
+                    return self._gm.custom_error_response(
+                        status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        "Filter values could not be loaded",
+                        code="server_error",
+                    )
             else:
-                values = [
-                    {
-                        "value": row.value,
-                        "type": row.attribute_type,
-                        "label": (
-                            "true"
-                            if row.value is True
-                            else "false"
-                            if row.value is False
-                            else str(row.value)
-                        ),
-                    }
-                    for row in catalog_page.values
-                ]
-                return self._gm.success_response(
-                    {
-                        "values": values,
-                        "query_complete": True,
-                        "query_status": "complete",
-                        # The cursor freezes the retained-range membership, but
-                        # first/last observation bounds do not prove exact
-                        # occurrence in every arbitrary sub-window. Deliberately
-                        # do not publish query_exact=true here.
-                        "query_window_start": catalog_page.window_start,
-                        "query_window_end": catalog_page.window_end,
-                        "query_count": catalog_page.query_count,
-                        "has_more": catalog_page.has_more,
-                        "browse_status": (
-                            "continuation" if catalog_page.has_more else "exhausted"
-                        ),
-                        "next_cursor": catalog_page.next_cursor,
-                        "catalog_epoch": catalog_page.catalog_epoch,
-                        "catalog_revision": catalog_page.catalog_revision,
-                        "activation_fingerprint": (catalog_page.activation_fingerprint),
-                        "attribute_types": list(catalog_page.attribute_types),
-                        "attribute_types_exact": True,
-                        "query_provenance": "activated_property_catalog",
-                        **(
-                            {"attribute_type": query_params["attribute_type"]}
-                            if query_params.get("attribute_type")
-                            else {}
-                        ),
-                    }
-                )
+                if catalog_read_mode == "shadow":
+                    logger.info(
+                        "property_catalog_value_shadow_read_succeeded",
+                        workspace_id=str(request.workspace.id),
+                        property_id=property_id,
+                        value_count=len(catalog_page.values),
+                        catalog_epoch=catalog_page.catalog_epoch,
+                        catalog_revision=catalog_page.catalog_revision,
+                        has_more=catalog_page.has_more,
+                    )
+                else:
+                    values = [
+                        {
+                            "value": row.value,
+                            "type": row.attribute_type,
+                            "label": (
+                                "true"
+                                if row.value is True
+                                else "false"
+                                if row.value is False
+                                else str(row.value)
+                            ),
+                        }
+                        for row in catalog_page.values
+                    ]
+                    return self._gm.success_response(
+                        {
+                            "values": values,
+                            "query_complete": True,
+                            "query_status": "complete",
+                            # The cursor freezes the retained-range membership, but
+                            # first/last observation bounds do not prove exact
+                            # occurrence in every arbitrary sub-window. Deliberately
+                            # do not publish query_exact=true here.
+                            "query_window_start": catalog_page.window_start,
+                            "query_window_end": catalog_page.window_end,
+                            "query_count": catalog_page.query_count,
+                            "has_more": catalog_page.has_more,
+                            "browse_status": (
+                                "continuation" if catalog_page.has_more else "exhausted"
+                            ),
+                            "next_cursor": catalog_page.next_cursor,
+                            "catalog_epoch": catalog_page.catalog_epoch,
+                            "catalog_revision": catalog_page.catalog_revision,
+                            "activation_fingerprint": (
+                                catalog_page.activation_fingerprint
+                            ),
+                            "attribute_types": list(catalog_page.attribute_types),
+                            "attribute_types_exact": True,
+                            "query_provenance": "activated_property_catalog",
+                            **(
+                                {"attribute_type": query_params["attribute_type"]}
+                                if query_params.get("attribute_type")
+                                else {}
+                            ),
+                        }
+                    )
 
         # Route by source
         if metric_type == "custom_column" and source in {

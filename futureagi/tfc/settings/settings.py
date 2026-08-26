@@ -1155,6 +1155,7 @@ PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT = (
 PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT = (
     "I_ACKNOWLEDGE_PROD_READ_ONLY_UNIFIED_PROPERTY_CATALOG"
 )
+PROPERTY_CATALOG_PROD_CLOUD_DEPLOYMENTS = frozenset({"US", "EU"})
 PROPERTY_CATALOG_MAX_READ_WORKSPACES = 256
 _PROPERTY_CATALOG_DATABASE_PATTERNS = {
     "dev": re.compile(r"\Ath7247_catalog_dev_[a-z0-9][a-z0-9_]*\Z"),
@@ -1179,9 +1180,13 @@ def property_catalog_read_deployment(
     ):
         return "dev"
     # ``ENV_TYPE`` is documented and deployed as ``prod``. Keep the longer
-    # spelling as a backwards-compatible alias, but never classify either as
-    # production when the cloud deployment is explicitly DEV.
-    if normalized_environment in {"prod", "production"} and normalized_cloud != "DEV":
+    # spelling as a backwards-compatible alias, but only admit the hosted
+    # production regions recognized by the application. Unknown, empty, and
+    # self-hosted deployment names must remain fail-closed.
+    if (
+        normalized_environment in {"prod", "production"}
+        and normalized_cloud in PROPERTY_CATALOG_PROD_CLOUD_DEPLOYMENTS
+    ):
         return "prod"
     raise ValueError(
         "unified property catalog reads require an explicitly supported DEV "

@@ -406,6 +406,72 @@ def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
     legacy.assert_not_called()
 
 
+def test_metrics_shadow_executes_catalog_read_then_requests_legacy_fallback(settings):
+    _enable_catalog_reads(settings)
+    settings.PROPERTY_CATALOG_READ_MODE = "shadow"
+    page = SimpleNamespace(
+        metrics=({"property_id": "custom_attribute:customer.plan"},),
+        has_more=False,
+        next_cursor=None,
+        catalog_epoch=3,
+        catalog_revision=17,
+        activation_fingerprint="a" * 64,
+        category_counts={
+            "all": 1,
+            "system_metric": 0,
+            "eval_metric": 0,
+            "annotation_metric": 0,
+            "custom_attribute": 1,
+            "custom_column": 0,
+        },
+        category_counts_exact=True,
+    )
+    reader = Mock()
+    reader.read_page.return_value = page
+
+    with (
+        patch(
+            "tracer.views.dashboard.resolve_property_catalog_project_scope",
+            return_value=[PROJECT_ID],
+        ),
+        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
+        patch("tracer.views.dashboard.activation_control_selector_for_deployment"),
+        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
+        patch("tracer.views.dashboard.build_metrics_catalog_page") as legacy,
+    ):
+        response = inspect.unwrap(DashboardViewSet.metrics)(
+            DashboardViewSet(), _request()
+        )
+
+    assert response.status_code == 503
+    assert response.data["code"] == "property_catalog_not_ready"
+    reader.read_page.assert_called_once()
+    legacy.assert_not_called()
+
+
+def test_metrics_shadow_failure_is_fail_open_to_legacy_fallback(settings):
+    _enable_catalog_reads(settings)
+    settings.PROPERTY_CATALOG_READ_MODE = "shadow"
+    reader = Mock()
+    reader.read_page.side_effect = PropertyCatalogUnavailable("query_failed")
+
+    with (
+        patch(
+            "tracer.views.dashboard.resolve_property_catalog_project_scope",
+            return_value=[PROJECT_ID],
+        ),
+        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
+        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
+    ):
+        response = inspect.unwrap(DashboardViewSet.metrics)(
+            DashboardViewSet(), _request()
+        )
+
+    assert response.status_code == 503
+    assert response.data["code"] == "property_catalog_not_ready"
+    reader.read_page.assert_called_once()
+
+
 def test_metrics_workspace_scope_binds_full_authorized_project_set(settings):
     _enable_catalog_reads(settings)
     reader = Mock()

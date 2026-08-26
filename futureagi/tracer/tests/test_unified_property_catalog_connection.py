@@ -134,12 +134,14 @@ def test_property_catalog_connection_preserves_acknowledged_dev_admission():
 
 @pytest.mark.parametrize("read_mode", ["read", "shadow"])
 @pytest.mark.parametrize("environment_type", ["prod", "production"])
+@pytest.mark.parametrize("cloud_deployment", ["US", "EU"])
 def test_property_catalog_connection_admits_bounded_production_reads(
-    read_mode, environment_type
+    read_mode, environment_type, cloud_deployment
 ):
     config = PropertyCatalogConnectionConfig.from_settings(
         _prod_settings(
             ENV_TYPE=environment_type,
+            CLOUD_DEPLOYMENT=cloud_deployment,
             PROPERTY_CATALOG_READ_MODE=read_mode,
         )
     )
@@ -219,6 +221,8 @@ def test_property_catalog_read_mode_off_never_builds_a_runtime_connection():
     [
         ({"ENV_TYPE": "staging", "CLOUD_DEPLOYMENT": "US"}, "supported DEV"),
         ({"CLOUD_DEPLOYMENT": "DEV"}, "supported DEV or production"),
+        ({"CLOUD_DEPLOYMENT": ""}, "supported DEV or production"),
+        ({"CLOUD_DEPLOYMENT": "TYPO"}, "supported DEV or production"),
         (
             {
                 "PROPERTY_CATALOG_PROD_READ_ACK": "wrong",
