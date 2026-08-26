@@ -4,7 +4,7 @@ name: Refresh disposable-email-domains
 # from the latest disposable-email-domains release upstream and open a PR if
 # the list moved. We vendor the list instead of depending on the package at
 # runtime, so this is what keeps it from going stale — nobody has to notice
-
+# a new release and bump a pin by hand. TH-7620.
 
 on:
   schedule:
@@ -39,7 +39,7 @@ jobs:
           curl -sfL "$sdist_url" -o /tmp/pkg.tar.gz
           tar xzf /tmp/pkg.tar.gz -C /tmp
 
-          conf=$(find /tmp -maxdepth 2 -name disposable_email_blocklist.conf)
+          conf=$(find /tmp -maxdepth 3 -name disposable_email_blocklist.conf)
           sort -u "$conf" > /tmp/upstream_domains.txt
           echo "Upstream domain count: $(wc -l < /tmp/upstream_domains.txt)"
 
