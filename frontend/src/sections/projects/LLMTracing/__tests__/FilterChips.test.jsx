@@ -151,6 +151,76 @@ describe("FilterChips", () => {
     expect(onAddFilter.mock.calls[0][0]).toBeInstanceOf(HTMLElement);
   });
 
+  describe("free-text search chip", () => {
+    it("renders the strip with only a search term and no filters", () => {
+      const { container } = render(
+        <FilterChips
+          extraFilters={[]}
+          searchTerm="timeout"
+          onRemoveSearch={vi.fn()}
+          onRemoveFilter={vi.fn()}
+          onClearAll={vi.fn()}
+        />,
+      );
+      expect(container.firstChild).not.toBeNull();
+      expect(screen.getByText("Search")).toBeInTheDocument();
+      expect(screen.getByText("contains")).toBeInTheDocument();
+      expect(screen.getByText("timeout")).toBeInTheDocument();
+    });
+
+    it("renders the search chip alongside field filter chips", () => {
+      render(
+        <FilterChips
+          extraFilters={[
+            {
+              column_id: "latency",
+              filter_config: { filter_op: "more_than", filter_value: 7 },
+            },
+          ]}
+          searchTerm="timeout"
+          onRemoveSearch={vi.fn()}
+          onRemoveFilter={vi.fn()}
+          onClearAll={vi.fn()}
+        />,
+      );
+      expect(screen.getByText("timeout")).toBeInTheDocument();
+      expect(screen.getByText("Latency")).toBeInTheDocument();
+    });
+
+    it("calls onRemoveSearch (not onRemoveFilter) when the search chip is deleted", async () => {
+      const user = userEvent.setup();
+      const onRemoveSearch = vi.fn();
+      const onRemoveFilter = vi.fn();
+      const { container } = render(
+        <FilterChips
+          extraFilters={[]}
+          searchTerm="timeout"
+          onRemoveSearch={onRemoveSearch}
+          onRemoveFilter={onRemoveFilter}
+          onClearAll={vi.fn()}
+        />,
+      );
+      const deleteIcon = container.querySelector(".MuiChip-deleteIcon");
+      expect(deleteIcon).not.toBeNull();
+      await user.click(deleteIcon);
+      expect(onRemoveSearch).toHaveBeenCalledTimes(1);
+      expect(onRemoveFilter).not.toHaveBeenCalled();
+    });
+
+    it("still renders nothing with no filters and no search term", () => {
+      const { container } = render(
+        <FilterChips
+          extraFilters={[]}
+          searchTerm=""
+          onRemoveSearch={vi.fn()}
+          onRemoveFilter={vi.fn()}
+          onClearAll={vi.fn()}
+        />,
+      );
+      expect(container.firstChild).toBeNull();
+    });
+  });
+
   describe("UUID column_id fallback", () => {
     const UUID = "f701b069-6224-46e8-900f-60cc5af4dd20";
 
