@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import override_settings
 
 from tracer.services.clickhouse.v2 import catalog_dev_schema
@@ -395,6 +396,38 @@ def test_management_command_defaults_to_zero_io_dry_run() -> None:
     assert '"mode":"dry_run"' in output
     assert '"zero_io":true' in output
     assert "property_catalog_source_streams" in output
+
+
+def test_management_command_refuses_wrong_uid_before_mutating_runtime_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tracer.management.commands import ch25_property_catalog_dev_rollout as command
+
+    monkeypatch.setattr(command.os, "geteuid", lambda: 0)
+    with (
+        override_settings(PROPERTY_CATALOG_RUNTIME_UID=65_532),
+        pytest.raises(CommandError, match="refusing uid 0 before runtime I/O"),
+    ):
+        call_command("ch25_property_catalog_dev_rollout", "--execute")
+
+
+def test_management_command_allows_read_only_modes_for_operator_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tracer.management.commands import ch25_property_catalog_dev_rollout as command
+
+    monkeypatch.setattr(command.os, "geteuid", lambda: 0)
+    command._require_mutating_runtime_identity({"execute": False, "status": True})
+
+
+def test_management_command_runtime_uid_is_overridable_for_reviewed_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tracer.management.commands import ch25_property_catalog_dev_rollout as command
+
+    monkeypatch.setattr(command.os, "geteuid", lambda: 12345)
+    with override_settings(PROPERTY_CATALOG_RUNTIME_UID=12345):
+        command._require_mutating_runtime_identity({"execute": True})
 
 
 @override_settings(

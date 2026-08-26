@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from argparse import ArgumentParser
 from typing import Any
 
@@ -25,6 +26,8 @@ from tracer.services.clickhouse.v2.property_catalog.dev_runtime import (
 from tracer.services.clickhouse.v2.property_catalog.reconciler import ReconcileMode
 
 _RUNTIME_FACTORY_SETTING = "PROPERTY_CATALOG_DEV_RUNTIME_FACTORY"
+_RUNTIME_UID_SETTING = "PROPERTY_CATALOG_RUNTIME_UID"
+_DEFAULT_RUNTIME_UID = 65_532
 
 
 class Command(BaseCommand):
@@ -69,6 +72,7 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> str:
         try:
+            _require_mutating_runtime_identity(options)
             request = _request(options)
             runtime = _runtime(request) if request.execute or request.status else None
             scheduled_mode = options.get("scheduled_reconcile")
@@ -86,6 +90,24 @@ class Command(BaseCommand):
         payload = result if isinstance(result, dict) else result.as_dict()
         output = canonical_json(payload, max_bytes=4 * 1024 * 1024)
         return output
+
+
+def _require_mutating_runtime_identity(options: dict[str, Any]) -> None:
+    """Keep every spool mutation under the producer/control runtime identity."""
+
+    if not (options.get("execute") or options.get("scheduled_reconcile")):
+        return
+    expected_uid = getattr(settings, _RUNTIME_UID_SETTING, _DEFAULT_RUNTIME_UID)
+    if isinstance(expected_uid, bool) or not isinstance(expected_uid, int):
+        raise DevRolloutError(f"{_RUNTIME_UID_SETTING} must be a positive integer")
+    if expected_uid <= 0:
+        raise DevRolloutError(f"{_RUNTIME_UID_SETTING} must be a positive integer")
+    actual_uid = os.geteuid()
+    if actual_uid != expected_uid:
+        raise DevRolloutError(
+            "property-catalog mutations require runtime uid "
+            f"{expected_uid}; refusing uid {actual_uid} before runtime I/O"
+        )
 
 
 def _request(options: dict[str, Any]) -> DevRolloutRequest:
