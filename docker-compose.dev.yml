@@ -9,6 +9,11 @@ x-dev-worker: &dev-worker
     # Bootstrap once with:
     #   python -m nltk.downloader -d ~/.cache/alk-nltk stopwords wordnet omw-1.4 punkt punkt_tab averaged_perceptron_tagger
     - ${HOME:?HOME must be set}/.cache/alk-nltk:/usr/local/nltk_data:ro
+  # nltk still attempts index downloads at boot even with the data mounted;
+  # each doomed attempt burns ~75s on a dying SSL connection. Point the index
+  # host at loopback so the failure is instant and boot doesn't stall.
+  extra_hosts:
+    - "raw.githubusercontent.com:127.0.0.1"
   environment:
     FAST_STARTUP: "true"
 
@@ -43,6 +48,9 @@ services:
       # In-container SSL downloads fail, so nltk data is pre-fetched on the
       # host; without this mount every recreated container loses the data.
       - ${HOME:?HOME must be set}/.cache/alk-nltk:/usr/local/nltk_data:ro
+    # Same nltk boot-stall short-circuit as the worker anchor.
+    extra_hosts:
+      - "raw.githubusercontent.com:127.0.0.1"
     environment:
       FAST_STARTUP: "true"
       ALK_HARNESS_SANDBOX_URL: http://alk-harness-sandbox:8788
