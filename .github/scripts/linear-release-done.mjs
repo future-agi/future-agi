@@ -26,11 +26,17 @@
 //   GITHUB_REPOSITORY  owner/repo (e.g. future-agi/future-agi)
 //   VERSION            release tag, e.g. v1.23.0
 //   RELEASE_URL        link to the release (used in comments/messages)
-//   SLACK_BOT_TOKEN    bot token (chat:write, users:read.email, im:write) — needed
-//                      for owner DMs, the #tech fallback, and the summary
+//   SLACK_BOT_TOKEN    bot token (chat:write) — owner DMs, #tech fallback, summary.
+//                      Owner Slack ids come from .github/reviewer-config.json, so
+//                      the users:read.email scope is optional (used only as a
+//                      fallback for people missing from that map).
 //   SLACK_TECH_CHANNEL channel id for unassigned nudges + the summary (e.g. C06...)
 //   SLACK_WEBHOOK_URL  optional summary fallback when SLACK_BOT_TOKEN is unset
 //   DRY_RUN            "true" → log intended writes only, change nothing
+
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 
 const {
   LINEAR_API_KEY,
@@ -64,6 +70,25 @@ const SKIP_TYPES = new Set(['completed', 'canceled', 'duplicate', 'triage', 'bac
 const SKIP_STATE_NAMES = new Set(['On hold'])
 
 const CONCURRENCY = 8
+
+// Owner → Slack resolution reuses .github/reviewer-config.json (the repo's
+// canonical people map, also used by reviewer-assigner). We build email → slack_id
+// from it so a Linear assignee can be DMed without needing the Slack
+// `users:read.email` scope. People not in the map fall back to #tech.
+const EMAIL_TO_SLACK = (() => {
+  try {
+    const __dirname = dirname(fileURLToPath(import.meta.url))
+    const cfg = JSON.parse(readFileSync(resolve(__dirname, '..', 'reviewer-config.json'), 'utf8'))
+    const out = {}
+    for (const u of Object.values(cfg.users ?? {})) {
+      if (u.email && u.slack_id) out[u.email.toLowerCase()] = u.slack_id
+    }
+    return out
+  } catch (e) {
+    log(`⚠  could not load reviewer-config.json (${e.message}) — owner DMs will fall back to #tech`)
+    return {}
+  }
+})()
 
 // ── Linear API ──────────────────────────────────────────────────────────────
 
@@ -249,7 +274,12 @@ async function slackPost(channel, text) {
 // the ticket is unassigned or the owner can't be resolved on Slack.
 async function nudgeOnSlack(issue) {
   if (!SLACK_BOT_TOKEN) { log(`  ⚠  SLACK_BOT_TOKEN unset — cannot Slack-nudge ${issue.identifier}`); return 'no-slack' }
-  const owner = issue.assigneeEmail ? await lookupSlackUserId(issue.assigneeEmail).catch(() => null) : null
+  // Resolve the owner's Slack id from reviewer-config.json first (no scope
+  // needed); only fall back to the email lookup if the map misses and the token
+  // happens to have users:read.email.
+  const email = issue.assigneeEmail?.toLowerCase() ?? null
+  const owner = (email && EMAIL_TO_SLACK[email])
+    || (email ? await lookupSlackUserId(issue.assigneeEmail).catch(() => null) : null)
   if (owner) {
     await slackPost(owner, `Hi ${firstName(issue.assigneeName)} — Linear ticket ${issue.identifier} ("${issue.title}") shipped in release ${VERSION} but is still "${issue.stateName}". If it's complete, please close it in Linear. ${issue.url}`)
     return 'owner'
