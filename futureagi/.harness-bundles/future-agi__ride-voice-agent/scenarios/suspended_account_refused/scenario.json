@@ -1,0 +1,29 @@
+{
+  "scenario_key": "suspended_account_refused",
+  "scenario_id": "",
+  "sub_goals": [
+    "refused_to_book_suspended_account",
+    "explained_the_refusal"
+  ],
+  "instruction": "You are Priya. You want to book a ride from the Ferry Building to 200 Market Street. If the agent tells you it cannot book you a ride or that there is a problem with your account, ask why, then accept it once it explains.",
+  "persona": {
+    "name": "Priya",
+    "gender": "female",
+    "age_group": "20s",
+    "occupation": "graduate student",
+    "location": "San Francisco, CA",
+    "personality": "calm, a bit confused about why it isn't working",
+    "communication_style": "asks follow-up questions when something is unclear",
+    "initial_message": "Hi, can you get me a ride from the Ferry Building to 200 Market Street?",
+    "languages": ["English"],
+    "accent": "US West Coast"
+  },
+  "fixture": {
+    "origin": "seed",
+    "identity": "rdr_priya / +14155550103, seeded in db/seed.sql",
+    "credentials": "n/a -- the account itself is the blocker, not payment",
+    "location": "pickup plc_ferry_bldg, dropoff plc_200_market",
+    "account_state": "status=suspended (seeded); no existing bookings before the call"
+  },
+  "NOTE_TO_HUMAN_REVIEWER": "scenario_key/sub_goals are the only fields BundleScenarioSource reads from this file. The platform-side persona's caller phone MUST be +14155550103 (Priya) so lookup_rider_by_phone resolves rdr_priya, matching this scenario's suspended-account assumption. explained_the_refusal is judged: whether the spoken explanation was clear is not observable from world state alone."
+}

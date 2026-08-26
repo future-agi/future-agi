@@ -1,0 +1,226 @@
+{
+  "schema_version": "futureagi.environment-bundle.v2",
+  "name": "ride-voice-agent",
+  "runtime": {
+    "kind": "process",
+    "control_service": "agent",
+    "evidence_seam": "http_tool"
+  },
+  "processes": [
+    {
+      "name": "postgres",
+      "kind": "managed",
+      "engine": "postgres",
+      "version": "16",
+      "user": "svc-data",
+      "depends_on": []
+    },
+    {
+      "name": "tools-api",
+      "kind": "source",
+      "working_directory": "tools-api",
+      "build_commands": [
+        [
+          "python3",
+          "-m",
+          "venv",
+          ".venv"
+        ],
+        [
+          ".venv/bin/pip",
+          "install",
+          "-r",
+          "requirements.txt"
+        ]
+      ],
+      "run_command": [
+        "sh",
+        "-c",
+        "exec .venv/bin/uvicorn main:app --host 0.0.0.0 --port \"$PORT\""
+      ],
+      "environment": {
+        "DATABASE_URL": "{{DATABASE_URL}}",
+        "PORT": "{{PORT_tools-api}}"
+      },
+      "secret_purposes": [],
+      "user": "svc-tools",
+      "depends_on": [
+        "postgres"
+      ]
+    },
+    {
+      "name": "agent",
+      "kind": "source",
+      "working_directory": ".",
+      "build_commands": [
+        [
+          "python3",
+          "-m",
+          "venv",
+          ".venv"
+        ],
+        [
+          ".venv/bin/pip",
+          "install",
+          "."
+        ],
+        [
+          ".venv/bin/python",
+          "-m",
+          "livekit.agents",
+          "download-files"
+        ]
+      ],
+      "run_command": [
+        ".venv/bin/python",
+        "agent/agent.py",
+        "start"
+      ],
+      "environment": {
+        "TOOLS_API_URL": "{{TOOLS_API_URL}}",
+        "LIVEKIT_AGENT_NAME": "agent-w{{WORLD_INDEX}}",
+        "HARNESS_MODE": "1",
+        "MAX_FARE_WITHOUT_OTP": "100",
+        "DEMO_CALLER_ANI": "+14155550101",
+        "TOOLS_TIMEOUT_SECONDS": "5",
+        "AGENT_STT_MODEL": "flux-general-en",
+        "AGENT_STT_MODEL_PHONE": "nova-2-phonecall",
+        "AGENT_LLM_MODEL": "gemini-2.5-flash-lite",
+        "AGENT_LLM_TEMPERATURE": "0.2",
+        "AGENT_TTS_MODEL": "aura-2-andromeda-en"
+      },
+      "secret_purposes": [
+        "target_provider"
+      ],
+      "user": "svc-agent",
+      "depends_on": [
+        "postgres",
+        "tools-api"
+      ]
+    }
+  ],
+  "capabilities": {
+    "database": {
+      "protocol": "postgres",
+      "service": "postgres",
+      "configuration_name": "DATABASE_URL"
+    },
+    "tools_api": {
+      "protocol": "http",
+      "service": "tools-api",
+      "configuration_name": "TOOLS_API_URL"
+    }
+  },
+  "readiness": [
+    {
+      "capability": "tools_api",
+      "path": "/health",
+      "timeout_seconds": 30,
+      "interval_seconds": 0.5
+    }
+  ],
+  "provenance": {
+    "source_kind": "repository",
+    "repository": "future-agi/ride-voice-agent",
+    "commit": "8693748561d8840d0aa17295691e29d10d1b1a15",
+    "source_digest": "955e1e2b326bfb07c478b93f86f8ff4479ff019d38f8a1aa21d2d4190929eb02"
+  },
+  "metadata": {
+    "source_branch": "codex/harden-voice-harness-flows",
+    "authored_by": "bundle-author agent (hand-authored, no live infra provisioned)"
+  },
+  "seed": {
+    "stores": [
+      {
+        "capability": "database",
+        "migrations": [
+          "db/schema.sql"
+        ],
+        "seed_files": [
+          "db/seed.sql"
+        ],
+        "baseline": {
+          "strategy": "template_database",
+          "inputs_digest": "sha256:935a4e062ddc4e33f1b16ad53fbce359af3d9f7b4784993544f6d708dad8cd93"
+        },
+        "sentinel": {
+          "query": "SELECT count(*) FROM users",
+          "expected": "9"
+        }
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "db/schema.sql",
+      "sha256": "497b852d2b439d5a8a8149ab2fe941c49be2bf5684a555f7de16e576278251eb",
+      "size": 5443
+    },
+    {
+      "path": "db/seed.sql",
+      "sha256": "ed93f167edcfe05c0e301331bada1b1ea6f52393134687a8a71d5f10adce3c90",
+      "size": 8794
+    },
+    {
+      "path": "scenarios/book_ride_saved_card_otp/checks/created_booking_with_saved_card.py",
+      "sha256": "a07b1fc97c74bf4d881d93b012e9c654dd4eebe0a9aa8924eeb932b33a2df389",
+      "size": 908
+    },
+    {
+      "path": "scenarios/book_ride_saved_card_otp/checks/verified_otp_before_charging.py",
+      "sha256": "8d2322814738e806246b74971811a9588c93c89e8c4b506b2fc6c97a32185a2e",
+      "size": 447
+    },
+    {
+      "path": "scenarios/book_ride_saved_card_otp/ready.py",
+      "sha256": "68a0fcbdcd783fac4744ab3f5e7322857e2e69e21e9d24007e9ddd25e7e61a0f",
+      "size": 987
+    },
+    {
+      "path": "scenarios/book_ride_saved_card_otp/scenario.json",
+      "sha256": "4349f2de2b8af2a6ef3ffbaa37c7f261e41d6a3069db9544b96e0e557590d536",
+      "size": 1687
+    },
+    {
+      "path": "scenarios/book_ride_saved_card_otp/setup.py",
+      "sha256": "f796631c6925d8772b7fbb684c0a92da458dd3a483cd40063eaeece3a2e9d133",
+      "size": 159
+    },
+    {
+      "path": "scenarios/cancel_ride_ask_fee/checks/cancelled_booking.py",
+      "sha256": "44f3906c383eb38bed00303cd753c34c856e476c8b028e5e923d9b7c43db8edd",
+      "size": 402
+    },
+    {
+      "path": "scenarios/cancel_ride_ask_fee/ready.py",
+      "sha256": "d87a825046306786f31fcb5be29dd0b9e986fd09c0467a3e4218992099ef87ab",
+      "size": 838
+    },
+    {
+      "path": "scenarios/cancel_ride_ask_fee/scenario.json",
+      "sha256": "6c5eed2cf764a1cab1c25082dd25f5cd64f2c0c48d629c20d34b7aa31d6a27e0",
+      "size": 1692
+    },
+    {
+      "path": "scenarios/cancel_ride_ask_fee/setup.py",
+      "sha256": "422f960e12e5d0d84213c1443f82d43ddb7b5b136fa4f0c558e3f8b410097462",
+      "size": 945
+    },
+    {
+      "path": "scenarios/suspended_account_refused/checks/refused_to_book_suspended_account.py",
+      "sha256": "e16866c957a8c2785c77d3359a58692ecf0dfe0f4d2142be00cb160ac3f2f175",
+      "size": 353
+    },
+    {
+      "path": "scenarios/suspended_account_refused/ready.py",
+      "sha256": "173b8edb06ea20ebc826641eb60a5fda6555b74f4acaf24dddecb4ae4dcfa0ae",
+      "size": 525
+    },
+    {
+      "path": "scenarios/suspended_account_refused/scenario.json",
+      "sha256": "6a44d8e89aa551194c768a70b4c0a6ecf781b57c5d5b298c9dae2f34ba14fdc7",
+      "size": 1617
+    }
+  ],
+  "digest": "sha256:5089486310014afcd6412276f138f66a0858b53c26f632323d6d31d00f6009a1"
+}

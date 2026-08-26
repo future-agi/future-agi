@@ -1,0 +1,30 @@
+{
+  "scenario_key": "book_ride_saved_card_otp",
+  "scenario_id": "",
+  "sub_goals": [
+    "created_booking_with_saved_card",
+    "verified_otp_before_charging",
+    "polite_and_clear"
+  ],
+  "instruction": "You are Dana, calling to book a ride from home to work. You want to pay with your usual card. If asked to verify a code sent to your phone, read it back one digit at a time.",
+  "persona": {
+    "name": "Dana",
+    "gender": "female",
+    "age_group": "30s",
+    "occupation": "product designer",
+    "location": "San Francisco, CA",
+    "personality": "friendly, a little rushed",
+    "communication_style": "brief, direct sentences",
+    "initial_message": "Hi, I need a ride to work.",
+    "languages": ["English"],
+    "accent": "US West Coast"
+  },
+  "fixture": {
+    "origin": "seed",
+    "identity": "rdr_dana / +14155550101, seeded in db/seed.sql",
+    "credentials": "default payment method pm_dana_visa (Visa ...4242, is_default=TRUE, is_valid=TRUE)",
+    "location": "home: plc_home_dana, work: plc_work_dana",
+    "account_state": "active, phone_verified=TRUE, OTP for +14155550101 unverified before the call (otp_codes seed row, verified=FALSE)"
+  },
+  "NOTE_TO_HUMAN_REVIEWER": "scenario_key/sub_goals are the only fields BundleScenarioSource (src/fi/alk/harness/scenario_source.py) reads from this file -- instruction/persona/fixture below are carried for a human registering the matching scenario+persona on the FutureAGI platform (the actual simulated-caller script), not read by the guest loader. The platform-side persona's caller phone MUST be +14155550101 so lookup_rider_by_phone resolves rdr_dana, matching this scenario's setup/ready/check assumptions."
+}

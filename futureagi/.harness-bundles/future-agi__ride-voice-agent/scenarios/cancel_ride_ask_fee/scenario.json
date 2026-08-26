@@ -1,0 +1,29 @@
+{
+  "scenario_key": "cancel_ride_ask_fee",
+  "scenario_id": "",
+  "sub_goals": [
+    "cancelled_booking",
+    "stated_cancellation_fee_correctly"
+  ],
+  "instruction": "You are Marcus. You already booked a ride (booking UBSEED0001) that is on its way. Your plans changed and you want to cancel it. Ask what the cancellation fee will be before you confirm you want to cancel.",
+  "persona": {
+    "name": "Marcus",
+    "gender": "male",
+    "age_group": "40s",
+    "occupation": "sales manager",
+    "location": "San Francisco, CA",
+    "personality": "polite but a little impatient",
+    "communication_style": "gets to the point quickly",
+    "initial_message": "Hey, I need to cancel a ride I just booked.",
+    "languages": ["English"],
+    "accent": "US West Coast"
+  },
+  "fixture": {
+    "origin": "mixed",
+    "identity": "rdr_marcus / +14155550102, seeded in db/seed.sql",
+    "credentials": "n/a -- cancellation does not charge a card",
+    "location": "pickup plc_ferry_bldg, dropoff plc_200_market",
+    "account_state": "one active booking UBSEED0001 (status=matched, cancellation_fee=5.00) inserted by this scenario's setup.py, not part of the shared base seed"
+  },
+  "NOTE_TO_HUMAN_REVIEWER": "scenario_key/sub_goals are the only fields BundleScenarioSource reads from this file. The platform-side persona's caller phone MUST be +14155550102 (Marcus) so lookup_rider_by_phone resolves rdr_marcus, matching this scenario's seeded booking. stated_cancellation_fee_correctly is judged: whether the agent spoke the $5.00 fee correctly is not observable from world state alone (evidence_seam=http_tool captures zero tool calls today), so a judge has to listen to the transcript."
+}
