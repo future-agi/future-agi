@@ -1,12 +1,133 @@
 package propertycatalog
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
+
+type mirroringDeliverySink struct {
+	first  DeliverySink
+	second DeliverySink
+}
+
+func (s *mirroringDeliverySink) InsertPropertyCatalog(
+	ctx context.Context, table Table, rows []map[string]any,
+) error {
+	if err := s.first.InsertPropertyCatalog(ctx, table, rows); err != nil {
+		return err
+	}
+	return s.second.InsertPropertyCatalog(ctx, table, rows)
+}
+
+func (s *mirroringDeliverySink) InsertPropertyCatalogDelivery(
+	ctx context.Context, rows []map[string]any,
+) error {
+	if err := s.first.InsertPropertyCatalogDelivery(ctx, rows); err != nil {
+		return err
+	}
+	return s.second.InsertPropertyCatalogDelivery(ctx, rows)
+}
+
+func TestFranzLoopbackEnvelopeConsumerDeliveryAndReplay(t *testing.T) {
+	brokersText := os.Getenv("TH7247_TEST_KAFKA_BROKERS")
+	topic := os.Getenv("TH7247_TEST_KAFKA_TOPIC")
+	if brokersText == "" || topic == "" {
+		t.Skip("set TH7247_TEST_KAFKA_BROKERS and TH7247_TEST_KAFKA_TOPIC for the loopback Kafka test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	brokers := strings.Split(brokersText, ",")
+
+	producer, err := NewFranzProducer(FranzProducerConfig{
+		Brokers: brokers, Topic: topic, ClientID: "th7247-property-catalog-loopback-producer",
+		DeliveryTimeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer producer.Close()
+
+	sink := &recordingSink{}
+	var deliverySink DeliverySink = sink
+	clickHouseURL := os.Getenv("TH7247_TEST_CLICKHOUSE_URL")
+	clickHouseDatabase := os.Getenv("TH7247_TEST_CLICKHOUSE_DATABASE")
+	clickHouseUsername := os.Getenv("TH7247_TEST_CLICKHOUSE_USERNAME")
+	if clickHouseURL != "" || clickHouseDatabase != "" || clickHouseUsername != "" {
+		if clickHouseURL == "" || clickHouseDatabase == "" || clickHouseUsername == "" {
+			t.Fatal("set all TH7247_TEST_CLICKHOUSE_URL, TH7247_TEST_CLICKHOUSE_DATABASE, and TH7247_TEST_CLICKHOUSE_USERNAME values")
+		}
+		clickHouseSink, err := NewClickHouseSink(ClickHouseSinkConfig{
+			URL: clickHouseURL, Database: clickHouseDatabase,
+			Environment: DevelopmentEnvironment, Username: clickHouseUsername,
+			Password: os.Getenv("TH7247_TEST_CLICKHOUSE_PASSWORD"), RequestTimeout: 10 * time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		deliverySink = &mirroringDeliverySink{first: sink, second: clickHouseSink}
+	}
+	guard := &recordingLeaseGuard{roles: []string{
+		"definitions", "definitions", "hot_values", "hot_values",
+	}}
+	handler, err := NewDeliveryHandler(deliverySink, guard, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator, err := NewSequenceValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := NewFranzConsumer(FranzConsumerConfig{
+		Brokers: brokers, Topic: topic,
+		GroupID:  fmt.Sprintf("th7247-property-catalog-loopback-%d", time.Now().UnixNano()),
+		ClientID: "th7247-property-catalog-loopback-consumer",
+	}, handler, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer consumer.Close()
+
+	definitionEnvelope := mustEnvelope(t, definitionDeliveryInput(t, 1))
+	valueInput := valueDeliveryInput(t, 1)
+	valueInput.ProducerStreamID = testProjectTwo
+	valueEnvelope := mustEnvelope(t, valueInput)
+	for _, envelope := range []WireEnvelope{definitionEnvelope, valueEnvelope} {
+		if err := producer.Publish(ctx, envelope); err != nil {
+			t.Fatalf("produce catalog envelope: %v", err)
+		}
+		if err := consumer.ProcessOne(ctx); err != nil {
+			t.Fatalf("consume catalog envelope: %v", err)
+		}
+	}
+
+	wantCalls := "[data:property_definition_catalog ledger data:span_attribute_value_catalog ledger]"
+	if got := fmt.Sprint(sink.calls); got != wantCalls {
+		t.Fatalf("loopback catalog writes=%s want=%s", got, wantCalls)
+	}
+	if len(guard.requests) != 4 {
+		t.Fatalf("loopback delivery authorizations=%d want=4", len(guard.requests))
+	}
+
+	// Kafka redelivery of the exact durable envelope advances the consumer
+	// offset but does not refresh either catalog table or the delivery ledger.
+	if err := producer.Publish(ctx, valueEnvelope); err != nil {
+		t.Fatalf("produce exact replay: %v", err)
+	}
+	if err := consumer.ProcessOne(ctx); err != nil {
+		t.Fatalf("consume exact replay: %v", err)
+	}
+	if got := fmt.Sprint(sink.calls); got != wantCalls || len(guard.requests) != 4 {
+		t.Fatalf("exact loopback replay refreshed state: calls=%s authorizations=%d", got, len(guard.requests))
+	}
+}
 
 func TestFranzProducerIsIdempotentAllISRAndHardBounded(t *testing.T) {
 	producer, err := NewFranzProducer(FranzProducerConfig{

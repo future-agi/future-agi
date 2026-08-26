@@ -119,6 +119,84 @@ func TestConsumerCommitsOnlyAfterDeliveryAndMarksExactDuplicate(t *testing.T) {
 	}
 }
 
+func TestKafkaProducerConsumerDeliveryWritesOnlyCatalogRowsAndReplaysExactly(t *testing.T) {
+	definitionEnvelope := mustEnvelope(t, definitionDeliveryInput(t, 1))
+	valueInput := valueDeliveryInput(t, 1)
+	valueInput.ProducerStreamID = testProjectTwo
+	valueEnvelope := mustEnvelope(t, valueInput)
+
+	writer := &recordingRecordWriter{}
+	producer, err := NewProducer("property-catalog", writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, envelope := range []WireEnvelope{definitionEnvelope, valueEnvelope} {
+		if err := producer.Publish(context.Background(), envelope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(writer.records) != 2 {
+		t.Fatalf("produced records=%d want=2", len(writer.records))
+	}
+
+	sink := &recordingSink{}
+	guard := &recordingLeaseGuard{roles: []string{
+		"definitions", "definitions", "hot_values", "hot_values",
+	}}
+	handler, err := NewDeliveryHandler(sink, guard, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator, err := NewSequenceValidator(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &oneRecordSource{}
+	consumer, err := NewConsumer("property-catalog", source, handler, validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for index, record := range writer.records {
+		record.Partition = int32(index)
+		record.Offset = int64(index)
+		source.record = record
+		if err := consumer.ProcessOne(context.Background()); err != nil {
+			t.Fatalf("consume record %d: %v", index, err)
+		}
+	}
+
+	wantCalls := "[data:property_definition_catalog ledger data:span_attribute_value_catalog ledger]"
+	if got := fmt.Sprint(sink.calls); got != wantCalls {
+		t.Fatalf("catalog writes=%s want=%s", got, wantCalls)
+	}
+	if source.commits != 2 || len(guard.requests) != 4 {
+		t.Fatalf("commits=%d authorizations=%d", source.commits, len(guard.requests))
+	}
+	if _, ok := sink.rows[0][0]["property_id"]; !ok {
+		t.Fatalf("definition row was not decoded into the catalog schema: %v", sink.rows[0][0])
+	}
+	if _, ok := sink.rows[2][0]["attribute_key"]; !ok {
+		t.Fatalf("value row was not decoded into the catalog schema: %v", sink.rows[2][0])
+	}
+
+	// Replaying the exact durable value envelope at a new Kafka offset commits
+	// the record without refreshing either catalog data or the delivery ledger.
+	replay := writer.records[1]
+	replay.Partition = 1
+	replay.Offset = 99
+	source.record = replay
+	if err := consumer.ProcessOne(context.Background()); err != nil {
+		t.Fatalf("consume exact replay: %v", err)
+	}
+	if source.commits != 3 || len(sink.calls) != 4 || len(guard.requests) != 4 {
+		t.Fatalf(
+			"exact replay refreshed durable state: commits=%d calls=%v authorizations=%d",
+			source.commits, sink.calls, len(guard.requests),
+		)
+	}
+}
+
 func TestConsumerCommitsFencedCrashReplayOnlyForExactDurableIdentity(t *testing.T) {
 	envelope := mustEnvelope(t, definitionDeliveryInput(t, 1))
 	snapshot := envelope.Snapshot()
