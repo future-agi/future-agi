@@ -87,7 +87,13 @@ export const paths = {
       personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
-      harness: `${ROOTS.DASHBOARD}/simulate/harness`,
+      testCallDetails: (testId, executionId) =>
+        `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
+      harness: {
+        root: `${ROOTS.DASHBOARD}/simulate/harness`,
+        new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
+        detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
+      },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {

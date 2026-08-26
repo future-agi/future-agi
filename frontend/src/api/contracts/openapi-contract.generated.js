@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 991,
+  "endpointCount": 997,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -27370,6 +27370,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/simulate/api/harness-jobs/secret-files/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_secret_file_upload",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessSecretFileUploadResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/simulate/api/harness-jobs/sources/": {
       "post": {
         "operationId": "simulate_api_harness-jobs_source_upload",
@@ -27432,6 +27449,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/HarnessJobAction"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_artifacts_artifact_manifest",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessManifest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessAcceptedResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": {
+      "put": {
+        "operationId": "simulate_api_harness_attempts_artifact_upload",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "type": "string",
+          "format": "binary"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessArtifactUploadResponse"
+          },
+          "201": {
+            "$ref": "#/definitions/HarnessArtifactUploadResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/events/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_events",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessEventBatch"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessEventBatchResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/results/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_results",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessResultReceipt"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessAcceptedResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness/attempts/{id}/scenarios/": {
+      "post": {
+        "operationId": "simulate_api_harness_attempts_scenarios",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessScenarioOperation"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessScenarioOperationResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -30062,6 +30178,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
+            "$ref": "#/definitions/RerunCallsResponse"
+          },
+          "202": {
             "$ref": "#/definitions/RerunCallsResponse"
           },
           "400": {
@@ -41734,6 +41853,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "enum": [
             "text",
+            "chat",
             "voice"
           ],
           "default": "text"
@@ -41899,8 +42019,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "format": "uuid"
           }
         },
+        "scenario_selectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          "maxItems": 100
+        },
         "simulator_agent_id": {
           "title": "Simulator agent id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "harness_job_id": {
+          "title": "Harness job id",
           "type": "string",
           "format": "uuid",
           "x-nullable": true
@@ -43470,7 +43607,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 5,
+          "maximum": 25,
           "minimum": 1,
           "x-nullable": true
         }
@@ -43629,7 +43766,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 5,
+          "maximum": 25,
           "minimum": 1,
           "x-nullable": true
         }
@@ -44664,7 +44801,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 5,
+          "maximum": 25,
           "minimum": 1
         },
         "commit_message": {
@@ -48957,6 +49094,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "description": "Whether to rerun all call executions in the test execution",
           "type": "boolean",
           "default": false
+        },
+        "environment_values": {
+          "title": "Environment values",
+          "description": "Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "default": {}
         }
       }
     },
@@ -58240,14 +58387,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "HarnessAcceptedResponse": {
+      "required": [
+        "accepted",
+        "duplicate"
+      ],
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "duplicate": {
+          "title": "Duplicate",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarnessArtifactUploadResponse": {
+      "required": [
+        "artifact_id",
+        "duplicate"
+      ],
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact id",
+          "type": "string",
+          "minLength": 1
+        },
+        "duplicate": {
+          "title": "Duplicate",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarnessEventBatch": {
+      "required": [
+        "schema_version",
+        "events"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-event.v1"
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessEvent"
+          }
+        }
+      }
+    },
+    "HarnessEventBatchResponse": {
+      "required": [
+        "acked_through_sequence",
+        "rejected"
+      ],
+      "type": "object",
+      "properties": {
+        "acked_through_sequence": {
+          "title": "Acked through sequence",
+          "type": "integer"
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessEventRejection"
+          }
+        }
+      }
+    },
     "HarnessJobAction": {
       "type": "object",
       "properties": {
         "reason": {
           "title": "Reason",
-          "description": "Optional operator-provided reason for the action.",
           "type": "string",
-          "maxLength": 500
+          "enum": [
+            "user_canceled",
+            "ttl_exceeded"
+          ],
+          "default": "user_canceled"
         }
       }
     },
@@ -58273,80 +58499,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "HarnessJobCreate": {
+      "required": [
+        "source",
+        "agent",
+        "artifacts"
+      ],
       "type": "object",
       "properties": {
-        "source_path": {
-          "title": "Source path",
-          "type": "string",
-          "maxLength": 4096,
-          "minLength": 1
-        },
-        "source_id": {
-          "title": "Source id",
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          "minLength": 1
-        },
-        "github_repository": {
-          "title": "Github repository",
-          "type": "string",
-          "maxLength": 512,
-          "minLength": 1
-        },
-        "github_ref": {
-          "title": "Github ref",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "github_commit_sha": {
-          "title": "Github commit sha",
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{40}$",
-          "minLength": 1
-        },
-        "github_visibility": {
-          "title": "Github visibility",
+        "schema_version": {
+          "title": "Schema version",
           "type": "string",
           "enum": [
-            "public",
-            "private"
+            "futureagi.harness-job.v1"
           ],
-          "default": "public"
+          "default": "futureagi.harness-job.v1"
         },
-        "github_installation_id": {
-          "title": "Github installation id",
+        "run_id": {
+          "title": "Run id",
           "type": "string",
-          "maxLength": 255,
-          "minLength": 1
+          "format": "uuid"
         },
-        "secret_refs": {
-          "title": "Secret refs",
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/definitions/SecretReference"
-          },
-          "default": {}
+        "source": {
+          "$ref": "#/definitions/HarnessSource"
         },
-        "environment_values": {
-          "title": "Environment values",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "maxLength": 65536
-          },
-          "default": {}
-        },
-        "connector_config": {
-          "title": "Connector config",
-          "type": "object",
-          "default": {}
+        "agent": {
+          "$ref": "#/definitions/HarnessAgent"
         },
         "scenario_count": {
           "title": "Scenario count",
           "type": "integer",
           "default": 10,
-          "maximum": 100,
+          "maximum": 10,
           "minimum": 1
         },
         "seed": {
@@ -58354,94 +58537,352 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "x-nullable": true
         },
+        "runtime": {
+          "$ref": "#/definitions/HarnessRuntime"
+        },
+        "security": {
+          "$ref": "#/definitions/HarnessSecurity"
+        },
+        "retry": {
+          "$ref": "#/definitions/HarnessRetry"
+        },
+        "artifacts": {
+          "$ref": "#/definitions/HarnessArtifact"
+        },
+        "platform_run_id": {
+          "title": "Platform run id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": {}
+        }
+      }
+    },
+    "HarnessManifest": {
+      "required": [
+        "schema_version",
+        "job_id",
+        "attempt_id",
+        "attempt_number",
+        "entries",
+        "complete",
+        "digest"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-manifest.v1"
+          ]
+        },
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "title": "Attempt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_number": {
+          "title": "Attempt number",
+          "type": "integer",
+          "minimum": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessManifestEntry"
+          }
+        },
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessPreflight": {
+      "required": [
+        "source",
+        "agent",
+        "artifacts"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-job.v1"
+          ],
+          "default": "futureagi.harness-job.v1"
+        },
+        "run_id": {
+          "title": "Run id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "source": {
+          "$ref": "#/definitions/HarnessSource"
+        },
+        "agent": {
+          "$ref": "#/definitions/HarnessAgent"
+        },
+        "scenario_count": {
+          "title": "Scenario count",
+          "type": "integer",
+          "default": 10,
+          "maximum": 10,
+          "minimum": 1
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "runtime": {
+          "$ref": "#/definitions/HarnessRuntime"
+        },
+        "security": {
+          "$ref": "#/definitions/HarnessSecurity"
+        },
+        "retry": {
+          "$ref": "#/definitions/HarnessRetry"
+        },
+        "artifacts": {
+          "$ref": "#/definitions/HarnessArtifact"
+        },
+        "platform_run_id": {
+          "title": "Platform run id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": {}
+        }
+      }
+    },
+    "HarnessResultReceipt": {
+      "required": [
+        "schema_version",
+        "job_id",
+        "attempt_id",
+        "attempt_number",
+        "scenario_key",
+        "scenario_id",
+        "scenario_attempt",
+        "world_index",
+        "status",
+        "sub_goals",
+        "evaluations",
+        "call",
+        "failure",
+        "digest"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "enum": [
+            "futureagi.harness-result.v1"
+          ]
+        },
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "title": "Attempt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_number": {
+          "title": "Attempt number",
+          "type": "integer",
+          "minimum": 1
+        },
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scenario_attempt": {
+          "title": "Scenario attempt",
+          "type": "integer",
+          "maximum": 2,
+          "minimum": 1
+        },
+        "world_index": {
+          "title": "World index",
+          "type": "integer",
+          "maximum": 7,
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "errored",
+            "skipped"
+          ]
+        },
+        "sub_goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessSubGoal"
+          }
+        },
+        "evaluations": {
+          "title": "Evaluations",
+          "type": "object"
+        },
+        "call": {
+          "$ref": "#/definitions/HarnessCall"
+        },
+        "failure": {
+          "$ref": "#/definitions/HarnessFailure"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessScenarioOperation": {
+      "required": [
+        "operation"
+      ],
+      "type": "object",
+      "properties": {
+        "operation": {
+          "title": "Operation",
+          "type": "string",
+          "enum": [
+            "provision",
+            "begin"
+          ]
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "modality": {
+          "title": "Modality",
+          "type": "string",
+          "enum": [
+            "text",
+            "voice"
+          ]
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "personas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessProvisionPersona"
+          }
+        },
+        "agent_definition_id": {
+          "title": "Agent definition id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
         "agent_name": {
           "title": "Agent name",
           "type": "string",
           "maxLength": 255
         },
-        "connector": {
-          "title": "Connector",
+        "run_test_id": {
+          "title": "Run test id",
           "type": "string",
-          "default": "auto",
-          "maxLength": 128,
-          "minLength": 1
+          "format": "uuid"
         },
-        "metadata": {
-          "title": "Metadata",
-          "type": "object",
-          "default": {}
+        "scenario_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1
+          }
         }
       }
     },
-    "HarnessPreflight": {
+    "HarnessScenarioOperationResponse": {
+      "required": [
+        "result"
+      ],
       "type": "object",
       "properties": {
-        "source_path": {
-          "title": "Source path",
+        "result": {
+          "$ref": "#/definitions/HarnessScenarioOperationResult"
+        }
+      }
+    },
+    "HarnessSecretFileUploadResponse": {
+      "required": [
+        "environment_name",
+        "secret_ref",
+        "size"
+      ],
+      "type": "object",
+      "properties": {
+        "environment_name": {
+          "title": "Environment name",
           "type": "string",
-          "maxLength": 4096,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "minLength": 1
         },
-        "source_id": {
-          "title": "Source id",
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          "minLength": 1
+        "secret_ref": {
+          "$ref": "#/definitions/SecretReference"
         },
-        "github_repository": {
-          "title": "Github repository",
-          "type": "string",
-          "maxLength": 512,
-          "minLength": 1
-        },
-        "github_ref": {
-          "title": "Github ref",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "github_commit_sha": {
-          "title": "Github commit sha",
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{40}$",
-          "minLength": 1
-        },
-        "github_visibility": {
-          "title": "Github visibility",
-          "type": "string",
-          "enum": [
-            "public",
-            "private"
-          ],
-          "default": "public"
-        },
-        "github_installation_id": {
-          "title": "Github installation id",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "secret_refs": {
-          "title": "Secret refs",
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/definitions/SecretReference"
-          },
-          "default": {}
-        },
-        "environment_values": {
-          "title": "Environment values",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "maxLength": 65536
-          },
-          "default": {}
-        },
-        "connector_config": {
-          "title": "Connector config",
-          "type": "object",
-          "default": {}
+        "size": {
+          "title": "Size",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
@@ -76404,6 +76845,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "maxLength": 255
         },
+        "scenario_name": {
+          "title": "Scenario name",
+          "type": "string",
+          "maxLength": 255
+        },
         "role": {
           "title": "Role",
           "type": "string",
@@ -84567,6 +85013,613 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "HarnessEvent": {
+      "required": [
+        "event_id",
+        "job_id",
+        "attempt_id",
+        "attempt_number",
+        "sequence",
+        "emitted_at",
+        "stage",
+        "type",
+        "payload",
+        "digest"
+      ],
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "title": "Event id",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "minLength": 1
+        },
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_id": {
+          "title": "Attempt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "attempt_number": {
+          "title": "Attempt number",
+          "type": "integer",
+          "minimum": 1
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer",
+          "minimum": 1
+        },
+        "emitted_at": {
+          "title": "Emitted at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "payload": {
+          "title": "Payload",
+          "type": "object"
+        },
+        "digest": {
+          "title": "Digest",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessEventRejection": {
+      "required": [
+        "event_id",
+        "sequence",
+        "code",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "title": "Event id",
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessAgent": {
+      "required": [
+        "connector"
+      ],
+      "type": "object",
+      "properties": {
+        "connector": {
+          "title": "Connector",
+          "type": "string",
+          "enum": [
+            "livekit",
+            "vapi",
+            "retell",
+            "auto"
+          ]
+        },
+        "config": {
+          "title": "Config",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": {}
+        },
+        "secret_refs": {
+          "title": "Secret refs",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SecretReference"
+          },
+          "default": {}
+        }
+      }
+    },
+    "HarnessArtifact": {
+      "required": [
+        "level"
+      ],
+      "type": "object",
+      "properties": {
+        "level": {
+          "title": "Level",
+          "type": "string",
+          "enum": [
+            "metadata-only",
+            "traces",
+            "traces-and-recordings",
+            "full"
+          ]
+        },
+        "retention_days": {
+          "title": "Retention days",
+          "type": "integer",
+          "default": 30,
+          "maximum": 3650,
+          "minimum": 1
+        },
+        "allow_bundle_download": {
+          "title": "Allow bundle download",
+          "type": "boolean",
+          "default": false
+        },
+        "max_artifact_bytes": {
+          "title": "Max artifact bytes",
+          "type": "integer",
+          "default": 1073741824,
+          "minimum": 0
+        }
+      }
+    },
+    "HarnessRetry": {
+      "type": "object",
+      "properties": {
+        "max_infrastructure_attempts": {
+          "title": "Max infrastructure attempts",
+          "type": "integer",
+          "default": 2,
+          "maximum": 5,
+          "minimum": 1
+        },
+        "initial_backoff_seconds": {
+          "title": "Initial backoff seconds",
+          "type": "number",
+          "default": 1,
+          "maximum": 60,
+          "minimum": 0
+        },
+        "max_backoff_seconds": {
+          "title": "Max backoff seconds",
+          "type": "number",
+          "default": 15,
+          "maximum": 300,
+          "minimum": 0
+        },
+        "retryable_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "infrastructure",
+              "connectivity",
+              "platform_sync"
+            ]
+          },
+          "default": [
+            "infrastructure",
+            "connectivity"
+          ]
+        }
+      },
+      "default": {
+        "max_infrastructure_attempts": 2,
+        "initial_backoff_seconds": 1,
+        "max_backoff_seconds": 15,
+        "retryable_domains": [
+          "infrastructure",
+          "connectivity"
+        ]
+      }
+    },
+    "HarnessRuntime": {
+      "type": "object",
+      "properties": {
+        "isolation": {
+          "title": "Isolation",
+          "type": "string",
+          "enum": [
+            "dedicated_vm"
+          ],
+          "default": "dedicated_vm"
+        },
+        "cpu_units": {
+          "title": "Cpu units",
+          "type": "integer",
+          "default": 4,
+          "minimum": 1
+        },
+        "memory_mb": {
+          "title": "Memory mb",
+          "type": "integer",
+          "default": 8192,
+          "minimum": 1024
+        },
+        "parallelism": {
+          "title": "Parallelism",
+          "type": "integer",
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1
+        },
+        "concurrency_weight": {
+          "title": "Concurrency weight",
+          "type": "integer",
+          "default": 1,
+          "maximum": 10,
+          "minimum": 1
+        },
+        "max_duration_seconds": {
+          "title": "Max duration seconds",
+          "type": "integer",
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 60
+        },
+        "network_policy": {
+          "title": "Network policy",
+          "type": "string",
+          "enum": [
+            "live"
+          ],
+          "default": "live"
+        }
+      },
+      "default": {
+        "isolation": "dedicated_vm",
+        "cpu_units": 4,
+        "memory_mb": 8192,
+        "parallelism": 1,
+        "concurrency_weight": 1,
+        "max_duration_seconds": 3600,
+        "network_policy": "live"
+      }
+    },
+    "HarnessSecurity": {
+      "type": "object",
+      "properties": {
+        "untrusted_source": {
+          "title": "Untrusted source",
+          "type": "boolean",
+          "default": true
+        },
+        "read_only_source": {
+          "title": "Read only source",
+          "type": "boolean",
+          "default": true
+        },
+        "allow_privileged": {
+          "title": "Allow privileged",
+          "type": "boolean",
+          "default": false
+        },
+        "allow_host_runtime_control": {
+          "title": "Allow host runtime control",
+          "type": "boolean",
+          "default": false
+        },
+        "allowed_egress_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:[A-Za-z0-9-]+\\.)*[A-Za-z0-9-]+$",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "default": {
+        "untrusted_source": true,
+        "read_only_source": true,
+        "allow_privileged": false,
+        "allow_host_runtime_control": false,
+        "allowed_egress_domains": []
+      }
+    },
+    "HarnessSource": {
+      "required": [
+        "kind"
+      ],
+      "type": "object",
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "enum": [
+            "github",
+            "archive",
+            "remote"
+          ]
+        },
+        "repository": {
+          "title": "Repository",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "commit_sha": {
+          "title": "Commit sha",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "installation_id": {
+          "title": "Installation id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "archive_artifact_id": {
+          "title": "Archive artifact id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string",
+          "format": "uri",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "visibility": {
+          "title": "Visibility",
+          "type": "string",
+          "enum": [
+            "public",
+            "private"
+          ],
+          "default": "public"
+        }
+      }
+    },
+    "HarnessManifestEntry": {
+      "required": [
+        "artifact_id",
+        "kind",
+        "size"
+      ],
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "title": "Artifact id",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "maxLength": 32,
+          "minLength": 1
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer",
+          "minimum": 0
+        },
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        }
+      }
+    },
+    "HarnessCall": {
+      "required": [
+        "started_at",
+        "ended_at",
+        "duration_ms",
+        "turns"
+      ],
+      "type": "object",
+      "properties": {
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "ended_at": {
+          "title": "Ended at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "title": "Duration ms",
+          "type": "integer",
+          "minimum": 0
+        },
+        "turns": {
+          "title": "Turns",
+          "type": "integer",
+          "minimum": 0
+        },
+        "transcript_artifact": {
+          "title": "Transcript artifact",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "recording_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 1
+          },
+          "default": []
+        }
+      },
+      "x-nullable": true
+    },
+    "HarnessFailure": {
+      "required": [
+        "domain",
+        "stage",
+        "code",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "domain": {
+          "title": "Domain",
+          "type": "string",
+          "enum": [
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "platform_sync"
+          ]
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        }
+      },
+      "x-nullable": true
+    },
+    "HarnessSubGoal": {
+      "required": [
+        "name",
+        "held",
+        "judged"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "held": {
+          "title": "Held",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "judged": {
+          "title": "Judged",
+          "type": "boolean"
+        }
+      }
+    },
+    "HarnessProvisionPersona": {
+      "required": [
+        "scenario_key"
+      ],
+      "type": "object",
+      "properties": {
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255
+        },
+        "role": {
+          "title": "Role",
+          "type": "string",
+          "maxLength": 255
+        },
+        "situation": {
+          "title": "Situation",
+          "type": "string"
+        },
+        "outcome": {
+          "title": "Outcome",
+          "type": "string"
+        },
+        "persona": {
+          "title": "Persona",
+          "type": "object"
+        }
+      }
+    },
+    "HarnessScenarioOperationResult": {
+      "required": [
+        "scenarios"
+      ],
+      "type": "object",
+      "properties": {
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessScenarioRegistrationResponse"
+          }
+        }
+      }
+    },
     "SecretReference": {
       "required": [
         "manager",
@@ -84578,8 +85631,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "manager": {
           "title": "Manager",
           "type": "string",
-          "maxLength": 64,
-          "minLength": 1
+          "enum": [
+            "platform-vault"
+          ]
         },
         "key": {
           "title": "Key",
@@ -84597,8 +85651,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "purpose": {
           "title": "Purpose",
           "type": "string",
-          "maxLength": 128,
-          "minLength": 1
+          "enum": [
+            "target_provider",
+            "source_checkout"
+          ]
         }
       }
     },
@@ -97463,6 +98519,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "number",
           "maximum": 1,
           "minimum": 0
+        }
+      }
+    },
+    "HarnessScenarioRegistrationResponse": {
+      "required": [
+        "scenario_key",
+        "scenario_id"
+      ],
+      "type": "object",
+      "properties": {
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "call_execution_id": {
+          "title": "Call execution id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
