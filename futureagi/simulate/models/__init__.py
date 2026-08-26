@@ -13,6 +13,17 @@ from .harness_environment_credentials import (
     HarnessEnvironmentCredentials,
 )
 from .eval_config import SimulateEvalConfig
+from .hosted_harness import (
+    HostedHarnessArtifact,
+    HostedHarnessAttempt,
+    HostedHarnessCleanupReceipt,
+    HostedHarnessEvent,
+    HostedHarnessJob,
+    HostedHarnessManifest,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+    HostedHarnessSecret,
+)
 from .persona import Persona
 from .prompt_trial import PromptTrial
 from .run_test import RunTest
@@ -57,4 +68,13 @@ __all__ = [
     "ChatSimulatorAssistant",
     "ChatSimulatorSession",
     "TrialItemResult",
+    "HostedHarnessArtifact",
+    "HostedHarnessAttempt",
+    "HostedHarnessCleanupReceipt",
+    "HostedHarnessEvent",
+    "HostedHarnessJob",
+    "HostedHarnessManifest",
+    "HostedHarnessReceipt",
+    "HostedHarnessSecret",
+    "HostedHarnessScenario",
 ]

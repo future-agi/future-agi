@@ -643,6 +643,37 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
+# Hosted ALK sandbox gateway
+HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
+# Execution backend for hosted harness jobs: "daytona" (platform drives the
+# Daytona sandbox) or "sandbox" (proxy to an out-of-process ALK sandbox server).
+HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "daytona")
+ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
+ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+ALK_HOSTED_SOURCE_MAX_BYTES = int(
+    os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
+)
+ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+    domain.strip()
+    for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
+    if domain.strip()
+]
+# The OS user the hosted entrypoint runs as inside the sandbox. Must be "root" for the process
+# provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
+# (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
+ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
+# A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
+ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
+DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
+DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
+DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
+DAYTONA_ORGANIZATION_ID = os.getenv("DAYTONA_ORGANIZATION_ID") or None
+ALK_DAYTONA_SNAPSHOT = os.getenv("ALK_DAYTONA_SNAPSHOT", "")
+ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")

@@ -357,13 +357,19 @@ def _ensure_workflows_registered() -> None:
     # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
         from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.hosted_harness_gateway_workflow import (
+            HostedHarnessGatewayWorkflow,
+        )
         from simulate.temporal.workflows.simulation_runner_workflow import (
             SimulationRunnerWorkflow,
         )
 
         register_for_queues(
             queues=[QUEUE_RUNNER],
-            workflows=[SimulationRunnerWorkflow],
+            workflows=[
+                SimulationRunnerWorkflow,
+                HostedHarnessGatewayWorkflow,
+            ],
         )
     except ImportError as e:
         from tfc.logging.temporal import get_logger
@@ -602,6 +608,11 @@ def _ensure_activities_registered() -> None:
     # runner spawns the released SDK as a child process; these do not run on the
     # native voice queues.
     try:
+        from simulate.temporal.activities.hosted_harness_gateway import (
+            cancel_hosted_harness_attempt,
+            launch_hosted_harness_job,
+            poll_hosted_harness_attempt,
+        )
         from simulate.temporal.activities.hosted_runner import (
             build_runner_job,
             finalize_hosted_execution,
@@ -615,9 +626,12 @@ def _ensure_activities_registered() -> None:
                 build_runner_job,
                 run_hosted_sdk_job,
                 finalize_hosted_execution,
+                launch_hosted_harness_job,
+                poll_hosted_harness_attempt,
+                cancel_hosted_harness_attempt,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=3)
+        log.info("registered_hosted_runner_activities", count=6)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 
