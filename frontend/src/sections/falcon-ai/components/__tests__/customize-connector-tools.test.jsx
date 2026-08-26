@@ -112,14 +112,13 @@ describe("resolveEnabledNames", () => {
     ]);
   });
 
-  it("expands the empty sentinel to every discovered tool", () => {
-    // An empty list means "all enabled"; collapsing it to [] on write would
-    // silently re-enable everything.
-    expect(resolveEnabledNames({ ...DETAIL, enabled_tool_names: [] })).toEqual([
-      "ask_question",
-      "read_wiki_contents",
-      "read_wiki_structure",
-    ]);
+  it("treats an explicitly empty list as no tools enabled", () => {
+    // An empty list means the user disabled every tool - it must not be
+    // expanded back to "all enabled", or unchecking the last tool would
+    // immediately re-check every other one.
+    expect(resolveEnabledNames({ ...DETAIL, enabled_tool_names: [] })).toEqual(
+      [],
+    );
   });
 
   it("yields nothing for a connector with no tools at all", () => {
@@ -223,6 +222,34 @@ describe("Customize panel — connector tools", () => {
     expect(names).toEqual(
       expect.arrayContaining(["read_wiki_contents", "read_wiki_structure"]),
     );
+  });
+
+  it("keeps the last tool unchecked instead of re-checking every tool", async () => {
+    // TH-7673: unchecking the last tool PATCHes enabled_tool_names: [], which
+    // an "empty means all" reading would immediately re-expand back to every
+    // discovered tool, undoing the very state the user just set.
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(1),
+    );
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(2),
+    );
+
+    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(3),
+    );
+
+    const [, lastNames] = mocks.updateConnectorTools.mock.calls[2];
+    expect(lastNames).toEqual([]);
+    expect(screen.queryAllByTitle("Allowed")).toHaveLength(0);
+    expect(screen.getAllByTitle("Denied")).toHaveLength(3);
   });
 
   it("updates the shared react-query cache so the settings page sees the new permissions", async () => {
