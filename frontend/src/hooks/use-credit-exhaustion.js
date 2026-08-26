@@ -16,9 +16,11 @@ const CREDIT_ERROR_CODES = [
  */
 export function isCreditExhaustionError(error) {
   if (!error) return false;
-  return (
-    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.errorCode)
-  );
+  // The axios layer spreads the backend body, so the code arrives as
+  // snake_case `error_code` (e.g. HTTP 403 + "FREE_TIER_LIMIT"); the old
+  // camelCase `errorCode` was never set (#2338).
+  const code = error.error_code ?? error.errorCode;
+  return error.statusCode === 402 || CREDIT_ERROR_CODES.includes(code);
 }
 
 /**
@@ -49,7 +51,7 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
         setExhaustionError(error);
         trackPostHogEvent("credits_nudge_shown", {
           feature,
-          error_code: error.errorCode,
+          error_code: error.error_code ?? error.errorCode,
           dimension: error.dimension,
           current_usage: error.currentUsage,
           limit: error.limit,
@@ -67,7 +69,7 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
     // if an attacker-controlled string ever landed in the payload.
     trackPostHogEvent("credits_upgrade_clicked", {
       feature,
-      error_code: exhaustionError?.errorCode,
+      error_code: exhaustionError?.error_code ?? exhaustionError?.errorCode,
       target_plan: exhaustionError?.upgradeCta?.plan,
     });
     navigate(paths.dashboard.settings.pricing);
@@ -77,7 +79,7 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
   const handleDismiss = useCallback(() => {
     trackPostHogEvent("credits_nudge_dismissed", {
       feature,
-      error_code: exhaustionError?.errorCode,
+      error_code: exhaustionError?.error_code ?? exhaustionError?.errorCode,
     });
     setExhaustionError(null);
   }, [exhaustionError, feature]);
