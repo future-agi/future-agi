@@ -327,6 +327,30 @@ const WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY = {
   custom_column: "custom_column",
 };
 
+const getEligibleWidgetAttributeTypes = (attributeTypes, pickerMode) =>
+  attributeTypes.filter((dataType) =>
+    pickerMode === "metric"
+      ? dataType === "number"
+      : pickerMode === "breakdown"
+        ? ["string", "number", "boolean"].includes(dataType)
+        : ["string", "number", "boolean", "array"].includes(dataType),
+  );
+
+const expandWidgetAttributeOption = ({
+  option,
+  attributeTypes,
+  attributeTypesExact,
+  pickerMode,
+}) =>
+  getEligibleWidgetAttributeTypes(attributeTypes, pickerMode).map(
+    (dataType) => ({
+      ...option,
+      dataType,
+      attributeTypes,
+      attributeTypesExact,
+    }),
+  );
+
 const normalizeWidgetCatalogSearchText = (value) =>
   String(value || "")
     .toLowerCase()
@@ -410,26 +434,44 @@ export function buildWidgetCatalogPickerOptions({
         targetMetricSource,
       }),
     )
-    .map((metric) => ({
-      id: metric.name,
-      registryId: metric.propertyId || metric.property_id,
-      name: metric.displayName || metric.display_name || metric.name,
-      type:
-        WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY[metric.category] ||
-        metric.category,
-      source: metric.source,
-      sources: metric.sources,
-      dataType: getWidgetMetricDataType(metric),
-      outputType: metric.outputType || metric.output_type,
-      columnDataType: metric.dataType || metric.data_type,
-      configIds: metric.configIds || metric.config_ids,
-      evalKey: metric.evalKey || metric.eval_key,
-      unit: metric.unit,
-      choices: metric.choices,
-      choiceOptions: metric.choiceOptions || metric.choice_options,
-      allowedAggregations:
-        metric.allowedAggregations || metric.allowed_aggregations,
-    }))
+    .flatMap((metric) => {
+      const option = {
+        id: metric.name,
+        registryId: metric.propertyId || metric.property_id,
+        name: metric.displayName || metric.display_name || metric.name,
+        type:
+          WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY[metric.category] ||
+          metric.category,
+        source: metric.source,
+        sources: metric.sources,
+        dataType: getWidgetMetricDataType(metric),
+        outputType: metric.outputType || metric.output_type,
+        columnDataType: metric.dataType || metric.data_type,
+        configIds: metric.configIds || metric.config_ids,
+        evalKey: metric.evalKey || metric.eval_key,
+        unit: metric.unit,
+        choices: metric.choices,
+        choiceOptions: metric.choiceOptions || metric.choice_options,
+        allowedAggregations:
+          metric.allowedAggregations || metric.allowed_aggregations,
+      };
+      const attributeTypes = [
+        ...(metric.attributeTypes || metric.attribute_types || []),
+      ].filter(
+        (attributeType, index, values) =>
+          attributeType && values.indexOf(attributeType) === index,
+      );
+      if (option.type !== "custom_attribute" || attributeTypes.length === 0) {
+        return [option];
+      }
+      return expandWidgetAttributeOption({
+        option,
+        attributeTypes,
+        attributeTypesExact:
+          metric.attributeTypesExact ?? metric.attribute_types_exact ?? false,
+        pickerMode,
+      });
+    })
     // The server category is authoritative, and this local guard prevents a
     // cached or compatibility response from leaking System rows into Trace
     // Attributes (or vice versa) after an explicit category selection.
@@ -496,6 +538,18 @@ export function getWidgetCatalogSidebarCategoryCount({
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
+export function getWidgetCatalogCategoryCountPresentation(count) {
+  if (Number.isSafeInteger(count) && count >= 0) {
+    return { text: String(count), title: null, exact: true };
+  }
+  return {
+    text: "—",
+    title: "Exact count unavailable",
+    exact: false,
+  };
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
 export function resolveWidgetCatalogSidebarCounts({
   requestSettled,
   search,
@@ -526,26 +580,21 @@ export function buildWidgetCursorAttributeOptions(
         (attributeType, index, values) =>
           attributeType && values.indexOf(attributeType) === index,
       );
-      const eligibleTypes = attributeTypes.filter((dataType) =>
-        pickerMode === "metric"
-          ? dataType === "number"
-          : pickerMode === "breakdown"
-            ? ["string", "number", "boolean"].includes(dataType)
-            : ["string", "number", "boolean", "array"].includes(dataType),
-      );
       // Map/object values require a structured object editor that this Widget
       // picker does not have. JSON-only eval-mapping fields are likewise not a
       // Widget filter contract. Keep both out instead of coercing them to text.
-      return eligibleTypes.map((dataType) => ({
-        id: key,
-        registryId: `custom_attribute:${key}`,
-        name: key,
-        type: "custom_attribute",
-        source: "traces",
-        dataType,
+      return expandWidgetAttributeOption({
+        option: {
+          id: key,
+          registryId: `custom_attribute:${key}`,
+          name: key,
+          type: "custom_attribute",
+          source: "traces",
+        },
         attributeTypes,
         attributeTypesExact: attribute?.types_exact === true,
-      }));
+        pickerMode,
+      });
     })
     .filter(Boolean);
 }
@@ -1750,14 +1799,32 @@ export function FilterValuePickerPopup({
       value: option.value,
       type: optionStorageType(option),
     }));
-    if (
-      entries.length > 0 &&
-      entries.every((entry) => isSelected(entry.value, entry.type))
-    ) {
-      setSelectedEntries([]);
-    } else {
-      setSelectedEntries(entries);
-    }
+    const visibleIdentities = new Set(
+      entries.map((entry) => selectedIdentity(entry.value, entry.type)),
+    );
+    setSelectedEntries((previous) => {
+      const selectedIdentities = new Set(
+        previous.map((entry) => selectedIdentity(entry.value, entry.type)),
+      );
+      const allVisibleSelected =
+        entries.length > 0 &&
+        entries.every((entry) =>
+          selectedIdentities.has(selectedIdentity(entry.value, entry.type)),
+        );
+      if (allVisibleSelected) {
+        return previous.filter(
+          (entry) =>
+            !visibleIdentities.has(selectedIdentity(entry.value, entry.type)),
+        );
+      }
+      return [
+        ...previous,
+        ...entries.filter(
+          (entry) =>
+            !selectedIdentities.has(selectedIdentity(entry.value, entry.type)),
+        ),
+      ];
+    });
   };
 
   const exactValueType = ["string", "number", "boolean"].includes(
@@ -1770,6 +1837,9 @@ export function FilterValuePickerPopup({
     filteredOptions.every((option) =>
       isSelected(option.value, optionStorageType(option)),
     );
+  const someFilteredSelected = filteredOptions.some((option) =>
+    isSelected(option.value, optionStorageType(option)),
+  );
 
   return (
     <Popper
@@ -1850,15 +1920,14 @@ export function FilterValuePickerPopup({
               px: 2,
               py: 1,
               cursor: "pointer",
-              bgcolor:
-                selectedEntries.length > 0 ? "action.selected" : "transparent",
+              bgcolor: someFilteredSelected ? "action.selected" : "transparent",
               "&:hover": { bgcolor: "action.hover" },
             }}
           >
             <Checkbox
               size="small"
               checked={allFilteredSelected}
-              indeterminate={selectedEntries.length > 0 && !allFilteredSelected}
+              indeterminate={someFilteredSelected && !allFilteredSelected}
               sx={{ p: 0 }}
             />
             <Typography variant="body2" fontWeight={600} color="primary.main">
@@ -7574,6 +7643,8 @@ export default function WidgetEditorView() {
                     categoryCounts: pickerSidebarCategoryCounts,
                     categoryCountsExact: pickerSidebarCategoryCountsExact,
                   });
+                  const categoryCountPresentation =
+                    getWidgetCatalogCategoryCountPresentation(categoryCount);
                   return (
                     <Box
                       key={cat.key}
@@ -7623,14 +7694,18 @@ export default function WidgetEditorView() {
                       >
                         {cat.label}
                       </Typography>
-                      {Number.isSafeInteger(categoryCount) && (
-                        <Typography
-                          variant="caption"
-                          sx={{ color: "text.disabled", fontSize: 10 }}
-                        >
-                          {categoryCount}
-                        </Typography>
-                      )}
+                      <Typography
+                        variant="caption"
+                        aria-label={`${cat.label} property count: ${
+                          categoryCountPresentation.exact
+                            ? categoryCountPresentation.text
+                            : "exact count unavailable"
+                        }`}
+                        title={categoryCountPresentation.title || undefined}
+                        sx={{ color: "text.disabled", fontSize: 10 }}
+                      >
+                        {categoryCountPresentation.text}
+                      </Typography>
                     </Box>
                   );
                 })}

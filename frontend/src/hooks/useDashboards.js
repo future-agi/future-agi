@@ -803,6 +803,30 @@ export function buildPropertyRegistryId({
   return `system_attribute:${source}:${metricName}`;
 }
 
+export function buildFilterValueRetryScope({
+  propertyId,
+  metricName,
+  metricType,
+  projectIds,
+  datasetId,
+  source,
+  workflow,
+  pageSize,
+  attributeType,
+}) {
+  return JSON.stringify({
+    property_id: propertyId || "",
+    metric_name: metricName || "",
+    metric_type: metricType || "",
+    project_ids: projectIds || [],
+    dataset_id: datasetId || "",
+    source: source || "",
+    workflow: workflow || "",
+    page_size: pageSize || null,
+    attribute_type: attributeType || "",
+  });
+}
+
 export function useDashboardFilterValues({
   propertyId,
   metricName,
@@ -832,6 +856,17 @@ export function useDashboardFilterValues({
     metricName,
     metricType,
     source,
+  });
+  const valueRetryScope = buildFilterValueRetryScope({
+    propertyId: resolvedPropertyId,
+    metricName,
+    metricType,
+    projectIds,
+    datasetId,
+    source,
+    workflow,
+    pageSize,
+    attributeType,
   });
   const queryKey = [
     ...DASHBOARD_KEYS.all,
@@ -1035,19 +1070,10 @@ export function useDashboardFilterValues({
   };
 
   useEffect(() => {
-    const scope = JSON.stringify([
-      metricName,
-      metricType,
-      projectIds,
-      source,
-      workflow,
-      pageSize,
-      attributeType,
-    ]);
-    const identity = JSON.stringify([scope, normalizedSearchGesture]);
+    const identity = JSON.stringify([valueRetryScope, normalizedSearchGesture]);
     const state = valueSearchGestureStateRef.current;
-    if (state.scope !== scope) {
-      state.scope = scope;
+    if (state.scope !== valueRetryScope) {
+      state.scope = valueRetryScope;
       state.previous = null;
       state.pendingRetry = null;
     }
@@ -1058,29 +1084,10 @@ export function useDashboardFilterValues({
       return;
     }
     state.pendingRetry = identity;
-  }, [
-    attributeType,
-    enabled,
-    metricName,
-    metricType,
-    normalizedSearchGesture,
-    pageSize,
-    projectIds,
-    source,
-    workflow,
-  ]);
+  }, [enabled, normalizedSearchGesture, valueRetryScope]);
 
   useEffect(() => {
-    const scope = JSON.stringify([
-      metricName,
-      metricType,
-      projectIds,
-      source,
-      workflow,
-      pageSize,
-      attributeType,
-    ]);
-    const identity = JSON.stringify([scope, normalizedSearchGesture]);
+    const identity = JSON.stringify([valueRetryScope, normalizedSearchGesture]);
     const state = valueSearchGestureStateRef.current;
     if (
       state.pendingRetry !== identity ||
@@ -1103,18 +1110,7 @@ export function useDashboardFilterValues({
     state.pendingRetry = null;
     if (continuationFailed) void query.fetchNextPage();
     else void retryFreshPage().catch(() => {});
-  }, [
-    attributeType,
-    metricName,
-    metricType,
-    normalizedSearchGesture,
-    pageSize,
-    projectIds,
-    query,
-    search,
-    source,
-    workflow,
-  ]);
+  }, [normalizedSearchGesture, query, search, valueRetryScope]);
 
   const pages = query.data?.pages || [];
   const cursorChainStopped = isFilterValueCursorChainStopped(query.data);

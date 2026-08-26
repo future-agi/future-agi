@@ -105,6 +105,26 @@ describe("FilterValueLabel", () => {
     );
   });
 
+  it("does not pin a json catalog summary when scalar attribute lanes are known", () => {
+    renderLabel({
+      name: "Migrated status",
+      type: "custom_attribute",
+      id: "request.status",
+      dataType: "json",
+      attributeTypes: ["string", "number"],
+      attributeTypesExact: true,
+      operator: "contains",
+      value: ["paid"],
+    });
+
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributeType: undefined,
+        enabled: false,
+      }),
+    );
+  });
+
   it("still fetches for system fields, which can relabel", () => {
     renderLabel({ ...baseFilter, value: ["p1"] });
     expect(screen.getByText("Project Alpha")).toBeInTheDocument();

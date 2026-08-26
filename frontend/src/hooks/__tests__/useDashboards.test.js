@@ -54,6 +54,7 @@ import {
   usePreviewQuery,
   useDashboardFilterValues,
   useDatasetColumnValues,
+  buildFilterValueRetryScope,
   buildPropertyRegistryId,
   boundPropertyCatalogSearch,
   FILTER_VALUE_REQUEST_TIMEOUT_MS,
@@ -66,6 +67,37 @@ describe("property catalog search contract", () => {
 
     expect(new TextEncoder().encode(search)).toHaveLength(512);
     expect(search).toBe("é".repeat(256));
+  });
+});
+
+describe("filter value retry identity", () => {
+  const baseScope = {
+    propertyId: "custom_attribute:customer.plan",
+    metricName: "customer.plan",
+    metricType: "custom_attribute",
+    projectIds: ["project-1"],
+    datasetId: "dataset-1",
+    source: "traces",
+    workflow: "trace",
+    pageSize: 20,
+    attributeType: "string",
+  };
+
+  it("separates retries by property_id and dataset_id", () => {
+    const identity = buildFilterValueRetryScope(baseScope);
+
+    expect(
+      buildFilterValueRetryScope({
+        ...baseScope,
+        propertyId: "custom_attribute:customer.segment",
+      }),
+    ).not.toBe(identity);
+    expect(
+      buildFilterValueRetryScope({
+        ...baseScope,
+        datasetId: "dataset-2",
+      }),
+    ).not.toBe(identity);
   });
 });
 

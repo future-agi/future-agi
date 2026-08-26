@@ -1255,6 +1255,9 @@ function metricToTraceFilterProperty(m) {
     outputType,
     choices,
     apiColType,
+    attributeTypes: m.attributeTypes || m.attribute_types,
+    attributeTypesExact:
+      m.attributeTypesExact ?? m.attribute_types_exact ?? false,
   };
 }
 
@@ -3814,6 +3817,14 @@ const TraceFilterPanel = ({
   freeSoloValues = false,
   isSpansView = false,
   attributeSource: attributeSourceOverride,
+  catalogError: externalCatalogError = false,
+  hasNextCatalogPage: externalHasNextCatalogPage = false,
+  catalogContinuationKey: externalCatalogContinuationKey = null,
+  isFetchingNextCatalogPage: externalIsFetchingNextCatalogPage = false,
+  catalogNextPageError: externalCatalogNextPageError = false,
+  loadNextCatalogPage: externalLoadNextCatalogPage,
+  catalogCategoryCounts: externalCatalogCategoryCounts = null,
+  catalogCategoryCountsExact: externalCatalogCategoryCountsExact = false,
 }) => {
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
@@ -4767,19 +4778,45 @@ const TraceFilterPanel = ({
                   )}
                   unifiedCatalogActive={unifiedPropertyCatalogActive}
                   isSimulator={isSimulator}
-                  catalogError={!skipDynamicProperties && dynamicPropsError}
+                  catalogError={
+                    skipDynamicProperties
+                      ? externalCatalogError
+                      : dynamicPropsError
+                  }
                   hasNextCatalogPage={
-                    !skipDynamicProperties && hasNextDynamicPropsPage
+                    skipDynamicProperties
+                      ? externalHasNextCatalogPage
+                      : hasNextDynamicPropsPage
                   }
                   catalogContinuationKey={
-                    !skipDynamicProperties ? dynamicPropsContinuationKey : null
+                    skipDynamicProperties
+                      ? externalCatalogContinuationKey
+                      : dynamicPropsContinuationKey
                   }
-                  isFetchingNextCatalogPage={isFetchingNextDynamicPropsPage}
-                  catalogNextPageError={isNextDynamicPropsPageError}
-                  loadNextCatalogPage={fetchNextDynamicPropsPage}
-                  catalogCategoryCounts={dynamicPropertyCategoryCounts}
+                  isFetchingNextCatalogPage={
+                    skipDynamicProperties
+                      ? externalIsFetchingNextCatalogPage
+                      : isFetchingNextDynamicPropsPage
+                  }
+                  catalogNextPageError={
+                    skipDynamicProperties
+                      ? externalCatalogNextPageError
+                      : isNextDynamicPropsPageError
+                  }
+                  loadNextCatalogPage={
+                    skipDynamicProperties
+                      ? externalLoadNextCatalogPage
+                      : fetchNextDynamicPropsPage
+                  }
+                  catalogCategoryCounts={
+                    skipDynamicProperties
+                      ? externalCatalogCategoryCounts
+                      : dynamicPropertyCategoryCounts
+                  }
                   catalogCategoryCountsExact={
-                    dynamicPropertyCategoryCountsExact
+                    skipDynamicProperties
+                      ? externalCatalogCategoryCountsExact
+                      : dynamicPropertyCategoryCountsExact
                   }
                   attributeSource={
                     unifiedPropertyCatalogActive
@@ -4979,6 +5016,17 @@ TraceFilterPanel.propTypes = {
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),
   isSpansView: PropTypes.bool,
   attributeSource: PropTypes.oneOf(["traces", "spans"]),
+  catalogError: PropTypes.bool,
+  hasNextCatalogPage: PropTypes.bool,
+  catalogContinuationKey: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.number,
+  ]),
+  isFetchingNextCatalogPage: PropTypes.bool,
+  catalogNextPageError: PropTypes.bool,
+  loadNextCatalogPage: PropTypes.func,
+  catalogCategoryCounts: PropTypes.object,
+  catalogCategoryCountsExact: PropTypes.bool,
 };
 
 export default React.memo(TraceFilterPanel);

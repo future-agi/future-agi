@@ -19,6 +19,7 @@ import {
   buildWidgetFilterConfig,
   buildWidgetCursorAttributeOptions,
   FilterValuePickerPopup,
+  getWidgetCatalogCategoryCountPresentation,
   getWidgetCatalogExactResultCount,
   getWidgetCatalogSidebarCategoryCount,
   getWidgetFilterDefaults,
@@ -108,9 +109,7 @@ describe("WidgetEditor filter-value picker", () => {
     intersection.emit(true);
     intersection.emit(true);
     expect(fetchNextPage).toHaveBeenCalledOnce();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Loading more values",
-    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading more values");
 
     await act(async () => {
       nextPage.resolve();
@@ -582,6 +581,67 @@ describe("WidgetEditor filter-value picker", () => {
     document.body.removeChild(anchorEl);
   });
 
+  it.each([
+    {
+      label: "selects a visible value",
+      initialValues: [0, "0"],
+      initialTypes: ["number", "string"],
+      expectedValues: [0, "0", false],
+      expectedTypes: ["number", "string", "boolean"],
+    },
+    {
+      label: "deselects a visible value",
+      initialValues: [0, "0", false],
+      initialTypes: ["number", "string", "boolean"],
+      expectedValues: [0, "0"],
+      expectedTypes: ["number", "string"],
+    },
+  ])(
+    "preserves hidden typed selections when Select all $label",
+    ({ initialValues, initialTypes, expectedValues, expectedTypes }) => {
+      useResolvedFilterOptionsMock.mockReturnValue({
+        options: [
+          { value: false, label: "Disabled", type: "boolean" },
+          { value: 0, label: "Zero code", type: "number" },
+          { value: "0", label: "String zero", type: "string" },
+        ],
+        isLoading: false,
+        isError: false,
+        fetchNextPage: vi.fn(),
+        hasNextPage: false,
+        isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        queryReadState: "complete",
+        refetch: vi.fn(),
+      });
+      const onApply = vi.fn();
+      const anchorEl = document.createElement("button");
+      document.body.appendChild(anchorEl);
+
+      render(
+        <FilterValuePickerPopup
+          anchorEl={anchorEl}
+          filter={{
+            field: "typed-choice",
+            value: initialValues,
+            valueTypes: initialTypes,
+          }}
+          onClose={vi.fn()}
+          onApply={onApply}
+          source="traces"
+        />,
+      );
+      fireEvent.change(screen.getByPlaceholderText("Search..."), {
+        target: { value: "Disabled" },
+      });
+      fireEvent.click(screen.getByText("Select all in list (1)"));
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+      expect(onApply).toHaveBeenCalledWith(expectedValues, expectedTypes);
+      document.body.removeChild(anchorEl);
+    },
+  );
+
   it("derives annotation and eval filter data types from output_type", () => {
     expect(
       getWidgetMetricDataType({
@@ -964,6 +1024,51 @@ describe("WidgetEditor filter-value picker", () => {
     },
   );
 
+  it.each([
+    ["metric", {}, ["number"]],
+    ["filter", { selectedMetricSources: ["traces"] }, ["string", "number"]],
+    ["metric_filter", { targetMetricSource: "traces" }, ["string", "number"]],
+    ["breakdown", { selectedMetricSources: ["traces"] }, ["string", "number"]],
+  ])(
+    "expands active mixed attributes into eligible scalar lanes in %s mode",
+    (pickerMode, adapterContext, expectedDataTypes) => {
+      const options = buildWidgetCatalogPickerOptions({
+        metrics: [
+          {
+            name: "mixed.status",
+            display_name: "Mixed status",
+            property_id: "custom_attribute:mixed.status",
+            category: "custom_attribute",
+            source: "traces",
+            sources: ["traces"],
+            type: "json",
+            attribute_types: ["string", "number"],
+            attribute_types_exact: true,
+            role: "metric",
+          },
+        ],
+        pickerMode,
+        pickerCategory: "all",
+        ...adapterContext,
+      });
+
+      expect(options.map(({ dataType }) => dataType)).toEqual(
+        expectedDataTypes,
+      );
+      expect(options).not.toContainEqual(
+        expect.objectContaining({ dataType: "json" }),
+      );
+      expect(options).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            attributeTypes: ["string", "number"],
+            attributeTypesExact: true,
+          }),
+        ]),
+      );
+    },
+  );
+
   it.each(["metric", "filter", "metric_filter", "breakdown"])(
     "strictly isolates an explicit Dashboard category in %s mode",
     (pickerMode) => {
@@ -1082,6 +1187,24 @@ describe("WidgetEditor filter-value picker", () => {
         allSearchCategoryCountsExact: false,
       }),
     ).toBeNull();
+    expect(getWidgetCatalogCategoryCountPresentation(29)).toEqual({
+      text: "29",
+      title: null,
+      exact: true,
+    });
+    const derivedPromptCount = getWidgetCatalogSidebarCategoryCount({
+      pickerCategory: "prompt",
+      categoryCounts: sidebarCounts,
+      categoryCountsExact: true,
+    });
+    expect(derivedPromptCount).toBeNull();
+    expect(
+      getWidgetCatalogCategoryCountPresentation(derivedPromptCount),
+    ).toEqual({
+      text: "—",
+      title: "Exact count unavailable",
+      exact: false,
+    });
   });
 
   it("uses one 20-item unified catalog for every property category", () => {

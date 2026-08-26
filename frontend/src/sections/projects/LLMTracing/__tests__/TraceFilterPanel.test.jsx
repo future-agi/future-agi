@@ -297,6 +297,14 @@ function renderPanel({
   tab,
   allowWorkspaceScope = false,
   propertyFilter,
+  catalogError = false,
+  hasNextCatalogPage = false,
+  catalogContinuationKey = null,
+  isFetchingNextCatalogPage = false,
+  catalogNextPageError = false,
+  loadNextCatalogPage,
+  catalogCategoryCounts = null,
+  catalogCategoryCountsExact = false,
 }) {
   let panelProps = {
     currentFilters,
@@ -312,6 +320,14 @@ function renderPanel({
     tab,
     allowWorkspaceScope,
     propertyFilter,
+    catalogError,
+    hasNextCatalogPage,
+    catalogContinuationKey,
+    isFetchingNextCatalogPage,
+    catalogNextPageError,
+    loadNextCatalogPage,
+    catalogCategoryCounts,
+    catalogCategoryCountsExact,
   };
   const anchorEl = document.createElement("button");
   document.body.appendChild(anchorEl);
@@ -335,6 +351,14 @@ function renderPanel({
         tab={panelProps.tab}
         allowWorkspaceScope={panelProps.allowWorkspaceScope}
         propertyFilter={panelProps.propertyFilter}
+        catalogError={panelProps.catalogError}
+        hasNextCatalogPage={panelProps.hasNextCatalogPage}
+        catalogContinuationKey={panelProps.catalogContinuationKey}
+        isFetchingNextCatalogPage={panelProps.isFetchingNextCatalogPage}
+        catalogNextPageError={panelProps.catalogNextPageError}
+        loadNextCatalogPage={panelProps.loadNextCatalogPage}
+        catalogCategoryCounts={panelProps.catalogCategoryCounts}
+        catalogCategoryCountsExact={panelProps.catalogCategoryCountsExact}
       />
     </QueryClientProvider>
   );
@@ -1741,6 +1765,59 @@ describe("voice-call property search aliases", () => {
     ).toBe(false);
 
     document.body.removeChild(anchorEl);
+  });
+
+  it("automatically advances an externally supplied catalog through the real shared picker", async () => {
+    const firstProperty = {
+      id: "first-eval",
+      registryId: "evaluation:first-eval",
+      name: "First eval",
+      category: "eval",
+      type: "number",
+      apiColType: "EVAL_METRIC",
+    };
+    const secondProperty = {
+      id: "second-eval",
+      registryId: "evaluation:second-eval",
+      name: "Second eval",
+      category: "eval",
+      type: "number",
+      apiColType: "EVAL_METRIC",
+    };
+    const loadNextCatalogPage = vi.fn(() => Promise.resolve());
+    const panel = renderPanel({
+      properties: [firstProperty],
+      source: "simulation",
+      hasNextCatalogPage: true,
+      catalogContinuationKey: "simulation-evals-cursor-2",
+      loadNextCatalogPage,
+      catalogCategoryCounts: {
+        all: 2,
+        system_metric: 0,
+        eval_metric: 2,
+        annotation_metric: 0,
+        custom_attribute: 0,
+        custom_column: 0,
+      },
+      catalogCategoryCountsExact: true,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    expect(screen.getByText("First eval")).toBeInTheDocument();
+    expect(screen.queryByText("Second eval")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("All property count")).toHaveTextContent("2");
+
+    triggerPropertyPageIntersection();
+
+    await waitFor(() => expect(loadNextCatalogPage).toHaveBeenCalledOnce());
+    panel.rerenderPanel({
+      properties: [firstProperty, secondProperty],
+      hasNextCatalogPage: false,
+      catalogContinuationKey: null,
+    });
+    expect(await screen.findByText("Second eval")).toBeInTheDocument();
+
+    document.body.removeChild(panel.anchorEl);
   });
 
   it("keeps exact All search counts and category isolation for voice-call cost fields", async () => {
@@ -6099,6 +6176,34 @@ describe("annotator annotation filter (TH-4710)", () => {
           type: "number",
         }),
       ]),
+    );
+  });
+
+  it("preserves certified mixed attribute types from the unified catalog", () => {
+    const [property] = buildTraceFilterProperties(
+      [
+        {
+          name: "mixed.status",
+          display_name: "Mixed status",
+          property_id: "custom_attribute:mixed.status",
+          category: "custom_attribute",
+          source: "traces",
+          sources: ["traces"],
+          type: "json",
+          attribute_types: ["string", "number"],
+          attribute_types_exact: true,
+        },
+      ],
+      { sourceScope: "traces" },
+    );
+
+    expect(property).toEqual(
+      expect.objectContaining({
+        id: "mixed.status",
+        registryId: "custom_attribute:mixed.status",
+        attributeTypes: ["string", "number"],
+        attributeTypesExact: true,
+      }),
     );
   });
 
