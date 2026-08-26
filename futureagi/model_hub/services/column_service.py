@@ -14,6 +14,7 @@ from django.db import transaction
 
 from model_hub.models.choices import SourceChoices, StatusType
 from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.utils.column_utils import get_column_data_type
 
 logger = structlog.get_logger(__name__)
@@ -378,9 +379,10 @@ def delete_eval_column_and_dependents(column, organization_id):
 
         # 2. Soft-delete cells by indexed column_id IN — no JOIN on source_id.
         if col_ids:
-            Cell.objects.filter(
-                column_id__in=col_ids, deleted=False
-            ).update(deleted=True, deleted_at=now)
+            bulk_soft_delete(
+                Cell.objects.filter(column_id__in=col_ids, deleted=False),
+                now=now,
+            )
 
         # 3. Prune column_order AND column_config in one Dataset row update.
         prune_dataset_columns(column.dataset, col_id_strs)
@@ -396,6 +398,4 @@ def delete_eval_column_and_dependents(column, organization_id):
 
         # 5. Soft-delete the columns.
         if col_ids:
-            Column.objects.filter(id__in=col_ids).update(
-                deleted=True, deleted_at=now
-            )
+            bulk_soft_delete(Column.objects.filter(id__in=col_ids), now=now)

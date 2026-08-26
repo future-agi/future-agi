@@ -98,6 +98,7 @@ from model_hub.services.dataset_table_snapshot import (
     assert_dataset_table_cells_within_limits,
     assert_dataset_table_response_within_limits,
 )
+from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.tasks.experiment_runner import process_experiments
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.function_eval_params import (
@@ -628,7 +629,7 @@ class ExperimentsTableView(APIView):
                     experiment_dataset_table = experiment.experiments_datasets
 
                     if experiment_dataset_table.exists():
-                        experiment_dataset_table.update(deleted=True)
+                        bulk_soft_delete(experiment_dataset_table)
 
                     workflow_id = start_experiment_workflow(
                         experiment_id=str(experiment.id),
@@ -3715,9 +3716,7 @@ class ExperimentDeleteView(APIView):
             if not experiments.exists():
                 return self._gm.not_found("No experiments found")
 
-            from django.utils import timezone
-
-            updated_count = experiments.update(deleted=True, deleted_at=timezone.now())
+            updated_count = bulk_soft_delete(experiments)
 
             return self._gm.success_response(
                 {
@@ -4747,15 +4746,18 @@ def _delete_base_eval_columns(experiment):
             reason_source_ids.append(f"{col_id}-sourceid-{metric_id}")
 
     now = timezone.now()
-    base_eval_cols.update(deleted=True, deleted_at=now)
+    bulk_soft_delete(base_eval_cols, now=now)
 
     if reason_source_ids:
-        Column.objects.filter(
-            dataset=snapshot_ds,
-            source=SourceChoices.EVALUATION_REASON.value,
-            source_id__in=reason_source_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
+        bulk_soft_delete(
+            Column.objects.filter(
+                dataset=snapshot_ds,
+                source=SourceChoices.EVALUATION_REASON.value,
+                source_id__in=reason_source_ids,
+                deleted=False,
+            ),
+            now=now,
+        )
 
 
 def _soft_delete_edt_and_columns(edt):
@@ -4785,10 +4787,10 @@ def _soft_delete_edt_and_columns(edt):
     eval_col_keys = list(eval_cols.values_list("id", "source_id"))
 
     # 1. Soft-delete M2M-linked columns (prompt output and any linked evals)
-    edt.columns.filter(deleted=False).update(deleted=True, deleted_at=now)
+    bulk_soft_delete(edt.columns.filter(deleted=False), now=now)
 
     # 2. Soft-delete per-EDT eval columns + their reason columns
-    eval_cols.update(deleted=True, deleted_at=now)
+    bulk_soft_delete(eval_cols, now=now)
 
     if eval_col_keys:
         reason_source_ids = []
@@ -4796,15 +4798,20 @@ def _soft_delete_edt_and_columns(edt):
             if source_id and "-sourceid-" in source_id:
                 metric_id = source_id.rsplit("-sourceid-", 1)[1]
                 reason_source_ids.append(f"{col_id}-sourceid-{metric_id}")
-        Column.objects.filter(
-            dataset=snapshot_dataset,
-            source=SourceChoices.EVALUATION_REASON.value,
-            source_id__in=reason_source_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
+        bulk_soft_delete(
+            Column.objects.filter(
+                dataset=snapshot_dataset,
+                source=SourceChoices.EVALUATION_REASON.value,
+                source_id__in=reason_source_ids,
+                deleted=False,
+            ),
+            now=now,
+        )
 
-    edt.deleted = True
-    edt.save(update_fields=["deleted"])
+    bulk_soft_delete(
+        ExperimentDatasetTable.objects.filter(id=edt.id),
+        now=now,
+    )
 
 
 def _precreate_eval_columns_for_configs(
@@ -5314,11 +5321,13 @@ def _diff_and_update_evals(
             delete_q |= Q(source_id=mid)
             delete_q |= Q(source_id__endswith=f"-sourceid-{mid}")
 
-        Column.objects.filter(
-            delete_q,
-            dataset=experiment.snapshot_dataset,
-            deleted=False,
-        ).update(deleted=True)
+        bulk_soft_delete(
+            Column.objects.filter(
+                delete_q,
+                dataset=experiment.snapshot_dataset,
+                deleted=False,
+            )
+        )
 
     return rerun_ids
 
@@ -5523,9 +5532,7 @@ class ExperimentDeleteV2View(APIView):
                 _soft_delete_edt_and_columns(edt)
 
             # Soft-delete experiments
-            from django.utils import timezone
-
-            updated_count = experiments.update(deleted=True, deleted_at=timezone.now())
+            updated_count = bulk_soft_delete(experiments)
 
             return self._gm.success_response(
                 {

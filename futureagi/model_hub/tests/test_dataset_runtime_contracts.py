@@ -743,13 +743,30 @@ def test_delete_datasets_service_sets_deleted_at():
         column_order=[],
         column_config={},
     )
+    second_dataset = Dataset.objects.create(
+        name="Delete Dataset Service Contract 2",
+        organization=organization,
+        column_order=[],
+        column_config={},
+    )
+    previous_updates = {
+        dataset.id: dataset.updated_at,
+        second_dataset.id: second_dataset.updated_at,
+    }
 
-    result = delete_datasets(dataset_ids=[str(dataset.id)], organization=organization)
+    result = delete_datasets(
+        dataset_ids=[str(dataset.id), str(second_dataset.id)],
+        organization=organization,
+    )
 
-    assert result["deleted"] == 1
-    dataset.refresh_from_db()
-    assert dataset.deleted is True
-    assert dataset.deleted_at is not None
+    assert result["deleted"] == 2
+    for deleted_dataset in [dataset, second_dataset]:
+        deleted_dataset.refresh_from_db()
+        assert deleted_dataset.deleted is True
+        assert deleted_dataset.deleted_at is not None
+        assert deleted_dataset.updated_at == deleted_dataset.deleted_at
+        assert deleted_dataset.updated_at > previous_updates[deleted_dataset.id]
+    assert dataset.updated_at == second_dataset.updated_at
 
 
 @pytest.mark.django_db
@@ -812,6 +829,8 @@ def test_delete_column_api_sets_deleted_at_on_column_and_cells():
     dataset.save(update_fields=["column_order", "column_config"])
     client = APIClient()
     client.force_authenticate(user=user)
+    previous_column_updated_at = column.updated_at
+    previous_cell_updated_at = cell.updated_at
 
     response = client.delete(
         f"/model-hub/develops/{dataset.id}/delete_column/{column.id}/",
@@ -824,8 +843,13 @@ def test_delete_column_api_sets_deleted_at_on_column_and_cells():
     dataset.refresh_from_db()
     assert column.deleted is True
     assert column.deleted_at is not None
+    assert column.updated_at == column.deleted_at
+    assert column.updated_at > previous_column_updated_at
     assert cell.deleted is True
     assert cell.deleted_at is not None
+    assert cell.updated_at == cell.deleted_at
+    assert cell.updated_at > previous_cell_updated_at
+    assert column.updated_at == cell.updated_at
     assert str(column.id) not in dataset.column_order
     assert str(column.id) not in dataset.column_config
 
