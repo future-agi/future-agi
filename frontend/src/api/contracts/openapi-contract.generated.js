@@ -36089,6 +36089,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "string"
             }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         },
         "responses": {
