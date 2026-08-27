@@ -52,6 +52,7 @@ class HostedHarnessJob(BaseModel):
     # completes.  Keep these separate from the submitted payload: the payload is
     # forwarded to the hosted guest, while these values exist only for the live UI.
     stage_outputs = models.JSONField(default=list, blank=True)
+    bundle_digest = models.CharField(max_length=71, null=True, blank=True)
     run_test = models.ForeignKey(
         "simulate.RunTest",
         on_delete=models.SET_NULL,
@@ -121,6 +122,8 @@ class HostedHarnessAttempt(BaseModel):
     provider_ref = models.CharField(max_length=255, null=True, blank=True)
     snapshot_name = models.CharField(max_length=255, null=True, blank=True)
     snapshot_digest = models.CharField(max_length=71, null=True, blank=True)
+    source_digest = models.CharField(max_length=71, null=True, blank=True)
+    bundle_digest = models.CharField(max_length=71, null=True, blank=True)
     heartbeat_at = models.DateTimeField(null=True, blank=True)
     cleanup_verified_at = models.DateTimeField(null=True, blank=True)
 
@@ -302,3 +305,29 @@ class HostedHarnessSecret(BaseModel):
         from agentcc.services.credential_manager import decrypt_token
 
         return decrypt_token(self.encrypted_value)
+
+
+class HostedHarnessStageOutput(BaseModel):
+    """Persisted authoritative snapshot from a verified bundle.
+
+    Created at job admission/launch from the pre-authored bundle so the read
+    DTO always has contract/environment/scenarios data without parsing mutable
+    files at read time.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="normalized_stage_outputs",
+    )
+    title = models.CharField(max_length=255)
+    summary = models.CharField(max_length=1024, default="")
+    kind = models.CharField(max_length=64)
+    data = models.JSONField()
+
+    class Meta:
+        db_table = "simulate_hosted_harness_stage_output"
+        indexes = [
+            models.Index(fields=["job", "kind"], name="idx_hstageout_job_kind"),
+        ]

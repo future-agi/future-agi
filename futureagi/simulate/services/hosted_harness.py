@@ -246,6 +246,20 @@ def provision_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
     job = attempt.job
+    # Enforce exactly scenario_count unique personas.
+    persona_keys = [p["scenario_key"] for p in payload["personas"]]
+    if len(persona_keys) != len(set(persona_keys)):
+        raise HostedHarnessError(
+            "scenario_key_duplicate",
+            "persona scenario_key values must be unique",
+            status_code=400,
+        )
+    if len(persona_keys) != job.scenario_count:
+        raise HostedHarnessError(
+            "scenario_count_mismatch",
+            f"expected exactly {job.scenario_count} personas, got {len(persona_keys)}",
+            status_code=400,
+        )
     if job.run_test_id:
         registrations = list(
             HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
@@ -431,8 +445,18 @@ def record_cleanup(
         # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
         job.current_stage = attempt.terminal_stage or job.state
         job.terminal_at = now
+        # Copy terminal stage/failure onto the job atomically so
+        # status.failure and status.stage are authoritative in the read DTO.
+        job.current_stage = attempt.terminal_stage or job.current_stage
+        job.failure = attempt.terminal_failure
         job.save(
-            update_fields=["state", "current_stage", "terminal_at", "updated_at"]
+            update_fields=[
+                "state",
+                "terminal_at",
+                "current_stage",
+                "failure",
+                "updated_at",
+            ]
         )
         if job.test_execution_id:
             execution_status = {

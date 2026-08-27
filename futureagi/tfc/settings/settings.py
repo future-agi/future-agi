@@ -672,6 +672,7 @@ ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-contro
 # Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
 # A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
 ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
+ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv("ALK_HOSTED_EGRESS_UNRESTRICTED","").lower() in ("1","true","yes")
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None

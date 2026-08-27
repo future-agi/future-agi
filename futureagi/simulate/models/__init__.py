@@ -23,6 +23,7 @@ from .hosted_harness import (
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessSecret,
+    HostedHarnessStageOutput,
 )
 from .persona import Persona
 from .prompt_trial import PromptTrial
@@ -77,4 +78,5 @@ __all__ = [
     "HostedHarnessReceipt",
     "HostedHarnessSecret",
     "HostedHarnessScenario",
+    "HostedHarnessStageOutput",
 ]

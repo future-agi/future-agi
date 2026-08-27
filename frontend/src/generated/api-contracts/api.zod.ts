@@ -29892,6 +29892,25 @@ selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
 ``sandbox``). See ``simulate.services.harness_provider``.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+export const SimulateApiHarnessJobsAdjustParams = zod.object({
+  "id": zod.string()
+})
+
+export const simulateApiHarnessJobsAdjustBodyInstructionMax = 2000;
+
+export const simulateApiHarnessJobsAdjustBodyClientRequestIdMax = 128;
+
+
+
+export const SimulateApiHarnessJobsAdjustBody = zod.object({
+  "instruction": zod.string().min(1).max(simulateApiHarnessJobsAdjustBodyInstructionMax).describe('A user correction to apply at the next safe harness stage boundary.'),
+  "client_request_id": zod.string().min(1).max(simulateApiHarnessJobsAdjustBodyClientRequestIdMax).optional()
+})
+
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
 export const SimulateApiHarnessJobsCancelParams = zod.object({
   "id": zod.string()
 })

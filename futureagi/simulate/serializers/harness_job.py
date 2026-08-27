@@ -276,3 +276,63 @@ class HarnessSecretValuesSerializer(serializers.Serializer):
 
 class HarnessSecretValuesResponseSerializer(serializers.Serializer):
     secret_refs = serializers.DictField(child=SecretReferenceSerializer())
+
+
+# ── Read DTO response serializers ───────────────────────────────────────
+
+class HarnessJobInfoSerializer(serializers.Serializer):
+    job_id = serializers.UUIDField()
+    run_id = serializers.UUIDField()
+    source = serializers.DictField()
+    metadata = serializers.DictField()
+    run_test_id = serializers.UUIDField(allow_null=True)
+    test_execution_id = serializers.UUIDField(allow_null=True)
+
+
+class HarnessJobStatusSerializer(serializers.Serializer):
+    state = serializers.CharField()
+    stage = serializers.CharField()
+    updated_at = serializers.CharField()
+    attempt = serializers.IntegerField()
+    completed_scenarios = serializers.IntegerField()
+    failed_scenarios = serializers.IntegerField()
+    total_scenarios = serializers.IntegerField()
+    deadline_at = serializers.CharField()
+    failure = serializers.JSONField(allow_null=True)
+
+
+class HarnessJobEventSerializer(serializers.Serializer):
+    event_id = serializers.CharField()
+    sequence = serializers.IntegerField()
+    stage = serializers.CharField()
+    type = serializers.CharField()
+    payload = serializers.JSONField(allow_null=True)
+    emitted_at = serializers.CharField()
+
+
+class HarnessStageOutputSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    title = serializers.CharField()
+    summary = serializers.CharField(allow_blank=True)
+    kind = serializers.CharField()
+    data = serializers.JSONField()
+
+
+class HarnessScenarioSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField()
+    scenario_id = serializers.UUIDField()
+    name = serializers.CharField(allow_blank=True)
+    instruction = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    use_case = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    call_execution_id = serializers.UUIDField(allow_null=True, required=False)
+    status = serializers.CharField(allow_null=True, required=False)
+
+
+class HarnessJobReadSerializer(serializers.Serializer):
+    """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
+    job = HarnessJobInfoSerializer()
+    status = HarnessJobStatusSerializer()
+    events = HarnessJobEventSerializer(many=True)
+    stage_outputs = HarnessStageOutputSerializer(many=True)
+    scenarios = HarnessScenarioSerializer(many=True)
+    receipts = serializers.ListField(child=serializers.JSONField())

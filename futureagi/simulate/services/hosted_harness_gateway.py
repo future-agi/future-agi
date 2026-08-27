@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,6 +34,8 @@ from simulate.services.hosted_harness import (
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+logger = logging.getLogger("simulate.hosted_harness_gateway")
 
 HOSTED_ENGINE_CATALOG = {
     "postgres": {
@@ -298,6 +301,140 @@ class PlatformSecretResolver:
         return resolved
 
 
+_MAX_EGRESS_DOMAINS = 20
+# RFC 1918 / loopback / link-local prefixes that must never appear in egress.
+_PRIVATE_HOST_PATTERNS = re.compile(
+    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost$)"
+)
+
+
+def _validate_egress_domains(domains: list[str]) -> None:
+    """Reject egress lists exceeding cap or containing private/invalid hosts."""
+    if len(domains) > _MAX_EGRESS_DOMAINS:
+        raise HostedHarnessError(
+            "egress_domain_limit_exceeded",
+            f"at most {_MAX_EGRESS_DOMAINS} egress domains allowed, got {len(domains)}",
+            status_code=400,
+        )
+    for domain in domains:
+        if _PRIVATE_HOST_PATTERNS.match(domain):
+            raise HostedHarnessError(
+                "egress_domain_private",
+                f"private/reserved host {domain!r} is not allowed in egress",
+                status_code=400,
+            )
+
+
+def _persist_bundle_stage_outputs(
+    job: HostedHarnessJob, manifest: dict,
+) -> None:
+    """Persist authoritative contract/environment/scenario snapshots from verified bundle."""
+    from simulate.models import HostedHarnessStageOutput
+
+    existing = set(
+        HostedHarnessStageOutput.no_workspace_objects.filter(job=job)
+        .values_list("kind", flat=True)
+    )
+    outputs: list[HostedHarnessStageOutput] = []
+    # Contract stage output — from contract.json referenced in manifest.files.
+    if "contract" not in existing:
+        contract_data = _load_bundle_file(manifest, "contract.json", job)
+        if contract_data is not None:
+            outputs.append(HostedHarnessStageOutput(
+                job=job,
+                title="Contract",
+                summary=contract_data.get("one_liner", "") if isinstance(contract_data, dict) else "",
+                kind="contract",
+                data=contract_data,
+            ))
+    # Environment stage output — bundle runtime/capabilities/seed.
+    if "environment" not in existing:
+        processes = manifest.get("processes") or []
+        capabilities = manifest.get("capabilities") or {}
+        outputs.append(HostedHarnessStageOutput(
+            job=job,
+            title="Environment",
+            summary=manifest.get("name", ""),
+            kind="environment",
+            data={
+                "services": [
+                    process.get("name")
+                    for process in processes
+                    if isinstance(process, dict) and process.get("name")
+                ],
+                "project": manifest.get("name", ""),
+                "managed": True,
+                "overrides": {
+                    capability.get("configuration_name", slug): capability.get("protocol", "")
+                    for slug, capability in capabilities.items()
+                    if isinstance(capability, dict)
+                },
+                "runtime": manifest.get("runtime"),
+                "processes": processes,
+                "capabilities": capabilities,
+                "seed": manifest.get("seed"),
+                "readiness": manifest.get("readiness"),
+            },
+        ))
+    # Scenarios stage output — from scenarios/ directories.
+    if "scenarios" not in existing:
+        scenario_docs = _load_bundle_scenarios(manifest, job)
+        if scenario_docs:
+            scenario_data = [
+                {
+                    **doc,
+                    "name": doc.get("name") or doc.get("scenario_key"),
+                    "use_case": doc.get("use_case") or doc.get("tests") or "",
+                }
+                for doc in scenario_docs
+            ]
+            outputs.append(HostedHarnessStageOutput(
+                job=job,
+                title="Scenarios",
+                summary=f"{len(scenario_data)} pre-authored scenarios",
+                kind="scenarios",
+                data=scenario_data,
+            ))
+    if outputs:
+        HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
+
+
+def _load_bundle_file(manifest: dict, relative_path: str, job: HostedHarnessJob):
+    """Load a JSON file from the resolved bundle directory."""
+    base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
+    if not base:
+        return None
+    source = (job.payload or {}).get("source") or {}
+    repo = source.get("repository") or ""
+    if not repo:
+        return None
+    file_path = Path(base) / repo.replace("/", "__") / relative_path
+    if not file_path.is_file():
+        return None
+    return json.loads(file_path.read_text(encoding="utf-8"))
+
+
+def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
+    """Load scenario.json files from bundle directories."""
+    base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
+    if not base:
+        return []
+    source = (job.payload or {}).get("source") or {}
+    repo = source.get("repository") or ""
+    if not repo:
+        return []
+    bundle_dir = Path(base) / repo.replace("/", "__")
+    scenarios_dir = bundle_dir / "scenarios"
+    if not scenarios_dir.is_dir():
+        return []
+    results = []
+    for scenario_path in sorted(scenarios_dir.iterdir()):
+        scenario_json = scenario_path / "scenario.json"
+        if scenario_json.is_file():
+            results.append(json.loads(scenario_json.read_text(encoding="utf-8")))
+    return results
+
+
 class DaytonaHostedGateway:
     def __init__(self) -> None:
         from daytona import Daytona, DaytonaConfig
@@ -341,6 +478,8 @@ class DaytonaHostedGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        # Bundle authoring is performed inside the sandbox. The platform sends source plus any
+        # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
         dispatch_payload = prepare_dispatch_payload(payload, secrets_map)
         capability = register_attempt(
@@ -350,6 +489,10 @@ class DaytonaHostedGateway:
             snapshot_digest=self.snapshot_digest or None,
         )
         attempt = capability.attempt
+        # Record provenance digests on the attempt.
+        if commit_sha:
+            attempt.source_digest = f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
+        attempt.save(update_fields=["source_digest", "bundle_digest", "updated_at"])
         ttl_seconds = payload["runtime"]["max_duration_seconds"] + 120
         ttl_minutes = max(1, (ttl_seconds + 59) // 60)
         platform_host = urlparse(endpoint_base_url).hostname
@@ -369,6 +512,15 @@ class DaytonaHostedGateway:
             webrtc_cidrs = list(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []))
         if platform_host:
             allowed_domains.add(platform_host)
+        # Egress union validation: cap at 20 user-supplied domains.
+        _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+        # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
+        # domain-allowlist cannot express when media and signaling resolve to different IPs. When
+        # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
+        # otherwise the domain allowlist (block-all + allowlist) applies.
+        unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
+        network_block_all = False if unrestricted else (not allowed_domains)
+        domain_allow_list = None if unrestricted else (",".join(sorted(allowed_domains)) or None)
         sandbox = None
         try:
             sandbox = self.client.create(
@@ -382,13 +534,8 @@ class DaytonaHostedGateway:
                         "futureagi.job": str(job.id),
                         "futureagi.attempt": str(attempt.id),
                     },
-                    network_block_all=not allowed_domains,
-                    network_allow_list=",".join(webrtc_cidrs) or None,
-                    domain_allow_list=(
-                        None
-                        if webrtc_cidrs
-                        else ",".join(sorted(allowed_domains)) or None
-                    ),
+                    network_block_all=network_block_all,
+                    domain_allow_list=domain_allow_list,
                     ephemeral=True,
                     ttl_minutes=ttl_minutes,
                     auto_delete_interval=ttl_minutes,
@@ -418,7 +565,8 @@ class DaytonaHostedGateway:
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
             prepared = sandbox.process.exec(
-                "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring && "
+                "mkdir -p /work/authoring && "
+                "if [ -f /work/authoring.tar.gz ]; then "
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
                 "tar -xzf /work/source.tar.gz -C /work && "
@@ -436,25 +584,18 @@ class DaytonaHostedGateway:
                     status_code=502,
                     retryable=True,
                 )
-            authored = sandbox.process.exec(
-                "python -m fi.alk.harness.bundle_author_v2 "
-                "--job /work/job.json --source /work/source "
-                "--authoring /work/authoring --output /work/bundle",
-                timeout=900,
-            )
-            if authored.exit_code:
-                detail = str(authored.result or "bundle authoring failed")[-1000:]
-                raise HostedHarnessError(
-                    "bundle_authoring_failed",
-                    detail,
-                    status_code=422,
-                    retryable=False,
-                )
             sandbox.process.create_session(_ENTRYPOINT_SESSION)
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SessionExecuteRequest(
                     command=(
+                        "if [ ! -f /work/authoring/contract.json ]; then "
+                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
+                        "/work/job.json --source /work/source --output /work/authoring; "
+                        "fi && "
+                        "python -m fi.alk.harness.bundle_author_v2 "
+                        "--job /work/job.json --source /work/source "
+                        "--authoring /work/authoring --output /work/bundle && "
                         "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
                         "--source /work/source --output /work/artifacts"
                     ),
@@ -499,6 +640,7 @@ class DaytonaHostedGateway:
 
     def inspect(self, attempt: HostedHarnessAttempt) -> dict[str, Any]:
         sandbox = self.client.get(str(attempt.provider_ref))
+        self._sync_authoring_progress(attempt, sandbox)
         command_id = (
             sandbox.fs.download_file(_ENTRYPOINT_COMMAND_ID_FILE).decode().strip()
         )
@@ -526,7 +668,114 @@ class DaytonaHostedGateway:
                 observation["logs"] = (text or "")[-8000:]
             except Exception:  # noqa: BLE001
                 observation["logs"] = ""
+            # The agent/tools-api/postgres run as CHILD processes; their stdout/stderr goes to
+            # per-world/build process.log files, never the entrypoint's own stream. Collect their
+            # tails too -- an "agent did not become ready" failure is only diagnosable from the
+            # agent's own log (STT/LLM/TTS init), which the entrypoint stream never sees.
+            try:
+                child = sandbox.process.exec(
+                    "for f in $(find /work/worlds /work/build -name '*.log' 2>/dev/null | sort); do "
+                    "echo \"===== $f =====\"; tail -120 \"$f\"; done",
+                    timeout=60,
+                )
+                child_logs = getattr(child, "result", "") or ""
+            except Exception:  # noqa: BLE001
+                child_logs = ""
+            observation["process_logs"] = child_logs[-16000:]
+            # Surface everything to the simulation-runner worker log so failures are visible via
+            # `docker logs temporal-worker-simulation-runner`, not only the truncated receipt tail.
+            logger.info(
+                "hosted guest attempt=%s exit_code=%s\n--- entrypoint ---\n%s\n--- processes ---\n%s",
+                attempt.id, command.exit_code, observation["logs"], observation["process_logs"],
+            )
         return observation
+
+    @staticmethod
+    def _sync_authoring_progress(attempt: HostedHarnessAttempt, sandbox) -> None:
+        """Expose safe in-sandbox authoring outputs while the unified command is running."""
+
+        def _json(path: str):
+            try:
+                return json.loads(sandbox.fs.download_file(path).decode("utf-8"))
+            except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
+                return None
+
+        contract = _json("/work/authoring/contract.json")
+        environment = _json("/work/authoring/environment.json")
+        scenarios = _json("/work/authoring/scenarios.json")
+        outputs: list[dict[str, Any]] = []
+        stage = "understanding_agent"
+        if isinstance(contract, dict):
+            tools = [
+                {"name": str(item.get("name") or "")}
+                for item in contract.get("tools", [])
+                if isinstance(item, dict) and item.get("name")
+            ]
+            outputs.append(
+                {
+                    "id": "contract",
+                    "kind": "contract",
+                    "title": "Agent contract",
+                    "summary": f"{len(tools)} tools · {contract.get('modality') or 'unknown'} modality",
+                    "data": {
+                        "one_liner": str(contract.get("one_liner") or ""),
+                        "modality": str(contract.get("modality") or "unknown"),
+                        "runtime": contract.get("runtime") or {},
+                        "tools": tools,
+                    },
+                }
+            )
+            stage = "generating_environment"
+        if isinstance(environment, dict):
+            services = [str(item) for item in environment.get("services", [])]
+            outputs.append(
+                {
+                    "id": "environment",
+                    "kind": "environment",
+                    "title": "Execution environment",
+                    "summary": f"{len(services)} services described",
+                    "data": {
+                        "services": services,
+                        "project": str(environment.get("project") or ""),
+                        "managed": bool(environment.get("managed")),
+                    },
+                }
+            )
+            stage = "generating_scenarios"
+        if isinstance(scenarios, list):
+            scenario_data = [
+                {
+                    "name": str(item.get("name") or "scenario"),
+                    "instruction": str(item.get("instruction") or ""),
+                    "use_case": str(item.get("use_case") or ""),
+                }
+                for item in scenarios
+                if isinstance(item, dict)
+            ]
+            outputs.append(
+                {
+                    "id": "scenarios",
+                    "kind": "scenarios",
+                    "title": "Generated scenarios",
+                    "summary": f"{len(scenario_data)} grounded scenarios",
+                    "data": scenario_data,
+                }
+            )
+            stage = "validating_environment"
+        if not outputs:
+            return
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+        # Once the guest event channel advances into runtime stages it is authoritative.
+        if job.current_stage in {
+            "queued",
+            "admitted",
+            "understanding_agent",
+            "generating_environment",
+            "generating_scenarios",
+        }:
+            job.current_stage = stage
+        job.stage_outputs = outputs
+        job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from daytona import DaytonaNotFoundError
@@ -636,7 +885,7 @@ class DaytonaHostedGateway:
                     "guest reached terminal state but could not deliver "
                     "the terminal event"
                 ),
-                "details": {"guest_log_tail": observation.get("logs", "")},
+                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -655,7 +904,7 @@ class DaytonaHostedGateway:
                 "stage": "running",
                 "code": "guest_crashed",
                 "message": f"guest entrypoint exited {exit_code}",
-                "details": {"guest_log_tail": observation.get("logs", "")},
+                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -676,7 +925,7 @@ class DaytonaHostedGateway:
                 "stage": "uploading_artifacts",
                 "code": "terminal_delivery_incomplete",
                 "message": "guest exited without an acknowledged terminal stream",
-                "details": {"guest_log_tail": observation.get("logs", "")},
+                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -739,7 +988,6 @@ def _safe_source_member(raw_path: str) -> str:
             status_code=400,
         )
     return candidate
-
 
 def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
     """Resolve frozen world/scenario authoring inputs for the in-sandbox v2 producer.
@@ -834,6 +1082,72 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
         for path in sorted(files):
             tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
     return archive.getvalue()
+
+
+def _bundle_archive_for(job: HostedHarnessJob) -> tuple[bytes | None, dict | None]:
+    """Resolve and verify a pre-authored environment-bundle.v2 for this job's source.
+
+    Returns (tar.gz bytes, manifest dict) or (None, None). Verifies:
+    - Bundle presence (manifest.json exists)
+    - provenance.repository matches source.repository
+    - provenance.commit matches source.commit_sha (if provided)
+    - file hashes in manifest match actual files
+    """
+    import hashlib as _hashlib
+
+    base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
+    if not base:
+        return None, None
+    source = (job.payload or {}).get("source") or {}
+    repo = source.get("repository") or ""
+    if not repo:
+        return None, None
+    bundle_dir = Path(base) / repo.replace("/", "__")
+    manifest_path = bundle_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None, None
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # Verify provenance
+    provenance = manifest.get("provenance") or {}
+    prov_repo = provenance.get("repository") or ""
+    if prov_repo and prov_repo != repo:
+        raise HostedHarnessError(
+            "bundle_provenance_repository_mismatch",
+            f"bundle provenance repository {prov_repo!r} does not match "
+            f"source repository {repo!r}",
+            status_code=409,
+        )
+    prov_commit = provenance.get("commit") or ""
+    source_commit = source.get("commit_sha") or ""
+    if prov_commit and source_commit and prov_commit != source_commit:
+        raise HostedHarnessError(
+            "bundle_provenance_commit_mismatch",
+            f"bundle provenance commit {prov_commit[:12]} does not match "
+            f"source commit {source_commit[:12]}",
+            status_code=409,
+        )
+    # Verify file hashes
+    for entry in manifest.get("files") or []:
+        file_path = bundle_dir / entry["path"]
+        if not file_path.is_file():
+            raise HostedHarnessError(
+                "bundle_file_missing",
+                f"bundle file {entry['path']} declared in manifest is missing",
+                status_code=422,
+            )
+        actual_hash = _hashlib.sha256(file_path.read_bytes()).hexdigest()
+        if actual_hash != entry["sha256"]:
+            raise HostedHarnessError(
+                "bundle_file_hash_mismatch",
+                f"bundle file {entry['path']} hash mismatch",
+                status_code=409,
+            )
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        for path in sorted(bundle_dir.rglob("*")):
+            if path.is_file():
+                tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
+    return archive.getvalue(), manifest
 
 
 def pack_authoring_archive(authoring_root: Path) -> bytes:
