@@ -17,7 +17,13 @@ const EvalDetailExpansion = ({
   pl = 4.5,
 }) => {
   const explanation = span.explanation;
-  const hasLoc = !!(span.span_id && evalConfigId);
+  // Error localization is an act-on-failure affordance, so it carries the same
+  // gate as Fix with Falcon below rather than rendering whenever the row opens.
+  // A row can open purely because a *passing* eval has an explanation (see
+  // spanHasDetail), and offering to localize an error that never happened is
+  // misleading. Choices always count as passed, so they never get it.
+  const hasLoc =
+    !!(span.span_id && evalConfigId) && !spanPassed(span, outputType);
 
   return (
     <Box

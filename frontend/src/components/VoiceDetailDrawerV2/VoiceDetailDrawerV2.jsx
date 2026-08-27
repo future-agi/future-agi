@@ -497,7 +497,17 @@ const VoiceDetailDrawerV2 = ({
                 flexDirection: "column",
               }}
             >
+              {/* Keyed per call so the panel's tab seeding re-runs whenever
+                  we move to a different call. VoiceRightPanel reads
+                  ?drawerTab=evals in a lazy useState initialiser, which fires
+                  once per mount — without a key it would only ever seed on
+                  the first mount if a wrapper kept this subtree alive. Today
+                  TestDetailSideDrawer unmounts it on close, but prev/next
+                  swaps `data` in place, and the embedded/full-page wrappers
+                  keep it mounted too. Mirrors the SpanDetailPane key in
+                  TraceDetailDrawerV2. */}
               <VoiceRightPanel
+                key={data?.trace_id || data?.id || "voice-right-panel"}
                 data={data}
                 onCompareBaseline={onCompareBaseline}
                 onAction={handleVoiceAction}

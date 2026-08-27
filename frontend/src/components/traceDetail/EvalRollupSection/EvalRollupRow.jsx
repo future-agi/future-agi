@@ -17,11 +17,18 @@ const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon, showGlyph = true }) 
   const chips = evalCellChips(ev.aggregate, colFromEval(ev));
   if (erroredCount) chips.push({ label: `Errored ${erroredCount}`, tone: "errored" });
   const [open, setOpen] = useState(false);
+  // An eval with no spans has nothing to disclose, so it must not take a tab
+  // stop or advertise a chevron that expands to nothing (same gate BreakdownRow
+  // applies via `canExpand`).
+  const canExpand = spans.length > 0;
 
   return (
     <>
       <Box
-        {...activatableProps(() => setOpen((p) => !p), { expanded: open })}
+        {...activatableProps(() => setOpen((p) => !p), {
+          expanded: open,
+          enabled: canExpand,
+        })}
         sx={{
           display: "flex",
           alignItems: "flex-start",
@@ -30,17 +37,19 @@ const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon, showGlyph = true }) 
           py: 0.75,
           borderBottom: "1px solid",
           borderColor: "divider",
-          cursor: "pointer",
+          cursor: canExpand ? "pointer" : "default",
           minHeight: 32,
           "&:hover": { bgcolor: "rgba(0,0,0,0.02)" },
         }}
       >
         <Box sx={{ width: 18, flexShrink: 0, display: "flex" }}>
-          <Iconify
-            icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
-            width={14}
-            color="text.disabled"
-          />
+          {canExpand && (
+            <Iconify
+              icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+              width={14}
+              color="text.disabled"
+            />
+          )}
         </Box>
         <Box
           sx={{
@@ -65,8 +74,17 @@ const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon, showGlyph = true }) 
             flexWrap: "wrap",
           }}
         >
-          {chips.map((c) => (
-            <ResultChip key={c.label} label={c.label} tone={c.tone} dense />
+          {/* Labels are not unique: the scalar-array branch of evalCellChips
+              maps a span's choice values straight through, so a repeated
+              choice yields duplicate labels. Index-suffix keeps keys stable
+              per position. */}
+          {chips.map((c, i) => (
+            <ResultChip
+              key={`${c.label}-${i}`}
+              label={c.label}
+              tone={c.tone}
+              dense
+            />
           ))}
           <Typography sx={{ fontSize: 10.5, color: "text.disabled", ml: 0.5 }}>
             from {spans.length} span{spans.length === 1 ? "" : "s"}
