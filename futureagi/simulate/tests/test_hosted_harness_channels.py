@@ -1,6 +1,6 @@
 from __future__ import annotations
-import hashlib
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -16,9 +16,72 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
 )
-from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+from simulate.services.hosted_harness_ingestion import (
+    _read_hosted_tool_trace,
+    _receipt_evaluations,
+    ingest_result_receipt,
+)
 
 BASE = "/simulate/api/harness/attempts"
+
+
+def test_receipt_evaluations_preserve_deterministic_and_judged_checks():
+    body = {
+        "sub_goals": [
+            {
+                "name": "booking_created",
+                "held": True,
+                "judged": False,
+                "reason": None,
+            },
+            {
+                "name": "friendly_tone",
+                "held": False,
+                "judged": True,
+                "reason": "The response was terse",
+            },
+        ],
+        "evaluations": [{"name": "cs_policy", "passed": True, "kind": "eval"}],
+    }
+
+    assert _receipt_evaluations(body) == [
+        {
+            "name": "booking_created",
+            "kind": "checkpoint",
+            "passed": True,
+            "reason": "",
+        },
+        {
+            "name": "friendly_tone",
+            "kind": "judge",
+            "passed": False,
+            "reason": "The response was terse",
+        },
+        {"name": "cs_policy", "passed": True, "kind": "eval"},
+    ]
+
+
+def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
+    response = MagicMock()
+    response.read.return_value = (
+        b'{"name":"lookup","ok":true}\n\nnot-json\n{"name":"book","ok":false}\n'
+    )
+    artifact = MagicMock(object_key="alk-harness/job/tool-trace")
+    storage = MagicMock()
+    storage.get_object.return_value = response
+
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        calls = _read_hosted_tool_trace(artifact)
+
+    assert calls == [
+        {"name": "lookup", "ok": True},
+        {"name": "book", "ok": False},
+    ]
+    response.close.assert_called_once_with()
+    response.release_conn.assert_called_once_with()
 
 
 def _payload(**overrides):
@@ -102,12 +165,13 @@ def _upload_required_artifacts(client, capability, headers):
                 }
             )
     return entries, storage
+
+
 @pytest.mark.django_db
 def test_job_creation_is_tenant_idempotent(organization):
     first, created = create_hosted_job(
         organization, _payload(), idempotency_key="stable-key"
     )
-
 
     second, duplicate = create_hosted_job(
         organization, _payload(), idempotency_key="stable-key"
@@ -199,7 +263,9 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
         body["digest"] = canonical_digest(body)
         return body
 
-    original, created = ingest_result_receipt(first.attempt, receipt(first, scenario_attempt=1))
+    original, created = ingest_result_receipt(
+        first.attempt, receipt(first, scenario_attempt=1)
+    )
     assert created is True
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
 
@@ -266,9 +332,7 @@ def test_event_gap_is_released_and_recorded_after_sixty_seconds(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="event-gap-key"
     )
-    capability = register_attempt(
-        job.id, endpoint_base_url="https://platform.example"
-    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     client = APIClient()
     payload = {"level": "info", "message": "after gap"}
     event = {
@@ -290,9 +354,7 @@ def test_event_gap_is_released_and_recorded_after_sixty_seconds(organization):
         **_headers(capability),
     )
     assert response.json()["acked_through_sequence"] == 0
-    capability.attempt.gap_started_at = django_timezone.now() - timedelta(
-        seconds=61
-    )
+    capability.attempt.gap_started_at = django_timezone.now() - timedelta(seconds=61)
     capability.attempt.save(update_fields=["gap_started_at"])
 
     response = client.post(
@@ -514,9 +576,7 @@ def test_scenario_receipt_manifest_and_cleanup_finalize_platform_rows(organizati
         **headers,
     )
     assert response.status_code == 200
-    required_entries, _ = _upload_required_artifacts(
-        client, capability, headers
-    )
+    required_entries, _ = _upload_required_artifacts(client, capability, headers)
 
     manifest = {
         "schema_version": "futureagi.harness-manifest.v1",

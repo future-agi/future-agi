@@ -150,9 +150,16 @@ services:
     volumes:
       - ./futureagi:/app/backend
       - ./.harness-bundles:/app/backend/.harness-bundles:ro
+      # Local Daytona certification can build the exact merged ALK guest directly. Production
+      # leaves ALK_DAYTONA_DOCKERFILE empty and boots the pinned immutable snapshot instead.
+      - ${ALK_REPOSITORY_PATH:-../alk-pr58}:/opt/alk-source:ro
+      # Keep worker startup deterministic and offline-safe; the base backend imports the trace
+      # scanner, which requires this corpus before the Temporal worker can begin polling.
+      - ${NLTK_DATA_ROOT:-/Users/rishavhada/nltk_data}:/usr/local/share/nltk_data:ro
     environment:
       FAST_STARTUP: "true"
       PYTHONUNBUFFERED: "1"
+      ALK_DAYTONA_DOCKERFILE: ${ALK_DAYTONA_DOCKERFILE:-}
     profiles: !reset []
 
   postgres:

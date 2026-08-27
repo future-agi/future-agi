@@ -306,6 +306,7 @@ _MAX_EGRESS_DOMAINS = 20
 _PRIVATE_HOST_PATTERNS = re.compile(
     r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost$)"
 )
+_GOOGLE_REGION = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
 
 def _validate_egress_domains(domains: list[str]) -> None:
@@ -325,57 +326,107 @@ def _validate_egress_domains(domains: list[str]) -> None:
             )
 
 
+def _validate_resolved_egress_domains(domains: set[str]) -> None:
+    """Enforce Daytona's cap after platform, provider, and customer hosts are combined."""
+    if len(domains) > _MAX_EGRESS_DOMAINS:
+        raise HostedHarnessError(
+            "egress_domain_limit_exceeded",
+            "resolved sandbox egress requires "
+            f"{len(domains)} domains; Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            status_code=400,
+        )
+
+
+def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
+    """Return the minimum provider hosts implied by run-scoped credentials.
+
+    These are platform-managed dependencies of the selected credential type, not customer
+    requested egress. In particular, Vertex service-account credentials cannot work unless the
+    OAuth token endpoint and regional Vertex endpoint are reachable.
+    """
+    aliases = {name.upper() for name in secrets_map}
+    domains: set[str] = set()
+    if aliases & {
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+    }:
+        domains.update(
+            {
+                "oauth2.googleapis.com",
+                "us-east5-aiplatform.googleapis.com",
+                "aiplatform.googleapis.com",
+            }
+        )
+        for name in ("GOOGLE_CLOUD_LOCATION", "CLOUD_ML_REGION"):
+            region = str(secrets_map.get(name) or "").strip().lower()
+            if _GOOGLE_REGION.fullmatch(region):
+                domains.add(f"{region}-aiplatform.googleapis.com")
+    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"}:
+        domains.add("generativelanguage.googleapis.com")
+    return domains
+
+
 def _persist_bundle_stage_outputs(
-    job: HostedHarnessJob, manifest: dict,
+    job: HostedHarnessJob,
+    manifest: dict,
 ) -> None:
     """Persist authoritative contract/environment/scenario snapshots from verified bundle."""
     from simulate.models import HostedHarnessStageOutput
 
     existing = set(
-        HostedHarnessStageOutput.no_workspace_objects.filter(job=job)
-        .values_list("kind", flat=True)
+        HostedHarnessStageOutput.no_workspace_objects.filter(job=job).values_list(
+            "kind", flat=True
+        )
     )
     outputs: list[HostedHarnessStageOutput] = []
     # Contract stage output — from contract.json referenced in manifest.files.
     if "contract" not in existing:
         contract_data = _load_bundle_file(manifest, "contract.json", job)
         if contract_data is not None:
-            outputs.append(HostedHarnessStageOutput(
-                job=job,
-                title="Contract",
-                summary=contract_data.get("one_liner", "") if isinstance(contract_data, dict) else "",
-                kind="contract",
-                data=contract_data,
-            ))
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Contract",
+                    summary=contract_data.get("one_liner", "")
+                    if isinstance(contract_data, dict)
+                    else "",
+                    kind="contract",
+                    data=contract_data,
+                )
+            )
     # Environment stage output — bundle runtime/capabilities/seed.
     if "environment" not in existing:
         processes = manifest.get("processes") or []
         capabilities = manifest.get("capabilities") or {}
-        outputs.append(HostedHarnessStageOutput(
-            job=job,
-            title="Environment",
-            summary=manifest.get("name", ""),
-            kind="environment",
-            data={
-                "services": [
-                    process.get("name")
-                    for process in processes
-                    if isinstance(process, dict) and process.get("name")
-                ],
-                "project": manifest.get("name", ""),
-                "managed": True,
-                "overrides": {
-                    capability.get("configuration_name", slug): capability.get("protocol", "")
-                    for slug, capability in capabilities.items()
-                    if isinstance(capability, dict)
+        outputs.append(
+            HostedHarnessStageOutput(
+                job=job,
+                title="Environment",
+                summary=manifest.get("name", ""),
+                kind="environment",
+                data={
+                    "services": [
+                        process.get("name")
+                        for process in processes
+                        if isinstance(process, dict) and process.get("name")
+                    ],
+                    "project": manifest.get("name", ""),
+                    "managed": True,
+                    "overrides": {
+                        capability.get("configuration_name", slug): capability.get(
+                            "protocol", ""
+                        )
+                        for slug, capability in capabilities.items()
+                        if isinstance(capability, dict)
+                    },
+                    "runtime": manifest.get("runtime"),
+                    "processes": processes,
+                    "capabilities": capabilities,
+                    "seed": manifest.get("seed"),
+                    "readiness": manifest.get("readiness"),
                 },
-                "runtime": manifest.get("runtime"),
-                "processes": processes,
-                "capabilities": capabilities,
-                "seed": manifest.get("seed"),
-                "readiness": manifest.get("readiness"),
-            },
-        ))
+            )
+        )
     # Scenarios stage output — from scenarios/ directories.
     if "scenarios" not in existing:
         scenario_docs = _load_bundle_scenarios(manifest, job)
@@ -388,13 +439,15 @@ def _persist_bundle_stage_outputs(
                 }
                 for doc in scenario_docs
             ]
-            outputs.append(HostedHarnessStageOutput(
-                job=job,
-                title="Scenarios",
-                summary=f"{len(scenario_data)} pre-authored scenarios",
-                kind="scenarios",
-                data=scenario_data,
-            ))
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Scenarios",
+                    summary=f"{len(scenario_data)} pre-authored scenarios",
+                    kind="scenarios",
+                    data=scenario_data,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -441,14 +494,17 @@ class DaytonaHostedGateway:
 
         api_key = getattr(settings, "DAYTONA_API_KEY", "")
         snapshot = getattr(settings, "ALK_DAYTONA_SNAPSHOT", "")
-        if not api_key or not snapshot:
+        dockerfile = getattr(settings, "ALK_DAYTONA_DOCKERFILE", "")
+        if not api_key or not (snapshot or dockerfile):
             raise HostedHarnessError(
                 "daytona_not_configured",
-                "DAYTONA_API_KEY and ALK_DAYTONA_SNAPSHOT are required",
+                "DAYTONA_API_KEY and either ALK_DAYTONA_SNAPSHOT or "
+                "ALK_DAYTONA_DOCKERFILE are required",
                 status_code=503,
                 retryable=True,
             )
         self.snapshot = snapshot
+        self.dockerfile = dockerfile
         self.snapshot_digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
         self.client = Daytona(
             DaytonaConfig(
@@ -462,7 +518,13 @@ class DaytonaHostedGateway:
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
-        from daytona import CreateSandboxFromSnapshotParams, SessionExecuteRequest
+        from daytona import (
+            CreateSandboxFromImageParams,
+            CreateSandboxFromSnapshotParams,
+            Image,
+            Resources,
+            SessionExecuteRequest,
+        )
 
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         authoring_archive = _authoring_archive_for(job)
@@ -485,62 +547,87 @@ class DaytonaHostedGateway:
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=self.snapshot,
-            snapshot_digest=self.snapshot_digest or None,
+            snapshot_name=self.snapshot or "direct-image",
+            snapshot_digest=(self.snapshot_digest or None) if self.snapshot else None,
         )
         attempt = capability.attempt
         # Record provenance digests on the attempt.
         if commit_sha:
-            attempt.source_digest = f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
+            attempt.source_digest = (
+                f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
+            )
         attempt.save(update_fields=["source_digest", "bundle_digest", "updated_at"])
-        ttl_seconds = payload["runtime"]["max_duration_seconds"] + 120
+        authoring_seconds = max(
+            0,
+            int(
+                getattr(
+                    settings,
+                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                    3600,
+                )
+            ),
+        )
+        ttl_seconds = max(
+            int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
+            authoring_seconds + payload["runtime"]["max_duration_seconds"] + 120,
+        )
         ttl_minutes = max(1, (ttl_seconds + 59) // 60)
         platform_host = urlparse(endpoint_base_url).hostname
         allowed_domains = set(getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []))
+        allowed_domains.update(_provider_egress_domains(secrets_map))
         allowed_domains.update(payload["security"]["allowed_egress_domains"])
-        # WebRTC negotiates media over IP candidates after the HTTPS/WebSocket signalling
-        # connection. A domain-only allowlist permits LiveKit signalling but can block the peer
-        # connection. Daytona rejects requests containing both allow-list forms, so an explicit
-        # operator CIDR policy replaces (rather than augments) the domain policy for LiveKit.
-        # Production CIDR policies therefore need to cover both media and every required HTTPS
-        # destination; the local certification lane deliberately uses 0.0.0.0/0.
-        webrtc_cidrs: list[str] = []
-        if (
-            payload["runtime"]["network_policy"] == "live"
-            and payload["agent"]["connector"] == "livekit"
-        ):
-            webrtc_cidrs = list(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []))
         if platform_host:
             allowed_domains.add(platform_host)
         # Egress union validation: cap at 20 user-supplied domains.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+        _validate_resolved_egress_domains(allowed_domains)
         # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
         # domain-allowlist cannot express when media and signaling resolve to different IPs. When
         # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
         # otherwise the domain allowlist (block-all + allowlist) applies.
         unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
         network_block_all = False if unrestricted else (not allowed_domains)
-        domain_allow_list = None if unrestricted else (",".join(sorted(allowed_domains)) or None)
+        domain_allow_list = (
+            None if unrestricted else (",".join(sorted(allowed_domains)) or None)
+        )
         sandbox = None
         try:
-            sandbox = self.client.create(
-                CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    language="python",
-                    os_user=getattr(
-                        settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                    ),
-                    labels={
-                        "futureagi.job": str(job.id),
-                        "futureagi.attempt": str(attempt.id),
-                    },
-                    network_block_all=network_block_all,
-                    domain_allow_list=domain_allow_list,
-                    ephemeral=True,
-                    ttl_minutes=ttl_minutes,
-                    auto_delete_interval=ttl_minutes,
+            common_params = {
+                "language": "python",
+                "os_user": getattr(
+                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
                 ),
-                timeout=300,
+                "labels": {
+                    "futureagi.job": str(job.id),
+                    "futureagi.attempt": str(attempt.id),
+                },
+                "network_block_all": network_block_all,
+                "domain_allow_list": domain_allow_list,
+                "ephemeral": True,
+                "ttl_minutes": ttl_minutes,
+                "auto_delete_interval": ttl_minutes,
+            }
+            dockerfile = getattr(self, "dockerfile", "")
+            if dockerfile:
+                launch_params = CreateSandboxFromImageParams(
+                    image=Image.from_dockerfile(dockerfile),
+                    resources=Resources(
+                        cpu=payload["runtime"]["cpu_units"],
+                        memory=max(4, (payload["runtime"]["memory_mb"] + 1023) // 1024),
+                        disk=10,
+                    ),
+                    **common_params,
+                )
+                launch_timeout = 1200
+            else:
+                launch_params = CreateSandboxFromSnapshotParams(
+                    snapshot=self.snapshot,
+                    **common_params,
+                )
+                launch_timeout = 300
+            sandbox = self.client.create(
+                launch_params,
+                timeout=launch_timeout,
             )
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
@@ -565,8 +652,8 @@ class DaytonaHostedGateway:
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
             prepared = sandbox.process.exec(
-                "mkdir -p /work/authoring && "
                 "if [ -f /work/authoring.tar.gz ]; then "
+                "mkdir -p /work/authoring && "
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
                 "tar -xzf /work/source.tar.gz -C /work && "
@@ -675,7 +762,7 @@ class DaytonaHostedGateway:
             try:
                 child = sandbox.process.exec(
                     "for f in $(find /work/worlds /work/build -name '*.log' 2>/dev/null | sort); do "
-                    "echo \"===== $f =====\"; tail -120 \"$f\"; done",
+                    'echo "===== $f ====="; tail -120 "$f"; done',
                     timeout=60,
                 )
                 child_logs = getattr(child, "result", "") or ""
@@ -686,7 +773,10 @@ class DaytonaHostedGateway:
             # `docker logs temporal-worker-simulation-runner`, not only the truncated receipt tail.
             logger.info(
                 "hosted guest attempt=%s exit_code=%s\n--- entrypoint ---\n%s\n--- processes ---\n%s",
-                attempt.id, command.exit_code, observation["logs"], observation["process_logs"],
+                attempt.id,
+                command.exit_code,
+                observation["logs"],
+                observation["process_logs"],
             )
         return observation
 
@@ -866,6 +956,23 @@ class DaytonaHostedGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
+
+        # Event/manifest ingestion runs independently from the provider poll.  The attempt object
+        # held by the workflow may predate the terminal HTTP requests even though both commits are
+        # already visible in the database by the time Daytona reports process exit.  Refresh the
+        # delivery fields before classifying exit 0, or a fully acknowledged run is overwritten
+        # with the false `terminal_delivery_incomplete` platform failure.
+        attempt.refresh_from_db(
+            fields=[
+                "terminal_event_received",
+                "manifest_acked",
+                "terminal_stage",
+                "terminal_reason",
+                "terminal_failure",
+                "state",
+                "updated_at",
+            ]
+        )
         retry_pending = False
         if exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
@@ -885,7 +992,10 @@ class DaytonaHostedGateway:
                     "guest reached terminal state but could not deliver "
                     "the terminal event"
                 ),
-                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
+                "details": {
+                    "guest_log_tail": observation.get("logs", ""),
+                    "process_logs": observation.get("process_logs", ""),
+                },
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -904,7 +1014,10 @@ class DaytonaHostedGateway:
                 "stage": "running",
                 "code": "guest_crashed",
                 "message": f"guest entrypoint exited {exit_code}",
-                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
+                "details": {
+                    "guest_log_tail": observation.get("logs", ""),
+                    "process_logs": observation.get("process_logs", ""),
+                },
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -925,7 +1038,10 @@ class DaytonaHostedGateway:
                 "stage": "uploading_artifacts",
                 "code": "terminal_delivery_incomplete",
                 "message": "guest exited without an acknowledged terminal stream",
-                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
+                "details": {
+                    "guest_log_tail": observation.get("logs", ""),
+                    "process_logs": observation.get("process_logs", ""),
+                },
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -988,6 +1104,7 @@ def _safe_source_member(raw_path: str) -> str:
             status_code=400,
         )
     return candidate
+
 
 def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
     """Resolve frozen world/scenario authoring inputs for the in-sandbox v2 producer.

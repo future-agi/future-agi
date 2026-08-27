@@ -483,9 +483,7 @@ def _advance_event_watermark(attempt: HostedHarnessAttempt) -> None:
                     "through": end,
                     "released_at": now.isoformat(),
                 }
-                for start, end in _missing_ranges(
-                    watermark + 1, sorted(sequences)
-                )
+                for start, end in _missing_ranges(watermark + 1, sorted(sequences))
             )
             attempt.released_event_gaps = gaps
             watermark = max(sequences)
@@ -612,6 +610,7 @@ def _apply_receipt_to_call(
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
     metadata["hosted_harness_receipt"] = _json_ready(body)
+    metadata["harness_evaluations"] = _receipt_evaluations(body)
     update_fields = [
         "status",
         "started_at",
@@ -632,6 +631,19 @@ def _apply_receipt_to_call(
                 sha256__in=[item.removeprefix("sha256:") for item in artifact_ids],
             )
         )
+        tool_trace = (
+            HostedHarnessArtifact.no_workspace_objects.filter(
+                job=registration.job,
+                scenario_key=registration.scenario_key,
+                kind="tool_trace",
+            )
+            .order_by("created_at")
+            .last()
+        )
+        if tool_trace is not None and all(
+            artifact.id != tool_trace.id for artifact in artifacts
+        ):
+            artifacts.append(tool_trace)
         metadata["hosted_harness_artifacts"] = {
             artifact.kind: {
                 "sha256": artifact.sha256,
@@ -647,9 +659,7 @@ def _apply_receipt_to_call(
             (item for item in artifacts if item.kind == "recording_stereo"), None
         )
         if combined is not None:
-            call.recording_url = get_object_url(
-                UPLOAD_BUCKET_NAME, combined.object_key
-            )
+            call.recording_url = get_object_url(UPLOAD_BUCKET_NAME, combined.object_key)
             update_fields.append("recording_url")
         if stereo is not None:
             call.stereo_recording_url = get_object_url(
@@ -667,10 +677,74 @@ def _apply_receipt_to_call(
             _ingest_hosted_transcript(call, transcript)
             call.transcript_available = True
             update_fields.append("transcript_available")
+        if tool_trace is not None:
+            provider_data = dict(call.provider_call_data or {})
+            livekit_data = dict(provider_data.get("livekit") or {})
+            livekit_data["tool_calls"] = _read_hosted_tool_trace(tool_trace)
+            provider_data["livekit"] = livekit_data
+            call.provider_call_data = provider_data
+            update_fields.append("provider_call_data")
     call.call_metadata = metadata
+    from simulate.services.alk_simulate_ingestion import (
+        _apply_harness_evaluation_outputs,
+        _dispatch_csat_once,
+    )
+
+    _apply_harness_evaluation_outputs(call)
+    update_fields.append("eval_outputs")
     if body.get("failure"):
         call.error_message = body["failure"]["message"]
     call.save(update_fields=list(dict.fromkeys(update_fields)))
+    if call.status == CallExecution.CallStatus.COMPLETED:
+        call_id = call.id
+        transaction.on_commit(
+            lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
+        )
+
+
+def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert hosted receipt checks to the platform's existing eval-output shape."""
+    results: list[dict[str, Any]] = []
+    for goal in body.get("sub_goals") or []:
+        if not isinstance(goal, dict) or not goal.get("name"):
+            continue
+        results.append(
+            {
+                "name": str(goal["name"]),
+                "kind": "judge" if goal.get("judged") else "checkpoint",
+                "passed": bool(goal.get("held")),
+                "reason": str(goal.get("reason") or ""),
+            }
+        )
+    for evaluation in body.get("evaluations") or []:
+        if isinstance(evaluation, dict):
+            results.append(dict(evaluation))
+    return results
+
+
+def _read_hosted_tool_trace(artifact: HostedHarnessArtifact) -> list[dict[str, Any]]:
+    """Read the sealed JSONL tool trace into the authorized call detail payload."""
+    response = None
+    try:
+        response = get_storage_client().get_object(
+            UPLOAD_BUCKET_NAME, artifact.object_key
+        )
+        raw = response.read().decode("utf-8")
+        calls: list[dict[str, Any]] = []
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                calls.append(value)
+        return calls
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
 
 
 def _ingest_hosted_transcript(
@@ -701,7 +775,9 @@ def _ingest_hosted_transcript(
                 if content is None:
                     continue
                 role = str(message.get("role") or "unknown")
-                valid_roles = {choice for choice, _label in CallTranscript.SpeakerRole.choices}
+                valid_roles = {
+                    choice for choice, _label in CallTranscript.SpeakerRole.choices
+                }
                 rows.append(
                     CallTranscript(
                         call_execution=call,

@@ -502,7 +502,9 @@ EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
 
 # Activation signing key (cloud control plane uses this to mint service tokens)
-ACTIVATION_PRIVATE_KEY = os.environ.get("ACTIVATION_PRIVATE_KEY", "").replace("\\n", "\n")
+ACTIVATION_PRIVATE_KEY = os.environ.get("ACTIVATION_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
 ACTIVATION_KEY_ID = os.environ.get("ACTIVATION_KEY_ID", "default")
 ACTIVATION_SIGNING_SERVICE_URL = os.environ.get("ACTIVATION_SIGNING_SERVICE_URL", "")
 ACTIVATION_TOKEN_ISSUER = os.environ.get(
@@ -672,13 +674,30 @@ ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-contro
 # Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
 # A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
 ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
-ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv("ALK_HOSTED_EGRESS_UNRESTRICTED","").lower() in ("1","true","yes")
+ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
+    "ALK_HOSTED_EGRESS_UNRESTRICTED", ""
+).lower() in ("1", "true", "yes")
+# Fresh hosted jobs perform contract, environment and scenario authoring before the call-runtime
+# budget begins. Keep that bounded work separate from the customer's maximum call duration;
+# otherwise Daytona expires a healthy sandbox midway through scenario authoring.
+ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
+    os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "3600")
+)
+# Daytona sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime
+# limit must never shorten fresh authoring; two hours is the hosted default/minimum.
+ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
+    os.getenv("ALK_HOSTED_SANDBOX_TTL_SECONDS", "7200")
+)
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
 DAYTONA_ORGANIZATION_ID = os.getenv("DAYTONA_ORGANIZATION_ID") or None
 ALK_DAYTONA_SNAPSHOT = os.getenv("ALK_DAYTONA_SNAPSHOT", "")
 ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+# Local certification escape hatch: Daytona builds an ephemeral sandbox directly from the
+# trusted hosted Dockerfile. Production leaves this empty and uses the immutable snapshot above.
+# This is intentionally a control-plane setting, never accepted from a customer job payload.
+ALK_DAYTONA_DOCKERFILE = os.getenv("ALK_DAYTONA_DOCKERFILE", "")
 
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")

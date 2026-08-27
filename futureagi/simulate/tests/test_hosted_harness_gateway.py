@@ -15,10 +15,35 @@ from simulate.services.hosted_harness_gateway import (
     DaytonaHostedGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
+    _provider_egress_domains,
+    _validate_resolved_egress_domains,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
 )
+
+
+def test_provider_egress_includes_vertex_auth_and_both_model_regions():
+    domains = _provider_egress_domains(
+        {
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON": "<encrypted-at-rest>",
+            "GOOGLE_CLOUD_LOCATION": "us-central1",
+        }
+    )
+
+    assert domains == {
+        "aiplatform.googleapis.com",
+        "oauth2.googleapis.com",
+        "us-central1-aiplatform.googleapis.com",
+        "us-east5-aiplatform.googleapis.com",
+    }
+
+
+def test_resolved_egress_rejects_daytona_domain_overflow():
+    with pytest.raises(HostedHarnessError, match="Daytona supports at most 20"):
+        _validate_resolved_egress_domains(
+            {f"provider-{index}.example.com" for index in range(21)}
+        )
 
 
 def _payload():
@@ -297,6 +322,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = "sha256:" + "b" * 64
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
 
     attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
@@ -310,6 +337,15 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/run/futureagi/entrypoint-command-id",
     }
     assert client.sandbox.process.sessions == ["alk-harness"]
+    # Authoring and call execution are distinct bounded phases. The sandbox must survive the
+    # former rather than using only the 10-minute call-runtime budget plus two minutes.
+    assert client.params.ttl_minutes == 120
+    prepare_command = client.sandbox.process.exec_calls[0]
+    assert not prepare_command.startswith("mkdir -p /work/authoring")
+    assert (
+        "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
+        in prepare_command
+    )
     # Egress domains present -> allowlist-only egress: block_all is False and the
     # domain_allow_list is the deny-by-default. block_all True is mutually
     # exclusive with an allow-list in Daytona (verified live), so the allow-list
@@ -323,9 +359,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
 
 
 @pytest.mark.django_db
-def test_daytona_livekit_launch_adds_explicit_webrtc_media_cidrs(
-    organization, settings
-):
+def test_daytona_livekit_launch_uses_coturn_domain_allowlist(organization, settings):
     payload = _payload()
     payload["agent"]["connector"] = "livekit"
     payload["source"] = {
@@ -341,16 +375,20 @@ def test_daytona_livekit_launch_adds_explicit_webrtc_media_cidrs(
     gateway.client = client
     gateway.snapshot = "alk-hosted-v1"
     gateway.snapshot_digest = "sha256:" + "b" * 64
-    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
-    settings.ALK_HOSTED_WEBRTC_EGRESS_CIDRS = ["203.0.113.0/24", "2001:db8::/32"]
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+        "ingest.example.com",
+        "coturn.turn-eu.futureagi.com",
+    ]
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
-    assert set(client.params.network_allow_list.split(",")) == {
-        "203.0.113.0/24",
-        "2001:db8::/32",
+    assert client.params.network_allow_list is None
+    assert set(client.params.domain_allow_list.split(",")) == {
+        "agent.example.com",
+        "coturn.turn-eu.futureagi.com",
+        "ingest.example.com",
+        "platform.example.com",
     }
-    assert client.params.domain_allow_list is None
 
 
 @pytest.mark.django_db
@@ -492,3 +530,59 @@ def test_reconcile_exit3_and_exit0_never_retry(organization, monkeypatch):
         HostedHarnessJob.State.RETRY_WAIT
     )
     assert captured["retry_pending"] is False
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeypatch):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="terminal-refresh-gateway"
+    )
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        stale_attempt = gateway.launch(
+            job, endpoint_base_url="https://platform.example.com"
+        )
+
+    # Model the ingestion requests committing after launch returned but before the provider poll
+    # observed process exit.  `stale_attempt` deliberately still carries both False values.
+    HostedHarnessAttempt.no_workspace_objects.filter(id=stale_attempt.id).update(
+        terminal_event_received=True,
+        manifest_acked=True,
+        terminal_stage="completed",
+        terminal_failure=None,
+    )
+    assert stale_attempt.terminal_event_received is False
+    assert stale_attempt.manifest_acked is False
+
+    captured = {}
+
+    def fake_delete(attempt, *, retry_pending=False):
+        captured["attempt"] = attempt
+        return attempt.job
+
+    monkeypatch.setattr(gateway, "_delete_and_record", fake_delete)
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 0, "logs": "", "process_logs": ""},
+    )
+
+    gateway.reconcile_completed(stale_attempt)
+
+    refreshed = captured["attempt"]
+    assert refreshed.terminal_event_received is True
+    assert refreshed.manifest_acked is True
+    assert refreshed.terminal_stage == "completed"
+    assert refreshed.terminal_failure is None
