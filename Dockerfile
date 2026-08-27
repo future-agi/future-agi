@@ -5,7 +5,11 @@ COPY futureagi/ .
 # The application source can advance independently of the shared base image.
 # Keep small import-critical additions explicit here so every service built
 # from this Dockerfile (backend and queue workers alike) has the same runtime.
-RUN pip install --no-cache-dir "disposable-email-domains==0.0.239"
+RUN pip install --no-cache-dir \
+    "disposable-email-domains==0.0.239" \
+    "daytona==0.207.0" \
+    "httpx-ws==0.7.2" \
+    "urllib3>=2.1"
 
 # Install Node.js for sandboxed JavaScript eval execution
 RUN apt-get update -qq && \

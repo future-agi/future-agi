@@ -206,6 +206,47 @@ def test_secret_file_upload_returns_only_opaque_reference(user):
 
 
 @pytest.mark.django_db
+def test_secret_values_are_encrypted_and_return_only_platform_refs(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    raw = "must-not-be-echoed"
+
+    response = client.post(
+        "/simulate/api/harness-jobs/secret-values/",
+        {"environment_values": {"DEEPGRAM_API_KEY": raw}},
+        format="json",
+    )
+
+    assert response.status_code == 201
+    reference = response.json()["secret_refs"]["DEEPGRAM_API_KEY"]
+    assert reference["manager"] == "platform-vault"
+    assert reference["purpose"] == "target_provider"
+    assert raw not in response.content.decode()
+
+    from simulate.models import HostedHarnessSecret
+
+    record = HostedHarnessSecret.objects.get(
+        organization=user.organization, name=reference["key"]
+    )
+    assert raw not in record.encrypted_value
+    assert record.get_value() == raw
+
+
+@pytest.mark.django_db
+def test_secret_values_reject_runner_owned_names(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/secret-values/",
+        {"environment_values": {"FI_API_KEY": "customer-value"}},
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
 def test_harness_job_adjustment_is_validated_and_forwarded(user):
     # Kept endpoint (base): a validated adjustment is forwarded to the sandbox
     # client verbatim.

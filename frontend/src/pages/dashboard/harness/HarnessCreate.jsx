@@ -30,6 +30,7 @@ import {
   createHarnessJob,
   listHarnessJobs,
   preflightHarnessJob,
+  storeHarnessSecretValues,
   uploadHarnessSecretFile,
   uploadHarnessSource,
 } from "src/api/harness/harness";
@@ -179,11 +180,15 @@ export default function HarnessCreate() {
 
   const sourcePayload = () => {
     if (sourceMode === "upload")
-      return { source_id: uploadedSource?.source_id };
+      return {
+        kind: "archive",
+        archive_artifact_id: uploadedSource?.source_id,
+      };
     return {
-      github_repository: githubRepository.trim(),
-      github_visibility: githubVisibility,
-      github_installation_id:
+      kind: "github",
+      repository: githubRepository.trim(),
+      visibility: githubVisibility,
+      installation_id:
         githubVisibility === "private"
           ? githubInstallationId.trim() || undefined
           : undefined,
@@ -226,18 +231,71 @@ export default function HarnessCreate() {
     }
   };
 
-  const checkPayload = () => ({
-    ...sourcePayload(),
-    secret_refs: secretFileRefs,
-    connector_config: configurationValues,
-    environment_values: environmentValues,
+  const pendingEnvironmentRefs = () =>
+    Object.fromEntries(
+      Object.keys(environmentValues).map((alias) => [
+        alias,
+        {
+          manager: "platform-vault",
+          key: `pending-${alias.toLowerCase()}`,
+          version: "1",
+          purpose: "target_provider",
+        },
+      ]),
+    );
+
+  const hostedPayload = (secretRefs = {}) => ({
+    schema_version: "futureagi.harness-job.v1",
+    source: sourcePayload(),
+    agent: {
+      connector: "auto",
+      config: configurationValues,
+      secret_refs: { ...secretFileRefs, ...secretRefs },
+    },
+    scenario_count: Number(scenarioCount),
+    runtime: {
+      isolation: "dedicated_vm",
+      cpu_units: 4,
+      memory_mb: 8192,
+      parallelism: 1,
+      concurrency_weight: 1,
+      max_duration_seconds: 3600,
+      network_policy: "live",
+    },
+    security: {
+      untrusted_source: true,
+      read_only_source: true,
+      allow_privileged: false,
+      allow_host_runtime_control: false,
+      allowed_egress_domains: [],
+    },
+    retry: {
+      max_infrastructure_attempts: 2,
+      initial_backoff_seconds: 1,
+      max_backoff_seconds: 15,
+      retryable_domains: ["infrastructure", "connectivity", "platform_sync"],
+    },
+    artifacts: {
+      level: "full",
+      retention_days: 30,
+      allow_bundle_download: false,
+      max_artifact_bytes: 1073741824,
+    },
+    metadata: {
+      name:
+        uploadedSource?.name || githubRepository.trim().split("/").pop() || "agent",
+      authoring_key:
+        uploadedSource?.name || githubRepository.trim().split("/").pop() || "agent",
+    },
   });
 
   const inspect = async () => {
     setChecking(true);
     setError("");
     try {
-      const value = await preflightHarnessJob(checkPayload());
+      const value = await preflightHarnessJob(
+        hostedPayload(pendingEnvironmentRefs()),
+      );
       setPreflight(value);
       setPreflightDirty(false);
     } catch (requestError) {
@@ -251,7 +309,9 @@ export default function HarnessCreate() {
     setSubmitting(true);
     setError("");
     try {
-      const checked = await preflightHarnessJob(checkPayload());
+      const checked = await preflightHarnessJob(
+        hostedPayload(pendingEnvironmentRefs()),
+      );
       setPreflight(checked);
       setPreflightDirty(false);
       if (!checked?.ready_to_submit) {
@@ -261,11 +321,12 @@ export default function HarnessCreate() {
         setSubmitting(false);
         return;
       }
-      const value = await createHarnessJob({
-        ...checkPayload(),
-        scenario_count: Number(scenarioCount),
-        connector: "auto",
-      });
+      const stored = Object.keys(environmentValues).length
+        ? await storeHarnessSecretValues(environmentValues)
+        : { secret_refs: {} };
+      const value = await createHarnessJob(
+        hostedPayload(stored.secret_refs || {}),
+      );
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));
     } catch (requestError) {

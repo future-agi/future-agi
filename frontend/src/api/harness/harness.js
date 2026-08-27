@@ -11,6 +11,8 @@ const preflightPath = () => apiPath("/simulate/api/harness-jobs/preflight/");
 const sourcesPath = () => apiPath("/simulate/api/harness-jobs/sources/");
 const secretFilesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-files/");
+const secretValuesPath = () =>
+  apiPath("/simulate/api/harness-jobs/secret-values/");
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
 export const createHarnessJob = async (
@@ -37,6 +39,12 @@ export const uploadHarnessSecretFile = async (formData) =>
     await axios.post(secretFilesPath(), formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 60000,
+    })
+  ).data;
+export const storeHarnessSecretValues = async (environmentValues) =>
+  (
+    await axios.post(secretValuesPath(), {
+      environment_values: environmentValues,
     })
   ).data;
 export const getHarnessJob = async (id) => (await axios.get(jobPath(id))).data;

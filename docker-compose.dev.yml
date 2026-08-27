@@ -35,6 +35,7 @@ services:
       - "${FLOWER_PORT:-5555}:5555"
     volumes:
       - ./futureagi:/app/backend
+      - ./.harness-bundles:/app/backend/.harness-bundles:ro
     environment:
       FAST_STARTUP: "true"
       ALK_HARNESS_SANDBOX_URL: http://alk-harness-sandbox:8788
@@ -148,6 +149,7 @@ services:
     working_dir: /app/backend
     volumes:
       - ./futureagi:/app/backend
+      - ./.harness-bundles:/app/backend/.harness-bundles:ro
     environment:
       FAST_STARTUP: "true"
       PYTHONUNBUFFERED: "1"

@@ -427,8 +427,13 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.CANCELED
         else:
             job.state = HostedHarnessJob.State.FAILED
+        # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
+        # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
+        job.current_stage = attempt.terminal_stage or job.state
         job.terminal_at = now
-        job.save(update_fields=["state", "terminal_at", "updated_at"])
+        job.save(
+            update_fields=["state", "current_stage", "terminal_at", "updated_at"]
+        )
         if job.test_execution_id:
             execution_status = {
                 HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
 import io
 import json
 import os
@@ -11,6 +10,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -55,7 +55,7 @@ HOSTED_ENGINE_CATALOG = {
     },
 }
 HOSTED_RUNTIME_CATALOG = {
-    "python": ["3.11", "3.12"],
+    "python": ["3.11", "3.12", "3.13"],
     "node": ["20", "22"],
     "binaries": ["git", "ffmpeg"],
 }
@@ -348,6 +348,20 @@ class DaytonaHostedGateway:
         platform_host = urlparse(endpoint_base_url).hostname
         allowed_domains = set(getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []))
         allowed_domains.update(payload["security"]["allowed_egress_domains"])
+        # WebRTC negotiates media over IP candidates after the HTTPS/WebSocket signalling
+        # connection. A domain-only allowlist permits LiveKit signalling but can block the peer
+        # connection. Daytona rejects requests containing both allow-list forms, so an explicit
+        # operator CIDR policy replaces (rather than augments) the domain policy for LiveKit.
+        # Production CIDR policies therefore need to cover both media and every required HTTPS
+        # destination; the local certification lane deliberately uses 0.0.0.0/0.
+        webrtc_cidrs: list[str] = []
+        if (
+            payload["runtime"]["network_policy"] == "live"
+            and payload["agent"]["connector"] == "livekit"
+        ):
+            webrtc_cidrs = list(
+                getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", [])
+            )
         if platform_host:
             allowed_domains.add(platform_host)
         sandbox = None
@@ -362,7 +376,10 @@ class DaytonaHostedGateway:
                         "futureagi.attempt": str(attempt.id),
                     },
                     network_block_all=not allowed_domains,
-                    domain_allow_list=",".join(sorted(allowed_domains)) or None,
+                    network_allow_list=",".join(webrtc_cidrs) or None,
+                    domain_allow_list=(
+                        None if webrtc_cidrs else ",".join(sorted(allowed_domains)) or None
+                    ),
                     ephemeral=True,
                     ttl_minutes=ttl_minutes,
                     auto_delete_interval=ttl_minutes,
@@ -387,12 +404,13 @@ class DaytonaHostedGateway:
                 ).encode(),
                 "/run/futureagi/capabilities.json",
             )
-            bundle_archive = _bundle_archive_for(job)
-            if bundle_archive is not None:
-                sandbox.fs.upload_file(bundle_archive, "/work/bundle.tar.gz")
+            authoring_archive = _authoring_archive_for(job)
+            if authoring_archive is not None:
+                sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
             prepared = sandbox.process.exec(
-                "if [ -f /work/bundle.tar.gz ]; then mkdir -p /work/bundle && "
-                "tar -xzf /work/bundle.tar.gz -C /work/bundle && rm /work/bundle.tar.gz; fi && "
+                "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring && "
+                "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
+                "rm /work/authoring.tar.gz; fi && "
                 "tar -xzf /work/source.tar.gz -C /work && "
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source && "
@@ -407,6 +425,20 @@ class DaytonaHostedGateway:
                     prepared.result[-500:],
                     status_code=502,
                     retryable=True,
+                )
+            authored = sandbox.process.exec(
+                "python -m fi.alk.harness.bundle_author_v2 "
+                "--job /work/job.json --source /work/source "
+                "--authoring /work/authoring --output /work/bundle",
+                timeout=900,
+            )
+            if authored.exit_code:
+                detail = str(authored.result or "bundle authoring failed")[-1000:]
+                raise HostedHarnessError(
+                    "bundle_authoring_failed",
+                    detail,
+                    status_code=422,
+                    retryable=False,
                 )
             sandbox.process.create_session(_ENTRYPOINT_SESSION)
             command = sandbox.process.execute_session_command(
@@ -695,29 +727,81 @@ def _safe_source_member(raw_path: str) -> str:
         )
     return candidate
 
-def _bundle_archive_for(job: HostedHarnessJob) -> bytes | None:
-    """Resolve a pre-authored environment-bundle.v2 for this job's source, gzipped for /work/bundle.
+def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
+    """Resolve frozen world/scenario authoring inputs for the in-sandbox v2 producer.
 
-    Stopgap delivery until in-sandbox bundle authoring lands: a bundle lives at
-    ``ALK_HOSTED_BUNDLE_DIR/<owner>__<repo>/`` (manifest.json + db/ + scenarios/). Returns the
-    tar.gz of that directory's contents, or None when no store is configured or no bundle is
-    registered for the source (the guest then fails at bundle_manifest_missing, unchanged).
+    The directory may be an older session or a hand-authored v2 bundle; the producer adopts only
+    its schema/scenarios and deterministically derives runtime topology from the newly acquired
+    source. It never trusts or forwards an old manifest.
     """
     base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
     if not base:
         return None
-    source = (job.payload or {}).get("source") or {}
-    repo = source.get("repository") or ""
-    if not repo:
+    payload = job.payload or {}
+    source = payload.get("source") or {}
+    metadata = payload.get("metadata") or {}
+    # Uploaded folders have no repository slug. ``authoring_key`` is the stable identity of the
+    # frozen contract/world/scenario output produced before dispatch; a source UUID is accepted as
+    # a final fallback for callers that store those outputs alongside the uploaded archive.
+    candidates = (
+        metadata.get("authoring_key"),
+        source.get("repository"),
+        metadata.get("name"),
+        source.get("archive_artifact_id"),
+    )
+    bundle_dir = None
+    root = Path(base).resolve()
+    for raw in candidates:
+        key = str(raw or "").strip()
+        if not key or not re.fullmatch(r"[A-Za-z0-9._/-]+", key):
+            continue
+        candidate = (root / key.replace("/", "__")).resolve()
+        if candidate.is_relative_to(root) and (candidate / "scenarios").is_dir():
+            bundle_dir = candidate
+            break
+    if bundle_dir is None:
         return None
-    bundle_dir = Path(base) / repo.replace("/", "__")
-    if not (bundle_dir / "manifest.json").is_file():
-        return None
+    # Authoring directories are long-lived developer/platform workspaces and may also contain
+    # historical recordings, database data directories, logs and prior environment builds.  None
+    # of those are V2 producer inputs.  Upload only the explicit authoring contract instead of
+    # recursively shipping the entire workspace to every sandbox.
+    files: list[Path] = []
+    for name in (
+        "schema.sql",
+        "store.json",
+        "world.sqlite",
+        "collections.json",
+        "contract.json",
+        "simulator_prompt.md",
+    ):
+        path = bundle_dir / name
+        if path.is_file() and not path.is_symlink():
+            files.append(path)
+    for directory_name in ("scenarios", "handlers"):
+        directory = bundle_dir / directory_name
+        if directory.is_dir() and not directory.is_symlink():
+            files.extend(
+                path
+                for path in sorted(directory.rglob("*"))
+                if path.is_file() and not path.is_symlink()
+            )
+    max_files = 10_000
+    max_bytes = 128 * 1024 * 1024
+    total_bytes = sum(path.stat().st_size for path in files)
+    if len(files) > max_files or total_bytes > max_bytes:
+        raise HostedHarnessError(
+            "authoring_artifacts_too_large",
+            (
+                "frozen authoring inputs exceed the hosted limit: "
+                f"files={len(files)}/{max_files}, bytes={total_bytes}/{max_bytes}"
+            ),
+            status_code=422,
+            retryable=False,
+        )
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode="w:gz") as tar:
-        for path in sorted(bundle_dir.rglob("*")):
-            if path.is_file():
-                tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
+        for path in sorted(files):
+            tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
     return archive.getvalue()
 
 

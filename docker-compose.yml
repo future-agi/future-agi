@@ -47,6 +47,22 @@ x-backend-env: &backend-env
   FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
   ALK_RUNNER_API_URL: ${ALK_RUNNER_API_URL:-http://backend}
 
+  # Hosted harness provider. These values must reach both the API process that
+  # authors/registers jobs and the simulation-runner worker that launches the
+  # attempt. Keeping them in the shared backend environment prevents a job
+  # accepted as hosted from silently falling back to the local sandbox path.
+  HARNESS_PUBLIC_BASE_URL: ${HARNESS_PUBLIC_BASE_URL:-}
+  HARNESS_PROVIDER: ${HARNESS_PROVIDER:-daytona}
+  ALK_HOSTED_BASE_EGRESS_DOMAINS: ${ALK_HOSTED_BASE_EGRESS_DOMAINS:-}
+  ALK_HOSTED_WEBRTC_EGRESS_CIDRS: ${ALK_HOSTED_WEBRTC_EGRESS_CIDRS:-}
+  ALK_HOSTED_BUNDLE_DIR: ${ALK_HOSTED_BUNDLE_DIR:-}
+  DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+  DAYTONA_API_URL: ${DAYTONA_API_URL:-}
+  DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+  DAYTONA_ORGANIZATION_ID: ${DAYTONA_ORGANIZATION_ID:-}
+  ALK_DAYTONA_SNAPSHOT: ${ALK_DAYTONA_SNAPSHOT:-}
+  ALK_DAYTONA_SNAPSHOT_DIGEST: ${ALK_DAYTONA_SNAPSHOT_DIGEST:-}
+
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
   AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}

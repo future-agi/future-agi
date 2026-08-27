@@ -467,5 +467,6 @@ def test_scenario_receipt_manifest_and_cleanup_finalize_platform_rows(organizati
     )
     finalized.refresh_from_db()
     assert finalized.state == HostedHarnessJob.State.COMPLETED
+    assert finalized.current_stage == "completed"
     finalized.test_execution.refresh_from_db()
     assert finalized.test_execution.status == "completed"

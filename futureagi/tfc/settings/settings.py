@@ -660,6 +660,11 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
 ]
+ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
+    cidr.strip()
+    for cidr in os.getenv("ALK_HOSTED_WEBRTC_EGRESS_CIDRS", "").split(",")
+    if cidr.strip()
+]
 # The OS user the hosted entrypoint runs as inside the sandbox. Must be "root" for the process
 # provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
 # (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.

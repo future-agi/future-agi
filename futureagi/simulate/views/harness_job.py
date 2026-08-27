@@ -14,6 +14,8 @@ from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
     HarnessSecretFileUploadResponseSerializer,
+    HarnessSecretValuesResponseSerializer,
+    HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
 )
 from simulate.services.harness_provider import get_harness_provider
@@ -143,6 +145,48 @@ class HarnessJobViewSet(viewsets.ViewSet):
             "size": record.size,
         }
         return Response(result, status=status.HTTP_201_CREATED)
+
+    @validated_request(
+        request_serializer=HarnessSecretValuesSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=False, methods=["post"], url_path="secret-values")
+    @swagger_auto_schema(
+        request_body=HarnessSecretValuesSerializer,
+        responses={201: HarnessSecretValuesResponseSerializer},
+    )
+    def secret_values(self, request):
+        """Persist uploaded agent values encrypted and return opaque hosted refs.
+
+        Values are intentionally separate from platform/model-provider settings. They are scoped
+        to the submitting organization and only resolved inside the selected hosted job.
+        """
+        import uuid
+
+        from simulate.models import HostedHarnessSecret
+
+        organization, _workspace = request_scope(request)
+        if organization is None:
+            return Response(
+                {"detail": "an organization is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        refs = {}
+        for alias, value in request.validated_data["environment_values"].items():
+            key = f"harness-{alias.lower()}-{uuid.uuid4().hex}"
+            HostedHarnessSecret.objects.create(
+                organization=organization,
+                name=key,
+                version="1",
+                encrypted_value=value,
+            )
+            refs[alias] = {
+                "manager": "platform-vault",
+                "key": key,
+                "version": "1",
+                "purpose": "target_provider",
+            }
+        return Response({"secret_refs": refs}, status=status.HTTP_201_CREATED)
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,

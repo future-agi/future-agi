@@ -32,6 +32,11 @@ RUN python -m venv /opt/alk-venv \
     && /opt/alk-venv/bin/python -c "import fi.simulate.hosted.child_entrypoint" \
     && rm -rf /tmp/alk
 
+# Hosted gateway activities execute in the application interpreter, while ALK calls execute in
+# /opt/alk-venv. Fail the image build if the provider dependency ever disappears from the base.
+RUN python -c "from daytona import Daytona, DaytonaConfig; print(Daytona, DaytonaConfig)" \
+    && /opt/alk-venv/bin/python -c "import fi.alk.harness.hosted_entrypoint"
+
 # The activity reads this to spawn the SDK child.
 ENV ALK_RUNNER_PYTHON=/opt/alk-venv/bin/python
 

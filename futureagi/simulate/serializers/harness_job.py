@@ -246,3 +246,33 @@ class HarnessSecretFileUploadResponseSerializer(serializers.Serializer):
     environment_name = serializers.RegexField(r"^[A-Za-z_][A-Za-z0-9_]*$")
     secret_ref = SecretReferenceSerializer()
     size = serializers.IntegerField(min_value=1)
+
+
+class HarnessSecretValuesSerializer(serializers.Serializer):
+    environment_values = serializers.DictField(
+        child=serializers.CharField(max_length=65_536, trim_whitespace=False),
+        allow_empty=False,
+    )
+
+    def validate_environment_values(self, values):
+        if len(values) > 100:
+            raise serializers.ValidationError("at most 100 values may be stored at once")
+        invalid = [
+            name
+            for name in values
+            if not name
+            or not name.replace("_", "").isalnum()
+            or name[0].isdigit()
+            or name in RUNNER_RESERVED_ENVIRONMENT
+        ]
+        if invalid:
+            raise serializers.ValidationError(
+                f"invalid or runner-reserved environment names: {', '.join(sorted(invalid))}"
+            )
+        if sum(len(value.encode("utf-8")) for value in values.values()) > 1_048_576:
+            raise serializers.ValidationError("environment values may not exceed 1 MiB")
+        return values
+
+
+class HarnessSecretValuesResponseSerializer(serializers.Serializer):
+    secret_refs = serializers.DictField(child=SecretReferenceSerializer())

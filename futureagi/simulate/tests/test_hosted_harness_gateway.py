@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 import io
 import tarfile
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +13,7 @@ from simulate.services.hosted_harness import create_hosted_job
 from simulate.services.hosted_harness_gateway import (
     DaytonaHostedGateway,
     HostedSourceAcquirer,
+    _authoring_archive_for,
 )
 
 
@@ -60,6 +61,33 @@ def _payload():
         },
         "metadata": {},
     }
+
+
+def test_authoring_archive_resolves_uploaded_source_by_explicit_key(tmp_path, settings):
+    root = tmp_path / "authoring"
+    scenario = root / "uploaded-agent" / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    stale = root / "uploaded-agent" / "webrtc-runs" / "old" / "postgres"
+    stale.mkdir(parents=True)
+    (stale / "pg_wal").write_bytes(b"must-not-upload")
+    settings.ALK_HOSTED_BUNDLE_DIR = str(root)
+    job = SimpleNamespace(
+        payload={
+            "source": {
+                "kind": "archive",
+                "archive_artifact_id": "0f95b074-d3db-47a1-a3a1-2e37991aa946",
+            },
+            "metadata": {"authoring_key": "uploaded-agent"},
+        }
+    )
+
+    archive = _authoring_archive_for(job)
+
+    assert archive is not None
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
+        assert "scenarios/one/scenario.json" in tar.getnames()
+        assert "webrtc-runs/old/postgres/pg_wal" not in tar.getnames()
 
 
 @pytest.mark.django_db
@@ -204,6 +232,37 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ingest.example.com",
         "platform.example.com",
     }
+
+
+@pytest.mark.django_db
+def test_daytona_livekit_launch_adds_explicit_webrtc_media_cidrs(
+    organization, settings
+):
+    payload = _payload()
+    payload["agent"]["connector"] = "livekit"
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-livekit-webrtc"
+    )
+    client = _Daytona()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_WEBRTC_EGRESS_CIDRS = ["203.0.113.0/24", "2001:db8::/32"]
+
+    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert set(client.params.network_allow_list.split(",")) == {
+        "203.0.113.0/24",
+        "2001:db8::/32",
+    }
+    assert client.params.domain_allow_list is None
 
 
 @pytest.mark.django_db
