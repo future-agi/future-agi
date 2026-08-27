@@ -1414,6 +1414,14 @@ class LLM:
                 }
             ]
 
+        # Some Vertex models are served only from a specific endpoint; without this litellm
+        # defaults to us-central1. A customer key that carries its own location still wins,
+        # since that branch overwrites this later.
+        if "vertex_location" not in payload:
+            location = ModelConfigs.get_vertex_location(_model)
+            if location:
+                payload["vertex_location"] = location
+
         return payload
 
     def _build_protect_flash_prompt(self, prompt: str, response: str = "") -> str:
