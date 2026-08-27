@@ -57,12 +57,19 @@ jobs:
         id: tags
         run: |
           set -eu
-          tags="${{ inputs.image }}:${{ steps.version.outputs.version }}
+          version="${{ steps.version.outputs.version }}"
+          tags="${{ inputs.image }}:${version}"
+          case "$version" in
+            *-*) ;;
+            *)
+              tags="$tags
           ${{ inputs.image }}:${{ steps.version.outputs.minor }}"
-          if [ "${{ inputs.push-latest }}" = "true" ]; then
-            tags="$tags
+              if [ "${{ inputs.push-latest }}" = "true" ]; then
+                tags="$tags
           ${{ inputs.image }}:latest"
-          fi
+              fi
+              ;;
+          esac
           { echo 'tags<<EOF'; echo "$tags"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
         if: contains(inputs.platforms, 'arm64')
