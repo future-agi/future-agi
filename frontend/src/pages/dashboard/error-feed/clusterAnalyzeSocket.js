@@ -41,9 +41,28 @@ const handlers = new Map();
 // caller decides whether to re-open. Used when a send lands on a
 // dead-but-readyState-OPEN socket (half-open after a server drop) or when the
 // delivery watchdog fires.
+// Fail every run still waiting on the socket. A run is only registered while
+// it is in flight, so a completed run is never touched.
+function failAllRuns() {
+  for (const entry of [...handlers.values()]) {
+    try {
+      entry.fail();
+    } catch {
+      /* a failing failer must not block the others */
+    }
+  }
+}
+
 function closeConnection() {
   try {
-    if (socket) socket.close();
+    // Flag the instance, not a module variable: onclose fires asynchronously,
+    // so a synchronous flag would already have been reset by the time it runs.
+    // Without this, the watchdog's deliberate close-and-resend would trip the
+    // unexpected-close handler and kill the very run it is retrying.
+    if (socket) {
+      socket._deliberateClose = true;
+      socket.close();
+    }
   } catch {
     /* already closed */
   }
@@ -106,6 +125,12 @@ function ensureSocket(token, workspaceId) {
         socket = null;
         socketReady = null;
       }
+      // Nothing else links socket death to in-flight runs, and the delivery
+      // watchdog retires once the first frame has arrived — so a socket that
+      // dies mid-run left the thread STREAMING forever with Re-run disabled,
+      // the only escape being a reload. The backend survives the disconnect
+      // and finishes the run, but its frames go to a closed connection.
+      if (!ws._deliberateClose) failAllRuns();
     };
     ws.onmessage = (event) => {
       let parsed;
@@ -116,8 +141,14 @@ function ensureSocket(token, workspaceId) {
       }
       const convId = parsed?.data?.conversation_id;
       if (convId && handlers.has(convId)) {
-        handlers.get(convId)(parsed);
+        handlers.get(convId).handle(parsed);
+        return;
       }
+      // An error we cannot route is exactly the one we must not drop: the
+      // server sends some terminal errors (usage limit, conversation missing)
+      // without a conversation_id, and silently discarding them leaves the run
+      // spinning forever with no explanation. Fail the runs instead.
+      if (!convId && parsed?.type === "error") failAllRuns();
     };
   });
   return socketReady;
@@ -400,7 +431,23 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
       { hidden: true },
     );
   } catch {
-    patchThread(clusterId, (t) => ({ ...t, runState: RUN_STATE.IDLE }));
+    // Reverting to IDLE with no message renders the pre-run empty state, so a
+    // failed kick-off is indistinguishable from never having clicked Analyze.
+    patchThread(clusterId, (t) => ({
+      ...t,
+      runState: RUN_STATE.DONE,
+      messages: [
+        ...t.messages,
+        {
+          id: `err-${Date.now()}`,
+          type: MESSAGE_TYPE.SYNTHESIS,
+          headline: "Couldn't start the analysis. Please try again.",
+          fix: "",
+          confidence: CONFIDENCE.LOW,
+          category: "error",
+        },
+      ],
+    }));
     return;
   }
   // Create endpoint wraps the row: { status, result: { id, ... } }.
@@ -556,7 +603,28 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     }
 
     if (type === RCA_FRAME.DONE) {
-      patchThread(clusterId, (t) => ({ ...t, runState: RUN_STATE.DONE }));
+      // A run can finish having emitted nothing — the agent completes but its
+      // synthesis step never lands. Leaving the thread empty renders the
+      // pre-run empty state ("No analysis yet"), which is indistinguishable
+      // from never having analysed the cluster: the user sees a start time and
+      // a Re-run button above an invitation to start. Say the run ended.
+      patchThread(clusterId, (t) => ({
+        ...t,
+        runState: RUN_STATE.DONE,
+        messages: t.messages.length
+          ? t.messages
+          : [
+              {
+                id: `empty-${Date.now()}`,
+                type: MESSAGE_TYPE.SYNTHESIS,
+                headline:
+                  "The analysis finished without producing a result. Hit Re-run to try again.",
+                fix: "",
+                confidence: CONFIDENCE.LOW,
+                category: "error",
+              },
+            ],
+      }));
       handlers.delete(conversationId);
       return;
     }
@@ -581,7 +649,7 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     }
   };
 
-  handlers.set(conversationId, handler);
+  // Registered below once failVisibly exists, so a dead socket can end this run.
 
   const sendChat = () =>
     send(
@@ -631,6 +699,8 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     }));
   };
 
+  handlers.set(conversationId, { handle: handler, fail: failVisibly });
+
   // Delivery watchdog. Only retry when the socket itself dies (readyState flips
   // to CLOSED/CLOSING) before the first frame — NOT on mere silence, because a
   // slow-but-healthy backend (cold gateway, queued worker) already received the
@@ -671,8 +741,9 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     await sendChat();
     armWatchdog();
   } catch {
-    handlers.delete(conversationId);
-    patchThread(clusterId, (t) => ({ ...t, runState: RUN_STATE.DONE }));
+    // failVisibly already says this correctly — a bare DONE here left the
+    // thread empty and the run looked like it had never happened.
+    failVisibly();
   }
 }
 
@@ -816,7 +887,28 @@ export async function runFollowUp({
     }
   };
 
-  handlers.set(conversationId, handler);
+  // Same contract as a run: if the socket dies, close the answer out instead of
+  // leaving the sub-agent card streaming forever.
+  const failFollowUp = () => {
+    handlers.delete(conversationId);
+    patchThread(clusterId, (t) => ({
+      ...t,
+      followUpRunState: RUN_STATE.DONE,
+      messages: t.messages.map((m) =>
+        m.id === subagentMsgId
+          ? {
+              ...m,
+              status: STREAM_STATUS.DONE,
+              answer:
+                answer ||
+                "The connection dropped before the answer arrived. Ask again.",
+            }
+          : m,
+      ),
+    }));
+  };
+
+  handlers.set(conversationId, { handle: handler, fail: failFollowUp });
 
   try {
     await send(

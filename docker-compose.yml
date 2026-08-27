@@ -1,4 +1,3 @@
-
 name: futureagi
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
@@ -24,12 +23,16 @@ x-backend-env: &backend-env
   # Local-only defaults. deploy/docker-compose.production.yml re-binds these
   # with ${VAR:?error} guards so prod refuses to boot on the dev values.
   SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
-  ENV_TYPE: ${ENV_TYPE:-development}
+  # 'local' (not 'development') so settings.py's _IS_LOCAL fallbacks (DEBUG,
+  # throwaway INTEGRATION_ENCRYPTION_KEY) activate for docker-compose installs.
+  ENV_TYPE: ${ENV_TYPE:-local}
   EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
-  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  # Empty -> settings.py auto-generates a throwaway dev key. Set in .env for
+  # persistence across restarts (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
   FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
   FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
   FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
@@ -42,6 +45,7 @@ x-backend-env: &backend-env
   FUTURE_AGI_TELEMETRY_URL: ${FUTURE_AGI_TELEMETRY_URL:-https://api.futureagi.com}
   FUTURE_AGI_TELEMETRY_INTERVAL_HOURS: ${FUTURE_AGI_TELEMETRY_INTERVAL_HOURS:-6}
   FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
+  ALK_RUNNER_API_URL: ${ALK_RUNNER_API_URL:-http://backend}
 
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
@@ -92,6 +96,7 @@ x-backend-env: &backend-env
   # this False until the cutover playbook in docs/CH25_MIGRATION.md is
   # complete.
   CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
+  CH25_EVAL_LOGGER_TABLE: ${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
 
   CH25_QUERY_TYPES_V2_ONLY: ${CH25_QUERY_TYPES_V2_ONLY:-span_list,trace_list,session_list,voice_call_list,dashboard,monitor_metrics,eval_metrics,filter_builder,trace_detail,annotation_labels}
 
@@ -135,7 +140,7 @@ x-backend-env: &backend-env
   # Future AGI Cloud API (optional)
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
-
+  TEMPORAL_TEST_EXECUTION_ENABLED: ${TEMPORAL_TEST_EXECUTION_ENABLED:-true}
 services:
   # ==========================================================================
   # Application
@@ -150,6 +155,9 @@ services:
       # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
       # deployment (e.g. https://api.example.com for split-domain).
       VITE_HOST_API: ${VITE_HOST_API:-}
+      # Empty -> the sidebar "Help" entry points at the community Discord.
+      # Set it to send users to your own support channel instead.
+      VITE_HELP_LINK: ${VITE_HELP_LINK:-}
     depends_on:
       - backend
     restart: unless-stopped
@@ -196,6 +204,7 @@ services:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
       TEMPORAL_ALL_QUEUES: ${TEMPORAL_ALL_QUEUES:-true}
+      TEMPORAL_EXCLUDED_QUEUES: ${TEMPORAL_EXCLUDED_QUEUES:-simulation_runner}
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_MAX_CONCURRENT_ACTIVITIES:-50}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS:-50}
     depends_on:
@@ -209,11 +218,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-
   worker-default:
     <<: &queue-worker
       image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
-      profiles: ["workers"]
+      profiles: ["workers", "full"]
       env_file:
         - path: .env
           required: false
@@ -278,6 +286,44 @@ services:
       TEMPORAL_TASK_QUEUE: agent_compass
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_COMPASS_MAX_ACTIVITIES:-50}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_COMPASS_MAX_WORKFLOWS:-50}
+
+  # Hosted simulation runner (plan §9). Polls only the simulation_runner queue
+  # and spawns the released SDK as a child process (ALK_RUNNER_PYTHON). Uses the
+  # dedicated runner image which bundles the SDK — the backend image does not.
+  worker-simulation-runner:
+    <<: *queue-worker
+    # compose is local/dev only (prod runs on k8s/helm), so default the tag
+    # instead of requiring the var — avoids breaking every compose command when
+    # SIMULATION_RUNNER_VERSION is unset.
+    image: futureagi/future-agi-simulation-runner:${SIMULATION_RUNNER_VERSION:-latest}
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: simulation_runner
+      TEMPORAL_ALL_QUEUES: "false"
+      ALK_RUNNER_PYTHON: ${ALK_RUNNER_PYTHON:-/opt/alk-venv/bin/python}
+      ALK_RUNNER_MAX_CONCURRENCY: ${ALK_RUNNER_MAX_CONCURRENCY:-4}
+      SIMULATOR_CONVERSATION_DIRECTION: ${SIMULATOR_CONVERSATION_DIRECTION:-simulator_first}
+      HOSTED_RUNNER_ENABLED: ${HOSTED_RUNNER_ENABLED:-true}
+      HOSTED_RUNNER_VOICE_ENABLED: ${HOSTED_RUNNER_VOICE_ENABLED:-false}
+      # DID-pool lease script (livekit-infra); unset ⇒ SDK self-provisions the
+      # per-run dispatch rule for sip_inbound. Only voice_sip leases.
+      ALK_SIM_SLOT_LEASE_SCRIPT: ${ALK_SIM_SLOT_LEASE_SCRIPT:-}
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${ALK_RUNNER_MAX_CONCURRENCY:-4}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_SIMRUNNER_MAX_WORKFLOWS:-8}
+      # Absolute so the SDK child (runs from a mkdtemp cwd) resolves the key.
+      GOOGLE_APPLICATION_CREDENTIALS: /app/backend/Vertex_AI_Creds.json
+      # gemini-3.1 is 404 in regional endpoints; only served on `global`.
+      GOOGLE_CLOUD_LOCATION: global
+      SIMULATOR_LLM_PROVIDER: vertex
+      SIMULATOR_LLM_MODEL: gemini-3.1-flash-lite
+      # TTS is chosen per persona language by the hosted runner
+      # (_voice_simulator_config): English -> Deepgram aura-2-andromeda-en,
+      # other/unknown -> streaming Gemini (multilingual). Set
+      # SIMULATOR_TTS_PROVIDER / SIMULATOR_TTS_MODEL here to force one engine.
+    volumes:
+      # Runner image lacks the key (only the backend image has it); mount it.
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/backend/Vertex_AI_Creds.json:ro
 
   # LLM gateway. Provider creds live in agentcc-gateway/config.yaml (override
   # the shipped example via AGENTCC_CONFIG_PATH).
@@ -423,6 +469,7 @@ services:
       # same `postgres` service Django uses (PG_USER/PG_PASSWORD/PG_DB).
       FI_PG_WRITE: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
       FI_PG_READ: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
+      FI_AUTH_REDIS_ADDR: redis:6379
       FI_GRPC_ADDR: ":4317"
       # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
       # `FI_HTTP_ADDR=disable` turns the listener off if you front the
@@ -434,6 +481,8 @@ services:
       - fi-collector-data:/var/lib/fi-collector
     depends_on:
       clickhouse:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -514,10 +563,9 @@ services:
       start_period: 90s
     restart: unless-stopped
 
-
   temporal-ui:
     image: temporalio/ui:2.43.3
-    profiles: ["observability"]
+    profiles: ["observability", "full"]
     ports:
       - "${TEMPORAL_UI_PORT:-8085}:8080"
     environment:
@@ -530,7 +578,7 @@ services:
 
   temporal-admin-tools:
     image: temporalio/admin-tools
-    profiles: ["observability"]
+    profiles: ["observability", "full"]
     environment:
       TEMPORAL_CLI_ADDRESS: temporal:7233
     stdin_open: true
@@ -550,7 +598,7 @@ services:
 
   peerdb-catalog:
     image: postgres:16-alpine
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -566,7 +614,7 @@ services:
 
   peerdb-temporal:
     image: temporalio/auto-setup:1.29
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -589,7 +637,7 @@ services:
 
   peerdb-minio:
     image: minio/minio:latest
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
@@ -607,7 +655,7 @@ services:
 
   peerdb-flow-api:
     image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
       PEERDB_ALLOWED_TARGETS:
@@ -618,7 +666,7 @@ services:
 
   peerdb-flow-worker:
     image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -628,7 +676,7 @@ services:
 
   peerdb-flow-snapshot-worker:
     image: ghcr.io/peerdb-io/flow-snapshot-worker:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -638,7 +686,7 @@ services:
 
   peerdb-server:
     image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     stop_signal: SIGINT
     environment:
       <<: *peerdb-catalog
@@ -654,7 +702,7 @@ services:
 
   peerdb-ui:
     image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: *peerdb-catalog
       PEERDB_FLOW_SERVER_HTTP: http://peerdb-flow-api:8113
@@ -670,7 +718,7 @@ services:
 
   peerdb-temporal-init:
     image: temporalio/admin-tools
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     restart: "no"
     environment:
       TEMPORAL_CLI_ADDRESS: peerdb-temporal:7233
@@ -689,7 +737,7 @@ services:
 
   peerdb-init:
     image: postgres:16-alpine
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     restart: "no"
     environment:
       SRC_PG_HOST: postgres

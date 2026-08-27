@@ -5,11 +5,14 @@ import string
 
 import requests
 import structlog
+from disposable_email_domains import blocklist as DISPOSABLE_EMAIL_DOMAINS
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
+from django.db.models.functions import Lower
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
 from accounts.models.organization import Organization
@@ -54,9 +57,7 @@ def _fire_deployment_telemetry_registration():
 
         threading.Thread(target=_register).start()
     except Exception:
-        logger.warning(
-            "deployment_telemetry_signup_hook_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_signup_hook_failed", exc_info=True)
 
 
 def resolve_org(request):
@@ -154,6 +155,31 @@ def generate_password(
     return "".join(password)
 
 
+WORK_EMAIL_REQUIRED_MESSAGE = "Please sign up with your work email address."
+
+
+class WorkEmailRequired(Exception):
+    """Raised when a managed-cloud signup uses a free email provider."""
+
+    def __init__(self, message=WORK_EMAIL_REQUIRED_MESSAGE):
+        super().__init__(message)
+
+
+def is_disposable_email_domain(domain):
+    """True if the domain, or any parent of it, is a known throwaway provider.
+
+    Walks the suffixes so a single blocklist entry also covers a provider's
+    subdomains -- Mailinator hands out `anything.mailinator.com`, and an exact
+    match on `mailinator.com` would miss every one of them. The bare TLD is
+    never tested, so a stray entry there can't take out a whole namespace.
+    """
+    domain_parts = domain.split(".")
+    for i in range(len(domain_parts) - 1):
+        if ".".join(domain_parts[i:]) in DISPOSABLE_EMAIL_DOMAINS:
+            return True
+    return False
+
+
 def is_work_email(email):
     """
     Returns True if the email appears to be a work email,
@@ -175,6 +201,24 @@ def is_work_email(email):
         "live.com",
         "msn.com",
         "yahoo.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "protonmail.com",
+        "proton.me",
+        "zoho.com",
+        "yandex.com",
+        "mail.com",
+        "gmx.com",
+        "rediffmail.com",
+        "qq.com",
+        "foxmail.com",
+        "rocketmail.com",
+        "yandex.ru",
+        "mailinator.com",
+        "yopmail.com",
+        "web-library.net",
+        "example.com",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
@@ -193,8 +237,10 @@ def is_work_email(email):
     # Extract the domain part from the email
     domain = email.split("@")[-1]
 
-    # Return False if the domain is in the free domains list
-    return domain not in free_domains
+    if domain in free_domains:
+        return False
+
+    return not is_disposable_email_domain(domain)
 
 
 def first_signup(data, mode=None):
@@ -222,9 +268,15 @@ def first_signup(data, mode=None):
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    allow_any_email = os.getenv("ALLOW_ANY_EMAIL", "false").lower() == "true"
+    # Only managed cloud requires a work address. A self-hosted install — EE
+    # licensed or not — is run by people signing up on whatever address they
+    # have, and the operator already controls who can reach the instance.
+    is_cloud = settings.CLOUD_DEPLOYMENT in ("US", "EU", "DEV")
+    allow_any_email = (
+        os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
+    )
     if not allow_any_email and not is_work_email(data.get("email")):
-        raise Exception("Provided Email is not work email")
+        raise WorkEmailRequired()
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
@@ -262,7 +314,7 @@ def first_signup(data, mode=None):
         except ImportError:
             pass
     else:
-        raise Exception(f"Invalid data: {serializer.errors}")
+        raise DRFValidationError(serializer.errors)
 
     email = data.get("email", None)
     organization = get_user_organization(user)
@@ -325,6 +377,48 @@ def persist_pending_org_invite(
     )
 
 
+def build_invite_accept_link(user):
+    """Build the accept-invite link for an inactive invited user.
+
+    Same URL that goes out in invite_user.html — OSS deployments surface it in
+    the API so an admin can share it manually when SMTP isn't configured.
+    """
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+
+
+def build_invite_links(emails):
+    """Map lowercased email -> accept-invite link, OSS only.
+
+    Shared by invite creation and both member lists so they cannot disagree
+    about who gets a link.
+    """
+    from tfc.ee_gating import is_oss
+
+    if not emails or not is_oss():
+        return {}
+
+    lowered = {email.lower() for email in emails}
+    return {
+        user.email.lower(): build_invite_accept_link(user)
+        for user in User.objects.annotate(email_lower=Lower("email")).filter(
+            email_lower__in=lowered,
+            is_active=False,
+        )
+    }
+
+
+def build_password_reset_link(uidb64, token):
+    """Build the password-reset link for an already-issued uid/token pair.
+
+    Same URL reset_password.html renders. The uid and token are passed in rather
+    than derived here because the caller has already minted the AuthToken that
+    the token encodes — building a second one would leave a stray active token.
+    """
+    return f"{settings.APP_URL}/auth/jwt/verify/{uidb64}/{token}"
+
+
 def send_invite_email(email, organization, inviter):
     """Send invite email to the target user."""
     try:
@@ -336,10 +430,8 @@ def send_invite_email(email, organization, inviter):
             extra_context = {}
         elif existing:
             # Inactive user — send invite with activation token
-            uid = urlsafe_base64_encode(force_bytes(existing.pk))
-            token = default_token_generator.make_token(existing)
             template = "invite_user.html"
-            extra_context = {"uid": uid, "token": token}
+            extra_context = {"invite_link": build_invite_accept_link(existing)}
         else:
             # No user record yet; email will be sent once the user signs up.
             logger.info("invite_email_skipped_no_user", email=email)
@@ -523,6 +615,16 @@ def _run_post_registration(user_id, generated_password):
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
+
+        org = get_user_organization(user)
+        if org:
+            from accounts.user_onboard import (
+                create_demo_traces_and_spans,
+                upload_demo_dataset,
+            )
+
+            upload_demo_dataset(org.id, str(user.id))
+            create_demo_traces_and_spans(str(org.id))
 
 
 def existing_member_access_will_change(

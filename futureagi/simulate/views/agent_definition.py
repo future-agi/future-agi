@@ -278,6 +278,7 @@ class CreateAgentDefinitionView(APIView):
                 in [
                     ProviderChoices.VAPI,
                     ProviderChoices.RETELL,
+                    ProviderChoices.BLAND,
                     ProviderChoices.OTHERS,
                 ]
             ):
@@ -304,6 +305,7 @@ class CreateAgentDefinitionView(APIView):
                 languages=validated.get("languages") or ["en"],
                 contact_number=validated.get("contact_number"),
                 inbound=validated.get("inbound", True),
+                target_speaks_first=validated.get("target_speaks_first"),
                 knowledge_base_id=validated.get("knowledge_base"),
                 model=validated.get("model"),
                 model_details=validated.get("model_details") or {},
@@ -573,15 +575,30 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                     agent_id=assistant_id
                 ).model_dump_json()
                 assistant_json = json.loads(assistant_raw)
-                response_engine = assistant_json.get("response_engine")
-                llm_id = response_engine.get("llm_id")
-
-                response_engine_raw = client.llm.retrieve(
-                    llm_id=llm_id
-                ).model_dump_json()
-                response_engine_json = json.loads(response_engine_raw)
                 name = assistant_json.get("agent_name")
-                prompt = response_engine_json.get("general_prompt")
+                response_engine = assistant_json.get("response_engine") or {}
+                engine_type = response_engine.get("type")
+
+                # Retell agents expose their prompt through different engines:
+                # retell-llm carries an llm_id, conversation-flow carries a
+                # conversation_flow_id, custom-llm has no fetchable prompt.
+                if engine_type == "conversation-flow":
+                    flow_id = response_engine.get("conversation_flow_id")
+                    flow_json = json.loads(
+                        client.conversation_flow.retrieve(
+                            conversation_flow_id=flow_id
+                        ).model_dump_json()
+                    )
+                    prompt = flow_json.get("global_prompt") or ""
+                elif response_engine.get("llm_id"):
+                    llm_json = json.loads(
+                        client.llm.retrieve(
+                            llm_id=response_engine["llm_id"]
+                        ).model_dump_json()
+                    )
+                    prompt = llm_json.get("general_prompt") or ""
+                else:
+                    prompt = ""
 
             elif provider == ProviderChoices.BLAND:
                 # Bland's "assistant" is a Conversational Pathway, fetched by id.
@@ -602,9 +619,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                     for node in pathway.get("nodes", [])
                 ]
                 prompt = "\n\n".join(
-                    text
-                    for text in [pathway.get("description"), *node_texts]
-                    if text
+                    text for text in [pathway.get("description"), *node_texts] if text
                 )
 
             response_data = {
@@ -677,6 +692,7 @@ class EditAgentDefinitionView(APIView):
                 "languages",
                 "contact_number",
                 "inbound",
+                "target_speaks_first",
                 "model",
                 "model_details",
                 "websocket_url",

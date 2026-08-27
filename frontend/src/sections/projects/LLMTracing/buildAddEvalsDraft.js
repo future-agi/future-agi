@@ -59,6 +59,12 @@ export function buildAddEvalsDraft({
   const startDate =
     dateFilter?.dateFilter?.[0] ?? formatDate(sub(new Date(), { months: 12 }));
   const endDate = dateFilter?.dateFilter?.[1] ?? formatDate(endOfToday());
+  // The toolbar's own label is authoritative — passing it through spares the
+  // create page a guess it can only make on calendar-day granularity. An
+  // incoming window with no label is absolute; the fallback above is ours.
+  const datePreset = dateFilter?.dateFilter
+    ? (dateFilter?.dateOption ?? "Custom")
+    : "12M";
 
   const values = {
     name: "",
@@ -70,6 +76,7 @@ export function buildAddEvalsDraft({
     evalsDetails: [],
     startDate,
     endDate,
+    datePreset,
     runType: "historical",
   };
 

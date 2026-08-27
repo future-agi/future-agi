@@ -1,0 +1,279 @@
+name: E2E CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # dorny/paths-filter reads the PR's file list
+    outputs:
+      any: ${{ steps.filter.outputs.any || steps.always.outputs.any }}
+      backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
+      gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'futureagi/**'
+              - 'fi-collector/**'
+            frontend:
+              - 'frontend/**'
+            gateway:
+              - 'agentcc-gateway/**'
+            any:
+              - 'futureagi/**'
+              - 'fi-collector/**'
+              - 'agentcc-gateway/**'
+              - 'frontend/**'
+              - 'e2e/**'
+              - 'bin/e2e'
+              - 'docker-compose.yml'
+              - '.github/workflows/e2e-ci.yml'
+      - id: always
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "any=true"
+            echo "backend=true"
+            echo "frontend=true"
+            echo "gateway=true"
+          } >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write # ghcr build-cache: read on PRs, written on pushes
+    env:
+      BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+      BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
+      BUILD_GATEWAY: ${{ needs.changes.outputs.gateway }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reclaim runner disk
+        # / is the small volume and the backend image alone unpacks ~15GB of
+        # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
+        # before setup-buildx creates its builder container under the old root.
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          # Unguarded on purpose: a half-applied move leaves docker broken, so
+          # every step below must fail the job rather than be tolerated.
+          sudo systemctl stop docker docker.socket
+          sudo mv /var/lib/docker /mnt/docker
+          sudo ln -s /mnt/docker /var/lib/docker
+          sudo systemctl start docker
+          timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+          docker info --format 'docker root: {{.DockerRootDir}}'
+          df -h / /mnt
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: ghcr login (cache writes on trusted pushes only)
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: ghcr login (cache reads on internal PRs)
+        # Fork PRs get no token and read anonymously, which works only once the
+        # e2e-cache package is made public — a one-time manual step in the org's
+        # package settings. Until then forks build cold.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # An image whose filter did not fire is NOT built from this PR — the
+      # stack runs the released :latest for it. So an e2e/**-only PR exercises
+      # the released stack; a frontend PR tests its frontend against released
+      # backend/collector/gateway. Deliberate speed trade.
+      - name: Build backend image from PR code
+        if: env.BUILD_BACKEND == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          # Contexts mirror release-images.yml:41/45 — Dockerfile.oss expects
+          # the futureagi/ dir as context, not the repo root.
+          context: futureagi
+          file: futureagi/Dockerfile.oss
+          load: true
+          tags: futureagi/future-agi:e2e-ci
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:backend
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Build fi-collector image from PR code
+        if: env.BUILD_BACKEND == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: fi-collector
+          file: fi-collector/Dockerfile
+          load: true
+          tags: futureagi/fi-collector:e2e-ci
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Build frontend image from PR code
+        if: env.BUILD_FRONTEND == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          load: true
+          tags: futureagi/frontend:e2e-ci
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Build agentcc-gateway image from PR code
+        # The eval flow routes the mock LLM through the gateway, so gateway
+        # changes have to run as built code, not as released :latest.
+        if: env.BUILD_GATEWAY == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: agentcc-gateway
+          file: agentcc-gateway/Dockerfile
+          load: true
+          tags: futureagi/agentcc-gateway:e2e-ci
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
+
+      - name: Drop the buildkit copy of the built images
+        # buildx holds a second copy of every loaded image; the cross-run
+        # cache lives in the registry, so the local one is free to drop.
+        run: |
+          docker buildx prune -af || true
+          df -h / /mnt
+
+      - name: Point the stack at the built images
+        # printf, not echo: e2e.env's last line may lack a trailing newline.
+        run: |
+          if [ "$BUILD_BACKEND" = "true" ]; then
+            printf '\n%s\n' "FUTURE_AGI_VERSION=e2e-ci" >> e2e/stack/e2e.env
+            printf '%s\n' "E2E_FI_COLLECTOR_VERSION=e2e-ci" >> e2e/stack/e2e.env
+          fi
+          if [ "$BUILD_FRONTEND" = "true" ]; then
+            printf '\n%s\n' "FRONTEND_VERSION=e2e-ci" >> e2e/stack/e2e.env
+          fi
+          if [ "$BUILD_GATEWAY" = "true" ]; then
+            printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=e2e-ci" >> e2e/stack/e2e.env
+          fi
+
+      - name: Prefetch vendor images
+        # fi-collector, agentcc-gateway and the app images are deliberately
+        # absent: when their filter fires their tag is the locally-built
+        # e2e-ci and a pull would 404 (failing the whole invocation, not just
+        # that image); `up` resolves whatever is left.
+        run: |
+          nohup bin/e2e compose pull --quiet \
+            postgres clickhouse redis rabbitmq minio temporal mock-llm \
+            peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker \
+            peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init \
+            peerdb-minio \
+            > /tmp/e2e-pull.log 2>&1 &
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        working-directory: e2e
+        run: yarn install --frozen-lockfile
+
+      - name: Restore Playwright browser cache
+        id: pw-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('e2e/yarn.lock') }}
+
+      - name: Install Chromium
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Save Playwright browser cache
+        if: github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('e2e/yarn.lock') }}
+
+      - name: Flow catalog is current
+        working-directory: e2e
+        run: yarn catalog:check
+
+      - name: Boot the e2e stack
+        run: bin/e2e up
+
+      - name: Run E2E suite
+        run: bin/e2e test
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
+          # A job that dies before the suite runs has no report; the real
+          # failure is upstream and must not be buried by an upload error.
+          if-no-files-found: warn
+
+      - name: Dump stack state on failure
+        if: failure()
+        run: |
+          df -h / /mnt
+          cat /tmp/e2e-pull.log || true
+          bin/e2e ps
+          bin/e2e logs --tail 200
+
+  e2e-tests:
+    name: E2E Tests Pass
+    needs: [changes, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless every dependency succeeded or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          # No -e flag and a non-empty success output: `jq -e` exits 4 when a
+          # filter produces no output, which would fail the gate on green runs.
+          echo "$NEEDS" | jq 'with_entries(.value |= .result)
+            | to_entries
+            | map(select(.value != "success" and .value != "skipped"))
+            | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
+              else "all dependencies green (or legitimately skipped)" end'

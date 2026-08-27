@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import structlog
+from accounts.models.user import User
 from django.conf import settings
 from django.db import transaction
 from django.db.models import (
@@ -22,12 +23,6 @@ from django.db.models import (
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, status, viewsets
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-
-from accounts.models.user import User
 from model_hub.models.annotation_queues import (
     FULL_ACCESS_QUEUE_ROLES,
     SOURCE_TYPE_FK_MAP,
@@ -141,6 +136,10 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_objects_bulk,
 )
 from model_hub.utils.utils import send_message_to_channel
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from simulate.models.test_execution import CallTranscript
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 from tfc.utils.api_contracts import validated_request
@@ -2661,7 +2660,6 @@ def _restore_archived_default_queue(queue):
     (hourly/daily/etc) so the user sees a smooth ramp-back-up.
     """
     from django.utils import timezone as tz
-
     from model_hub.models.annotation_queues import AutomationRule
 
     queue.deleted = False
@@ -2879,22 +2877,6 @@ def _check_annotation_queue_create_limit(org, workspace=None):
         raise
 
 
-def _review_workflow_entitlement_denial(request):
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        return None
-
-    org = getattr(request, "organization", None) or request.user.organization
-    feat_check = Entitlements.check_feature(
-        str(org.id),
-        "has_review_workflow",
-    )
-    if not feat_check.allowed:
-        return feat_check.reason
-    return None
-
-
 def _related_count_subquery(manager, fk_field, **filters):
     """Live rows of *manager* pointing at the outer row, as a correlated scalar
     subquery: one indexed aggregate on ``fk_field``, never a join the outer
@@ -3046,16 +3028,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         try:
             serializer.is_valid(raise_exception=True)
 
-            from tfc.ee_gating import (
-                EEFeature,
-                check_ee_feature,
-            )
-
             requires_review = _is_truthy(
                 serializer.validated_data.get("requires_review", False)
             )
             if requires_review:
-                check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
+                from tfc.ee_gating import check_ee_feature
+
+                check_ee_feature("review_workflow", org_id=str(org.id))
             _check_annotation_queue_create_limit(
                 org, getattr(request, "workspace", None)
             )
@@ -3089,10 +3068,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if requires_review_requested is not None and _is_truthy(
             requires_review_requested
         ):
-            from tfc.ee_gating import EEFeature, check_ee_feature
+            from tfc.ee_gating import check_ee_feature
 
             org = getattr(request, "organization", None) or request.user.organization
-            check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
+            check_ee_feature("review_workflow", org_id=str(org.id))
 
         try:
             return super().update(request, *args, **kwargs)
@@ -7016,10 +6995,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="bulk-review")
     def bulk_review(self, request, queue_id=None):
         """Approve or send back multiple pending-review items."""
-        entitlement_denial = _review_workflow_entitlement_denial(request)
-        if entitlement_denial:
-            return self._gm.forbidden_response(entitlement_denial)
-
         if not _has_queue_role(
             queue_id,
             request.user,
@@ -7249,10 +7224,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
         """Approve, request changes, or leave reviewer feedback on an item."""
-        entitlement_denial = _review_workflow_entitlement_denial(request)
-        if entitlement_denial:
-            return self._gm.forbidden_response(entitlement_denial)
-
         # Verify requesting user has reviewer or manager role
         if not _has_queue_role(
             queue_id,
@@ -7865,7 +7836,6 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         # row and ``QueueItem`` unique constraints make the bulk_create
         # idempotent.
         from temporalio.exceptions import WorkflowAlreadyStartedError
-
         from tfc.temporal.drop_in.runner import start_activity_sync
 
         task_id = f"automation-rule-eval-{rule.pk}"

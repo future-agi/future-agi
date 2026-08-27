@@ -3,7 +3,6 @@ import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
-from accounts.models.totp_device import UserTOTPDevice
 from accounts.services.totp_service import confirm_totp_device, create_totp_device
 from accounts.services.two_factor_challenge import create_challenge, validate_challenge
 
@@ -161,3 +160,72 @@ class TestLoginWith2FA:
         )
         assert verify_resp.status_code == 200
         assert "access" in verify_resp.json()
+
+    def test_verify_totp_invalid_code(self, user):
+        """Wrong TOTP code during login verify is rejected."""
+        self._setup_totp_for_user(user)
+        client = APIClient()
+        login_resp = client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login_resp.status_code == 200
+        challenge_token = login_resp.json()["challenge_token"]
+
+        verify_resp = client.post(
+            "/accounts/2fa/verify/totp/",
+            {"challenge_token": challenge_token, "code": "000001"},
+            format="json",
+        )
+        assert verify_resp.status_code == 400
+        body = verify_resp.json()
+        assert body["status"] is False
+        assert body["code"] == "invalid"
+        assert body["message"] == "Invalid code. Please try again."
+        assert "access" not in body
+
+    def test_verify_totp_missing_challenge(self, user):
+        """Missing/invalid challenge token is rejected."""
+        self._setup_totp_for_user(user)
+        client = APIClient()
+        verify_resp = client.post(
+            "/accounts/2fa/verify/totp/",
+            {
+                "challenge_token": "00000000-0000-0000-0000-000000000000",
+                "code": "123456",
+            },
+            format="json",
+        )
+        assert verify_resp.status_code == 400
+        body = verify_resp.json()
+        assert body["status"] is False
+        assert body["code"] == "invalid"
+        assert body["message"] == "Invalid or expired verification session."
+        assert "access" not in body
+
+    def test_verify_recovery_invalid_code(self, user, auth_client):
+        """Wrong recovery code during login verify is rejected."""
+        setup_resp = auth_client.post("/accounts/2fa/totp/setup/")
+        secret = setup_resp.json()["secret"]
+        totp = pyotp.TOTP(secret)
+        auth_client.post("/accounts/2fa/totp/confirm/", {"code": totp.now()})
+
+        client = APIClient()
+        login_resp = client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        )
+        challenge_token = login_resp.json()["challenge_token"]
+        verify_resp = client.post(
+            "/accounts/2fa/verify/recovery/",
+            {"challenge_token": challenge_token, "code": "WRONGCODE1"},
+            format="json",
+        )
+        assert verify_resp.status_code == 400
+        body = verify_resp.json()
+        assert "access" not in body
+        assert body["status"] is False
+        assert body["code"] == "invalid"
+        assert body["message"] == "Invalid or already used recovery code."

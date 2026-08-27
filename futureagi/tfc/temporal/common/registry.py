@@ -66,6 +66,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.scenario_tasks",
     "simulate.services.test_executor",
     "simulate.tasks.chat_sim",
+    "simulate.tasks.alk_sim",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -77,7 +78,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     # Self-hosted deployment registration and usage heartbeat
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
-    "ee.usage.services.deployment_telemetry_integrations",
+    "ee.cloud.telemetry.deployment_telemetry_integrations",
 ]
 
 
@@ -351,11 +352,31 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_call_execution_workflows", error=str(e)
         )
 
+    # Register the hosted simulation-runner workflow on its dedicated queue.
+    # This workflow dispatches the released SDK to the simulation-runner worker
+    # (plan §9); it runs on `simulation_runner`, not the native call queues.
+    try:
+        from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.simulation_runner_workflow import (
+            SimulationRunnerWorkflow,
+        )
+
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            workflows=[SimulationRunnerWorkflow],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_simulation_runner_workflow", error=str(e)
+        )
+
     # Register billing/usage workflows for default queue
     # UsageConsumerWorkflow (long-running singleton) + MonthlyResetWorkflow
     try:
         try:
-            from ee.usage.temporal import get_workflows as get_billing_workflows
+            from ee.cloud.temporal import get_workflows as get_billing_workflows
         except ImportError:
             get_billing_workflows = None
 
@@ -577,6 +598,29 @@ def _ensure_activities_registered() -> None:
     except ImportError as e:
         log.warning("could_not_load_call_execution_small_activities", error=str(e))
 
+    # Hosted simulation-runner activities (plan §9) — dedicated queue. The
+    # runner spawns the released SDK as a child process; these do not run on the
+    # native voice queues.
+    try:
+        from simulate.temporal.activities.hosted_runner import (
+            build_runner_job,
+            finalize_hosted_execution,
+            run_hosted_sdk_job,
+        )
+        from simulate.temporal.constants import QUEUE_RUNNER
+
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            activities=[
+                build_runner_job,
+                run_hosted_sdk_job,
+                finalize_hosted_execution,
+            ],
+        )
+        log.info("registered_hosted_runner_activities", count=3)
+    except ImportError as e:
+        log.warning("could_not_load_hosted_runner_activities", error=str(e))
+
     # Voice small activities (Enterprise Edition)
     try:
         from ee.voice.temporal.activities.voice_small import (
@@ -747,7 +791,7 @@ def _ensure_activities_registered() -> None:
     except ImportError as e:
         log.warning("could_not_load_dataset_optimization_activities", error=str(e))
 
-    # Register billing activities (Stripe usage reporting, dunning)
+    # Register billing activities (Stripe usage reporting)
     try:
         from tfc.temporal.billing import get_activities as get_billing_activities
 
@@ -763,7 +807,7 @@ def _ensure_activities_registered() -> None:
     # Register usage metering activities (consumer, sync, monthly reset)
     try:
         try:
-            from ee.usage.temporal import get_activities as get_usage_activities
+            from ee.cloud.temporal import get_activities as get_usage_activities
         except ImportError:
             get_usage_activities = None
 

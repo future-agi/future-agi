@@ -54,6 +54,19 @@ make test-shell          # Shell inside the test container
 
 Under the hood, `make test` delegates to `bin/test`, which runs pytest inside an isolated Compose stack (`docker-compose.test.yml`) with its own Postgres, Redis, ClickHouse, and MinIO. See `bin/test --help` for lower-level options.
 
+### End-to-end (browser + full stack, Playwright)
+
+```bash
+bin/e2e up      # boot the isolated futureagi-e2e stack (side by side with your dev stack)
+bin/e2e test    # run the Playwright suite against it
+bin/e2e ui      # Playwright UI mode
+bin/e2e down    # stop it (add -v to wipe volumes)
+```
+
+Full-stack flows that drive a real browser against the production frontend image and assert both what the user sees **and** the backend state behind it (Postgres, ClickHouse, the CDC mirrors). The stack is the root `docker-compose.yml`, trimmed and moved onto its own ports (app 3100, API 8100, everything else 2xxxx), so it collides with neither your dev stack nor `futureagi-test`. The only mocked component is the LLM provider, behind the real gateway.
+
+A cold first boot takes about 8–9 minutes — most of it the backend's first-run migrations — and warm boots are far quicker. Covered flows are cataloged in [`e2e/FLOWS.md`](e2e/FLOWS.md), which is generated from the specs (`cd e2e && yarn catalog`). The authoring guide, the attach and local-code workflows, and the quarantine rules are in [`e2e/README.md`](e2e/README.md).
+
 ---
 
 ## Git hooks
@@ -72,7 +85,7 @@ Validates the branch name against the convention in `BRANCH_NAMING_CONVENTION.md
 
 ### Bypassing hooks
 
-Only in genuine emergencies, and document *why* in the commit body:
+Only in genuine emergencies, and document _why_ in the commit body:
 
 ```bash
 git commit --no-verify -m "hotfix: critical bug"
@@ -85,15 +98,16 @@ If `--no-verify` becomes habitual, the hook is wrong — open an issue instead.
 
 ## CI (GitHub Actions)
 
-Today, CI covers the frontend; backend CI is on the roadmap. Workflows in [`.github/workflows/`](.github/workflows):
+Today, CI covers the frontend and the end-to-end suite; backend unit CI is on the roadmap. Workflows in [`.github/workflows/`](.github/workflows):
 
-| Workflow | Trigger | Purpose |
-|---|---|---|
-| `frontend-feature.yml` | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification |
-| `frontend-develop.yml` | push to `develop`/`dev` + PRs into `main`/`develop`/`dev` | Quality gates, integration tests, build check, Lighthouse (PRs only) |
-| `frontend-main.yml` | push to `main` | Full suite with coverage + production build |
-| `frontend-deploy-*.yaml` | manual or on main | Environment-specific deploys (EU, GCP, prod, dev CDN) |
-| `frontend-auto-approve-hotfix.yml` | hotfix PRs | Auto-approval routing for verified hotfix branches |
+| Workflow                           | Trigger                                                                          | Purpose                                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `frontend-feature.yml`             | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification                                 |
+| `frontend-develop.yml`             | push to `develop`/`dev` + PRs into `main`/`develop`/`dev`                        | Quality gates, integration tests, build check, Lighthouse (PRs only)                               |
+| `frontend-main.yml`                | push to `main`                                                                   | Full suite with coverage + production build                                                        |
+| `frontend-deploy-*.yaml`           | manual or on main                                                                | Environment-specific deploys (EU, GCP, prod, dev CDN)                                              |
+| `frontend-auto-approve-hotfix.yml` | hotfix PRs                                                                       | Auto-approval routing for verified hotfix branches                                                 |
+| `e2e-ci.yml`                       | PRs into and pushes on `dev`/`main`, merge queue                                 | Builds the changed images from PR code, boots the `futureagi-e2e` stack, runs the Playwright flows |
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
 
@@ -139,7 +153,7 @@ pytest discovers them automatically. Use `make test-shell` to drop into the test
 
 **Hooks don't fire after cloning.** Run `yarn install` at repo root — husky's `prepare` script sets `core.hooksPath` during install, and it's a no-op until that runs.
 
-**Pre-commit fails on files you didn't touch.** `lint-staged` only runs against *your* staged files, so this usually means you accidentally staged more than intended. Check `git diff --cached --stat`.
+**Pre-commit fails on files you didn't touch.** `lint-staged` only runs against _your_ staged files, so this usually means you accidentally staged more than intended. Check `git diff --cached --stat`.
 
 **Tests pass locally but fail in CI.** Run `yarn test:ci` (frontend) or `make test` (backend) — both use the same reporter/environment as CI.
 
@@ -152,7 +166,7 @@ pytest discovers them automatically. Use `make test-shell` to drop into the test
 ## What we're still missing
 
 - Backend CI (pytest in Actions, parallel to the frontend workflows)
-- Playwright E2E for critical user journeys
+- Broader E2E flow coverage — the harness and CI job ship today; [`e2e/FLOWS.md`](e2e/FLOWS.md) is the current list
 - Visual regression testing (Chromatic or Percy)
 - Accessibility testing (axe-core in CI)
 - Performance budgets with automated alerts

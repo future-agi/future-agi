@@ -34,11 +34,12 @@ _BUILDER_BY_ROW_TYPE = {
 
 
 def iter_desired_rows(
-    task: EvalTask, *, batch_size: int = 10_000
+    task: EvalTask, *, batch_size: int = 10_000, ceiling: datetime | None = None
 ) -> Iterator[list[str]]:
     # Row limit applies to historical tasks only; continuous runs forever.
     limit = task.spans_limit if task.run_type == RunType.HISTORICAL else None
     sampling_rate = task.sampling_rate if task.sampling_rate is not None else 100.0
+    created_at_ceiling = ceiling if task.run_type == RunType.CONTINUOUS else None
 
     sql, params = _build_sample_query(
         project_id=str(task.project_id),
@@ -48,6 +49,7 @@ def iter_desired_rows(
         filters=task.filters or {},
         limit=limit,
         created_at_floor=_continuous_floor(task),
+        created_at_ceiling=created_at_ceiling,
     )
     reader = get_reader()
     try:
@@ -79,6 +81,7 @@ def _build_sample_query(
     filters: dict | None,
     limit: int | None,
     created_at_floor: datetime | None = None,
+    created_at_ceiling: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
@@ -107,24 +110,13 @@ def _build_sample_query(
             }
         )
 
-    # Continuous forward floor. Appended last so it wins the lower bound in
-    # parse_time_range over any date_range start above (a continuous task is
-    # anchored at its own start, not an earlier configured window) — and so the
-    # set isn't silently capped at parse_time_range's now-30d default.
-    if created_at_floor is not None:
-        ui_filters.append(
-            {
-                "column_id": "created_at",
-                "filter_config": {
-                    "filter_type": "datetime",
-                    "filter_op": "greater_than",
-                    "filter_value": created_at_floor,
-                },
-            }
-        )
-
+    # Continuous floor: passed to build_id_query to bind on arrival (created_at),
+    # not injected as a filter (parse_time_range would fold it onto start_time).
+    # None (historical) keeps the builder's start_time window.
     builder = get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters)
-    inner_sql, params = builder.build_id_query()
+    inner_sql, params = builder.build_id_query(
+        created_at_floor=created_at_floor, created_at_ceiling=created_at_ceiling
+    )
     params = {**params, "salt": str(salt), "rate": float(sampling_rate)}
 
     # observation_type is a legacy top-level key, not a filter-builder column;

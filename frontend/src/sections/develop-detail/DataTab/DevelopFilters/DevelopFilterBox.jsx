@@ -583,6 +583,7 @@ const DevelopFilterBox = () => {
         onRemoveFilter={handleRemoveChip}
         onClearAll={handleClearChips}
         onAddFilter={() => setDevelopFilterOpen(true)}
+        onChipClick={() => setDevelopFilterOpen(true)}
       />
       <TraceFilterPanel
         anchorEl={anchorEl}

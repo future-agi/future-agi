@@ -1253,6 +1253,113 @@ func TestWatchRevocationsIgnoresUnrelatedKeys(t *testing.T) {
 	}
 }
 
+func TestResolveResultDeleteProjectByID(t *testing.T) {
+	r := &ResolveResult{
+		OrgID: "org-1",
+		Projects: map[string]string{
+			"alpha": "id-A",
+			"beta":  "id-B",
+			"alias": "id-A", // same id under a second name
+		},
+	}
+	if !r.DeleteProjectByID("id-A") {
+		t.Fatal("expected DeleteProjectByID to report a removal")
+	}
+	if _, ok := r.GetProject("alpha"); ok {
+		t.Error("alpha (id-A) should be evicted")
+	}
+	if _, ok := r.GetProject("alias"); ok {
+		t.Error("alias (id-A) should be evicted")
+	}
+	if id, ok := r.GetProject("beta"); !ok || id != "id-B" {
+		t.Errorf("beta (id-B) should survive, got (%q, %v)", id, ok)
+	}
+	if r.DeleteProjectByID("id-A") {
+		t.Error("second delete of id-A should report no removal")
+	}
+}
+
+func TestCacheEvictProjectID(t *testing.T) {
+	c := newCache(5*time.Minute, 1*time.Hour)
+	// Two keys in the same org both cached the deleted project; a third is unrelated.
+	c.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "other": "P9"}})
+	c.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
+	c.putPositive("ck-3", &ResolveResult{OrgID: "org-2", Projects: map[string]string{"unrelated": "P2"}})
+
+	if n := c.evictProjectID("P1"); n != 2 {
+		t.Fatalf("evictProjectID touched %d entries, want 2", n)
+	}
+	e1, _ := c.get("ck-1")
+	if _, ok := e1.result.GetProject("pokedex"); ok {
+		t.Error("pokedex should be evicted from ck-1")
+	}
+	if id, ok := e1.result.GetProject("other"); !ok || id != "P9" {
+		t.Error("unrelated mapping in ck-1 should survive")
+	}
+	e3, _ := c.get("ck-3")
+	if id, ok := e3.result.GetProject("unrelated"); !ok || id != "P2" {
+		t.Error("other org's mapping should be untouched")
+	}
+	if n := c.evictProjectID(""); n != 0 {
+		t.Errorf("empty projectID should touch 0 entries, got %d", n)
+	}
+}
+
+func TestWatchProjectInvalidationEvictsByID(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		rdb:   rdb,
+		log:   slog.Default(),
+	}
+	a.cache.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
+	a.cache.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "live": "P3"}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go a.WatchRevocations(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	if err := rdb.Publish(ctx, projectInvalidateChannel, "P1").Err(); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		e1, _ := a.cache.get("ck-1")
+		e2, _ := a.cache.get("ck-2")
+		_, ok1 := e1.result.GetProject("pokedex")
+		_, ok2 := e2.result.GetProject("pokedex")
+		if !ok1 && !ok2 {
+			// P1 gone from both; the unrelated "live" mapping must remain.
+			if id, ok := e2.result.GetProject("live"); !ok || id != "P3" {
+				t.Fatalf("unrelated mapping evicted: got (%q, %v)", id, ok)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("project id P1 was not evicted after invalidation publish")
+}
+
+// TestInvalidationChannelWireContract pins the literal channel names shared
+// with the Django backend. The backend publishes to these exact strings
+// (futureagi/tracer/services/project_deletion.py and accounts/views/keys.py);
+// a rename on either side silently breaks invalidation, so assert the literals
+// rather than the constants.
+func TestInvalidationChannelWireContract(t *testing.T) {
+	if projectInvalidateChannel != "fi:project:invalidate" {
+		t.Errorf("projectInvalidateChannel drifted: got %q", projectInvalidateChannel)
+	}
+	if revocationChannel != "fi:auth:revoke" {
+		t.Errorf("revocationChannel drifted: got %q", revocationChannel)
+	}
+}
+
 func TestFormatIndicesLong(t *testing.T) {
 	got := formatIndices([]int{0, 1, 2, 3, 4, 5, 6, 7})
 	if got == "" {

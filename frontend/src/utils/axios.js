@@ -591,6 +591,9 @@ export const endpoints = {
       deploymentInfo: apiPath("/api/deployment-info/"),
     },
   },
+  ossSetup: {
+    setupChecks: apiPath("/api/setup-checks/"),
+  },
   tools: {
     create: apiPath("/model-hub/tools/"),
     update: (id) => apiPath("/model-hub/tools/{id}/", { id: id }),
@@ -1502,6 +1505,9 @@ export const endpoints = {
   runTests: {
     list: apiPath("/simulate/run-tests/"),
     create: apiPath("/simulate/run-tests/create/"),
+    validateLiveKitCredentials: apiPath(
+      "/simulate/api/livekit/validate-credentials/",
+    ),
     detail: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/", { run_test_id: id }),
     detailExecutions: (id) =>

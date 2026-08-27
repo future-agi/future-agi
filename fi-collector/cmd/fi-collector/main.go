@@ -11,7 +11,7 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_DEAD_LETTER_FILE)
+//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -51,7 +52,7 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	cfg := loadConfig(log, configPath)
-	applyEnvOverrides(&cfg)
+	applyEnvOverrides(log, &cfg)
 
 	writer, err := chwriter.New(cfg.Writer)
 	if err != nil {
@@ -70,7 +71,7 @@ func main() {
 		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
 		defer rdb.Close()
 	} else {
-		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement and usage metering are disabled")
+		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
 	}
 
 	authenticator, err := auth.New(context.Background(), cfg.Auth, rdb, log)
@@ -169,7 +170,7 @@ func loadConfig(log *slog.Logger, path string) rootConfig {
 
 // applyEnvOverrides — surgical, only the fields ops most often need to
 // override at runtime without baking a new image.
-func applyEnvOverrides(c *rootConfig) {
+func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	if v := os.Getenv("FI_CH_URL"); v != "" {
 		c.Writer.URL = v
 	}
@@ -196,6 +197,15 @@ func applyEnvOverrides(c *rootConfig) {
 			c.Server.HTTPAddr = ""
 		default:
 			c.Server.HTTPAddr = v
+		}
+	}
+	if v := os.Getenv("FI_GRPC_MAX_RECV_MIB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.Server.GRPCMaxRecvMiB = n
+		} else {
+			// Silent fallback here would reproduce the silent-loss failure
+			// mode this knob exists to fix — an operator must see it.
+			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
 		}
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {

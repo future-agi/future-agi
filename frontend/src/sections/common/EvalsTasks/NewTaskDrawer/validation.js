@@ -7,6 +7,10 @@ import {
   LIST_OPS,
   NO_VALUE_OPS,
 } from "src/sections/common/EvalsTasks/common";
+import {
+  presetToRange,
+  presetToToken,
+} from "src/sections/projects/timeWindowPresets";
 
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
@@ -32,66 +36,68 @@ const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
 // into "in [A, B]" and invert intent. OR is expressed within a single multi-
 // value `in`/`not_in` row, not across rows.
 export const extractAttributeFilters = (filters) => {
-  return (filters || [])
-    .filter((f) => {
-      if (!f) return false;
-      // Sibling keys are emitted separately by getNewTaskFilters.
-      if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
-      // Legacy rows with neither apiColType nor propertyId are BE no-ops.
-      if (!f.propertyId && f.property !== "attributes") return false;
-      return true;
-    })
-    .map((f) => {
-      const columnId = f.propertyId || f.property;
-      const op = f?.filterConfig?.filterOp || "equals";
-      const filterType = f?.filterConfig?.filterType || "text";
-      const v = f?.filterConfig?.filterValue;
+  return (
+    (filters || [])
+      .filter((f) => {
+        if (!f) return false;
+        // Sibling keys are emitted separately by getNewTaskFilters.
+        if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
+        // Legacy rows with neither apiColType nor propertyId are BE no-ops.
+        if (!f.propertyId && f.property !== "attributes") return false;
+        return true;
+      })
+      .map((f) => {
+        const columnId = f.propertyId || f.property;
+        const op = f?.filterConfig?.filterOp || "equals";
+        const filterType = f?.filterConfig?.filterType || "text";
+        const v = f?.filterConfig?.filterValue;
 
-      // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
-      // fieldCategory fallback → SPAN_ATTRIBUTE default.
-      let apiColType;
-      if (ANNOTATION_COLUMN_IDS.has(columnId)) {
-        apiColType = "ANNOTATION";
-      } else if (f?.apiColType) {
-        apiColType = f.apiColType;
-      } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
-        apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
-      } else {
-        apiColType = "SPAN_ATTRIBUTE";
-      }
+        // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
+        // fieldCategory fallback → SPAN_ATTRIBUTE default.
+        let apiColType;
+        if (ANNOTATION_COLUMN_IDS.has(columnId)) {
+          apiColType = "ANNOTATION";
+        } else if (f?.apiColType) {
+          apiColType = f.apiColType;
+        } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
+          apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
+        } else {
+          apiColType = "SPAN_ATTRIBUTE";
+        }
 
-      let filterValue;
-      if (NO_VALUE_OPS.has(op)) {
-        filterValue = "";
-      } else if (RANGE_OPS.has(op)) {
-        if (Array.isArray(v) && v.length > 0) filterValue = v;
-      } else if (LIST_OPS.has(op)) {
-        const arr = Array.isArray(v)
-          ? v
-          : v !== undefined && v !== null && v !== ""
-            ? [v]
-            : [];
-        if (arr.length > 0) filterValue = arr;
-      } else if (v !== undefined && v !== null && v !== "") {
-        filterValue = v;
-      }
+        let filterValue;
+        if (NO_VALUE_OPS.has(op)) {
+          filterValue = "";
+        } else if (RANGE_OPS.has(op)) {
+          if (Array.isArray(v) && v.length > 0) filterValue = v;
+        } else if (LIST_OPS.has(op)) {
+          const arr = Array.isArray(v)
+            ? v
+            : v !== undefined && v !== null && v !== ""
+              ? [v]
+              : [];
+          if (arr.length > 0) filterValue = arr;
+        } else if (v !== undefined && v !== null && v !== "") {
+          filterValue = v;
+        }
 
-      return {
-        column_id: columnId,
-        filter_config: {
-          filter_type: filterType,
-          filter_op: op,
-          col_type: apiColType,
-          ...(filterValue !== undefined && { filter_value: filterValue }),
-        },
-      };
-    })
-    // Drop value-less in/not_in (legacy/hand-edited)
-    .filter(
-      (entry) =>
-        !LIST_OPS.has(entry.filter_config.filter_op) ||
-        entry.filter_config.filter_value !== undefined,
-    );
+        return {
+          column_id: columnId,
+          filter_config: {
+            filter_type: filterType,
+            filter_op: op,
+            col_type: apiColType,
+            ...(filterValue !== undefined && { filter_value: filterValue }),
+          },
+        };
+      })
+      // Drop value-less in/not_in (legacy/hand-edited)
+      .filter(
+        (entry) =>
+          !LIST_OPS.has(entry.filter_config.filter_op) ||
+          entry.filter_config.filter_value !== undefined,
+      )
+  );
 };
 
 // Sibling-key extraction: rows whose property maps to a top-level BE key
@@ -124,9 +130,15 @@ export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
   Object.assign(filters, extractSiblingFilters(data?.filters));
 
   if (data?.runType === "historical" && !ignoreDate) {
+    // A relative preset re-anchors to now on save; Custom is kept verbatim.
+    // Writing the key every save is also what migrates pre-existing tasks.
+    const preset = data?.datePreset || "Custom";
+    const range = presetToRange(preset);
+    const [start, end] = range || [data?.startDate, data?.endDate];
+    filters["date_preset"] = presetToToken(preset);
     filters["date_range"] = [
-      new Date(data?.startDate).toISOString(),
-      new Date(data?.endDate).toISOString(),
+      new Date(start).toISOString(),
+      new Date(end).toISOString(),
     ];
   }
 
@@ -157,6 +169,8 @@ export const NewTaskValidationSchema = () =>
         .transform((evals) => evals.map((e) => e.id)),
       startDate: z.string(),
       endDate: z.string(),
+      // Listed for the same reason as rowType below — zod strips unlisted keys.
+      datePreset: z.string().optional(),
       runType: z.enum(["historical", "continuous"], {
         message: "Run Type is required",
       }),
@@ -205,7 +219,13 @@ export const NewTaskValidationSchema = () =>
       const finalData = {
         name: data?.name,
         project: data?.project,
-        spansLimit: data?.spansLimit,
+        // The custom row-limit input yields a string; the API contract
+        // requires spans_limit as an integer, and strict request-contract
+        // validation aborts the POST on a string.
+        spansLimit:
+          data?.spansLimit != null && data?.spansLimit !== ""
+            ? Number(data.spansLimit)
+            : data?.spansLimit,
         samplingRate: data?.samplingRate,
         evals: data?.evalsDetails,
         runType: data?.runType,

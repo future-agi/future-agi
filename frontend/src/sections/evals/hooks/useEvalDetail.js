@@ -2,18 +2,22 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
 
+export const evalDetailQuery = (templateId) => ({
+  queryKey: ["evals", "detail", templateId],
+  queryFn: async () => {
+    const { data } = await axios.get(
+      endpoints.develop.eval.getEvalDetail(templateId),
+    );
+    return data?.result;
+  },
+});
+
 /**
  * Hook to fetch a single eval template's detail.
  */
 export function useEvalDetail(templateId) {
   return useQuery({
-    queryKey: ["evals", "detail", templateId],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalDetail(templateId),
-      );
-      return data?.result;
-    },
+    ...evalDetailQuery(templateId),
     enabled: !!templateId,
   });
 }

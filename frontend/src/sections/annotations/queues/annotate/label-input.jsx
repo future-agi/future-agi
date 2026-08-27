@@ -18,6 +18,7 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 
 const LABEL_COLORS = {
@@ -636,12 +637,25 @@ function NumericInput({ settings, value, onChange, inputRef }) {
   const step = Number(rawStep) > 0 ? Number(rawStep) : 1;
   const displayType = settings.display_type || "slider";
 
-  const clamp = (nextValue) => Math.max(min, Math.min(max, nextValue));
-  const handleNumberChange = (nextValue) => {
-    const n = nextValue === "" ? null : Number(nextValue);
-    if (n === null || !Number.isNaN(n)) {
-      onChange(n === null ? n : clamp(n));
+  const handleNumberChange = (event) => {
+    const raw = event.target.value;
+    if (raw === "") {
+      onChange(null);
+      return;
     }
+    const n = Number(raw);
+    if (Number.isNaN(n)) return;
+    if (n > max) {
+      enqueueSnackbar(`Maximum value is ${max} only`, { variant: "warning" });
+      return;
+    }
+   
+    if (/^-?0\d/.test(raw)) event.target.value = String(n);
+    onChange(n);
+  };
+
+  const handleNumberBlur = () => {
+    if (value !== null && value !== undefined && value < min) onChange(min);
   };
 
   if (displayType === "button") {
@@ -684,7 +698,8 @@ function NumericInput({ settings, value, onChange, inputRef }) {
           type="number"
           size="small"
           value={value ?? ""}
-          onChange={(e) => handleNumberChange(e.target.value)}
+          onChange={handleNumberChange}
+          onBlur={handleNumberBlur}
           inputProps={{ min, max, step }}
           sx={{
             width: 96,
@@ -710,8 +725,9 @@ function NumericInput({ settings, value, onChange, inputRef }) {
         inputRef={inputRef}
         type="number"
         size="small"
-        value={value ?? ""}
-        onChange={(e) => handleNumberChange(e.target.value)}
+        value={value ?? min}
+        onChange={handleNumberChange}
+        onBlur={handleNumberBlur}
         inputProps={{ min, max, step }}
         sx={{
           width: 64,

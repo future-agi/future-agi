@@ -719,6 +719,50 @@ class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
     page_number = serializers.IntegerField(required=False, default=0)
     page_size = serializers.IntegerField(required=False, default=10)
 
+    def validate_sort(self, value):
+        """Reject a null/empty ``column_id`` here so it fails with the same 400
+        the view returns for an unknown one, instead of sorting nothing."""
+        for item in value:
+            if isinstance(item, dict) and item.get("column_id", "") in (None, ""):
+                raise serializers.ValidationError(
+                    "Sort column_id cannot be null or empty."
+                )
+        return value
+
+
+class LegacyKnowledgeBaseBulkDeleteRequestSerializer(serializers.Serializer):
+    """Body of ``DELETE /model-hub/knowledge-base/``.
+
+    Documentation-only: the view reads ``request.data`` directly and the
+    decorator is wired with ``strict_request_validation=False``, so this
+    declares the contract without changing which payloads are accepted.
+    """
+
+    kb_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+
+
+class LegacyKnowledgeBaseFileDeleteRequestSerializer(serializers.Serializer):
+    """Body of ``DELETE /model-hub/knowledge-base/files/``.
+
+    Every field is optional because the endpoint accepts three shapes: explicit
+    ``file_ids``, explicit ``file_names``, or ``delete_all`` with optional
+    ``excluded_file_ids``. Documentation-only, as above.
+    """
+
+    kb_id = serializers.UUIDField(required=False, allow_null=True)
+    delete_all = serializers.BooleanField(required=False, default=False)
+    file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    excluded_file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    file_names = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
+
 
 class LegacyKnowledgeBaseSortQueryParamField(serializers.Field):
     def to_internal_value(self, data):
@@ -742,6 +786,10 @@ class LegacyKnowledgeBaseSortQueryParamField(serializers.Field):
             if "column_id" not in item or "type" not in item:
                 raise serializers.ValidationError(
                     "Each sort item requires column_id and type."
+                )
+            if item["column_id"] in (None, ""):
+                raise serializers.ValidationError(
+                    "Sort column_id cannot be null or empty."
                 )
             if item["type"] not in ("ascending", "descending"):
                 raise serializers.ValidationError(

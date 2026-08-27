@@ -80,7 +80,9 @@ export default function QueueAgreementTab({ queueId }) {
   const popoverOpen = Boolean(anchorEl);
 
   if (isLoading) {
-    return <LoadingScreen />;
+    return (
+      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
+    );
   }
 
   if (!agreement) return null;

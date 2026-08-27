@@ -74,9 +74,7 @@ const FeatureGateOverlay = ({
         sx={{
           display: "block",
           width: "100%",
-          height: "100%",
-          minHeight,
-          objectFit: "cover",
+          height: "auto",
           objectPosition: "top center",
         }}
       />

@@ -138,8 +138,8 @@ class BaseQueryBuilder(ABC):
         """Return the ClickHouse time-bucketing function name for *interval*.
 
         Args:
-            interval: One of ``"hour"``, ``"day"``, ``"week"``, ``"month"``,
-                ``"year"``.
+            interval: One of ``"minute"``, ``"hour"``, ``"day"``, ``"week"``,
+                ``"month"``, ``"year"``.
 
         Returns:
             The ClickHouse function name, e.g. ``"toStartOfHour"``.

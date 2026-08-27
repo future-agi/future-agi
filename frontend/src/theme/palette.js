@@ -260,6 +260,28 @@ export const green = {
   o30: "#00A2514D",
 };
 
+// Role accents for status marks, badges and role chips. These are the hues the
+// product already ships in light mode; the dark counterparts below are lifted
+// so each one clears 4.5:1 on the dark surfaces (the light mid-tones sit at
+// 3.0-4.1:1 there, which is why they read as muddy in dark mode).
+export const accent = {
+  brand: "#7857FC",
+  pass: "#16A34A",
+  fail: "#DC2626",
+  agent: "#7C3AED",
+  tool: "#EA580C",
+  info: "#2563EB",
+  violet: "#8b5cf6",
+  neutral: "#6B7280",
+};
+
+// JSON / code token colours for the span and log viewers.
+export const syntax = {
+  string: "#b5520a",
+  number: "#1750EB",
+  boolean: "#9333EA",
+};
+
 const base = {
   primary,
   secondary,
@@ -283,6 +305,8 @@ const base = {
   red,
   green,
   orange,
+  accent,
+  syntax,
 };
 
 // ----------------------------------------------------------------------
@@ -319,7 +343,49 @@ const darkHull = {
   shadow: "#18181b",
 };
 
-export { darkSpace, darkText, darkBorder, darkHull };
+// Dark counterpart of `whiteScale`. The light ramp runs white -> light grey,
+// so surfaces and hovers that key off it turn near-white on a dark background.
+// This mirrors it as base-surface -> progressively lighter, keeping the same
+// 50..500 "increasing contrast" meaning in both modes.
+const darkWhiteScale = {
+  50: darkSpace.void,
+  100: darkSpace.nebulaDark,
+  200: darkSpace.asteroid,
+  300: darkHull.dark,
+  400: darkBorder.default,
+  500: darkBorder.hover,
+};
+
+// Dark counterparts of `accent` / `syntax`. Same roles, lifted luminance so
+// every one clears 4.5:1 against `darkSpace.nebulaDark`.
+const darkAccent = {
+  brand: "#A792FD",
+  pass: "#4ADE80",
+  fail: "#F87171",
+  agent: "#C4B5FD",
+  tool: "#FDBA74",
+  info: "#7DA9FB",
+  violet: "#C4B5FD",
+  neutral: darkText.distantStar,
+};
+
+// Values match the --syntax-* dark ramp already in global.css so the JSON
+// viewers read the same whichever styling path a component uses.
+const darkSyntax = {
+  string: "#e89b5a",
+  number: "#6ba8e6",
+  boolean: "#c4b5fd",
+};
+
+export {
+  darkSpace,
+  darkText,
+  darkBorder,
+  darkHull,
+  darkWhiteScale,
+  darkAccent,
+  darkSyntax,
+};
 
 export function palette(mode) {
   const light = {
@@ -398,6 +464,9 @@ export function palette(mode) {
     border: darkBorder,
     hull: darkHull,
     space: darkSpace,
+    whiteScale: darkWhiteScale,
+    accent: darkAccent,
+    syntax: darkSyntax,
   };
 
   return mode === "light" ? light : dark;

@@ -19,6 +19,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_mapping import require_mapping_paths
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
@@ -72,6 +73,7 @@ def _stamp_eval_version(source_config, eval_template):
             template_id=str(getattr(eval_template, "id", None)),
             exc_info=True,
         )
+
 
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
@@ -557,6 +559,15 @@ class EvalSkippedMissingAttribute(ValueError):
         )
 
 
+def _require_mapping_paths(mapping, target):
+    """Guard the mapping before any walker touches it.
+
+    The heavy-id scan reads the raw values first, so a per-value check inside
+    the resolve loop never sees them.
+    """
+    require_mapping_paths(mapping, target)
+
+
 def _process_mapping(
     mapping: dict | None, span: ObservationSpan, eval_template_id: int
 ) -> dict:
@@ -578,6 +589,7 @@ def _process_mapping(
 
     if not mapping:
         return {}
+    _require_mapping_paths(mapping, f"span {span.id}")
 
     parsed_mapping = {}
     # Use accessor for backward compatibility (span_attributes || eval_attributes)
@@ -609,7 +621,9 @@ def _process_mapping(
         # shorthands (``recording_url``, ``transcript``, …) resolve to
         # one of several provider-specific attribute names via the
         # ``_ATTRIBUTE_ALIASES`` table above — first hit wins.
-        candidates = [attribute, f"{attribute}.value"]
+        # A cleared value on a required key: _resolve_attr would reach
+        # ``None.split(".")``. Falls through to the miss branch, as trace does.
+        candidates = [attribute, f"{attribute}.value"] if attribute else []
         for alias in _ATTRIBUTE_ALIASES.get(attribute, []):
             candidates.append(alias)
             candidates.append(f"{alias}.value")
@@ -632,6 +646,7 @@ def _process_mapping(
         # so non-voice spans are unaffected. See _walk_raw_log.
         if (
             resolved_value is _MISSING
+            and attribute
             and span.observation_type == ObservationType.CONVERSATION
         ):
             raw_log = span_attrs.get("raw_log")
@@ -1110,6 +1125,7 @@ def _execute_composite_on_span(
     eval_task_id,
     run_params=None,
     feedback_id=None,
+    project_id=None,
 ):
     """Execute a composite `EvalTemplate` against a tracer span.
 
@@ -1133,6 +1149,7 @@ def _execute_composite_on_span(
         observation_span = get_observation_span(
             observation_span_id,
             select_related=("project", "project__organization", "project__workspace"),
+            project_id=project_id,
         )
         custom_eval_config = CustomEvalConfig.objects.get(
             id=custom_eval_config_id, deleted=False
@@ -1498,6 +1515,7 @@ def _execute_evaluation(
     type,
     run_params=None,
     feedback_id=None,
+    project_id=None,
 ):
     from evaluations.constants import FUTUREAGI_EVAL_TYPES
     from evaluations.engine import EvalRequest, run_eval
@@ -1506,9 +1524,13 @@ def _execute_evaluation(
     try:
         from tracer.services.clickhouse.v2.eval_loader import get_observation_span
 
+        # project_id scopes the CH point-read to one tenant's primary-key
+        # range; an unscoped `id =` read merges the whole table under FINAL
+        # and can hit the per-query memory limit.
         observation_span = get_observation_span(
             observation_span_id,
             select_related=("project", "project__organization", "project__workspace"),
+            project_id=project_id,
         )
 
         custom_eval_config = CustomEvalConfig.objects.get(
@@ -1537,6 +1559,7 @@ def _execute_evaluation(
             eval_task_id=eval_task_id,
             run_params=run_params,
             feedback_id=feedback_id,
+            project_id=project_id,
         )
 
     # Apply the shared empty-input rules so eval tasks behave the same as
@@ -1965,6 +1988,7 @@ def evaluate_observation_span(
             run_params=run_params,
             type=EXPERIMENT,
             feedback_id=feedback_id,
+            project_id=observation_span.project_id,
         )
         return True
     except ValueError as e:
@@ -2078,6 +2102,7 @@ def evaluate_observation_span_observe(
             run_params=run_params,
             type=OBSERVE,
             feedback_id=feedback_id,
+            project_id=observation_span.project_id,
         )
 
         # Composite evals return a logger_kwargs dict instead of writing
@@ -2091,28 +2116,15 @@ def evaluate_observation_span_observe(
                 eval_task_id,
             )
 
-        # Re-enabled with per-project Temporal dedup. The original per-row
-        # enqueue caused embedding-service overload under backfill (N×M
-        # fan-out → many concurrent same-project clustering runs each
-        # re-embedding the whole unclustered backlog). A deterministic
-        # per-project workflow id + USE_EXISTING conflict policy collapses
-        # concurrent triggers for a project onto the single in-flight run;
-        # once it completes the next trigger starts a fresh run that
-        # re-sweeps whatever is still unclustered (cluster_eval_results is
-        # idempotent), so coalescing is safe and loses nothing.
-        try:
-            from temporalio.common import WorkflowIDConflictPolicy
+        # Clustering is eval-task-only, so an inline eval (no task id) can never
+        # match and doesn't need the RPC. Eval-task rows still reach this path
+        # via feedback-driven re-evaluation, which binds the original entry's
+        # eval_task_id and never goes through ``run_entry`` — so this stays the
+        # only clustering trigger for those rows.
+        if eval_task_id:
+            from tracer.tasks.eval_clustering import dispatch_eval_clustering
 
-            from tracer.tasks.eval_clustering import cluster_eval_results_task
-
-            project_id = str(observation_span.project_id)
-            cluster_eval_results_task.apply_async(
-                args=(project_id,),
-                task_id=f"eval-cluster-{project_id}",
-                id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-            )
-        except Exception:
-            logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
+            dispatch_eval_clustering(observation_span.project_id)
 
         return True
     except ValueError as e:
@@ -2838,6 +2850,7 @@ def _process_trace_mapping(
     """
     if not mapping:
         return {}
+    _require_mapping_paths(mapping, f"trace {trace.id}")
 
     parsed: dict = {}
     is_user_custom_eval = False
@@ -2999,6 +3012,8 @@ def resolve_trace_mapping_lean_first(mapping: dict | None, trace, template_id) -
     """
     from tracer.services.clickhouse.v2.eval_loader import _read_source
 
+    _require_mapping_paths(mapping, f"trace {trace.id}")
+
     if _read_source() != "clickhouse":
         return _process_trace_mapping(mapping, trace, template_id)
 
@@ -3114,6 +3129,8 @@ def resolve_session_mapping_lean_first(
     """
     from tracer.services.clickhouse.v2.eval_loader import _read_source
 
+    _require_mapping_paths(mapping, f"session {trace_session.id}")
+
     if _read_source() != "clickhouse":
         return _process_session_mapping(mapping, trace_session, template_id)
 
@@ -3135,6 +3152,7 @@ def _process_session_mapping(
     """Resolve a saved mapping against a TraceSession."""
     if not mapping:
         return {}
+    _require_mapping_paths(mapping, f"session {trace_session.id}")
 
     parsed: dict = {}
     is_user_custom_eval = False

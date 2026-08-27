@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.eval_task import EvalTask
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import mark_terminal, writing_onto_entry
@@ -68,7 +69,42 @@ def run_entry(entry: EvalLogger) -> str:
     fresh.refresh_from_db()
     status = EvalEntryStatus.ERRORED if fresh.error else EvalEntryStatus.COMPLETED
     mark_terminal(fresh, status, config_hash=config_hash)
+    if status == EvalEntryStatus.COMPLETED:
+        _reseed_eval_clustering(fresh, config.project_id)
     return status
+
+
+def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
+    """Re-trigger eval-result clustering for a completed *failing* eval-task eval.
+
+    Clustering used to be seeded inside the ``evaluate_*_observe`` wrappers, which
+    the (now-retired) eval-task cron drove. The per-task workflows that replaced
+    the cron call the inner eval cores directly and bypass those wrappers, so the
+    trigger has to live here or eval-task failures never cluster — the exact gap
+    the cutover opened. ``run_entry`` is the single activity core both the
+    historical AND continuous workflows drain every entry through, so hooking it
+    covers both (a per-task-completion hook would miss continuous tasks, which
+    never finalize).
+
+    The dispatch itself (per-project coalescing, fail-open logging) lives in
+    ``dispatch_eval_clustering`` — shared with the span-eval wrapper, which is
+    the trigger for feedback-driven re-evals that never reach ``run_entry``.
+    A coalesced trigger is dropped by design; the drain it folds into keeps
+    re-fetching until empty, so the rows behind that trigger are still picked up.
+    """
+    # Mirror _FAILING_EVAL_Q's failure clause. A failing eval with no explanation
+    # has nothing to embed/cluster, so skip the no-op dispatch RPC.
+    is_clusterable_failure = (
+        entry.output_bool is False
+        or (entry.output_float is not None and entry.output_float < 1.0)
+    ) and entry.eval_explanation
+    if not is_clusterable_failure:
+        return
+    # Lazy import: the tasks module pulls the tracer task graph, so importing at
+    # module top risks a cycle (mirrors eval.py).
+    from tracer.tasks.eval_clustering import dispatch_eval_clustering
+
+    dispatch_eval_clustering(project_id)
 
 
 def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
@@ -93,6 +129,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
     )
 
     task_id = entry.eval_task_id
+    task_project = EvalTask.objects.select_related("project").get(id=task_id).project
     template_id = config.eval_template_id
 
     with eval_read_source("clickhouse"), writing_onto_entry(entry.id):
@@ -104,7 +141,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
-                project_id=config.project_id,
+                project_id=task_project.id,
             )
             run_params = _process_mapping(config.mapping, span, template_id)
             result = _execute_evaluation(
@@ -113,6 +150,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 eval_task_id=task_id,
                 run_params=run_params,
                 type=OBSERVE,
+                project_id=task_project.id,
             )
             # Single evals write inside _execute_evaluation; composites return the
             # logger kwargs for the caller to persist (mirrors the span wrapper).
@@ -126,7 +164,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
-                project_id=config.project_id,
+                project_id=task_project.id,
             )
             run_params = resolve_trace_mapping_lean_first(
                 config.mapping, trace, template_id
@@ -139,7 +177,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 run_params=run_params,
             )
         elif entry.target_type == EvalTargetType.SESSION:
-            session = get_trace_session(entry.trace_session_id, project=config.project)
+            session = get_trace_session(entry.trace_session_id, project=task_project)
             run_params = resolve_session_mapping_lean_first(
                 config.mapping, session, template_id
             )

@@ -8,13 +8,13 @@ server:
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s
-  max_request_body_size: 10485760  # 10MB
+  max_request_body_size: 10485760 # 10MB
   default_request_timeout: 60s
 
 providers:
   openai:
     base_url: "https://api.openai.com"
-    api_key: "${OPENAI_API_KEY}"  # Set via env var
+    api_key: "${OPENAI_API_KEY}" # Set via env var
     api_format: "openai"
     default_timeout: 60s
     max_concurrent: 100
@@ -208,6 +208,18 @@ providers:
   #   models:
   #     - meta-llama/Meta-Llama-3.1-70B-Instruct
 
+  # api_path_prefix overrides the version segment placed between base_url and
+  # each endpoint. Unset means "/v1", which is what almost every
+  # OpenAI-compatible provider uses.
+  #
+  #   api_path_prefix: ""            # upstream serves /chat/completions
+  #   api_path_prefix: "/v1/openai"  # upstream mounts the API deeper
+  #
+  # A base_url that already ends in the prefix is left alone rather than having
+  # it repeated, so copying a vendor's documented URL verbatim works:
+  # "https://api.mistral.ai/v1" resolves to ".../v1/chat/completions", not
+  # ".../v1/v1/chat/completions". openai-format providers only.
+
   # Perplexity exposes two complementary APIs over the same OpenAI-compatible base URL:
   #   * Sonar API  (chat completions) - models: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research
   #   * Agent API  (responses)        - orchestrates third-party LLMs (default model: gpt-5.1)
@@ -362,7 +374,6 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-
 # guardrails:
 #   enabled: true
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
@@ -461,15 +472,114 @@ logging:
 #       headers:
 #         Authorization: "Bearer ${SIEM_TOKEN}"
 
-# OpenTelemetry tracing.
+# OpenTelemetry tracing. One span per request carrying model, provider,
+# latency, token counts, cost, cache status, and any caller dimensions sent in
+# the x-agentcc-metadata header. Attribute names follow the OTel GenAI semantic
+# conventions (gen_ai.*), with session.id / user.id / metadata for the rest, so
+# spans are consumable by any GenAI-aware backend without a translation layer.
 # otel:
 #   enabled: true
 #   service_name: "agentcc-gateway"
-#   exporter: "stdout"                 # currently: stdout
+#   exporter: "otlp"                   # stdout | otlp
+#   endpoint: "http://otel-collector:4318"   # required for otlp; /v1/traces is
+#                                            # appended when the URL has no path
+#   protocol: "http/protobuf"          # the only supported OTLP transport
+#   headers:                           # hosted collectors authenticate here;
+#     X-Api-Key: "${FI_API_KEY}"       # keep credentials in the environment,
+#     X-Secret-Key: "${FI_SECRET_KEY}" # not in this file
+#   include_bodies: false              # attach prompt + completion to each span
+#                                      # (input.value / output.value). Off by
+#                                      # default: it sends user content to the
+#                                      # collector. Redacted with the same
+#                                      # privacy config as the request log.
 #   sample_rate: 0.1                   # 10% of requests
-#   attributes:
+#   trace_propagation: false           # honour an inbound W3C `traceparent`:
+#                                      # adopt its trace id and nest this span
+#                                      # under the caller's span instead of
+#                                      # starting a second root in the trace.
+#                                      # Only parents a caller that marks itself
+#                                      # sampled — an unsampled caller never
+#                                      # exports the span we would point at.
+#                                      # Leave off unless the caller ships its
+#                                      # spans to the same destination as this
+#                                      # gateway: a trace whose root lives in
+#                                      # another backend has no root here, and
+#                                      # consumers that key on the root span
+#                                      # will not list it. The caller-supplied
+#                                      # trace id is trusted input, so enable it
+#                                      # deliberately.
+#   metadata_attributes: true          # default. Also emit each caller metadata
+#                                      # key as agentcc.metadata.<key>, next to
+#                                      # the `metadata` JSON object that is
+#                                      # always written. The flat copies are
+#                                      # what a backend can filter and group on;
+#                                      # the JSON object is one opaque string.
+#                                      # Capped at 16 pairs / 64-char keys /
+#                                      # 512-char values, matching OpenAI's own
+#                                      # metadata limits. Keys past the cap are
+#                                      # dropped in sorted order and counted in
+#                                      # agentcc.metadata_dropped.
+#   body_attributes: true              # default. Emit the request body's unknown
+#                                      # top-level fields as agentcc.body.<key>
+#                                      # — an SDK's extra_body, and every
+#                                      # OpenAI parameter newer than the field
+#                                      # list the request struct knows about
+#                                      # (reasoning_effort, parallel_tool_calls,
+#                                      # store...). Scalars only: a nested
+#                                      # object is not filterable, and objects
+#                                      # are the shape credentials arrive in.
+#                                      # Numbers stay numbers, so range filters
+#                                      # work. Values are redacted with the
+#                                      # privacy config; the caps and the
+#                                      # agentcc.body_dropped counter mirror
+#                                      # metadata's.
+#   capture_headers:                   # request headers to copy onto the span
+#     - "x-acme-*"                     # as http.request.header.<name>. Empty by
+#     - "x-request-source"             # default. Trailing * is a prefix
+#                                      # wildcard; matching is case-insensitive.
+#                                      # An allowlist, never a blocklist:
+#                                      # request headers carry credentials, and
+#                                      # a trace goes somewhere wider than a log
+#                                      # does. Authorization, x-api-key, cookie
+#                                      # and friends stay denied even when a
+#                                      # wildcard — or an exact entry — names
+#                                      # them. Values are redacted with the
+#                                      # privacy config; metadata values are not,
+#                                      # because they are dimensions the caller
+#                                      # chose to group by.
+#   attributes:                        # emitted as OTLP resource attributes
 #     environment: "production"
 #     region: "us-east-1"
+#
+# Exporting to the FutureAGI platform: point endpoint at
+# https://api.futureagi.com/v1/traces, authenticate with X-Api-Key/X-Secret-Key,
+# and set project_name (plus project_type: "observe") under attributes — the
+# platform reads those resource attributes to decide which project the spans
+# land in, and creates it on first use.
+#
+# Spans are queued and flushed in the background, so an unreachable collector
+# never adds latency to a request. The gateway's own x-agentcc-trace-id travels
+# as the agentcc.trace_id span attribute, so a span can be matched to its
+# request-log row; agentcc.request_id and agentcc.is_stream are likewise
+# gateway facts with no conventional equivalent.
+#
+# Adding your own attributes: the gateway's stand-in for span.SetAttribute() is
+# caller metadata, and it has two channels. Send x-agentcc-metadata with a JSON
+# object, or set the OpenAI-spec `metadata` field in the request body — both
+# land as agentcc.metadata.<key> on the span and in the request log. The header
+# wins if the same key comes through both, because infrastructure tagging should
+# not be overridable by the payload it forwards. Values are strings; keys under
+# auth_, key_, org_, budget_, ratelimit_, cost, cache_, guardrail_ and credit_
+# are reserved for the gateway's own plugins and are silently dropped. There is
+# deliberately no un-prefixed passthrough: a bare key could shadow a gen_ai.*
+# convention the backend reads.
+#
+# Anything else you put in the body is exported too, as agentcc.body.<key>, so
+# an SDK's extra_body needs no gateway-side configuration to show up. The
+# difference between the two is the promise, not the plumbing: metadata is
+# curated, exported verbatim so grouping keys survive, and works on every
+# endpoint through the header. Body fields are whatever the payload carried —
+# scalars only, redacted, and only on endpoints whose body the gateway parses.
 
 # Prometheus metrics endpoint.
 # prometheus:
