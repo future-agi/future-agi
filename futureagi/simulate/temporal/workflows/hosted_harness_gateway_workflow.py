@@ -31,7 +31,7 @@ class HostedHarnessGatewayWorkflow:
             "author_hosted_harness_job",
             input,
             task_queue=QUEUE_RUNNER,
-            start_to_close_timeout=timedelta(minutes=45),
+            start_to_close_timeout=timedelta(minutes=60),
             heartbeat_timeout=timedelta(minutes=2),
             retry_policy=RetryPolicy(maximum_attempts=1),
             result_type=HostedHarnessAuthoringOutput,
