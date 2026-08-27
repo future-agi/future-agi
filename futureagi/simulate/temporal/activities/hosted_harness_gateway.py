@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import os
 import tarfile
-import tempfile
 from pathlib import Path
 
 from django.utils import timezone
@@ -114,39 +112,36 @@ def _authoring_stage_outputs(root: Path) -> list[dict]:
 async def author_hosted_harness_job(
     input: HostedHarnessGatewayInput,
 ) -> HostedHarnessAuthoringOutput:
-    """Run the established ALK contract/environment/scenario stages before Daytona launch."""
+    """Author the frozen bundle inside a Daytona sandbox before the execution launch.
+
+    Contract/environment/scenario generation is model-heavy, so it runs in a throwaway sandbox
+    (authoring credentials only) rather than on the control-plane worker. A job that already
+    carries ``authoring_object_key`` is treated as authored and skipped.
+    """
     from simulate.models import HostedHarnessJob
     from simulate.services.hosted_harness_gateway import (
-        HostedSourceAcquirer,
-        pack_authoring_archive,
+        DaytonaHostedGateway,
         store_authoring_archive,
     )
 
-    def _prepare() -> tuple[bytes, str, bool]:
+    def _prepare() -> bool:
         job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
             id=input.job_id
         )
         metadata = (job.payload or {}).get("metadata") or {}
         if metadata.get("authoring_object_key"):
-            return b"", json.dumps(job.payload), True
+            return True
         job.current_stage = "understanding_agent"
         job.state = HostedHarnessJob.State.ADMITTED
         job.save(update_fields=["current_stage", "state", "updated_at"])
-        source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
-        payload = dict(job.payload)
-        source_spec = dict(payload["source"])
-        if source_spec["kind"] == "github":
-            source_spec["commit_sha"] = commit_sha
-            payload["source"] = source_spec
-            job.payload = payload
-            job.save(update_fields=["payload", "updated_at"])
-        return source_archive, json.dumps(payload), False
+        return False
 
-    def _stage(stage: str, outputs: list[dict]) -> None:
-        job = HostedHarnessJob.no_workspace_objects.get(id=input.job_id)
-        job.current_stage = stage
-        job.stage_outputs = outputs
-        job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
+    def _author_and_store() -> None:
+        job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
+            id=input.job_id
+        )
+        body = DaytonaHostedGateway().author(job)
+        store_authoring_archive(job, body)
 
     def _failed(detail: str) -> None:
         job = HostedHarnessJob.no_workspace_objects.get(id=input.job_id)
@@ -170,90 +165,18 @@ async def author_hosted_harness_job(
         )
 
     try:
-        source_archive, job_json, cached = await _run_db(_prepare)
+        cached = await _run_db(_prepare)
         if cached:
             return HostedHarnessAuthoringOutput(ready=True, state="admitted")
-        with tempfile.TemporaryDirectory(prefix=f"alk-author-{input.job_id}-") as temp:
-            root = Path(temp)
-            source = _extract_source_archive(source_archive, root)
-            job_path = root / "job.json"
-            job_path.write_text(job_json, encoding="utf-8")
-            output = root / "authoring"
-            environment = dict(os.environ)
-            python = environment.get("ALK_RUNNER_PYTHON", "/opt/alk-venv/bin/python")
-            process = await asyncio.create_subprocess_exec(
-                python,
-                "-m",
-                "fi.alk.harness.authoring_entrypoint",
-                str(job_path),
-                "--source",
-                str(source),
-                "--output",
-                str(output),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=environment,
-                cwd=root,
-            )
-            assert process.stdout is not None
-            recent: list[str] = []
-            stage_names = {
-                "understand": "understanding_agent",
-                "environment": "generating_environment",
-                "scenarios": "generating_scenarios",
-            }
+        # The sandbox authoring run blocks for minutes with no streamed output; keep the
+        # Temporal activity alive with periodic heartbeats until it settles.
+        task = asyncio.ensure_future(_run_db(_author_and_store))
+        while not task.done():
             try:
-                while True:
-                    try:
-                        raw = await asyncio.wait_for(
-                            process.stdout.readline(), timeout=30
-                        )
-                    except TimeoutError:
-                        # Model-backed stages can legitimately produce no console
-                        # output for minutes. Keep the Temporal activity alive while
-                        # the child remains healthy.
-                        activity.heartbeat("ALK authoring is still active")
-                        continue
-                    if not raw:
-                        break
-                    line = raw.decode("utf-8", "replace").strip()
-                    if not line:
-                        continue
-                    recent.append(line[:1000])
-                    recent = recent[-20:]
-                    for marker, stage in stage_names.items():
-                        if line == f"=== {marker} ===":
-                            await _run_db(
-                                _stage, stage, _authoring_stage_outputs(output)
-                            )
-                            break
-                    activity.heartbeat(line[:200])
-                return_code = await process.wait()
-            finally:
-                # Temporal cancellation must not orphan an expensive model child.
-                if process.returncode is None:
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=5)
-                    except TimeoutError:
-                        process.kill()
-                        await process.wait()
-            if return_code:
-                raise RuntimeError(
-                    f"ALK authoring exited {return_code}: {' | '.join(recent)[-3000:]}"
-                )
-            body = pack_authoring_archive(output)
-            final_outputs = _authoring_stage_outputs(output)
-
-        def _store() -> None:
-            job = HostedHarnessJob.no_workspace_objects.select_related(
-                "organization"
-            ).get(id=input.job_id)
-            job.stage_outputs = final_outputs
-            job.save(update_fields=["stage_outputs", "updated_at"])
-            store_authoring_archive(job, body)
-
-        await _run_db(_store)
+                await asyncio.wait_for(asyncio.shield(task), timeout=20)
+            except TimeoutError:
+                activity.heartbeat("ALK authoring in sandbox is active")
+        await task
         return HostedHarnessAuthoringOutput(ready=True, state="admitted")
     except Exception as exc:
         detail = str(exc) or type(exc).__name__

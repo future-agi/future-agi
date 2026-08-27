@@ -515,6 +515,171 @@ class DaytonaHostedGateway:
             )
         )
 
+    def author(self, job: HostedHarnessJob) -> bytes:
+        """Run ALK authoring (understand -> environment -> scenarios) inside a Daytona sandbox.
+
+        Scenario generation is LLM-heavy and must run off the control-plane worker. This provisions
+        a throwaway sandbox with only the authoring model credentials (never the target call
+        secrets), runs the same ``authoring_entrypoint`` the local SDK uses, and returns the packed
+        frozen authoring archive that ``bundle_author_v2`` later seals inside the execution sandbox.
+        """
+        from daytona import CreateSandboxFromSnapshotParams
+
+        source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
+        payload = dict(job.payload)
+        source = dict(payload["source"])
+        if source["kind"] == "github":
+            source["commit_sha"] = commit_sha
+            payload["source"] = source
+        if payload != job.payload:
+            job.payload = payload
+            job.save(update_fields=["payload", "updated_at"])
+
+        # Authoring reaches only the model provider and the source host - never the target
+        # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
+        secrets_map = PlatformSecretResolver().resolve(job)
+        sa_json = str(secrets_map.get("GOOGLE_APPLICATION_CREDENTIALS_JSON") or "")
+        project_id = ""
+        if sa_json:
+            try:
+                project_id = str(json.loads(sa_json).get("project_id") or "")
+            except (ValueError, TypeError):
+                project_id = ""
+
+        # Authoring reaches only the source host and the authoring model provider (Vertex/Claude).
+        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes the
+        # call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
+        default_authoring_egress = [
+            "github.com",
+            "codeload.github.com",
+            "api.github.com",
+            "objects.githubusercontent.com",
+            "raw.githubusercontent.com",
+            "oauth2.googleapis.com",
+            "www.googleapis.com",
+            "sts.googleapis.com",
+            "accounts.google.com",
+            "aiplatform.googleapis.com",
+            "us-east5-aiplatform.googleapis.com",
+            "us-central1-aiplatform.googleapis.com",
+        ]
+        allowed_domains = list(
+            dict.fromkeys(
+                getattr(
+                    settings,
+                    "ALK_HOSTED_AUTHORING_EGRESS_DOMAINS",
+                    default_authoring_egress,
+                )
+            )
+        )[:20]
+        authoring_env = {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "GOOGLE_GENAI_USE_VERTEXAI": "True",
+            "CLOUD_ML_REGION": getattr(
+                settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
+            ),
+            "GOOGLE_CLOUD_LOCATION": getattr(
+                settings, "ALK_HOSTED_AUTHORING_GEMINI_LOCATION", "us-central1"
+            ),
+            "GOOGLE_APPLICATION_CREDENTIALS": "/run/futureagi/vertex-sa.json",
+        }
+        if project_id:
+            authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
+            authoring_env["ANTHROPIC_VERTEX_PROJECT_ID"] = project_id
+
+        ttl_minutes = int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40))
+        sandbox = None
+        try:
+            sandbox = self.client.create(
+                CreateSandboxFromSnapshotParams(
+                    snapshot=self.snapshot,
+                    language="python",
+                    os_user=getattr(
+                        settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
+                    ),
+                    labels={
+                        "futureagi.job": str(job.id),
+                        "futureagi.authoring": "1",
+                    },
+                    network_block_all=not allowed_domains,
+                    domain_allow_list=",".join(sorted(allowed_domains)) or None,
+                    ephemeral=True,
+                    ttl_minutes=ttl_minutes,
+                    auto_delete_interval=ttl_minutes,
+                ),
+                timeout=300,
+            )
+            sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
+            sandbox.fs.upload_file(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+                "/work/job.json",
+            )
+            if sa_json:
+                sandbox.fs.upload_file(
+                    sa_json.encode(), "/run/futureagi/vertex-sa.json"
+                )
+            prepared = sandbox.process.exec(
+                "tar -xzf /work/source.tar.gz -C /work && rm /work/source.tar.gz && "
+                "chown -R svc-control:svc-control /work/source",
+                timeout=120,
+            )
+            if prepared.exit_code:
+                raise HostedHarnessError(
+                    "authoring_source_prepare_failed",
+                    str(prepared.result or "")[-500:],
+                    status_code=502,
+                    retryable=True,
+                )
+            # The authoring model session drops intermittently; a fresh output dir plus a
+            # retry clears it. Early drops fail fast, so retries stay cheap.
+            attempts = max(
+                1, int(getattr(settings, "ALK_HOSTED_AUTHORING_ATTEMPTS", 3))
+            )
+            run_timeout = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 1500))
+            detail = "authoring produced no scenarios"
+            for _ in range(attempts):
+                run = sandbox.process.exec(
+                    "rm -rf /work/authoring && "
+                    "python -m fi.alk.harness.authoring_entrypoint /work/job.json "
+                    "--source /work/source --output /work/authoring",
+                    env=authoring_env,
+                    timeout=run_timeout,
+                )
+                check = sandbox.process.exec(
+                    "ls /work/authoring/scenarios 2>/dev/null | wc -l", timeout=30
+                )
+                try:
+                    produced = int(str(check.result or "0").strip() or "0")
+                except ValueError:
+                    produced = 0
+                if run.exit_code == 0 and produced >= 1:
+                    break
+                detail = str(run.result or detail)[-1000:]
+            else:
+                raise HostedHarnessError(
+                    "authoring_failed", detail, status_code=422, retryable=False
+                )
+            packed = sandbox.process.exec(
+                "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
+                "$(ls -d world.sqlite schema.sql store.json collections.json "
+                "contract.json simulator_prompt.md scenarios handlers 2>/dev/null)",
+                timeout=180,
+            )
+            if packed.exit_code:
+                raise HostedHarnessError(
+                    "authoring_pack_failed",
+                    str(packed.result or "")[-500:],
+                    status_code=502,
+                    retryable=True,
+                )
+            return sandbox.fs.download_file("/tmp/authoring.tar.gz")
+        finally:
+            if sandbox is not None:
+                try:
+                    sandbox.delete()
+                except Exception:  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
+                    pass
+
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
