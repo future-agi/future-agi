@@ -54,8 +54,8 @@ class SimulationEvaluator(Evaluator):
         user_eval_configs: Optional[List[Any]] = None,
         issues: Optional[List[Dict[str, Any]]] = None,
         use_synthetic: bool = True,
-        simulator_model: str = "gemini-2.5-flash",
-        customer_model: str = "gemini-2.5-flash",
+        simulator_model: str = "gemini-3.5-flash-lite",
+        customer_model: str = "gemini-3.5-flash-lite",
         max_parallel_evals: int = 5,
         use_issues: bool = True,
         use_evals: bool = True,
@@ -741,7 +741,7 @@ class SimulationEvaluator(Evaluator):
             return 0.5
 
         llm = LLM(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-3.5-flash-lite",
             max_tokens=100,
             provider="vertex_ai",
             temperature=0.4,
@@ -934,7 +934,7 @@ class FixYourAgent:
         optimizer_type: str = "random_search",
         optimizer_config: Optional[Dict[str, Any]] = None,
         use_synthetic: bool = True,
-        optimization_model: str = "vertex_ai/gemini-2.5-flash",
+        optimization_model: str = "vertex_ai/gemini-3.5-flash-lite",
         api_key: Optional[str] = None,
         use_issues: bool = True,
         use_evals: bool = True,
@@ -963,7 +963,7 @@ class FixYourAgent:
             optimizer_type: One of: random_search, gepa, protegi, bayesian, metaprompt, promptwizard
             optimizer_config: Dict
             use_synthetic: Whether to use synthetic (LLM) simulation
-            optimization_model: Model to use for optimization (e.g., "vertex_ai/gemini-2.5-flash")
+            optimization_model: Model to use for optimization (e.g., "vertex_ai/gemini-3.5-flash-lite")
             use_issues_only: use agent_level issues
             organization: Organization instance for evaluation context
             workspace: Workspace instance for evaluation context
@@ -1341,7 +1341,7 @@ class FixYourAgent:
         self,
         execution_data: Dict[str, Any],
         optimizer_type: str = "random_search",
-        optimization_model: str = "vertex_ai/gemini-2.5-flash",
+        optimization_model: str = "vertex_ai/gemini-3.5-flash-lite",
         use_synthetic: bool = True,
         use_issues: bool = True,
         use_evals: bool = True,

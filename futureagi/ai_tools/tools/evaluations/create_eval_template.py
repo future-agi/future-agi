@@ -51,7 +51,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
         description=(
             "Model for evaluation (not used for code evals). "
             "Built-in: 'turing_large' (default), 'turing_small', 'turing_flash'. "
-            "External (needs configured API key): 'gpt-4o', 'claude-sonnet-4-6', 'gemini-2.5-pro', etc."
+            "External (needs configured API key): 'gpt-4o', 'claude-sonnet-4-6', 'gemini-3.7-flash', etc."
         ),
     )
     output_type: Literal["pass_fail", "percentage", "deterministic"] = Field(

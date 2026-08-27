@@ -153,6 +153,26 @@ class ModelConfigs:
         model_name="vertex_ai/gemini-3.1-flash-lite",
         temperature=0.2,
         max_tokens=8100,
+        supports_audio=True,
+        supports_pdf=True,
+    )
+
+    VERTEX_GEMINI_3_5_FLASH_LITE: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.5-flash-lite",
+        temperature=0.2,
+        max_tokens=8100,
+        supports_audio=True,
+        supports_pdf=True,
+    )
+
+    VERTEX_GEMINI_3_7_FLASH: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.7-flash",
+        temperature=0.2,
+        max_tokens=50000,
+        supports_audio=True,
+        supports_pdf=True,
     )
 
     CLAUDE_4_5_SONNET_BEDROCK_ARN: Final[ModelConfig] = ModelConfig(

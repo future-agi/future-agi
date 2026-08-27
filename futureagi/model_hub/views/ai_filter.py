@@ -680,7 +680,7 @@ def _run_smart_agent(query, schema, fetch_values):
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
 
-    cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+    cfg = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
     llm = LLM(
         provider=cfg.provider,
         model_name=cfg.model_name,
@@ -1093,7 +1093,7 @@ class AIFilterView(APIView):
             from agentic_eval.core.llm.llm import LLM
             from agentic_eval.core.utils.model_config import ModelConfigs
 
-            cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
+            cfg = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
             llm = LLM(
                 provider=cfg.provider,
                 model_name=cfg.model_name,

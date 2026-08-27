@@ -406,10 +406,10 @@ class ErrorLocalizer:
     @cached_property
     def _llm(self) -> LLM:
         return LLM(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name,
-            temperature=ModelConfigs.VERTEX_GEMINI_2_5_PRO.temperature,
-            max_tokens=ModelConfigs.VERTEX_GEMINI_2_5_PRO.max_tokens,
-            provider=ModelConfigs.VERTEX_GEMINI_2_5_PRO.provider,
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name,
+            temperature=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.temperature,
+            max_tokens=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.max_tokens,
+            provider=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.provider,
         )
 
     def _accumulate_cost(self, *, stage: str, source: str, contribution: float) -> None:
