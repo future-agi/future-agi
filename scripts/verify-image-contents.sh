@@ -113,6 +113,8 @@ if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
 echo "=== OSS Image: ${OSS_IMAGE} ==="
 check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
 check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
+check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
+  "import nltk; [nltk.data.find(path) for path in ('corpora/stopwords', 'tokenizers/punkt', 'tokenizers/punkt_tab', 'taggers/averaged_perceptron_tagger', 'taggers/averaged_perceptron_tagger_eng', 'corpora/wordnet.zip', 'corpora/omw-1.4.zip')]"
 check "Django boots without cloud-private code" image_python "$OSS_IMAGE" -c "import django; django.setup()"
 check "No cloud routes" check_routes "$OSS_IMAGE" absent \
   /v1/internal/licenses /v1/self-hosted/activations /v1/enterprise/heartbeats
