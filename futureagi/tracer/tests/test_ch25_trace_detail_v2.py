@@ -455,7 +455,7 @@ class TestV1V2EnvelopeParity:
 
 
 # --------------------------------------------------------------------------- #
-# 4) Eval enrichment moved to the view (TH-7610)
+# 4) Eval enrichment moved to the view
 # --------------------------------------------------------------------------- #
 class TestV2NoHandlerEvalFetch:
     """Grouped eval_scores are attached uniformly for v1+v2 by the view

@@ -1100,13 +1100,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 analytics=analytics,
             )
             detail = handler.fetch()
+            # Eval scores are best-effort: a CH read failure here marks the
+            # eval section errored but still returns the assembled tree, rather
+            # than sinking the whole detail (see _attach_detail_eval_scores).
             self._attach_detail_eval_scores(detail, trace_id, analytics)
             return self._gm.success_response(detail)
-        except EvalFetchError as e:
-            # Explicit failure beats fail-open: an empty eval section is
-            # indistinguishable from "no evals ran" on the client.
-            logger.error("trace_detail_eval_fetch_failed", error=str(e))
-            return self._gm.bad_request("error fetching evaluation scores for trace")
         except Exception as e:
             logger.exception(f"Error in fetching the trace: {str(e)}")
             return self._gm.bad_request(
@@ -1115,31 +1113,68 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     @staticmethod
     def _attach_detail_eval_scores(detail, trace_id, analytics):
-        """Attach grouped ``eval_scores`` to every span-tree entry (TH-7610).
+        """Attach grouped ``eval_scores`` to the assembled span tree.
 
-        Root entries carry the trace-level rollup (``scope: "trace"``,
-        per-span rows across the whole trace); child entries carry their own
-        ``scope: "span"`` slice. Runs one CH read + one batched PG config
-        lookup regardless of which detail handler (v1 PG / v2 CH) assembled
-        the tree. ``EvalFetchError`` propagates so the endpoint surfaces a
-        fetch failure explicitly.
+        Exactly one canonical root — the first top-level span with no parent,
+        i.e. the span the drawer opens on — carries the trace-level rollup
+        (``scope: "trace"``, per-span rows across the whole trace). Every other
+        top-level entry (additional roots, orphan spans whose parent is outside
+        the fetched set) and every child carries its own ``scope: "span"``
+        slice. Runs one CH read + one batched PG config lookup regardless of
+        which detail handler (v1 PG / v2 CH) assembled the tree.
+
+        Best-effort: the tree is already assembled from queries that succeeded,
+        so a CH eval-read failure marks the eval section errored per span and
+        still returns the tree, rather than sinking the whole detail response.
         """
+        top_entries = detail.get("observation_spans") or []
+        if not top_entries:
+            return
+
+        # Canonical root = first top-level span with no parent_span_id (mirrors
+        # the drawer's rootSpanId). Orphans carry a parent that is simply
+        # outside the fetched set, so they are NOT the root and get span scope.
+        root_sid = None
+        for entry in top_entries:
+            span = entry.get("observation_span") or {}
+            if not span.get("parent_span_id"):
+                root_sid = str(span.get("id") or "") or None
+                break
+
         span_targets = []
 
-        def _walk(entries, is_root):
-            for entry in entries:
-                span = entry.get("observation_span") or {}
-                sid = str(span.get("id") or "")
-                if sid:
-                    span_targets.append((sid, span.get("name"), is_root, entry))
-                _walk(entry.get("children") or [], False)
+        def _collect(entry):
+            span = entry.get("observation_span") or {}
+            sid = str(span.get("id") or "")
+            if sid:
+                is_root = root_sid is not None and sid == root_sid
+                span_targets.append((sid, span.get("name"), is_root, entry))
+            for child in entry.get("children") or []:
+                _collect(child)
 
-        _walk(detail.get("observation_spans") or [], True)
+        for entry in top_entries:
+            _collect(entry)
         if not span_targets:
             return
-        eval_rows, rows_by_span, config_lookup = fetch_grouped_eval_rows(
-            analytics, trace_id
-        )
+
+        try:
+            eval_rows, rows_by_span, config_lookup = fetch_grouped_eval_rows(
+                analytics, trace_id
+            )
+        except EvalFetchError as e:
+            logger.error(
+                "trace_detail_eval_fetch_failed",
+                trace_id=str(trace_id),
+                error=str(e),
+            )
+            for sid, _name, is_root, target in span_targets:
+                target["eval_scores"] = {
+                    "scope": "trace" if is_root else "span",
+                    "evals": [],
+                    "error": True,
+                }
+            return
+
         attach_grouped_eval_scores(span_targets, eval_rows, rows_by_span, config_lookup)
 
     # Keys to strip from the list response (heavy / detail-only fields).
@@ -3507,12 +3542,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # One aggregated scan serves both discoveries: which configs have
             # rows (the column set — same population the old DISTINCT
             # subquery matched) and the most recent target_type per config
-            # (the S/T column glyph).
+            # (the S/T column glyph). Bounded to the viewed window and to
+            # non-deleted rows so it doesn't scan an org's full eval history.
+            from datetime import datetime, timedelta
+
+            window_days = BuilderCls.window_days_covering(filters)
+            row_cutoff = datetime.utcnow() - timedelta(days=window_days)
             target_rows = list(
                 EvalLogger.objects.filter(
                     trace_id__in=Trace.objects.filter(
                         project_id__in=org_project_ids
-                    ).values("id")
+                    ).values("id"),
+                    deleted=False,
+                    created_at__gte=row_cutoff,
                 )
                 .values("custom_eval_config_id", "target_type")
                 .annotate(last_seen=Max("created_at"))

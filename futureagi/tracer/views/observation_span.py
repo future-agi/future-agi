@@ -1497,10 +1497,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # One aggregated scan serves both discoveries: which configs have
             # rows (the column set — same population the old DISTINCT
             # subquery matched) and the most recent target_type per config
-            # (the S/T column glyph).
+            # (the S/T column glyph). Bounded to the viewed window and to
+            # non-deleted rows so it doesn't scan an org's full eval history.
+            from datetime import datetime, timedelta
+
+            window_days = SpanListQueryBuilder.window_days_covering(filters)
+            row_cutoff = datetime.utcnow() - timedelta(days=window_days)
             target_rows = list(
                 EvalLogger.objects.filter(
-                    observation_span__project_id__in=org_project_ids
+                    observation_span__project_id__in=org_project_ids,
+                    deleted=False,
+                    created_at__gte=row_cutoff,
                 )
                 .values("custom_eval_config_id", "target_type")
                 .annotate(last_seen=Max("created_at"))

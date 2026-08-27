@@ -249,7 +249,7 @@ def retrieve_trace_detail_ch(
 
     # Grouped eval_scores are attached uniformly for the v1 and v2 handlers
     # by the view (TraceView.retrieve -> attach_grouped_eval_scores), from one
-    # shared CH read — no per-handler eval fetch here (TH-7610).
+    # shared CH read — no per-handler eval fetch here.
 
     # ----- Phase 8: Batch fetch annotations from PG -----
     annotation_map = {}

@@ -487,10 +487,17 @@ def build_eval_target_map(
         if config_id not in alive:
             continue
         existing = chosen.get(config_id)
-        if existing is None or (
-            last_seen is not None
-            and existing[1] is not None
-            and last_seen > existing[1]
+        # Replace when there is no incumbent, or the new row is strictly newer.
+        # A real timestamp always beats a None incumbent (so a null-``last_seen``
+        # first-seen row can't pin the choice); two real timestamps compare
+        # directly. Equal timestamps keep first-seen (CH GROUP BY order is
+        # unspecified, so this is arbitrary-but-stable, not meaningful).
+        if existing is None:
+            chosen[config_id] = (target_type or None, last_seen)
+            continue
+        prev_last_seen = existing[1]
+        if last_seen is not None and (
+            prev_last_seen is None or last_seen > prev_last_seen
         ):
             chosen[config_id] = (target_type or None, last_seen)
     return {cid: target_type for cid, (target_type, _last_seen) in chosen.items()}
@@ -678,14 +685,18 @@ def _aggregate_eval_cell(rows, output_type: str | None) -> dict[str, Any]:
     return {"avg_score": avg}
 
 
-def _per_span_eval_value(rows, output_type: str | None):
-    """Raw per-span value (one span's rows): Score -> number, Pass/Fail ->
-    ``"pass"``/``"fail"``, Choices -> ``[labels]``. Uses the latest non-errored
-    completed row (re-runs); ``None`` when every row errored.
+def _latest_live_row(rows):
+    """The latest completed (non-errored, non-terminal) row from one span's
+    rows, or ``None`` when every row errored / is still running.
 
-    "Latest" is determined by ``created_at`` explicitly — the fetch orders by
-    it, but a rerun could still arrive out of order from CH, so pick the
-    max-created row here rather than relying on scan order.
+    "Latest" is ``max(created_at)`` explicitly — the fetch orders by it, but a
+    rerun could still arrive out of order from CH, so pick the max-created row
+    here rather than relying on scan order. The eval table holds several rows
+    per ``(span, config)`` (reruns are ``uuid4``-keyed inserts that survive
+    ``FINAL``; a config can also run under several eval tasks), so the caller
+    collapses each span to this single latest row before both rendering it and
+    aggregating over it — keeping the rollup consistent with the per-span
+    chips shown beneath it.
     """
     live = [
         r
@@ -700,8 +711,12 @@ def _per_span_eval_value(rows, output_type: str | None):
         ts = r.get("created_at")
         return (ts is not None, ts)
 
-    row = max(live, key=_created_key)
+    return max(live, key=_created_key)
 
+
+def _row_to_value(row, output_type: str | None):
+    """Map one EvalLogger row to its display value: Score -> number, Pass/Fail
+    -> ``"pass"``/``"fail"``, Choices -> ``[labels]``."""
     if output_type == EvalOutputType.CHOICES.value:
         return _eval_row_choice_labels(row.get("output_str_list"))
 
@@ -731,7 +746,12 @@ def build_grouped_eval_scores(
 
     Pure in-memory, single pass over ``rows`` — no DB access. A config that
     ran under several eval tasks folds into ONE eval entry (task grouping is
-    out of scope — TH-7610).
+    out of scope).
+
+    The aggregate is computed over the SAME latest-completed-row-per-span set
+    the per-span chips render, not over every row: reruns and multi-task rows
+    would otherwise inflate the mean / pass-fail counts past the span count and
+    contradict the breakdown shown beneath the rollup.
     """
     # config_id -> [rows]; dict preserves first-seen order.
     by_config: dict[str, list] = {}
@@ -747,10 +767,6 @@ def build_grouped_eval_scores(
         output_type = info.get("output") or EvalOutputType.SCORE.value
         choices = info.get("choices") or []
 
-        aggregate = _eval_chip_value(
-            _aggregate_eval_cell(eval_rows, output_type), output_type, choices
-        )
-
         # target_type ("span"/"trace"/"session") the eval was applied at —
         # the same discriminator the list columns carry. Take the first
         # non-null; a config's rows share it in practice.
@@ -759,12 +775,18 @@ def build_grouped_eval_scores(
             None,
         )
 
-        # One entry per span (group this eval's rows by span_id).
+        # One entry per span (group this eval's rows by span_id), collapsing
+        # each span to its latest completed row. Those latest rows are both
+        # rendered per-span AND fed to the aggregate, so the two always agree.
         by_span: dict[str, list] = {}
         for row in eval_rows:
             by_span.setdefault(row.get("span_id"), []).append(row)
         spans = []
+        latest_rows = []
         for sid, span_rows in by_span.items():
+            latest = _latest_live_row(span_rows)
+            if latest is not None:
+                latest_rows.append(latest)
             explanation = next(
                 (r.get("explanation") for r in span_rows if r.get("explanation")),
                 None,
@@ -773,11 +795,19 @@ def build_grouped_eval_scores(
                 {
                     "span_id": sid,
                     "span_name": span_name_map.get(sid),
-                    "value": _per_span_eval_value(span_rows, output_type),
+                    "value": (
+                        _row_to_value(latest, output_type)
+                        if latest is not None
+                        else None
+                    ),
                     "explanation": explanation,
                     "error": all(_eval_row_is_error(r) for r in span_rows),
                 }
             )
+
+        aggregate = _eval_chip_value(
+            _aggregate_eval_cell(latest_rows, output_type), output_type, choices
+        )
 
         evals.append(
             {

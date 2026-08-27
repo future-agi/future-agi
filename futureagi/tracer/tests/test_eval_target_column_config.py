@@ -1,11 +1,11 @@
-"""Unit tests for the eval column target_type enrichment (TH-7610).
+"""Unit tests for the eval column target_type enrichment.
 
 Covers ``build_eval_target_map`` (most-recent target_type per config, from the
 eval_logger discovery scan) and its stamping through
 ``update_column_config_based_on_eval_config`` — the S/T source glyph the
 Observe trace/span lists render per eval column. Task grouping
 (eval_task_id / eval_task_name) is deliberately NOT on the wire — scoped out
-of TH-7610.
+of this change.
 """
 
 from datetime import datetime, timedelta
@@ -145,7 +145,7 @@ class TestColumnConfigTargetType:
         assert all(c["target_type"] == "trace" for c in cols)
 
     def test_no_eval_task_fields_on_the_wire(self, custom_eval_config):
-        """Task grouping is scoped out of TH-7610 — the column config must not
+        """Task grouping is scoped out — the column config must not
         grow eval_task_id / eval_task_name back."""
         config = update_column_config_based_on_eval_config(
             [],

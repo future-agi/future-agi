@@ -1,4 +1,4 @@
-"""Unit tests for the grouped trace-detail ``eval_scores`` (TH-7610).
+"""Unit tests for the grouped trace-detail ``eval_scores``.
 
 Covers the flat ``{scope, evals: [{aggregate, spans[]}]}`` structure the
 trace-detail endpoint attaches per span-tree entry:
@@ -10,7 +10,7 @@ trace-detail endpoint attaches per span-tree entry:
     incl. the fail-loud ``EvalFetchError`` contract.
   * ``TraceView._attach_detail_eval_scores`` — the span-tree walk in the view.
 
-Task grouping (``eval_tasks`` nesting) is scoped out of TH-7610: a config that
+Task grouping (``eval_tasks`` nesting) is scoped out: a config that
 ran under several eval tasks folds into ONE eval entry.
 """
 
@@ -131,7 +131,45 @@ class TestBuildGroupedEvalScores:
             ),
         ]
         result = build_grouped_eval_scores(rows, SCORE_LOOKUP, SPAN_NAMES, "span")
-        assert result["evals"][0]["spans"][0]["value"] == 20.0
+        ev = result["evals"][0]
+        assert ev["spans"][0]["value"] == 20.0
+        # The aggregate must reflect the SAME latest-per-span row, not the mean
+        # of all reruns (which would be (20+90)/2 = 55.0).
+        assert ev["aggregate"] == 20.0
+
+    def test_score_aggregate_ignores_stale_reruns_across_spans(self):
+        """Aggregate mean is over latest-per-span, matching the chips beneath."""
+        rows = [
+            _row("s1", "c-score", output_float=0.9, created_at=NOW),
+            _row(
+                "s1", "c-score", output_float=0.1, created_at=NOW - timedelta(hours=1)
+            ),
+            _row("s2", "c-score", output_float=0.7, created_at=NOW),
+        ]
+        result = build_grouped_eval_scores(rows, SCORE_LOOKUP, SPAN_NAMES, "trace")
+        ev = result["evals"][0]
+        # Latest per span: s1=90, s2=70 -> mean 80. Stale s1=10 excluded.
+        assert ev["aggregate"] == 80.0
+        assert {s["span_id"]: s["value"] for s in ev["spans"]} == {
+            "s1": 90.0,
+            "s2": 70.0,
+        }
+
+    def test_passfail_aggregate_counts_latest_per_span_only(self):
+        """Pass/Fail counts collapse reruns/multi-task rows to latest-per-span,
+        so the aggregate can never exceed the span count."""
+        rows = [
+            # s1: latest is a fail (an older pass rerun must not be counted)
+            _row("s1", "c-pf", output_bool=False, created_at=NOW),
+            _row("s1", "c-pf", output_bool=True, created_at=NOW - timedelta(hours=1)),
+            # s2: single pass
+            _row("s2", "c-pf", output_bool=True, created_at=NOW),
+        ]
+        result = build_grouped_eval_scores(rows, PASSFAIL_LOOKUP, SPAN_NAMES, "trace")
+        ev = result["evals"][0]
+        assert ev["aggregate"] == {"pass": 1, "fail": 1}
+        # pass + fail == number of evaluated spans (2), matching the chips.
+        assert ev["aggregate"]["pass"] + ev["aggregate"]["fail"] == len(ev["spans"])
 
     def test_configs_from_different_tasks_fold_into_one_eval(self):
         """Task grouping is scoped out: same config under two tasks = ONE

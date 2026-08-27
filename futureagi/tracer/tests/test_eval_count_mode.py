@@ -1,4 +1,4 @@
-"""Unit tests for the count-mode eval cells (TH-7610).
+"""Unit tests for the count-mode eval cells.
 
 Covers the ``count_mode`` flag on ``TraceListQueryBuilder.pivot_eval_results``
 and ``SpanListQueryBuilder.pivot_eval_results`` (the Observe list endpoints)
