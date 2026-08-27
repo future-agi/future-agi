@@ -30002,6 +30002,13 @@
                             "user",
                             "previously_configured"
                         ]
+                    },
+                    {
+                        "name": "experiment_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -96946,13 +96953,16 @@
                     "title": "Composite weight overrides",
                     "type": "object",
                     "x-nullable": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },
         "UserEvalUpdateRequest": {
-            "required": [
-                "config"
-            ],
             "type": "object",
             "properties": {
                 "name": {
@@ -99772,6 +99782,12 @@
                     "title": "Updated at",
                     "type": "string"
                 },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
                 "version_number": {
                     "title": "Version number",
                     "type": "integer",
@@ -99869,6 +99885,11 @@
                         "code"
                     ],
                     "x-nullable": true
+                },
+                "skip_template_update": {
+                    "title": "Skip template update",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -101159,6 +101180,11 @@
                     "title": "Config snapshot",
                     "type": "object",
                     "x-nullable": true
+                },
+                "set_as_default": {
+                    "title": "Set as default",
+                    "type": "boolean",
+                    "default": true
                 }
             }
         },
@@ -101804,6 +101830,12 @@
                 "composite_weight_overrides": {
                     "title": "Composite weight overrides",
                     "type": "object",
+                    "x-nullable": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid",
                     "x-nullable": true
                 }
             }

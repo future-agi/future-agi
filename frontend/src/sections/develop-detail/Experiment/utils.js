@@ -6,6 +6,11 @@ import {
 } from "../RunPrompt/common";
 import _ from "lodash";
 import { DEFAULT_MESSAGES } from "./constants";
+import axios, { endpoints } from "src/utils/axios";
+import {
+  isCompositeEval as _isCompositeEval,
+  buildRunConfig,
+} from "src/sections/common/EvalPicker/serializeEvalConfig";
 
 // Normalize key for matching (remove special chars, lowercase)
 const normalizeKey = (key) => {
@@ -737,4 +742,68 @@ export const promptConfigTransform = (
   }
 
   return [];
+};
+
+export const isCompositeEval = _isCompositeEval;
+
+export const buildExperimentRunConfig = buildRunConfig;
+
+export const createEvalVersionForExperiment = async (
+  evalConfig,
+  queryClient,
+) => {
+  const isSystemEval = evalConfig.isSystemEval ||
+    evalConfig.evalTemplate?.owner === "system";
+
+  if (isSystemEval) return null;
+
+  if (isCompositeEval(evalConfig)) {
+    const patchPayload = { skip_template_update: true };
+    if (evalConfig.composite_weight_overrides) {
+      const weights = {};
+      for (const [childId, w] of Object.entries(
+        evalConfig.composite_weight_overrides,
+      )) {
+        if (w != null) weights[childId] = w;
+      }
+      if (Object.keys(weights).length) patchPayload.child_weights = weights;
+    }
+    const { data } = await axios.patch(
+      endpoints.develop.eval.getCompositeDetail(evalConfig.templateId),
+      patchPayload,
+    );
+    const versionId = data?.result?.version_id;
+    if (versionId) {
+      queryClient.invalidateQueries({
+        queryKey: ["evals", "versions", evalConfig.templateId],
+      });
+      return versionId;
+    }
+    return null;
+  }
+
+  const isCodeEval = evalConfig.evalType === "code";
+  const configSnapshot = { ...(evalConfig.config || {}) };
+  const criteria = isCodeEval
+    ? configSnapshot.code
+    : configSnapshot.rule_prompt;
+  const { data: versionData } = await axios.post(
+    endpoints.develop.eval.createEvalVersion(evalConfig.templateId),
+    {
+      config_snapshot: configSnapshot,
+      criteria,
+      model: evalConfig.model,
+      // Experiment-scoped version: pin it without stealing the
+      // template's default version in the eval workbench.
+      set_as_default: false,
+    },
+  );
+  const versionId = versionData?.result?.id;
+  if (versionId) {
+    queryClient.invalidateQueries({
+      queryKey: ["evals", "versions", evalConfig.templateId],
+    });
+    return versionId;
+  }
+  return null;
 };

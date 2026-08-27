@@ -40,6 +40,7 @@ import CreateEvaluationGroupDrawer from "./CreateEvaluationGroupDrawer";
 import { useSearchParams } from "react-router-dom";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { buildRunConfig } from "src/sections/common/EvalPicker/serializeEvalConfig";
 import { useRunEvaluationStore } from "src/sections/develop-detail/states";
 import { useWorkbenchEvaluationContext } from "src/sections/workbench/createPrompt/Evaluation/context/WorkbenchEvaluationContext";
 
@@ -221,9 +222,7 @@ const EvaluationDrawerChild = ({
   }, [setCurrentTab, setSelectedGroup, setVisibleSection]);
 
   // After any eval action (add/run/stop/edit/delete) we need to re-fetch the
-  // queries that render eval state. Mirrors ManageExperimentEvalsDrawer's
-  // invalidateEvalCaches so the shared drawer and the experiment-specific
-  // drawer stay in sync.
+  // queries that render eval state.
   const invalidateEvalCaches = useCallback(() => {
     queryClient.invalidateQueries({
       queryKey: getUserEvalListKey(module, id),
@@ -570,8 +569,7 @@ const EvaluationDrawerChild = ({
         // Experiment evals reference two values that don't exist as real
         // dataset cells — the prompt/agent output and the full prompt chain.
         // Surface them as virtual columns in the variable-mapping dropdown
-        // so users can map eval inputs to them (mirrors the legacy
-        // ManageExperimentEvalsDrawer.experimentVirtualColumns).
+        // so users can map eval inputs to them.
         extraColumns={
           module === "experiment"
             ? [
@@ -597,42 +595,7 @@ const EvaluationDrawerChild = ({
           // should be forwarded so eval_runner can apply it at run time.
           const isComposite = evalConfig.templateType === "composite";
 
-          const runConfig = {};
-          if (!isComposite) {
-            // Single-eval runtime overrides. Composite children each
-            // carry their own model/mode/tools — none of this applies
-            // at the composite binding level.
-            if (evalConfig.model) runConfig.model = evalConfig.model;
-            if (evalConfig.agent_mode)
-              runConfig.agent_mode = evalConfig.agent_mode;
-            if (evalConfig.check_internet !== undefined)
-              runConfig.check_internet = !!evalConfig.check_internet;
-            if (evalConfig.summary) runConfig.summary = evalConfig.summary;
-            if (evalConfig.knowledge_base_id)
-              runConfig.knowledge_base_id = evalConfig.knowledge_base_id;
-            if (evalConfig.knowledge_bases)
-              runConfig.knowledge_bases = evalConfig.knowledge_bases;
-            if (evalConfig.tools) runConfig.tools = evalConfig.tools;
-            if (evalConfig.pass_threshold !== undefined)
-              runConfig.pass_threshold = evalConfig.pass_threshold;
-            if (
-              evalConfig.choice_scores &&
-              Object.keys(evalConfig.choice_scores).length
-            )
-              runConfig.choice_scores = evalConfig.choice_scores;
-            if (evalConfig.multi_choice !== undefined)
-              runConfig.multi_choice = !!evalConfig.multi_choice;
-          }
-          // Data injection applies to both single and composite — the
-          // backend resolves it at row-evaluation time.
-          if (evalConfig.data_injection)
-            runConfig.data_injection = evalConfig.data_injection;
-          // Error localizer toggle was previously dropped between
-          // EvalPickerConfigFull and the backend. It now flows through
-          // for both single and composite bindings.
-          if (evalConfig.error_localizer_enabled !== undefined)
-            runConfig.error_localizer_enabled =
-              !!evalConfig.error_localizer_enabled;
+          const runConfig = buildRunConfig(evalConfig);
 
           // Code-eval static params (function_params_schema values).
           // `EvalPickerConfigFull.handleSave` hands them back on
@@ -668,34 +631,32 @@ const EvaluationDrawerChild = ({
               name: evalConfig.name,
               template_id: evalConfig.templateId,
               model: isComposite ? undefined : evalConfig.model,
-              // In the optimization context the optimizer runs evals itself —
-              // skip the full-dataset run so adding an eval is near-instant.
-              // Dataset adds are also save-only now: the user runs evals
-              // manually from the dataset grid rather than auto-running on
-              // add, which would otherwise queue work the user didn't ask for.
+              // Optimizer runs evals itself; dataset adds are save-only so
+              // an add doesn't queue work the user didn't ask for.
               run: module !== "run-optimization" && module !== "dataset",
-              // Mirror the workbench path: surface error_localizer at the top
-              // level so EditAndRunUserEvalView can update eval_metric.error_localizer.
+              // Surface error_localizer at the top level so
+              // EditAndRunUserEvalView can update eval_metric.error_localizer.
               error_localizer: runConfig.error_localizer_enabled ?? false,
-              config: {
-                mapping: evalConfig.mapping || {},
-                config: isComposite ? {} : evalConfig.config || {},
-                ...(Object.keys(evalParams).length
-                  ? { params: evalParams }
-                  : {}),
-                ...(Object.keys(runConfig).length
-                  ? { run_config: runConfig }
-                  : {}),
-              },
-              ...(isComposite && evalConfig.compositeWeightOverrides
+              ...(!evalConfig.userEvalId || evalConfig.isDirty
                 ? {
-                    composite_weight_overrides:
-                      evalConfig.compositeWeightOverrides,
+                    config: {
+                      mapping: evalConfig.mapping || {},
+                      config: isComposite ? {} : evalConfig.config || {},
+                      ...(Object.keys(evalParams).length
+                        ? { params: evalParams }
+                        : {}),
+                      ...(Object.keys(runConfig).length
+                        ? { run_config: runConfig }
+                        : {}),
+                    },
                   }
                 : {}),
-              ...(isComposite && evalConfig.composite_weight_overrides
+              ...(isComposite &&
+              (evalConfig.compositeWeightOverrides ??
+                evalConfig.composite_weight_overrides)
                 ? {
                     composite_weight_overrides:
+                      evalConfig.compositeWeightOverrides ??
                       evalConfig.composite_weight_overrides,
                   }
                 : {}),
@@ -719,8 +680,8 @@ const EvaluationDrawerChild = ({
               effectiveModule === "experiment")
           ) {
             try {
-              // `id` in this drawer is always the datasetId for dataset /
-              // experiment flows (experiment evals still live under a dataset).
+              // `id` is always the datasetId for dataset/experiment flows
+              // (experiment evals still live under a dataset).
               await axios.post(
                 endpoints.develop.eval.editEval(id, evalConfig.userEvalId),
                 {

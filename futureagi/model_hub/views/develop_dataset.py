@@ -7387,9 +7387,17 @@ class GetEvalStructureView(APIView):
             else:  # user
                 if not dataset_id:
                     return self._gm.bad_request(get_error_message("DATASET_ID_MISSING"))
+                experiment_id = request.validated_query_data.get("experiment_id")
+                lookup_dataset_id = dataset_id
+                if experiment_id:
+                    experiment = ExperimentsTable.objects.filter(
+                        id=experiment_id
+                    ).first()
+                    if experiment and experiment.snapshot_dataset_id:
+                        lookup_dataset_id = str(experiment.snapshot_dataset_id)
                 return self._get_user_structure(
                     eval_id,
-                    dataset_id,
+                    lookup_dataset_id,
                     request,
                 )
 
@@ -7531,6 +7539,7 @@ class GetEvalStructureView(APIView):
             "pinned_version_id": (
                 str(eval.pinned_version_id) if eval.pinned_version_id else None
             ),
+            "composite_weight_overrides": eval.composite_weight_overrides,
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7916,10 +7925,19 @@ class EditAndRunUserEvalView(APIView):
                 if not dataset:
                     return self._gm.not_found("Dataset not found")
 
-                # When editing an eval attached to an experiment, retain the
-                # source_id=experiment_id discriminator, but keep the lookup bound to
-                # the active workspace dataset from the URL.
-                eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
+                # Experiment evals live on the snapshot dataset, not the
+                # original dataset from the URL. Resolve the correct dataset_id
+                # so the queryset actually finds the metric.
+                lookup_dataset_id = dataset_id
+                if experiment_id:
+                    experiment = ExperimentsTable.objects.filter(
+                        id=experiment_id
+                    ).first()
+                    if experiment and experiment.snapshot_dataset_id:
+                        lookup_dataset_id = str(experiment.snapshot_dataset_id)
+                eval_queryset = _request_user_eval_metric_queryset(
+                    request, lookup_dataset_id
+                )
                 if experiment_id:
                     eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
                 eval_metric = (
@@ -8033,15 +8051,6 @@ class EditAndRunUserEvalView(APIView):
                             f"Missing required mapping keys: {', '.join(missing_keys)}"
                         )
 
-                # If the user explicitly switched to a DIFFERENT version, set it
-                # as the dedup baseline before calling maybe_pin_new_version.
-                # This means:
-                #   - user selects V1 with no config changes → snap matches V1 →
-                #     dedup fires → V1 stays pinned (no new version)
-                #   - user selects V1 and also edits config → snap differs from V1 →
-                #     new version created with the edited config
-                # Both paths keep eval_metric.config and pinned_version.config_snapshot
-                # in lockstep (the invariant).
                 explicit_version_id = request_data.get("pinned_version_id")
                 version_switched = explicit_version_id and str(
                     explicit_version_id
@@ -8052,17 +8061,13 @@ class EditAndRunUserEvalView(APIView):
                     selected_ver = ETV.objects.filter(
                         id=explicit_version_id,
                         eval_template=eval_metric.template,
+                        organization=getattr(request, "organization", None)
+                        or request.user.organization,
                     ).first()
                     if not selected_ver:
                         return self._gm.bad_request("Selected version not found")
-                    # Use the selected version as the dedup baseline.
                     eval_metric.pinned_version = selected_ver
 
-                # Version creation on edit — business logic lives in the service.
-                # Runs whether or not the user switched versions: if config
-                # matches the baseline snapshot, dedup skips creation; if it
-                # differs (including after a version switch with edits), a new
-                # version is created and pinned.
                 from model_hub.services.eval_version_pinning import (
                     maybe_pin_new_version,
                 )
@@ -8074,6 +8079,7 @@ class EditAndRunUserEvalView(APIView):
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                     workspace=getattr(request, "workspace", None),
+                    set_as_default=not bool(experiment_id),
                 )
 
                 # Update the config (already validated above)
@@ -8111,7 +8117,7 @@ class EditAndRunUserEvalView(APIView):
                 #  * experiment: one EXPERIMENT_EVALUATION column per EDT, source_id
                 #    "{edt_id}-{col_id}-sourceid-{metric_id}" — doing a single
                 #    Column.objects.get(source_id=eval_metric.id) here crashes.
-                if new_config.get("reason_column"):
+                if (new_config or {}).get("reason_column"):
                     if experiment_id:
                         per_edt_cols = Column.objects.filter(
                             source__in=[

@@ -14,14 +14,20 @@ import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useFieldArray, useWatch } from "react-hook-form";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "notistack";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { ShowComponent } from "src/components/show";
 import { isUUID } from "src/utils/utils";
+import {
+  buildExperimentRunConfig,
+  createEvalVersionForExperiment,
+  isCompositeEval,
+} from "../utils";
 
 const EvaluationStepExperimentCreation = ({
   control,
@@ -34,6 +40,7 @@ const EvaluationStepExperimentCreation = ({
   const [searchParam] = useSearchParams();
   const datasetId = datasetParam || searchParam.get("datasetId") || "";
   const theme = useTheme();
+  const queryClient = useQueryClient();
   const userChangedColumnRef = useRef(false);
   const experimentVirtualColumns = [
     { field: "output", headerName: "Output", dataType: "text" },
@@ -84,7 +91,7 @@ const EvaluationStepExperimentCreation = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEvalList, replaceEvals]);
-  const handleAddEvaluation = (evalConfig) => {
+  const handleAddEvaluation = async (evalConfig) => {
     // Build mapping: DatasetTestMode returns { variable: "column_name" }.
     // The backend expects { variable: "column_uuid" }.
     // Translate using updatedEvalColumns.
@@ -102,9 +109,12 @@ const EvaluationStepExperimentCreation = ({
     // how to execute the eval (eval_type_id, rule_prompt, output, etc.)
     const templateConfig =
       evalConfig.config || evalConfig.evalTemplate?.config || {};
+    const runConfig = buildExperimentRunConfig(evalConfig);
+
     const fullConfig = {
       ...templateConfig,
       mapping: translatedMapping,
+      ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
     };
 
     const evalEntry = {
@@ -120,11 +130,32 @@ const EvaluationStepExperimentCreation = ({
         evalConfig.evalTemplate?.requiredKeys ||
         templateConfig.requiredKeys ||
         [],
-      ...(evalConfig.templateType === "composite" &&
-      evalConfig.compositeWeightOverrides
-        ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
+      ...(isCompositeEval(evalConfig) &&
+      (evalConfig.compositeWeightOverrides || evalConfig.composite_weight_overrides)
+        ? {
+            compositeWeightOverrides:
+              evalConfig.compositeWeightOverrides ??
+              evalConfig.composite_weight_overrides,
+          }
         : {}),
+      pinned_version_id: evalConfig.versionId || null,
     };
+
+    if (evalConfig.isDirty && evalConfig.templateId) {
+      try {
+        const versionId = await createEvalVersionForExperiment(
+          evalConfig,
+          queryClient,
+        );
+        if (versionId) evalEntry.pinned_version_id = versionId;
+      } catch (err) {
+        enqueueSnackbar(
+          err?.response?.data?.result || err?.message || "Failed to create eval version",
+          { variant: "error" },
+        );
+        throw err;
+      }
+    }
 
     if (editingEval) {
       // Edit mode: replace the existing field in place, keep the same name.
@@ -179,6 +210,7 @@ const EvaluationStepExperimentCreation = ({
       compositeWeightOverrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
+      pinned_version_id: evalItem.pinned_version_id || null,
     });
     setOpenEvaluationDialog(true);
   };

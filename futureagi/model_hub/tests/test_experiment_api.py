@@ -33,6 +33,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import (
     CompositeEvalChild,
     EvalTemplate,
+    EvalTemplateVersion,
     UserEvalMetric,
 )
 from model_hub.models.experiments import (
@@ -1831,3 +1832,159 @@ class TestExperimentOrganizationIsolation:
             f"/model-hub/experiments/?experiment_id={other_org_experiment.id}"
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+class TestExperimentEvalVersionPinning:
+    """Tests for pinned_version_id wiring through experiment eval flow."""
+
+    def test_create_inline_writes_pinned_version(
+        self, experiment, dataset, organization, user, workspace, eval_template,
+    ):
+        from model_hub.views.experiments import _create_eval_metrics_inline
+
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=eval_template,
+            config_snapshot=eval_template.config or {},
+            criteria=eval_template.criteria or "",
+            model=eval_template.model or "",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[{
+                "name": "pinned-eval",
+                "template_id": eval_template.id,
+                "config": {"mapping": {}},
+                "pinned_version_id": version.id,
+            }],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+        assert str(metrics[0].pinned_version_id) == str(version.id)
+
+    def test_create_inline_null_when_absent(
+        self, experiment, dataset, organization, user, workspace, eval_template,
+    ):
+        from model_hub.views.experiments import _create_eval_metrics_inline
+
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[{
+                "name": "no-pin",
+                "template_id": eval_template.id,
+                "config": {"mapping": {}},
+            }],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+        assert metrics[0].pinned_version_id is None
+
+    def test_has_eval_changed_detects_version_switch(
+        self, experiment, dataset, organization, user, workspace, eval_template,
+    ):
+        from model_hub.views.experiments import _has_eval_changed
+
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=eval_template,
+            config_snapshot=eval_template.config or {},
+            criteria="",
+            model="",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        metric = UserEvalMetric.objects.create(
+            name="test",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=eval_template,
+            config={"mapping": {}},
+            user=user,
+        )
+        entry = {
+            "template_id": str(eval_template.id),
+            "name": "test",
+            "config": {"mapping": {}},
+            "pinned_version_id": str(version.id),
+        }
+        assert _has_eval_changed(metric, entry, {}) is True
+
+    def test_has_eval_changed_no_false_positive_without_field(
+        self, experiment, dataset, organization, user, workspace, eval_template,
+    ):
+        from model_hub.views.experiments import _has_eval_changed
+
+        metric = UserEvalMetric.objects.create(
+            name="test",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=eval_template,
+            config={"mapping": {}},
+            model="turing_large",
+            error_localizer=False,
+            user=user,
+        )
+        entry = {
+            "template_id": str(eval_template.id),
+            "name": "test",
+            "config": {"mapping": {}},
+            "model": "turing_large",
+            "error_localizer": False,
+        }
+        assert _has_eval_changed(metric, entry, {}) is False
+
+    def test_diff_and_update_writes_pinned_version(
+        self, experiment, dataset, organization, user, workspace, eval_template,
+    ):
+        from model_hub.views.experiments import _diff_and_update_evals
+
+        metric = UserEvalMetric.objects.create(
+            name="test",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=eval_template,
+            config={"mapping": {}},
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+        experiment.snapshot_dataset = dataset
+        experiment.save()
+
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=eval_template,
+            config_snapshot=eval_template.config or {},
+            criteria="",
+            model="",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        with patch("model_hub.views.experiment_runner.ExperimentRunner"):
+            rerun_ids = _diff_and_update_evals(
+                experiment,
+                [{
+                    "id": str(metric.id),
+                    "template_id": str(eval_template.id),
+                    "name": "test",
+                    "config": {"mapping": {}},
+                    "pinned_version_id": str(version.id),
+                }],
+                organization,
+                user,
+                workspace,
+            )
+        metric.refresh_from_db()
+        assert str(metric.pinned_version_id) == str(version.id)
+        assert str(metric.id) in [str(r) for r in rerun_ids]
