@@ -1,16 +1,8 @@
 import io
-import json
 import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-
-try:
-    import orjson
-
-    _json_loads = orjson.loads
-except ImportError:
-    _json_loads = json.loads
 
 import pandas as pd
 import structlog
@@ -2293,6 +2285,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         _MAX_ATTR_KEYS_PER_SESSION = 50
         if session_ids_page and attr_result_data:
             try:
+                from tracer.services.clickhouse.v2.span_reader import (
+                    merge_span_attributes,
+                )
+
                 aggregated_attrs: dict[str, dict] = {}
                 for attr_row in attr_result_data:
                     sid = str(attr_row.get("session_id", ""))
@@ -2301,24 +2297,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
                     ):
                         continue
-                    raw = attr_row.get("span_attributes_raw", "{}")
-                    try:
-                        attrs = (
-                            _json_loads(raw)
-                            if isinstance(raw, str) and raw
-                            else (raw or {})
-                        )
-                    except (json.JSONDecodeError, ValueError, TypeError):
-                        attrs = {}
-                    if not attrs:
-                        str_map = attr_row.get("attrs_string") or {}
-                        num_map = attr_row.get("attrs_number") or {}
-                        if isinstance(str_map, dict):
-                            attrs.update(str_map)
-                        if isinstance(num_map, dict):
-                            for k, v in num_map.items():
-                                if k not in attrs:
-                                    attrs[k] = v
+
+                    attrs = merge_span_attributes(
+                        attr_row.get("attrs_string"),
+                        attr_row.get("attrs_number"),
+                        attr_row.get("attrs_bool"),
+                        attr_row.get("span_attributes_raw", "{}"),
+                    )
                     if sid not in aggregated_attrs:
                         aggregated_attrs[sid] = {}
                     for key, value in attrs.items():

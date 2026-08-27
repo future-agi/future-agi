@@ -18,7 +18,7 @@ import React, {
   useState,
 } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { Helmet } from "react-helmet-async";
 import { formatDate } from "src/utils/report-utils";
@@ -71,6 +71,7 @@ import axios, { endpoints } from "src/utils/axios";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import CustomColumnDialog from "../LLMTracing/CustomColumnDialog";
+import { useTraceFilterProperties } from "../LLMTracing/TraceFilterPanel";
 import {
   reorderColumns,
   columnStateToOrder,
@@ -934,16 +935,21 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const pendingCustomColumnsRef = useRef([]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: { filters: JSON.stringify({ project_id: observeId }) },
-      }),
-    select: (data) => data.data?.result,
-    enabled: Boolean(observeId),
+  // Span-attribute options for custom columns come from the SAME source as the
+  // filter panel: useTraceFilterProperties shares one react-query fetch keyed on
+  // the project id (sourceScope only shapes the per-caller transform), so the
+  // picker list stays in lockstep with the filter's span-attribute list. Keep
+  // only span attributes (category "attribute").
+  const { data: filterProperties } = useTraceFilterProperties(observeId, {
+    sourceScope: "traces",
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
+  const attributes = useMemo(
+    () =>
+      (filterProperties || [])
+        .filter((p) => p.category === "attribute")
+        .map((p) => p.id),
+    [filterProperties],
+  );
 
   const handleAddCustomColumns = useCallback((newCols) => {
     setSessionColumns((prev) => {

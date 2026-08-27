@@ -3220,9 +3220,25 @@ class TestSessionListQueryBuilder:
         assert "attributes_extra AS span_attributes_raw" in query
         assert "attrs_string" in query
         assert "attrs_number" in query
+        # Boolean custom columns must be fetched too (test_bool rendered empty
+        # when attrs_bool was omitted from the SELECT).
+        assert "attrs_bool" in query
         assert "span_attr_str" not in query
         assert "span_attr_num" not in query
+        assert "span_attr_bool" not in query
         assert "toJSONString(attributes_extra) AS span_attributes_raw" not in query
+
+    def test_v1_span_attributes_query_selects_bool_map(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(project_id="test-project-id")
+        builder.build()
+        query, _ = builder.build_span_attributes_query(["session-1"])
+        # v1 aliases the legacy columns to the canonical attrs_* names so the
+        # consumer reads one key regardless of which builder ran.
+        assert "span_attr_str AS attrs_string" in query
+        assert "span_attr_num AS attrs_number" in query
+        assert "span_attr_bool AS attrs_bool" in query
 
     def test_content_query_reuses_session_time_window(self):
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
@@ -3615,21 +3631,25 @@ class TestSessionListCountSkipLogic:
 
 @pytest.mark.unit
 class TestSpanAttributesParsing:
-    """Tests for the orjson + key-cap optimization in span attribute processing."""
+    """Tests for the shared attr-merge + key-cap in span attribute processing."""
 
-    def test_json_loads_fallback(self):
-        """_json_loads should work whether orjson is available or not."""
-        from tracer.views.trace_session import _json_loads
+    def test_merge_parses_json_string_extra(self):
+        """merge_span_attributes should parse a JSON-string attributes_extra."""
+        from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
 
-        result = _json_loads(b'{"key": "value"}')
-        assert result == {"key": "value"}
-
-    def test_json_loads_handles_string(self):
-        """_json_loads should handle string input."""
-        from tracer.views.trace_session import _json_loads
-
-        result = _json_loads('{"env": "production", "count": 42}')
+        result = merge_span_attributes(
+            None, None, None, '{"env": "production", "count": 42}'
+        )
         assert result == {"env": "production", "count": 42}
+
+    def test_merge_accepts_dict_extra(self):
+        """merge_span_attributes should accept a Map/dict attributes_extra (v2)."""
+        from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+
+        result = merge_span_attributes(
+            {"s": "v"}, {"n": 1}, {"b": 1}, {"key": "value"}
+        )
+        assert result == {"s": "v", "n": 1, "b": True, "key": "value"}
 
     def test_max_attr_keys_cap(self):
         """Attribute processing should cap keys per session at 50."""

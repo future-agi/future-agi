@@ -31,7 +31,7 @@ const formatDate = (date) => {
 };
 
 const SessionCellRenderer = (params) => {
-  const { column, value, data } = params;
+  const { column, value, data, isCustomColumn } = params;
   const colId = column?.colId;
 
   const renderValue = (fromCell) => {
@@ -171,7 +171,7 @@ const SessionCellRenderer = (params) => {
 
   return (
     <CustomTooltip
-      show={SHOW_TOOLTIPS.includes(colId)}
+      show={SHOW_TOOLTIPS.includes(colId) || isCustomColumn}
       title={
         <Box sx={{ maxHeight: 200, minWidth: "200px", overflowY: "auto" }}>
           {renderValue()}

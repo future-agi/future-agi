@@ -399,8 +399,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         scans on sessions with many traces.
 
         Returns one row per root span with trace_session_id,
-        span_attributes_raw, and typed Map columns (span_attr_str,
-        span_attr_num) as fallback when the raw JSON blob is empty.
+        span_attributes_raw, and the typed Map columns (span_attr_str,
+        span_attr_num, span_attr_bool) which hold the custom attributes
+        post-CH25 (the raw blob keeps only input/output).
         """
         if not session_ids:
             return "", {}
@@ -428,8 +429,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         SELECT
             {resolved_ts} AS session_id,
             span_attributes_raw,
-            span_attr_str,
-            span_attr_num
+            span_attr_str AS attrs_string,
+            span_attr_num AS attrs_number,
+            span_attr_bool AS attrs_bool
         FROM {self.TABLE} AS s
         {ts_join}
         WHERE {self.project_filter_sql()}
@@ -440,6 +442,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
             OR length(mapKeys(span_attr_str)) > 0
             OR length(mapKeys(span_attr_num)) > 0
+            OR length(mapKeys(span_attr_bool)) > 0
           )
           AND {resolved_ts} IN %(attr_session_ids)s
         LIMIT 500

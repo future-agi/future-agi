@@ -203,7 +203,7 @@ class TestSpanAttributesProcessingStress:
         self, num_sessions, attrs_per_session, keys_per_attr
     ):
         """Simulate the attribute processing loop from _list_sessions_clickhouse."""
-        from tracer.views.trace_session import _json_loads
+        from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
 
         _SKIP_ATTR_PREFIXES = (
             "raw.",
@@ -225,8 +225,9 @@ class TestSpanAttributesProcessingStress:
                     {
                         "session_id": sid,
                         "span_attributes_raw": json.dumps(attrs),
-                        "span_attr_str": {},
-                        "span_attr_num": {},
+                        "attrs_string": {},
+                        "attrs_number": {},
+                        "attrs_bool": {},
                     }
                 )
 
@@ -240,13 +241,12 @@ class TestSpanAttributesProcessingStress:
                 and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
             ):
                 continue
-            raw = attr_row.get("span_attributes_raw", "{}")
-            try:
-                attrs = (
-                    _json_loads(raw) if isinstance(raw, str) and raw else (raw or {})
-                )
-            except (json.JSONDecodeError, ValueError, TypeError):
-                attrs = {}
+            attrs = merge_span_attributes(
+                attr_row.get("attrs_string"),
+                attr_row.get("attrs_number"),
+                attr_row.get("attrs_bool"),
+                attr_row.get("span_attributes_raw", "{}"),
+            )
             if sid not in aggregated_attrs:
                 aggregated_attrs[sid] = {}
             for key, value in attrs.items():
@@ -284,7 +284,7 @@ class TestSpanAttributesProcessingStress:
 
     def test_stress_many_sessions_many_attributes(self):
         """Stress test: 30 sessions with 500 attribute rows."""
-        from tracer.views.trace_session import _json_loads
+        from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
 
         _MAX_ATTR_KEYS_PER_SESSION = 50
         _SKIP_ATTR_PREFIXES = (
@@ -317,11 +317,12 @@ class TestSpanAttributesProcessingStress:
                 and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
             ):
                 continue
-            raw = attr_row["span_attributes_raw"]
-            try:
-                attrs = _json_loads(raw) if raw else {}
-            except (json.JSONDecodeError, ValueError, TypeError):
-                attrs = {}
+            attrs = merge_span_attributes(
+                attr_row.get("attrs_string"),
+                attr_row.get("attrs_number"),
+                attr_row.get("attrs_bool"),
+                attr_row["span_attributes_raw"],
+            )
             if sid not in aggregated_attrs:
                 aggregated_attrs[sid] = {}
             for key, value in attrs.items():

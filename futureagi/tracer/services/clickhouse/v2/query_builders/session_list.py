@@ -49,7 +49,8 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             {resolved_ts} AS session_id,
             attributes_extra AS span_attributes_raw,
             attrs_string,
-            attrs_number
+            attrs_number,
+            attrs_bool
         FROM {self.TABLE} AS s
         {ts_join}
         WHERE {self.project_filter_sql()}
@@ -60,6 +61,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             (attributes_extra != '{{}}' AND attributes_extra != '')
             OR length(mapKeys(attrs_string)) > 0
             OR length(mapKeys(attrs_number)) > 0
+            OR length(mapKeys(attrs_bool)) > 0
           )
           AND {resolved_ts} IN %(attr_session_ids)s
         LIMIT 500
