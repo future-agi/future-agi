@@ -5,7 +5,6 @@ import {
   Box,
   Card,
   CardContent,
-  CircularProgress,
   Table,
   TableBody,
   TableCell,
@@ -17,6 +16,7 @@ import {
   Link,
   Stack,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import {
   useAnnotationQueueDetail,
   useQueueAgreement,
@@ -80,11 +80,7 @@ export default function QueueAgreementTab({ queueId }) {
   const popoverOpen = Boolean(anchorEl);
 
   if (isLoading) {
-    return (
-      <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen />;
   }
 
   if (!agreement) return null;

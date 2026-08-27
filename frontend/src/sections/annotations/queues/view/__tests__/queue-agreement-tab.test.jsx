@@ -106,6 +106,20 @@ describe("QueueAgreementTab", () => {
     });
   });
 
+  it("renders LoadingScreen when agreement data is loading", () => {
+    mocks.useQueueAgreement.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+    });
+
+    render(<QueueAgreementTab queueId="queue-1" />);
+
+    const progressBar = screen.getByRole("progressbar");
+    expect(progressBar).toBeInTheDocument();
+    expect(progressBar).toHaveClass("MuiLinearProgress-root");
+    expect(screen.queryByText("Overall Agreement")).not.toBeInTheDocument();
+  });
+
   it("renders agreement overview, label table, and makes non-zero disagreements interactive while zero stays non-interactive", async () => {
     render(<QueueAgreementTab queueId="queue-1" />);
 
