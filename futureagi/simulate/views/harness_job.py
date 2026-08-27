@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -10,10 +12,12 @@ from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
+    HarnessJobReadSerializer,
     HarnessPreflightSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSourceUploadResponseSerializer,
 )
+from simulate.services.harness_provider import get_harness_provider
 from simulate.services.harness_sandbox import (
     HarnessSandboxClient,
     HarnessSandboxRejected,
@@ -21,16 +25,19 @@ from simulate.services.harness_sandbox import (
 )
 from simulate.services.harness_credentials import (
     credential_file_ref,
-    materialize_secret_refs,
     request_scope,
-    save_environment_credentials,
     store_credential_file,
 )
 from tfc.utils.api_contracts import validated_request
 
 
 class HarnessJobViewSet(viewsets.ViewSet):
-    """Control-plane facade over the configured ALK sandbox provider."""
+    """Provider-neutral control plane for hosted ALK harness jobs.
+
+    Validates the v1.6 request contract and delegates execution to the backend
+    selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+    ``sandbox``). See ``simulate.services.harness_provider``.
+    """
 
     permission_classes = [IsAuthenticated]
 
@@ -39,50 +46,15 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessJobCreateSerializer,
+        responses={202: HarnessJobReadSerializer},
         reject_unknown_fields=True,
     )
     def create(self, request):
-        organization, workspace = request_scope(request)
-        if organization is None:
-            return Response(
-                {"detail": "an organization is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        payload = dict(request.validated_data)
-        durable_refs = dict(payload.get("secret_refs") or {})
-        client = self._client()
-        try:
-            payload["secret_refs"] = materialize_secret_refs(
-                durable_refs, organization=organization, client=client
-            )
-            result = client.submit(payload)
-            job_id = str(result.get("job", {}).get("job_id") or "").strip()
-            if not job_id:
-                raise HarnessSandboxUnavailable(
-                    "ALK sandbox accepted a job without returning a job id"
-                )
-            save_environment_credentials(
-                job_id,
-                environment_values=dict(payload.get("environment_values") or {}),
-                secret_refs=durable_refs,
-                organization=organization,
-                workspace=workspace,
-            )
-        except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        return Response(result, status=status.HTTP_202_ACCEPTED)
+        return get_harness_provider().create(request)
 
+    @swagger_auto_schema(responses={200: HarnessJobReadSerializer(many=True)})
     def list(self, request):
-        try:
-            return Response(self._client().list_jobs())
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+        return get_harness_provider().list(request)
 
     @action(
         detail=False,
@@ -116,35 +88,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
         responses={201: HarnessSourceUploadResponseSerializer},
     )
     def source_upload(self, request):
-        files = request.FILES.getlist("files")
-        paths = request.data.getlist("paths")
-        if not files or len(files) != len(paths):
-            return Response(
-                {"detail": "one relative path is required per file"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if len(files) > 5_000:
-            return Response(
-                {"detail": "source may contain at most 5000 files"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
-        total = sum(int(getattr(uploaded, "size", 0) or 0) for uploaded in files)
-        if total > 200 * 1024 * 1024:
-            return Response(
-                {"detail": "source may not exceed 200 MiB"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
-        try:
-            result = self._client().upload_source(
-                files, paths, str(request.data.get("name") or "uploaded-agent")
-            )
-        except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-        return Response(result, status=status.HTTP_201_CREATED)
+        return get_harness_provider().source_upload(request)
 
     @action(
         detail=False,
@@ -209,39 +153,19 @@ class HarnessJobViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=["post"])
     def preflight(self, request):
-        try:
-            return Response(self._client().preflight(request.validated_data))
-        except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+        return get_harness_provider().preflight(request)
 
+    @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
     def retrieve(self, request, pk=None):
-        try:
-            return Response(self._client().get(str(pk)))
-        except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
-
+        return get_harness_provider().retrieve(request, pk)
     @validated_request(
         request_serializer=HarnessJobActionSerializer,
+        responses={200: HarnessJobReadSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
-        try:
-            return Response(self._client().cancel(str(pk)))
-        except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+        return get_harness_provider().cancel(request, pk)
 
     @validated_request(
         request_serializer=HarnessJobAdjustmentSerializer,
@@ -260,9 +184,4 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def health(self, request):
-        try:
-            return Response(self._client().health())
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+        return Response(get_harness_provider().health())
