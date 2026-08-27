@@ -61,6 +61,18 @@ def test_interactive_read_profile_accepts_a_thirty_second_filter_value_wall():
     assert values["FILTER_VALUE_READ_TIMEOUT_MS"] == 30_000
 
 
+def test_large_tenant_reads_scan_widely_without_unbounding_memory_or_results():
+    values = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+
+    assert values["DASHBOARD_TRACE_READ_MAX_BYTES"] == 1024**4
+    assert values["OBSERVABILITY_LIST_MAX_BYTES"] == 1024**4
+    assert values["DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES"] == 36 * 1024**3
+    assert values["OBSERVABILITY_LIST_MAX_MEMORY_BYTES"] == 36 * 1024**3
+    assert values["DASHBOARD_TRACE_READ_MAX_RESULT_BYTES"] == 64 * 1024**2
+    assert values["DASHBOARD_FILTER_VALUE_MAX_RESULT_BYTES"] == 64 * 1024**2
+    assert values["ATTRIBUTE_READ_MAX_RESULT_BYTES"] == 64 * 1024**2
+
+
 def test_blank_source_value_uses_fallback_before_default():
     values = load_numeric_settings(
         INTERACTIVE_READ_SETTING_SPECS,

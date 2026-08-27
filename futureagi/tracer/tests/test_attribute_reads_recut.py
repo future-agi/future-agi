@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 import pytest
 from clickhouse_driver.errors import ServerException
+from django.conf import settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from tracer.serializers.observation_span import (
@@ -5509,7 +5510,10 @@ def test_filter_value_cursor_typed_distinct_sentinel_is_an_exact_fallback():
     assert "max_rows_to_read" not in distinct_call.settings
     assert distinct_call.settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
     assert distinct_call.settings["max_result_rows"] == 2
-    assert distinct_call.settings["max_result_bytes"] == 16 * 1024 * 1024
+    assert (
+        distinct_call.settings["max_result_bytes"]
+        == settings.ATTRIBUTE_READ_MAX_RESULT_BYTES
+    )
     assert distinct_call.settings["read_overflow_mode"] == "throw"
     assert distinct_call.settings["result_overflow_mode"] == "throw"
     assert distinct_call.settings["timeout_overflow_mode"] == "throw"

@@ -252,8 +252,8 @@ EXACT_GRAPH_READ_SETTINGS = {
     # max_rows_to_read setting. Production evidence includes 207,479,677
     # physical rows in one valid twelve-month window. Byte, time, memory,
     # thread, result, and refresh-admission limits remain independently
-    # enforced; reads above 36 GiB fail closed rather than publishing a partial
-    # result as exact.
+    # enforced. The byte ceiling is intentionally much larger than memory: it
+    # limits total scan work without rejecting large, low-memory aggregations.
     "max_bytes_to_read": EXACT_GRAPH_MAX_BYTES_TO_READ,
     # The same observed seven-day read peaked at 1,055,221,165 bytes.  Preserve
     # measured headroom while spilling compact aggregation/sort state early;
@@ -279,9 +279,10 @@ EXACT_GRAPH_TRACE_CLASSIFIER_READ_SETTINGS = {
 }
 EXACT_GRAPH_SPAN_PARTITION_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
-    # Span partitions use the same application envelope; their time partition,
-    # shared deadline and result ceilings remain the tighter controls.
-    "max_bytes_to_read": settings.CLICKHOUSE_APPLICATION_READ_MAX_BYTES,
+    # Span partitions use the same large-tenant scan envelope; their time
+    # partition, shared deadline, memory and result ceilings remain the tighter
+    # controls.
+    "max_bytes_to_read": EXACT_GRAPH_MAX_BYTES_TO_READ,
 }
 EXACT_GRAPH_TRACE_ANCHOR_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,

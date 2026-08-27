@@ -971,7 +971,10 @@ def test_voice_annotator_and_turn_count_use_positive_candidate_seed() -> None:
     assert builder.supports_filter_candidate_seed_page() is True
     assert builder.recommended_filter_initial_slice_width() == END - START
     assert builder.recommended_filter_max_slice_width() == END - START
-    assert builder.recommended_filter_query_timeout_ms() == 9_500
+    assert (
+        builder.recommended_filter_query_timeout_ms()
+        == settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+    )
     assert "model_hub_score AS s FINAL" in compact_sql
     assert "s.annotator_id IN (toUUID(%(uid_1)s))" in compact_sql
     assert "s.created_at >=" not in compact_sql
@@ -4832,7 +4835,11 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
     assert (
         bounded_read.call_args.kwargs["deadline_ms"] <= TRACE_LIST_CANDIDATE_DEADLINE_MS
     )
-    assert TRACE_LIST_CANDIDATE_DEADLINE_MS == TRACE_LIST_WALL_DEADLINE_MS == 9_500
+    assert (
+        TRACE_LIST_CANDIDATE_DEADLINE_MS
+        == TRACE_LIST_WALL_DEADLINE_MS
+        == settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+    )
     assert TRACE_LIST_ENRICHMENT_MAX_WORKERS == 2
     assert len(analytics.calls) == 2 * expected_chunks + 1
     content_chunks = [
@@ -4889,7 +4896,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
     CLICKHOUSE_V2={"QUERY_TYPES_V2_ONLY": "TRACE_LIST"},
 )
 def test_page_500_slow_candidate_admits_every_exact_enrichment_wave():
-    """The 9.5 s ceiling admits the modeled 9.3 s max-page exact replay.
+    """The reviewed ceiling admits the modeled 9.3 s max-page exact replay.
 
     The virtual two-worker scheduler is deterministic: the candidate consumes
     3 s, each CH statement consumes its full 900 ms cap, and the optional user
@@ -5107,7 +5114,7 @@ def test_page_500_slow_candidate_admits_every_exact_enrichment_wave():
 
     assert status_name == "ok"
     assert len(payload["table"]) == 500
-    assert TRACE_LIST_WALL_DEADLINE_MS == 9_500
+    assert TRACE_LIST_WALL_DEADLINE_MS == settings.INTERACTIVE_READ_DEFAULT_WALL_MS
     assert deadline.now_ms == 9_300
     assert VirtualPool.instances[0].submit_count == 13
     assert all(
@@ -6737,11 +6744,12 @@ def test_candidate_first_seed_keeps_exact_classifier_and_page_hydration() -> Non
         "max_rows_to_read" not in settings for _, settings in executor.settings_by_query
     )
     assert all(
-        settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
-        and settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
-        and settings["max_threads"] == 1
-        and 0 < settings["max_result_rows"] <= 10_000
-        for _, settings in executor.settings_by_query
+        query_settings["max_bytes_to_read"] == settings.OBSERVABILITY_LIST_MAX_BYTES
+        and query_settings["max_memory_usage"]
+        == settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES
+        and query_settings["max_threads"] == 1
+        and 0 < query_settings["max_result_rows"] <= 10_000
+        for _, query_settings in executor.settings_by_query
     )
 
 

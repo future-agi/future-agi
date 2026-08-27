@@ -342,7 +342,11 @@ ATTRIBUTE_READ_SETTINGS: dict[str, Any] = {
     "max_bytes_to_read": 36 * 1024 * _MIB,
     "read_overflow_mode": "throw",
     "max_result_rows": ATTRIBUTE_READ_CANDIDATE_LIMIT + 1,
-    "max_result_bytes": 16 * _MIB,
+    # One retained identity can carry a wide attributes_extra payload. Keep a
+    # finite response ceiling, but leave enough room to hydrate the bounded
+    # candidate page on large tenants instead of turning a valid property page
+    # into an empty result.
+    "max_result_bytes": settings.ATTRIBUTE_READ_MAX_RESULT_BYTES,
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }

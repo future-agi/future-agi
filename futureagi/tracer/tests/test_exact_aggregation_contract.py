@@ -13,6 +13,7 @@ from django.db import DatabaseError
 from django.test import override_settings
 
 from tracer.services.clickhouse.exact_graph_reads import (
+    EXACT_GRAPH_MAX_BYTES_TO_READ,
     ExactGraphReadError,
     _annotation_label_ids_for_filters,
     _enumerate_exact_trace_ids,
@@ -4813,7 +4814,7 @@ def test_exact_trace_membership_exhausts_5k_identity_classifier_boundary(monkeyp
     assert exact_module.EXACT_GRAPH_READ_SETTINGS["max_bytes_to_read"] == (
         exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ
     )
-    assert exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ == 36 * 1024 * 1024 * 1024
+    assert exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ == 1024**4
     assert exact_module.EXACT_GRAPH_TRACE_CLASSIFIER_READ_SETTINGS["max_threads"] == 8
     assert trace_ids == ordered_ids
     assert [len(batch) for batch in classifier_batches] == [5_000, 5_000, 1]
@@ -5809,7 +5810,7 @@ def test_exact_span_graph_merges_additive_partitions_only_after_all_succeed():
     assert all(call[3]["max_threads"] == 1 for call in analytics.calls)
     assert all("max_rows_to_read" not in call[3] for call in analytics.calls)
     assert all(
-        call[3]["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+        call[3]["max_bytes_to_read"] == exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ
         for call in analytics.calls
     )
     nonzero = [point for point in result["data"] if point["value"]]
@@ -6149,7 +6150,7 @@ def test_filtered_exact_span_window_uses_hour_aligned_additive_statements():
     assert "AS cost_sum" in query
     assert settings["max_threads"] == 1
     assert "max_rows_to_read" not in settings
-    assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+    assert settings["max_bytes_to_read"] == EXACT_GRAPH_MAX_BYTES_TO_READ
     assert result["query_count"] == 1
     assert "query_snapshot_version_ceiling" not in result
     assert result["query_complete"] is True

@@ -298,7 +298,7 @@ def test_dashboard_30d_114m_row_read_has_no_application_row_ceiling():
     assert observed_sql is sql
     assert observed_params is params
     assert observed_settings is _DASHBOARD_TRACE_READ_SETTINGS
-    assert observed_timeout == 9_500
+    assert observed_timeout == _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
     assert "max_rows_to_read" not in observed_settings
     assert params == _dashboard_full_window_params(days=30)
 
@@ -332,12 +332,12 @@ def test_dashboard_full_window_read_keeps_all_independent_finite_limits():
     read_settings = _DASHBOARD_TRACE_READ_SETTINGS
 
     assert read_settings == {
-        "max_threads": 4,
-        "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-        "max_memory_usage": 36 * 1024 * 1024 * 1024,
+        "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+        "max_bytes_to_read": settings.DASHBOARD_TRACE_READ_MAX_BYTES,
+        "max_memory_usage": settings.DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES,
         "read_overflow_mode": "throw",
-        "max_result_rows": 250_000,
-        "max_result_bytes": 64 * 1024 * 1024,
+        "max_result_rows": settings.DASHBOARD_TRACE_READ_MAX_RESULT_ROWS,
+        "max_result_bytes": settings.DASHBOARD_TRACE_READ_MAX_RESULT_BYTES,
         "result_overflow_mode": "throw",
         "timeout_overflow_mode": "throw",
     }
@@ -347,7 +347,10 @@ def test_dashboard_full_window_read_keeps_all_independent_finite_limits():
 def test_dashboard_worker_has_one_deadline_for_every_exact_source():
     source = inspect.getsource(DashboardWidgetViewSet._execute_ch_query_config)
 
-    assert _DASHBOARD_EXACT_QUERY_TIMEOUT_MS == 9_500
+    assert (
+        _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
+        == settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+    )
     assert source.count("ReadDeadline.start(") == 1
     assert source.count("timeout_ms=read_deadline.remaining_ms(") == 3
     assert source.count("read_deadline.remaining_ms(floor_ms=1)") == 2
@@ -503,19 +506,15 @@ def test_dashboard_worker_runs_each_metric_once_without_snapshot_ceiling_metadat
 
     assert len(analytics.calls) == 4
     deadline_start.assert_called_once_with(_DASHBOARD_EXACT_QUERY_TIMEOUT_MS)
-    assert sorted(deadline.statement_timeouts, reverse=True) == [
-        9_500,
-        8_500,
-        7_500,
-        6_500,
+    expected_timeouts = [
+        _DASHBOARD_EXACT_QUERY_TIMEOUT_MS - (index * 1_000)
+        for index in range(4)
     ]
+    assert sorted(deadline.statement_timeouts, reverse=True) == expected_timeouts
     assert deadline.publication_fences == 2
-    assert sorted([call[2] for call in analytics.calls], reverse=True) == [
-        9_500,
-        8_500,
-        7_500,
-        6_500,
-    ]
+    assert sorted(
+        [call[2] for call in analytics.calls], reverse=True
+    ) == expected_timeouts
     assert {call[0] for call in analytics.calls} == {
         "SELECT latency FROM spans FINAL",
         "SELECT traffic FROM spans FINAL",
@@ -7569,7 +7568,7 @@ class TestAnnotationLabelScoresCH:
 
 
 class TestDashboardTraceTimeoutSelection:
-    def test_default_trace_timeout_is_short(self):
+    def test_default_trace_timeout_uses_reviewed_analytics_budget(self):
         viewset = DashboardViewSet()
         timeout = viewset._get_trace_query_timeout_ms(
             {
@@ -7584,7 +7583,7 @@ class TestDashboardTraceTimeoutSelection:
                 "breakdowns": [],
             }
         )
-        assert timeout == 9500
+        assert timeout == _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
 
     def test_project_breakdown_uses_longer_timeout(self):
         viewset = DashboardViewSet()
@@ -7601,7 +7600,7 @@ class TestDashboardTraceTimeoutSelection:
                 "breakdowns": [{"type": "system_metric", "name": "project"}],
             }
         )
-        assert timeout == 9500
+        assert timeout == _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
 
     def test_eval_metric_uses_longer_timeout(self):
         viewset = DashboardViewSet()
@@ -7618,7 +7617,7 @@ class TestDashboardTraceTimeoutSelection:
                 "breakdowns": [],
             }
         )
-        assert timeout == 9500
+        assert timeout == _DASHBOARD_EXACT_QUERY_TIMEOUT_MS
 
 
 class TestDashboardMetricSourceNormalization:
@@ -11317,7 +11316,11 @@ class TestMetricsCatalogPagination:
             build_metrics_catalog,
         )
 
-        workspace = SimpleNamespace(id="workspace-static", organization=object())
+        workspace = SimpleNamespace(
+            id="workspace-static",
+            organization=object(),
+            organization_id="organization-static",
+        )
         with (
             patch(
                 "tracer.services.dashboard_metrics_catalog.Project.objects.filter"
@@ -11370,7 +11373,11 @@ class TestMetricsCatalogPagination:
         ):
             with pytest.raises(MetricsCatalogUnavailable) as exc_info:
                 build_metrics_catalog(
-                    SimpleNamespace(id="workspace-worker", organization=object()),
+                    SimpleNamespace(
+                        id="workspace-worker",
+                        organization=object(),
+                        organization_id="organization-worker",
+                    ),
                     project_ids_param=project_id,
                     category="custom_attribute",
                     source="traces",

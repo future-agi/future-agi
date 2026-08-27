@@ -267,9 +267,9 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("DASHBOARD_TRACE_READ_MAX_THREADS", 4, 1, 16),
             (
                 "DASHBOARD_TRACE_READ_MAX_BYTES",
-                36 * 1024**3,
+                1024**4,
                 64 * 1024**2,
-                128 * 1024**3,
+                2 * 1024**4,
             ),
             (
                 "DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES",
@@ -290,9 +290,15 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("DASHBOARD_FILTER_VALUE_LEGACY_MAX", 500, 1, 5_000),
             (
                 "DASHBOARD_FILTER_VALUE_MAX_RESULT_BYTES",
-                8 * 1024**2,
-                64 * 1024,
                 64 * 1024**2,
+                64 * 1024,
+                512 * 1024**2,
+            ),
+            (
+                "ATTRIBUTE_READ_MAX_RESULT_BYTES",
+                64 * 1024**2,
+                16 * 1024**2,
+                512 * 1024**2,
             ),
             ("DASHBOARD_ROLLUP_MAX_QUERIES", 2, 1, 16),
             ("DASHBOARD_ROLLUP_MAX_POINTS", 10_000, 100, 100_000),
@@ -312,7 +318,7 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("DASHBOARD_METRICS_EVAL_USAGE_QUERY_TIMEOUT_MS", 5_000, 100, 60_000),
             ("DASHBOARD_METRICS_EVAL_USAGE_LOOKBACK_DAYS", 90, 1, 3_660),
             ("OBSERVABILITY_LIST_MAX_BLOCK_SIZE", 8192, 1, 65_536),
-            ("OBSERVABILITY_LIST_MAX_BYTES", 36 * 1024**3, 64 * 1024**2, 128 * 1024**3),
+            ("OBSERVABILITY_LIST_MAX_BYTES", 1024**4, 64 * 1024**2, 2 * 1024**4),
             (
                 "OBSERVABILITY_LIST_MAX_MEMORY_BYTES",
                 36 * 1024**3,
