@@ -99,6 +99,12 @@ const BASE_SESSION_FILTER_FIELDS = [
   { id: "duration", name: "Duration", category: "system", type: "number" },
   { id: "total_cost", name: "Total Cost", category: "system", type: "number" },
   {
+    id: "total_tokens",
+    name: "Total Tokens",
+    category: "system",
+    type: "number",
+  },
+  {
     id: "total_traces_count",
     name: "Total Traces",
     category: "system",

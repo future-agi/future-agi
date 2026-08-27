@@ -15,7 +15,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import TracesDrawer from "../TracesDrawer/TracesDrawer";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { getSessionListColumnDef } from "./common";
+import { getSessionListColumnDef, initialVisibility } from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -322,7 +322,19 @@ const SessionGrid = React.forwardRef(
                 const columnConfig = (newCols || []).find(
                   (config) => config.id === column.field,
                 );
-                return columnConfig ? columnConfig.isVisible : true;
+                const backendVisible = columnConfig
+                  ? columnConfig.isVisible
+                  : true;
+
+                const isDefaultColumn = column.field in initialVisibility;
+                if (
+                  !isDefaultColumn &&
+                  !backendVisible &&
+                  updateObjRef.current?.[column.field] === true
+                ) {
+                  return true;
+                }
+                return backendVisible;
               });
 
               setFilteredColumnDefs(filteredColumns);
