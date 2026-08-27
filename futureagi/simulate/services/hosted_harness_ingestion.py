@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 from datetime import timedelta
 from typing import Any, BinaryIO
@@ -10,6 +11,7 @@ from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
+    CallTranscript,
     HostedHarnessArtifact,
     HostedHarnessAttempt,
     HostedHarnessEvent,
@@ -25,7 +27,7 @@ from simulate.services.hosted_harness import (
     update_execution_counts,
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import get_storage_client
+from tfc.utils.storage_client import get_object_url, get_storage_client
 
 _EVENT_TYPES = {
     "stage_changed",
@@ -610,20 +612,120 @@ def _apply_receipt_to_call(
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
     metadata["hosted_harness_receipt"] = _json_ready(body)
+    update_fields = [
+        "status",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "call_metadata",
+        "error_message",
+        "updated_at",
+    ]
+    if call_data:
+        artifact_ids = list(call_data.get("recording_artifacts") or [])
+        transcript_id = call_data.get("transcript_artifact")
+        if transcript_id:
+            artifact_ids.append(transcript_id)
+        artifacts = list(
+            HostedHarnessArtifact.no_workspace_objects.filter(
+                job=registration.job,
+                sha256__in=[item.removeprefix("sha256:") for item in artifact_ids],
+            )
+        )
+        metadata["hosted_harness_artifacts"] = {
+            artifact.kind: {
+                "sha256": artifact.sha256,
+                "object_key": artifact.object_key,
+                "url": get_object_url(UPLOAD_BUCKET_NAME, artifact.object_key),
+            }
+            for artifact in artifacts
+        }
+        combined = next(
+            (item for item in artifacts if item.kind == "recording_combined"), None
+        )
+        stereo = next(
+            (item for item in artifacts if item.kind == "recording_stereo"), None
+        )
+        if combined is not None:
+            call.recording_url = get_object_url(
+                UPLOAD_BUCKET_NAME, combined.object_key
+            )
+            update_fields.append("recording_url")
+        if stereo is not None:
+            call.stereo_recording_url = get_object_url(
+                UPLOAD_BUCKET_NAME, stereo.object_key
+            )
+            update_fields.append("stereo_recording_url")
+        if combined is not None or stereo is not None:
+            call.recording_available = True
+            update_fields.append("recording_available")
+
+        transcript = next(
+            (item for item in artifacts if item.kind == "transcript"), None
+        )
+        if transcript is not None:
+            _ingest_hosted_transcript(call, transcript)
+            call.transcript_available = True
+            update_fields.append("transcript_available")
     call.call_metadata = metadata
     if body.get("failure"):
         call.error_message = body["failure"]["message"]
-    call.save(
-        update_fields=[
-            "status",
-            "started_at",
-            "completed_at",
-            "duration_seconds",
-            "call_metadata",
-            "error_message",
-            "updated_at",
-        ]
-    )
+    call.save(update_fields=list(dict.fromkeys(update_fields)))
+
+
+def _ingest_hosted_transcript(
+    call: CallExecution, artifact: HostedHarnessArtifact
+) -> None:
+    """Materialize the sealed transcript artifact into the normal call transcript model.
+
+    The v2 producer emits structured JSON.  Raw text remains supported for artifacts uploaded by
+    older guests, so upgrading the platform does not invalidate already-running attempts.
+    """
+    response = None
+    try:
+        response = get_storage_client().get_object(
+            UPLOAD_BUCKET_NAME, artifact.object_key
+        )
+        raw = response.read().decode("utf-8")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {"transcript": raw, "messages": []}
+        messages = payload.get("messages") if isinstance(payload, dict) else []
+        rows: list[CallTranscript] = []
+        if isinstance(messages, list):
+            for index, message in enumerate(messages):
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content")
+                if content is None:
+                    continue
+                role = str(message.get("role") or "unknown")
+                valid_roles = {choice for choice, _label in CallTranscript.SpeakerRole.choices}
+                rows.append(
+                    CallTranscript(
+                        call_execution=call,
+                        speaker_role=role if role in valid_roles else "unknown",
+                        content=str(content),
+                        start_time_ms=index,
+                        end_time_ms=index,
+                    )
+                )
+        if not rows and isinstance(payload, dict) and payload.get("transcript"):
+            rows.append(
+                CallTranscript(
+                    call_execution=call,
+                    speaker_role=CallTranscript.SpeakerRole.UNKNOWN,
+                    content=str(payload["transcript"]),
+                )
+            )
+        CallTranscript.objects.filter(call_execution=call).delete()
+        if rows:
+            CallTranscript.objects.bulk_create(rows)
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
 
 
 def _backfill_missing_receipts(attempt: HostedHarnessAttempt) -> None:
