@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,6 +34,8 @@ from simulate.services.hosted_harness import (
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+logger = logging.getLogger("simulate.hosted_harness_gateway")
 
 HOSTED_ENGINE_CATALOG = {
     "postgres": {
@@ -501,6 +504,13 @@ class DaytonaHostedGateway:
             allowed_domains.add(platform_host)
         # Egress union validation: cap at 20 user-supplied domains.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+        # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
+        # domain-allowlist cannot express when media and signaling resolve to different IPs. When
+        # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
+        # otherwise the domain allowlist (block-all + allowlist) applies.
+        unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
+        network_block_all = False if unrestricted else (not allowed_domains)
+        domain_allow_list = None if unrestricted else (",".join(sorted(allowed_domains)) or None)
         sandbox = None
         try:
             sandbox = self.client.create(
@@ -512,8 +522,8 @@ class DaytonaHostedGateway:
                         "futureagi.job": str(job.id),
                         "futureagi.attempt": str(attempt.id),
                     },
-                    network_block_all=not allowed_domains,
-                    domain_allow_list=",".join(sorted(allowed_domains)) or None,
+                    network_block_all=network_block_all,
+                    domain_allow_list=domain_allow_list,
                     ephemeral=True,
                     ttl_minutes=ttl_minutes,
                     auto_delete_interval=ttl_minutes,
@@ -631,6 +641,26 @@ class DaytonaHostedGateway:
                 observation["logs"] = (text or "")[-8000:]
             except Exception:  # noqa: BLE001
                 observation["logs"] = ""
+            # The agent/tools-api/postgres run as CHILD processes; their stdout/stderr goes to
+            # per-world/build process.log files, never the entrypoint's own stream. Collect their
+            # tails too -- an "agent did not become ready" failure is only diagnosable from the
+            # agent's own log (STT/LLM/TTS init), which the entrypoint stream never sees.
+            try:
+                child = sandbox.process.exec(
+                    "for f in $(find /work/worlds /work/build -name '*.log' 2>/dev/null | sort); do "
+                    "echo \"===== $f =====\"; tail -120 \"$f\"; done",
+                    timeout=60,
+                )
+                child_logs = getattr(child, "result", "") or ""
+            except Exception:  # noqa: BLE001
+                child_logs = ""
+            observation["process_logs"] = child_logs[-16000:]
+            # Surface everything to the simulation-runner worker log so failures are visible via
+            # `docker logs temporal-worker-simulation-runner`, not only the truncated receipt tail.
+            logger.info(
+                "hosted guest attempt=%s exit_code=%s\n--- entrypoint ---\n%s\n--- processes ---\n%s",
+                attempt.id, command.exit_code, observation["logs"], observation["process_logs"],
+            )
         return observation
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
@@ -741,7 +771,7 @@ class DaytonaHostedGateway:
                     "guest reached terminal state but could not deliver "
                     "the terminal event"
                 ),
-                "details": {"guest_log_tail": observation.get("logs", "")},
+                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -760,7 +790,7 @@ class DaytonaHostedGateway:
                 "stage": "running",
                 "code": "guest_crashed",
                 "message": f"guest entrypoint exited {exit_code}",
-                "details": {"guest_log_tail": observation.get("logs", "")},
+                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
@@ -781,7 +811,7 @@ class DaytonaHostedGateway:
                 "stage": "uploading_artifacts",
                 "code": "terminal_delivery_incomplete",
                 "message": "guest exited without an acknowledged terminal stream",
-                "details": {"guest_log_tail": observation.get("logs", "")},
+                "details": {"guest_log_tail": observation.get("logs", ""), "process_logs": observation.get("process_logs", "")},
             }
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
