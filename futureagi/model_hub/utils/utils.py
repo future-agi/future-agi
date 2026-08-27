@@ -3,6 +3,7 @@ import difflib
 import json
 import time
 from collections import Counter
+from threading import Lock
 from typing import Literal
 
 import litellm
@@ -984,7 +985,25 @@ class AnnotationCorpusBuilder:
         return vocab, top_20, min_sen_len, max_sen_len, avg_len
 
 
-corpus_builder = AnnotationCorpusBuilder()
+class _LazyAnnotationCorpusBuilder:
+    """Avoid downloading NLTK corpora while unrelated workers import this module."""
+
+    def __init__(self):
+        self._instance = None
+        self._lock = Lock()
+
+    def _get_instance(self):
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    self._instance = AnnotationCorpusBuilder()
+        return self._instance
+
+    def build_annotation_corpus(self, sentences):
+        return self._get_instance().build_annotation_corpus(sentences)
+
+
+corpus_builder = _LazyAnnotationCorpusBuilder()
 
 
 def get_model_mode(model_name: str) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tarfile
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -9,11 +10,14 @@ from unittest.mock import patch
 import pytest
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
-from simulate.services.hosted_harness import create_hosted_job
+from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
 from simulate.services.hosted_harness_gateway import (
     DaytonaHostedGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
+    pack_authoring_archive,
+    prepare_dispatch_payload,
+    resolve_authored_connector,
 )
 
 
@@ -88,6 +92,90 @@ def test_authoring_archive_resolves_uploaded_source_by_explicit_key(tmp_path, se
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         assert "scenarios/one/scenario.json" in tar.getnames()
         assert "webrtc-runs/old/postgres/pg_wal" not in tar.getnames()
+
+
+def test_fresh_authoring_archive_contains_contract_and_scenarios_only(tmp_path):
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"agent":"ride"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    ignored = root / "webrtc-runs" / "old"
+    ignored.mkdir(parents=True)
+    (ignored / "recording.wav").write_bytes(b"not an authoring input")
+
+    body = pack_authoring_archive(root)
+
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        assert sorted(archive.getnames()) == [
+            "contract.json",
+            "scenarios/one/scenario.json",
+        ]
+
+
+def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
+    (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(HostedHarnessError, match="without scenario artifacts"):
+        pack_authoring_archive(tmp_path)
+
+
+def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"modality":"voice"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    payload = _payload()
+    payload["agent"] = {
+        "connector": "auto",
+        "config": {},
+        "secret_refs": {
+            "LIVEKIT_URL": {},
+            "LIVEKIT_API_KEY": {},
+            "LIVEKIT_API_SECRET": {},
+        },
+    }
+
+    resolved = resolve_authored_connector(payload, pack_authoring_archive(root))
+
+    assert resolved["agent"]["connector"] == "livekit"
+    assert payload["agent"]["connector"] == "auto"
+
+
+def test_authored_connector_never_overrides_explicit_or_ambiguous_input(tmp_path):
+    root = tmp_path / "authoring"
+    scenario = root / "scenarios" / "one"
+    scenario.mkdir(parents=True)
+    (root / "contract.json").write_text('{"modality":"voice"}', encoding="utf-8")
+    (scenario / "scenario.json").write_text('{"name":"one"}', encoding="utf-8")
+    body = pack_authoring_archive(root)
+    explicit = _payload()
+    explicit["agent"]["connector"] = "retell"
+    ambiguous = _payload()
+    ambiguous["agent"]["connector"] = "auto"
+
+    assert resolve_authored_connector(explicit, body)["agent"]["connector"] == "retell"
+    assert resolve_authored_connector(ambiguous, body)["agent"]["connector"] == "auto"
+
+
+def test_dispatch_payload_mirrors_only_livekit_url():
+    payload = {"agent": {"connector": "livekit", "config": {}}}
+
+    dispatched = prepare_dispatch_payload(
+        payload,
+        {
+            "LIVEKIT_URL": "wss://customer.livekit.cloud",
+            "LIVEKIT_API_KEY": "must-not-be-copied",
+            "LIVEKIT_API_SECRET": "must-not-be-copied",
+        },
+    )
+
+    assert dispatched["agent"]["config"] == {
+        "livekit_url": "wss://customer.livekit.cloud"
+    }
+    assert payload["agent"]["config"] == {}
+    assert "must-not-be-copied" not in json.dumps(dispatched)
 
 
 @pytest.mark.django_db

@@ -609,6 +609,7 @@ def _ensure_activities_registered() -> None:
     # native voice queues.
     try:
         from simulate.temporal.activities.hosted_harness_gateway import (
+            author_hosted_harness_job,
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
             poll_hosted_harness_attempt,
@@ -626,12 +627,13 @@ def _ensure_activities_registered() -> None:
                 build_runner_job,
                 run_hosted_sdk_job,
                 finalize_hosted_execution,
+                author_hosted_harness_job,
                 launch_hosted_harness_job,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=6)
+        log.info("registered_hosted_runner_activities", count=7)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

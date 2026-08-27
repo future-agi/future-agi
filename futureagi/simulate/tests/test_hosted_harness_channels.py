@@ -8,7 +8,7 @@ import pytest
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessJob
+from simulate.models import HostedHarnessJob, HostedHarnessReceipt
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
@@ -16,6 +16,7 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
 )
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 
 BASE = "/simulate/api/harness/attempts"
 
@@ -137,6 +138,80 @@ def test_registering_attempt_supersedes_old_capability(organization):
     assert second.document["endpoints"]["events"].endswith("/events/")
     job.refresh_from_db()
     assert (second.attempt.expires_at - job.deadline_at).total_seconds() == 420
+
+
+@pytest.mark.django_db
+def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="receipt-rerun-key"
+    )
+    first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{first.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Receipt rerun",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "same-scenario",
+                    "name": "Customer",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(first),
+    )
+    assert provision.status_code == 200
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+    begin = client.post(
+        f"{BASE}/{first.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["same-scenario"],
+        },
+        format="json",
+        **_headers(first),
+    )
+    assert begin.status_code == 200
+
+    def receipt(capability, *, scenario_attempt):
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(job.id),
+            "attempt_id": str(capability.attempt.id),
+            "attempt_number": capability.attempt.attempt_number,
+            "scenario_key": "same-scenario",
+            "scenario_id": scenario["scenario_id"],
+            "scenario_attempt": scenario_attempt,
+            "world_index": None,
+            "status": "skipped",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": None,
+            "failure": None,
+        }
+        body["digest"] = canonical_digest(body)
+        return body
+
+    original, created = ingest_result_receipt(first.attempt, receipt(first, scenario_attempt=1))
+    assert created is True
+    second = register_attempt(job.id, endpoint_base_url="https://platform.example")
+
+    replacement, created = ingest_result_receipt(
+        second.attempt, receipt(second, scenario_attempt=2)
+    )
+
+    assert created is True
+    assert replacement.id == original.id
+    assert replacement.attempt_id == second.attempt.id
+    assert replacement.attempt_number == 2
+    assert HostedHarnessReceipt.no_workspace_objects.filter(job=job).count() == 1
 
 
 @pytest.mark.django_db

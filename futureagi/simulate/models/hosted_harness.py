@@ -48,6 +48,10 @@ class HostedHarnessJob(BaseModel):
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
     terminal_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
+    # Secret-safe presentation snapshots produced as each ALK authoring stage
+    # completes.  Keep these separate from the submitted payload: the payload is
+    # forwarded to the hosted guest, while these values exist only for the live UI.
+    stage_outputs = models.JSONField(default=list, blank=True)
     run_test = models.ForeignKey(
         "simulate.RunTest",
         on_delete=models.SET_NULL,

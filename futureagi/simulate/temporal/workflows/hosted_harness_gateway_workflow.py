@@ -8,6 +8,7 @@ from temporalio.common import RetryPolicy
 from simulate.temporal.constants import QUEUE_RUNNER
 from simulate.temporal.types.hosted_harness_gateway import (
     HostedHarnessAttemptInput,
+    HostedHarnessAuthoringOutput,
     HostedHarnessGatewayInput,
     HostedHarnessGatewayOutput,
     HostedHarnessLaunchOutput,
@@ -26,6 +27,17 @@ class HostedHarnessGatewayWorkflow:
 
     @workflow.run
     async def run(self, input: HostedHarnessGatewayInput) -> HostedHarnessGatewayOutput:
+        authored = await workflow.execute_activity(
+            "author_hosted_harness_job",
+            input,
+            task_queue=QUEUE_RUNNER,
+            start_to_close_timeout=timedelta(minutes=45),
+            heartbeat_timeout=timedelta(minutes=2),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+            result_type=HostedHarnessAuthoringOutput,
+        )
+        if not authored.ready:
+            return HostedHarnessGatewayOutput(job_id=input.job_id, state=authored.state)
         backoff = input.initial_backoff_seconds
         while True:
             launched = await workflow.execute_activity(

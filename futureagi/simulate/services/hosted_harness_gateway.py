@@ -173,9 +173,10 @@ class HostedSourceAcquirer:
             credential = GitHubAppTokenProvider.from_settings().credential(
                 installation_id
             )
-        with credential as token, tempfile.TemporaryDirectory(
-            prefix=f"harness-source-{job.id}-"
-        ) as temp:
+        with (
+            credential as token,
+            tempfile.TemporaryDirectory(prefix=f"harness-source-{job.id}-") as temp,
+        ):
             root = Path(temp)
             checkout = root / "source"
             environment = {
@@ -327,7 +328,12 @@ class DaytonaHostedGateway:
         from daytona import CreateSandboxFromSnapshotParams, SessionExecuteRequest
 
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
+        authoring_archive = _authoring_archive_for(job)
         payload = dict(job.payload)
+        if authoring_archive is not None:
+            # Resolve cached authoring created before connector resolution shipped as well as
+            # newly-authored jobs. This must happen before network policy and job.json are built.
+            payload = resolve_authored_connector(payload, authoring_archive)
         source = dict(payload["source"])
         if source["kind"] == "github":
             source["commit_sha"] = commit_sha
@@ -336,6 +342,7 @@ class DaytonaHostedGateway:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
         secrets_map = PlatformSecretResolver().resolve(job)
+        dispatch_payload = prepare_dispatch_payload(payload, secrets_map)
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
@@ -359,9 +366,7 @@ class DaytonaHostedGateway:
             payload["runtime"]["network_policy"] == "live"
             and payload["agent"]["connector"] == "livekit"
         ):
-            webrtc_cidrs = list(
-                getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", [])
-            )
+            webrtc_cidrs = list(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []))
         if platform_host:
             allowed_domains.add(platform_host)
         sandbox = None
@@ -370,7 +375,9 @@ class DaytonaHostedGateway:
                 CreateSandboxFromSnapshotParams(
                     snapshot=self.snapshot,
                     language="python",
-                    os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                    os_user=getattr(
+                        settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
+                    ),
                     labels={
                         "futureagi.job": str(job.id),
                         "futureagi.attempt": str(attempt.id),
@@ -378,7 +385,9 @@ class DaytonaHostedGateway:
                     network_block_all=not allowed_domains,
                     network_allow_list=",".join(webrtc_cidrs) or None,
                     domain_allow_list=(
-                        None if webrtc_cidrs else ",".join(sorted(allowed_domains)) or None
+                        None
+                        if webrtc_cidrs
+                        else ",".join(sorted(allowed_domains)) or None
                     ),
                     ephemeral=True,
                     ttl_minutes=ttl_minutes,
@@ -391,7 +400,9 @@ class DaytonaHostedGateway:
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
-                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+                json.dumps(
+                    dispatch_payload, sort_keys=True, separators=(",", ":")
+                ).encode(),
                 "/work/job.json",
             )
             sandbox.fs.upload_file(
@@ -404,7 +415,6 @@ class DaytonaHostedGateway:
                 ).encode(),
                 "/run/futureagi/capabilities.json",
             )
-            authoring_archive = _authoring_archive_for(job)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
             prepared = sandbox.process.exec(
@@ -507,7 +517,10 @@ class DaytonaHostedGateway:
                 )
                 text = getattr(logs, "output", None) or "\n".join(
                     part
-                    for part in (getattr(logs, "stdout", ""), getattr(logs, "stderr", ""))
+                    for part in (
+                        getattr(logs, "stdout", ""),
+                        getattr(logs, "stderr", ""),
+                    )
                     if part
                 )
                 observation["logs"] = (text or "")[-8000:]
@@ -727,6 +740,7 @@ def _safe_source_member(raw_path: str) -> str:
         )
     return candidate
 
+
 def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
     """Resolve frozen world/scenario authoring inputs for the in-sandbox v2 producer.
 
@@ -734,12 +748,29 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
     its schema/scenarios and deterministically derives runtime topology from the newly acquired
     source. It never trusts or forwards an old manifest.
     """
+    metadata = (job.payload or {}).get("metadata") or {}
+    object_key = str(metadata.get("authoring_object_key") or "").strip()
+    if object_key:
+        response = None
+        try:
+            response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+            return response.read()
+        except Exception as exc:
+            raise HostedHarnessError(
+                "authoring_artifacts_not_found",
+                "the frozen ALK authoring artifacts could not be loaded",
+                status_code=422,
+            ) from exc
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+
     base = getattr(settings, "ALK_HOSTED_BUNDLE_DIR", "")
     if not base:
         return None
     payload = job.payload or {}
     source = payload.get("source") or {}
-    metadata = payload.get("metadata") or {}
     # Uploaded folders have no repository slug. ``authoring_key`` is the stable identity of the
     # frozen contract/world/scenario output produced before dispatch; a source UUID is accepted as
     # a final fallback for callers that store those outputs alongside the uploaded archive.
@@ -804,6 +835,122 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
             tar.add(path, arcname=path.relative_to(bundle_dir).as_posix())
     return archive.getvalue()
 
+
+def pack_authoring_archive(authoring_root: Path) -> bytes:
+    """Pack only the frozen ALK outputs consumed by ``bundle_author_v2``."""
+    files: list[Path] = []
+    for name in (
+        "schema.sql",
+        "store.json",
+        "world.sqlite",
+        "collections.json",
+        "contract.json",
+        "simulator_prompt.md",
+    ):
+        path = authoring_root / name
+        if path.is_file() and not path.is_symlink():
+            files.append(path)
+    for directory_name in ("scenarios", "handlers"):
+        directory = authoring_root / directory_name
+        if directory.is_dir() and not directory.is_symlink():
+            files.extend(
+                path
+                for path in sorted(directory.rglob("*"))
+                if path.is_file() and not path.is_symlink()
+            )
+    if not (authoring_root / "contract.json").is_file():
+        raise HostedHarnessError(
+            "agent_contract_missing",
+            "ALK authoring completed without an agent contract",
+            status_code=422,
+        )
+    if not (authoring_root / "scenarios").is_dir():
+        raise HostedHarnessError(
+            "scenario_artifacts_missing",
+            "ALK authoring completed without scenario artifacts",
+            status_code=422,
+        )
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        for path in sorted(files):
+            tar.add(path, arcname=path.relative_to(authoring_root).as_posix())
+    return archive.getvalue()
+
+
+def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str, Any]:
+    """Resolve ``auto`` only when frozen authoring evidence is unambiguous.
+
+    Explicit user choices remain authoritative. For the repository-hosted voice lane, require
+    both a voice contract and the complete LiveKit credential triplet before selecting LiveKit.
+    Bundle compilation and guest dispatch then consume the same concrete connector.
+    """
+    resolved = dict(payload)
+    agent = dict(resolved.get("agent") or {})
+    if str(agent.get("connector") or "auto").lower() != "auto":
+        return resolved
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            member = archive.extractfile("contract.json")
+            contract = json.load(member) if member is not None else {}
+    except (KeyError, tarfile.TarError, json.JSONDecodeError, OSError, TypeError):
+        return resolved
+
+    aliases = {str(alias).upper() for alias in (agent.get("secret_refs") or {})}
+    required = {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
+    if str(contract.get("modality") or "").lower() == "voice" and required <= aliases:
+        agent["connector"] = "livekit"
+        resolved["agent"] = agent
+    return resolved
+
+
+def prepare_dispatch_payload(
+    payload: dict[str, Any], secrets_map: dict[str, str]
+) -> dict[str, Any]:
+    """Add non-secret connector configuration derived from run-scoped secrets.
+
+    Hosted users supply ``LIVEKIT_URL`` beside the LiveKit key pair. The target agent needs the
+    uppercase environment alias, while the ALK caller contract reads lowercase
+    ``agent.config.livekit_url``. Mirror only the public endpoint into the ephemeral job document;
+    API keys and secret values remain exclusively in ``secrets.json`` and the stored job payload is
+    never mutated.
+    """
+    dispatched = dict(payload)
+    agent = dict(dispatched.get("agent") or {})
+    config = dict(agent.get("config") or {})
+    if (
+        str(agent.get("connector") or "").lower() == "livekit"
+        and not config.get("livekit_url")
+        and secrets_map.get("LIVEKIT_URL")
+    ):
+        config["livekit_url"] = secrets_map["LIVEKIT_URL"]
+        agent["config"] = config
+        dispatched["agent"] = agent
+    return dispatched
+
+
+def store_authoring_archive(job: HostedHarnessJob, body: bytes) -> str:
+    """Persist fresh authoring output and attach its opaque key to the hosted job."""
+    object_key = f"harness-authoring/{job.organization_id}/{job.id}.tar.gz"
+    client = get_storage_client()
+    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=object_key,
+        data=io.BytesIO(body),
+        length=len(body),
+        content_type="application/gzip",
+    )
+    payload = resolve_authored_connector(dict(job.payload or {}), body)
+    metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_object_key"] = object_key
+    metadata["authoring_mode"] = "fresh"
+    payload["metadata"] = metadata
+    job.payload = payload
+    job.current_stage = "validating_scenarios"
+    job.state = HostedHarnessJob.State.ADMITTED
+    job.save(update_fields=["payload", "current_stage", "state", "updated_at"])
+    return object_key
 
 
 def store_source_archive(organization, files, paths, name: str) -> dict[str, Any]:

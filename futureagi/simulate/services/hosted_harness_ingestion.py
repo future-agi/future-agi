@@ -149,16 +149,35 @@ def ingest_result_receipt(
                     "a different receipt is already accepted for this scenario",
                     status_code=409,
                 )
-            existing.delete()
-        receipt = HostedHarnessReceipt.no_workspace_objects.create(
-            job=attempt.job,
-            attempt=attempt,
-            scenario=registration,
-            attempt_number=attempt.attempt_number,
-            digest=supplied_digest,
-            status=body["status"],
-            body=_json_ready(body),
-        )
+            # BaseModel.delete() is a soft delete, so delete-then-create still violates the
+            # one-latest-receipt-per-job/scenario database constraint. Replace the older attempt
+            # atomically in place instead.
+            existing.attempt = attempt
+            existing.attempt_number = attempt.attempt_number
+            existing.digest = supplied_digest
+            existing.status = body["status"]
+            existing.body = _json_ready(body)
+            existing.save(
+                update_fields=[
+                    "attempt",
+                    "attempt_number",
+                    "digest",
+                    "status",
+                    "body",
+                    "updated_at",
+                ]
+            )
+            receipt = existing
+        else:
+            receipt = HostedHarnessReceipt.no_workspace_objects.create(
+                job=attempt.job,
+                attempt=attempt,
+                scenario=registration,
+                attempt_number=attempt.attempt_number,
+                digest=supplied_digest,
+                status=body["status"],
+                body=_json_ready(body),
+            )
         _apply_receipt_to_call(registration, body)
         update_execution_counts(attempt.job)
         return receipt, True

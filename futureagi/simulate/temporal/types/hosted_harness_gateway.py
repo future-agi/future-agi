@@ -17,6 +17,13 @@ class HostedHarnessGatewayOutput:
 
 
 @dataclass(frozen=True)
+class HostedHarnessAuthoringOutput:
+    ready: bool
+    state: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
 class HostedHarnessAttemptInput:
     attempt_id: str
 

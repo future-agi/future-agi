@@ -77,6 +77,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "failure": job.failure,
         },
         "events": events,
+        "stage_outputs": job.stage_outputs or [],
     }
 
 
