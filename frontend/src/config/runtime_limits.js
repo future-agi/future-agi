@@ -35,19 +35,19 @@ export function formatRuntimeSeconds(milliseconds) {
 
 export const INTERACTIVE_REQUEST_TIMEOUT_MS = readBoundedRuntimeInteger(
   "VITE_INTERACTIVE_REQUEST_TIMEOUT_MS",
-  9_000,
+  30_000,
   { minimum: 1_000, maximum: 60_000 },
 );
 
 export const ANALYTICS_REQUEST_TIMEOUT_MS = readBoundedRuntimeInteger(
   "VITE_ANALYTICS_REQUEST_TIMEOUT_MS",
-  9_500,
+  30_000,
   { minimum: 1_000, maximum: 60_000 },
 );
 
 export const AGGREGATION_REQUEST_TIMEOUT_MS = readBoundedRuntimeInteger(
   "VITE_AGGREGATION_REQUEST_TIMEOUT_MS",
-  9_800,
+  30_000,
   { minimum: 1_000, maximum: 60_000 },
 );
 
@@ -75,7 +75,7 @@ export const AGGREGATION_POLL_TIMEOUT_MS = readAggregationPollTimeout();
 
 export const FILTER_VALUE_REQUEST_TIMEOUT_MS = readBoundedRuntimeInteger(
   "VITE_FILTER_VALUE_REQUEST_TIMEOUT_MS",
-  4_800,
+  30_000,
   { minimum: 100, maximum: 60_000 },
 );
 
@@ -114,6 +114,22 @@ export const CURSOR_MAX_EMPTY_CONTINUATIONS = readBoundedRuntimeInteger(
   "VITE_CURSOR_MAX_EMPTY_CONTINUATIONS",
   12,
   { minimum: 1, maximum: 128 },
+);
+
+// Cursor pages are sequential: page N returns the opaque cursor required by
+// page N+1. Keep one datasource request in flight and retain only a small
+// window of rendered blocks so long scroll sessions cannot grow the tab heap
+// without bound. Both values remain runtime-overridable for measured tuning.
+export const OBSERVE_GRID_MAX_CONCURRENT_REQUESTS = readBoundedRuntimeInteger(
+  "VITE_OBSERVE_GRID_MAX_CONCURRENT_REQUESTS",
+  1,
+  { minimum: 1, maximum: 4 },
+);
+
+export const OBSERVE_GRID_MAX_BLOCKS_IN_CACHE = readBoundedRuntimeInteger(
+  "VITE_OBSERVE_GRID_MAX_BLOCKS_IN_CACHE",
+  5,
+  { minimum: 1, maximum: 100 },
 );
 
 export const CHUNK_IMPORT_TIMEOUT_MS = readBoundedRuntimeInteger(

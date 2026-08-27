@@ -447,12 +447,10 @@ _DASHBOARD_TRACE_MAX_CONCURRENT_METRICS = (
 )
 _DASHBOARD_EXACT_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 
-# Property/value pickers have a stricter five-second interaction contract than
-# the general analytics surface. Begin the request-owned wall before project
-# and cursor preparation, leaving one second for response construction and
-# transport. Exhaustion returns an advancing cursor over the same unconsumed
-# interval, so the smaller wall changes page density, never exactness or
-# retained-history reachability.
+# Property/value pickers use the reviewed environment-backed interaction wall.
+# Begin that request-owned wall before project and cursor preparation.
+# Exhaustion returns an advancing cursor over the same unconsumed interval, so
+# changing the wall affects page density, never exactness or retained reach.
 _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS = settings.DASHBOARD_FILTER_VALUE_WALL_MS
 _FILTER_VALUE_BATCH_CURSOR_RESOURCE = "dashboard_filter_value_project_batches"
 _FILTER_VALUE_BATCH_CURSOR_MARKER = "project_batches_v1"

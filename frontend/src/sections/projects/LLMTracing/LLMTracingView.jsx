@@ -3995,9 +3995,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               viewMode={effectiveViewMode}
               onViewModeChange={setViewMode}
               hasEvalFilter={hasEvalFilter}
-              onToggleEvalFilter={() =>
-                setHasEvalFilter((current) => !current)
-              }
+              onToggleEvalFilter={() => setHasEvalFilter((current) => !current)}
               showEvalToggle={
                 !!columnKey &&
                 columns[columnKey]?.some(
@@ -4901,7 +4899,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     canonicalOrderRef={canonicalTraceOrderRef}
                     canonicalColumnsRef={canonicalTraceColumnsRef}
                     showErrors={showErrors}
-                    enabled={traceListProjectReady && selectedTab === "trace"}
+                    enabled={
+                      traceListProjectReady &&
+                      selectedTab === "trace" &&
+                      selectedGraph === "primary"
+                    }
                   />
                 </Suspense>
               </Box>
@@ -5004,7 +5006,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="primary"
-                    enabled={traceListProjectReady && selectedTab === "spans"}
+                    enabled={
+                      traceListProjectReady &&
+                      selectedTab === "spans" &&
+                      selectedGraph === "primary"
+                    }
                   />
                 </Suspense>
               </Box>

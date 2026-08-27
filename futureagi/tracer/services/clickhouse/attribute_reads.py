@@ -27,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
+from django.conf import settings
 
 from tracer.services.clickhouse.attribute_cursor_state import (
     ATTRIBUTE_CURSOR_STATE_MAX_DIGESTS,
@@ -56,21 +57,18 @@ JsonScalar = str | int | float | bool
 AttributeValue = str | int | float | bool | tuple[JsonScalar, ...]
 
 ATTRIBUTE_READ_HORIZON_DAYS = (7, 14, 30, 180, 365)
-# Attribute inventory and value reads reserve HTTP serialization/transport time
-# inside the product's ten-second SLA. Each selector owns at most eight seconds.
-# Every statement receives only the operation's
+# Attribute inventory and value reads share the reviewed, environment-backed
+# filter-value wall. Every statement receives only the operation's
 # remaining time; finite query-count, candidate, byte, memory, and result caps
 # continue to bound the work independently of source-row volume.
-ATTRIBUTE_READ_WALL_TIMEOUT_MS = 8_000
-ATTRIBUTE_READ_QUERY_TIMEOUT_MS = 8_000
-ATTRIBUTE_READ_EXACT_KEY_QUERY_TIMEOUT_MS = 8_000
-# Interactive property pickers have a stricter product SLA than the shared
-# compatibility/sample reads above.  Reserve a full second for Django/DRF,
-# cursor-state persistence, serialization, and transport by bounding the
-# selector itself to four seconds.  This is a per-request work budget, not a
-# data or pagination limit: cursor reads publish only proven progress and keep
-# the same frozen retained window reachable through exact continuations.
-ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS = 4_000
+ATTRIBUTE_READ_WALL_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
+ATTRIBUTE_READ_QUERY_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
+ATTRIBUTE_READ_EXACT_KEY_QUERY_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
+# Property picker requests use the same reviewed dashboard wall across Observe,
+# Tasks, Annotations, Evals, Users, and dashboard widgets. This is a per-request
+# work budget, not a data or pagination limit: cursor reads publish only proven
+# progress and retain the same frozen window across exact continuations.
+ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS = settings.DASHBOARD_FILTER_VALUE_WALL_MS
 # Keep one operation below the production low-load harness ceiling (32) even
 # when a typed value page needs candidate, version-certificate, and hydration
 # queries. Candidate-page caps bound discovery breadth; this separate ceiling
@@ -78,10 +76,10 @@ ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS = 4_000
 ATTRIBUTE_READ_MAX_QUERY_COUNT = 30
 # JSON overflow has no key skip index, but it still follows the one shared
 # operation deadline rather than imposing a smaller data-dependent cutoff.
-ATTRIBUTE_READ_JSON_QUERY_TIMEOUT_MS = 8_000
+ATTRIBUTE_READ_JSON_QUERY_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
 # The active-part lower bound is only a pagination accelerator: Unix epoch is
 # the conservative lossless fallback. Keep this metadata probe short so it
-# cannot consume the authoritative cursor read's shared eight-second wall.
+# cannot consume the authoritative cursor read's configured wall.
 ATTRIBUTE_READ_METADATA_TIMEOUT_MS = 750
 ATTRIBUTE_READ_FALLBACK_RETAINED_START = datetime(1970, 1, 1, tzinfo=UTC)
 # Production A/B on the largest US project showed that one-day and 12-hour
@@ -109,7 +107,7 @@ ATTRIBUTE_READ_TARGETED_CANDIDATE_PAGE_LIMIT = 6
 # First probes cover all adaptive bands before these pages run round-robin, so a
 # dense recent week cannot hide an older value. A first sample that already has
 # usable values remains a visibly degraded sample instead of paying for a full
-# global sort. The eight-second wall deadline remains the tighter production cap.
+# global sort. The configured wall deadline remains the production cap.
 ATTRIBUTE_READ_VALUE_CANDIDATE_PAGE_LIMIT = 6
 ATTRIBUTE_READ_VALUE_TOTAL_CANDIDATE_PAGE_LIMIT = 15
 ATTRIBUTE_READ_MAX_KEYS = 1_000
@@ -184,7 +182,7 @@ ATTRIBUTE_VALUE_CURSOR_DUPLICATE_ONLY_MAX_CANDIDATE_PAGES = (
 # candidate in that half-open physical slice.  Grow only after such a proof so
 # sparse retained history does not require one public cursor round-trip per
 # day.  The 60-day ceiling still exhausts a frozen 365-day window in a small,
-# finite number of statements, while the selector's independent eight-second /
+# finite number of statements, while the selector's independent configured
 # 30-query ceilings remain the hard request bound.
 ATTRIBUTE_VALUE_CURSOR_MAX_EMPTY_SEGMENT = timedelta(days=60)
 # A widened physical candidate slice is an optional accelerator.  If
@@ -360,7 +358,7 @@ _JSON_VALUE_CANDIDATE_SETTINGS: dict[str, Any] = {
 
 # A single indexed Map granule on the largest production tenant exceeds the
 # old low read-volume guard even for a 30-second temporal slice. Cursor value
-# reads remain single-threaded and share the eight-second wall; the common 36 GiB
+# reads remain single-threaded and share the configured wall; the common 36 GiB
 # memory/read ceilings let ClickHouse finish that already-selected granule.
 _ATTRIBUTE_VALUE_PROOF_MAP_SETTINGS: dict[str, Any] = {
     "max_bytes_to_read": 36 * 1024 * _MIB,
@@ -1225,7 +1223,7 @@ _LATEST_CARDINALITY_SQL = """
 class AttributeReadSelector:
     """Thin typed selector shared by every production attribute picker.
 
-    Each public operation gets one eight-second wall budget shared by all of its
+    Each public operation gets one configured wall budget shared by all of its
     adaptive candidate and latest-state replay queries. Default-horizon reads
     keep the existing finite band/page caps; caller-supplied windows are split
     into adjacent six-hour probes under the same whole-operation deadline. Common
@@ -4905,7 +4903,7 @@ class AttributeReadSelector:
         # acquiring a larger finite identity prefix costs roughly the same
         # source read as 64 identities while yielding a useful value page.
         # Keep tiny/untyped/search pages on the conservative seed and
-        # retain the exact replay + eight-second request wall.
+        # retain the exact replay plus configured request wall.
         dense_typed_oversample = bool(
             key == "call_id"
             and typed_cursor_read

@@ -159,7 +159,7 @@ describe("queryReadState", () => {
     expect(AGGREGATION_POLL_TIMEOUT_MS).toBeGreaterThan(
       AGGREGATION_REQUEST_TIMEOUT_MS,
     );
-    expect(AGGREGATION_REQUEST_TIMEOUT_MS).toBeLessThan(10_000);
+    expect(AGGREGATION_REQUEST_TIMEOUT_MS).toBe(30_000);
     expect(
       isAggregationPollBudgetExhausted({
         attempt: AGGREGATION_POLL_MAX_ATTEMPTS - 1,

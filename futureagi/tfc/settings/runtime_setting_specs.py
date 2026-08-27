@@ -189,8 +189,8 @@ DATASET_READ_SETTING_SPECS = {
 INTERACTIVE_READ_SETTING_SPECS = {
     **_specs(
         (
-            ("INTERACTIVE_READ_DEFAULT_WALL_MS", 8_500, 100, 60_000),
-            ("INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS", 9_500, 100, 60_000),
+            ("INTERACTIVE_READ_DEFAULT_WALL_MS", 30_000, 100, 60_000),
+            ("INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS", 30_000, 100, 60_000),
             ("INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE", 100, 1, 500),
             ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", 30, 1, 3_660),
             ("PG_CONNECT_TIMEOUT_SECONDS", 1, 1, 5),
@@ -263,7 +263,7 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 64 * 1024,
                 64 * 1024**2,
             ),
-            ("DASHBOARD_FILTER_VALUE_WALL_MS", 4_000, 100, 10_000),
+            ("DASHBOARD_FILTER_VALUE_WALL_MS", 30_000, 100, 60_000),
             ("DASHBOARD_TRACE_READ_MAX_THREADS", 4, 1, 16),
             (
                 "DASHBOARD_TRACE_READ_MAX_BYTES",
@@ -327,7 +327,7 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("GRAPH_EVENT_LIMIT", 2_000, 1, 100_000),
             ("GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT", 40, 1, 4_096),
             ("GRAPH_SPAN_METRIC_BATCH_SIZE", 1_024, 1, 4_096),
-            ("FILTER_VALUE_READ_TIMEOUT_MS", 8_000, 100, 60_000),
+            ("FILTER_VALUE_READ_TIMEOUT_MS", 30_000, 100, 60_000),
             ("FILTER_VALUE_CURSOR_MIN_SEGMENT_SECONDS", 5, 1, 300),
             # A five-minute system-value continuation read crossed 1 GiB and
             # the four-second picker wall on a production-scale project. Start

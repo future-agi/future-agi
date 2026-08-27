@@ -45,6 +45,22 @@ def test_numeric_settings_accept_mapping_and_object_overrides():
     assert values["DASHBOARD_FILTER_VALUE_LEGACY_MAX"] == 500
 
 
+def test_interactive_read_profile_accepts_a_thirty_second_filter_value_wall():
+    values = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={
+            "INTERACTIVE_READ_DEFAULT_WALL_MS": "30000",
+            "INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS": "30000",
+            "DASHBOARD_FILTER_VALUE_WALL_MS": "30000",
+            "FILTER_VALUE_READ_TIMEOUT_MS": "30000",
+        },
+    )
+
+    validate_interactive_read_settings(values)
+    assert values["DASHBOARD_FILTER_VALUE_WALL_MS"] == 30_000
+    assert values["FILTER_VALUE_READ_TIMEOUT_MS"] == 30_000
+
+
 def test_blank_source_value_uses_fallback_before_default():
     values = load_numeric_settings(
         INTERACTIVE_READ_SETTING_SPECS,

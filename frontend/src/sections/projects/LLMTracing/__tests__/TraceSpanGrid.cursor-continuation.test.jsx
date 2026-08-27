@@ -368,12 +368,15 @@ describe.each([
     const firstPage = makeParams(0, 25);
     firstPage.api = api;
     await getRows(firstPage);
-    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+    // Cursor pages are sequential. Settling page one must not issue an eager
+    // page-two request while the grid is idle.
+    expect(getMock).toHaveBeenCalledTimes(1);
 
     const secondPage = makeParams(25, 50);
     secondPage.api = api;
     await getRows(secondPage);
 
+    expect(getMock).toHaveBeenCalledTimes(2);
     expect(getMock.mock.calls[1][1].params).toEqual(
       expect.objectContaining({
         cursor: "same-query-page-2",
@@ -413,6 +416,63 @@ describe.each([
     gridState.api = null;
     gridState.props = null;
     resetMetricIds.mockReset();
+  });
+
+  it("shares simultaneous reads for one block and stays idle after settlement", async () => {
+    const rows = Array.from({ length: 25 }, (_, index) =>
+      kind === "trace"
+        ? { trace_id: `trace-${index}`, project_id: "project-1" }
+        : {
+            span_id: `span-${index}`,
+            trace_id: `trace-${index}`,
+            project_id: "project-1",
+            start_time: `2026-08-08T00:00:${String(index).padStart(2, "0")}Z`,
+          },
+    );
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+
+    renderGrid(kind);
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    const first = makeParams();
+    const duplicate = makeParams();
+    let firstRead;
+    let duplicateRead;
+    act(() => {
+      firstRead = gridState.props.serverSideDatasource.getRows(first);
+      duplicateRead = gridState.props.serverSideDatasource.getRows(duplicate);
+    });
+
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+    expect(getMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveResponse(
+        listResponse({
+          rows,
+          hasMore: true,
+          nextCursor: "next-block",
+          totalRows: 26,
+          lowerBound: true,
+        }),
+      );
+      await Promise.all([firstRead, duplicateRead]);
+    });
+
+    expect(first.success).toHaveBeenCalledOnce();
+    expect(duplicate.success).toHaveBeenCalledOnce();
+    expect(first.fail).not.toHaveBeenCalled();
+    expect(duplicate.fail).not.toHaveBeenCalled();
+    // No eager cursor prefetch means an idle grid cannot start a request loop.
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(gridState.props.maxConcurrentDatasourceRequests).toBe(1);
+    expect(gridState.props.maxBlocksInCache).toBe(5);
   });
 
   it("pauses neutrally and resumes the retained checkpoint after one click", async () => {

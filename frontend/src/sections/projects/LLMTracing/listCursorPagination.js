@@ -185,6 +185,37 @@ export const isListCursorProtocolError = (error) =>
   error?.code === MIXED_VERSION_ERROR_CODE;
 
 /**
+ * Share one exact visible-page read between equivalent AG Grid requests.
+ *
+ * AG Grid can ask for the same server-side block while its first read is still
+ * in flight. Exact cursor reads mutate one forward-only checkpoint, so running
+ * those requests independently duplicates backend work and races that state.
+ * The caller owns this map per datasource generation and clears it on reset.
+ */
+export const shareInFlightListPage = ({ inFlight, key, load }) => {
+  if (!(inFlight instanceof Map)) {
+    throw new Error("Exact list in-flight map is required");
+  }
+  if (typeof key !== "string" || key.length === 0) {
+    throw new Error("Exact list in-flight key is required");
+  }
+  if (typeof load !== "function") {
+    throw new Error("Exact list page loader is required");
+  }
+
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+
+  const request = Promise.resolve().then(load);
+  inFlight.set(key, request);
+  const clear = () => {
+    if (inFlight.get(key) === request) inFlight.delete(key);
+  };
+  request.then(clear, clear);
+  return request;
+};
+
+/**
  * Keep the opaque continuation chain for one immutable grid query.
  *
  * Cursor pagination is opt-in. The first response decides the mode: explicit
@@ -210,20 +241,55 @@ export const createListCursorPagination = ({
   const cursorByPage = new Map([[0, null]]);
   const transportCursorByPage = new Map();
   const bufferedVisiblePageByPage = new Map();
-  // One immutable query generation owns one forward-only signed cursor chain.
-  // A checkpoint may move from a transport continuation to the next visible
-  // page, but the API must never return an already-issued checkpoint again.
-  // Keeping this global to the generation catches both A -> A no-progress and
-  // A -> B -> A cycles even when they cross visible-page boundaries.
-  const seenCursors = new Set();
+  // A bounded AG Grid cache may legitimately re-read an evicted block. Record
+  // the proven cursor transition graph so an identical replay is idempotent,
+  // while a non-advancing cursor, cycle, or changed successor still fails
+  // closed. The symbol represents the cursor-less first transport page.
+  const initialCursor = Symbol("initial-list-cursor");
+  const cursorSuccessorByInput = new Map();
 
-  const rememberNewCursor = (cursor) => {
-    if (seenCursors.has(cursor)) {
+  const inputCursorForPage = (pageNumber) => {
+    const cursor =
+      transportCursorByPage.get(pageNumber) || cursorByPage.get(pageNumber);
+    if (cursor) return cursor;
+    return pageNumber === 0 ? initialCursor : null;
+  };
+
+  const recordCursorTransition = (pageNumber, nextCursor) => {
+    const inputCursor = inputCursorForPage(pageNumber);
+    if (inputCursor === null) {
+      throw createListCursorProtocolError(
+        "Continuation cursor is unavailable for this page",
+      );
+    }
+    if (inputCursor === nextCursor) {
       throw createListCursorProtocolError(
         "List API returned a repeated continuation cursor",
       );
     }
-    seenCursors.add(cursor);
+
+    const provenSuccessor = cursorSuccessorByInput.get(inputCursor);
+    if (provenSuccessor !== undefined) {
+      if (provenSuccessor !== nextCursor) {
+        throw createListCursorProtocolError(
+          "List API changed a proven continuation cursor",
+        );
+      }
+      return;
+    }
+
+    const traversed = new Set();
+    let cursor = nextCursor;
+    while (cursor !== undefined && !traversed.has(cursor)) {
+      if (cursor === inputCursor) {
+        throw createListCursorProtocolError(
+          "List API returned a repeated continuation cursor",
+        );
+      }
+      traversed.add(cursor);
+      cursor = cursorSuccessorByInput.get(cursor);
+    }
+    cursorSuccessorByInput.set(inputCursor, nextCursor);
   };
 
   const advanceGeneration = () => {
@@ -239,7 +305,7 @@ export const createListCursorPagination = ({
     cursorByPage.set(0, null);
     transportCursorByPage.clear();
     bufferedVisiblePageByPage.clear();
-    seenCursors.clear();
+    cursorSuccessorByInput.clear();
   };
 
   // An initial request rejected by a strict pre-cursor serializer is still the
@@ -251,7 +317,7 @@ export const createListCursorPagination = ({
     cursorByPage.set(0, null);
     transportCursorByPage.clear();
     bufferedVisiblePageByPage.clear();
-    seenCursors.clear();
+    cursorSuccessorByInput.clear();
   };
 
   const disableCursor = () => {
@@ -338,7 +404,7 @@ export const createListCursorPagination = ({
           "List response omitted its continuation cursor",
         );
       }
-      rememberNewCursor(metadata.next_cursor);
+      recordCursorTransition(pageNumber, metadata.next_cursor);
       cursorByPage.set(pageNumber + 1, metadata.next_cursor);
       transportCursorByPage.delete(pageNumber);
       return;
@@ -368,7 +434,7 @@ export const createListCursorPagination = ({
       );
     }
     mode = CURSOR_MODE;
-    rememberNewCursor(metadata.next_cursor);
+    recordCursorTransition(pageNumber, metadata.next_cursor);
     transportCursorByPage.set(pageNumber, metadata.next_cursor);
     cursorByPage.delete(pageNumber + 1);
   };

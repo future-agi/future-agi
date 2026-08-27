@@ -121,8 +121,8 @@ PROJECT_A = "c4de3065-12b5-488c-a814-aa1c8e3f856f"
 PROJECT_B = "790063cd-bc6a-4ad0-866b-35f11b5bc29b"
 
 
-def test_production_attribute_reads_reserve_transport_inside_ten_second_sla():
-    assert ATTRIBUTE_READ_WALL_TIMEOUT_MS == 8_000
+def test_production_attribute_reads_use_reviewed_thirty_second_wall():
+    assert ATTRIBUTE_READ_WALL_TIMEOUT_MS == 30_000
     assert ATTRIBUTE_READ_QUERY_TIMEOUT_MS == ATTRIBUTE_READ_WALL_TIMEOUT_MS
     assert ATTRIBUTE_READ_EXACT_KEY_QUERY_TIMEOUT_MS == ATTRIBUTE_READ_WALL_TIMEOUT_MS
     assert ATTRIBUTE_READ_JSON_QUERY_TIMEOUT_MS == ATTRIBUTE_READ_WALL_TIMEOUT_MS
@@ -136,8 +136,7 @@ def test_production_attribute_reads_reserve_transport_inside_ten_second_sla():
     assert ATTRIBUTE_READ_METADATA_TIMEOUT_MS < ATTRIBUTE_READ_WALL_TIMEOUT_MS
     assert ATTRIBUTE_VALUE_CURSOR_INITIAL_SEGMENT == timedelta(seconds=5)
     assert ATTRIBUTE_KEY_CURSOR_DENSE_RETRY_MIN_SEGMENT == timedelta(seconds=5)
-    assert ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS == 4_000
-    assert ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS < 5_000
+    assert ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS == 30_000
 
 
 def test_interactive_property_selector_wall_leaves_http_transport_headroom():
@@ -6776,7 +6775,7 @@ def test_filter_value_cursor_four_second_wall_returns_only_proven_progress():
     read = AttributeReadSelector(
         RecordingExecutor(respond),
         now=NOW,
-        wall_timeout_ms=ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS,
+        wall_timeout_ms=4_000,
         clock=clock,
     ).read_value_cursor_page(
         [PROJECT_A],
@@ -6823,7 +6822,7 @@ def test_filter_value_cursor_four_second_wall_never_skips_unproven_frontier():
         AttributeReadSelector(
             RecordingExecutor(respond),
             now=NOW,
-            wall_timeout_ms=ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS,
+            wall_timeout_ms=4_000,
             clock=clock,
         ).read_value_cursor_page(
             [PROJECT_A],
@@ -10473,7 +10472,9 @@ def test_attribute_retained_bound_budget_falls_back_without_starving_cursor(
     assert capacity.timeouts[0] == ATTRIBUTE_READ_METADATA_TIMEOUT_MS / 1000
     assert capacity.timeouts[1] > capacity.timeouts[0]
     assert any("segment_start" in call.params for call in executor.calls)
-    assert all(0 < call.timeout_ms <= 8_000 for call in executor.calls)
+    assert all(
+        0 < call.timeout_ms <= ATTRIBUTE_READ_WALL_TIMEOUT_MS for call in executor.calls
+    )
     assert clock.value < 101.0
     assert page.metadata.query_count == len(executor.calls)
 
@@ -11358,7 +11359,7 @@ def test_span_attribute_key_cursor_four_second_wall_publishes_prior_proof(
     selector = AttributeReadSelector(
         RecordingExecutor(),
         now=NOW,
-        wall_timeout_ms=ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS,
+        wall_timeout_ms=4_000,
         clock=clock,
         typed_only=True,
         json_attribute_mode="structured",

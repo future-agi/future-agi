@@ -224,7 +224,7 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     const firstListConfig = mocks.get.mock.calls.find(
       ([url]) => url === endpoints.runTests.list,
     )[1];
-    expect(firstListConfig.timeout).toBe(9000);
+    expect(firstListConfig.timeout).toBe(30_000);
     expect(firstListConfig.signal).toBeInstanceOf(AbortSignal);
     expect(firstListConfig.params).toEqual({
       page: 1,
@@ -264,7 +264,7 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     );
     expect(previewRequests).toHaveLength(4);
     for (const [, config] of previewRequests) {
-      expect(config.timeout).toBe(9000);
+      expect(config.timeout).toBe(30_000);
     }
     const callRequests = previewRequests.filter(
       ([url]) => url === endpoints.testExecutions.previewCalls("execution-1"),

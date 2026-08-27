@@ -1,4 +1,6 @@
-export const WIDGET_PREVIEW_MAX_WAIT_MS = 9000;
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+
+export const WIDGET_PREVIEW_MAX_WAIT_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
 
 export const getWidgetEditorLoadState = ({
   isEditing,

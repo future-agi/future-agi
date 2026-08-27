@@ -92,8 +92,8 @@ describe("widget editor terminal load states", () => {
 });
 
 describe("exact widget preview states", () => {
-  it("bounds preparation below the ten-second UX deadline", () => {
-    expect(WIDGET_PREVIEW_MAX_WAIT_MS).toBeLessThan(10_000);
+  it("allows a slow exact preview to use the reviewed analytics wall", () => {
+    expect(WIDGET_PREVIEW_MAX_WAIT_MS).toBe(30_000);
   });
 
   it.each([

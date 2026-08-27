@@ -52,6 +52,7 @@ const harness = vi.hoisted(() => {
       setOpenReplaySessionDrawer: vi.fn(),
     },
     testDetailState: { setTestDetailDrawerOpen: vi.fn() },
+    selectedGraph: "primary",
     selectedTab: "trace",
     traceStore: createStore({
       toggledNodes: [],
@@ -127,7 +128,11 @@ vi.mock("src/routes/hooks/use-url-state", async () => {
   return {
     useUrlState: (key, defaultValue) =>
       ReactModule.useState(
-        key === "selectedTab" ? harness.selectedTab : defaultValue,
+        key === "selectedTab"
+          ? harness.selectedTab
+          : key === "selectedGraph"
+            ? harness.selectedGraph
+            : defaultValue,
       ),
   };
 });
@@ -192,18 +197,23 @@ vi.mock("../states", async () => {
 vi.mock("../TraceGrid", async () => {
   const ReactModule = await import("react");
   return {
-    default: ReactModule.forwardRef(() => (
-      <button
-        type="button"
-        onClick={() =>
-          harness.traceStore.set({
-            selectAll: true,
-            toggledNodes: ["trace-excluded"],
-          })
-        }
+    default: ReactModule.forwardRef(({ compareType, enabled }, _ref) => (
+      <div
+        data-testid={`${compareType}-trace-grid`}
+        data-enabled={String(enabled)}
       >
-        Header select all traces
-      </button>
+        <button
+          type="button"
+          onClick={() =>
+            harness.traceStore.set({
+              selectAll: true,
+              toggledNodes: ["trace-excluded"],
+            })
+          }
+        >
+          Header select all traces
+        </button>
+      </div>
     )),
   };
 });
@@ -211,18 +221,23 @@ vi.mock("../TraceGrid", async () => {
 vi.mock("../SpanGrid", async () => {
   const ReactModule = await import("react");
   return {
-    default: ReactModule.forwardRef(() => (
-      <button
-        type="button"
-        onClick={() =>
-          harness.spanStore.set({
-            selectAll: true,
-            toggledNodes: [harness.spanExcludedPhysicalId],
-          })
-        }
+    default: ReactModule.forwardRef(({ compareType, enabled }, _ref) => (
+      <div
+        data-testid={`${compareType}-span-grid`}
+        data-enabled={String(enabled)}
       >
-        Header select all spans
-      </button>
+        <button
+          type="button"
+          onClick={() =>
+            harness.spanStore.set({
+              selectAll: true,
+              toggledNodes: [harness.spanExcludedPhysicalId],
+            })
+          }
+        >
+          Header select all spans
+        </button>
+      </div>
     )),
   };
 });
@@ -440,6 +455,7 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
   beforeEach(() => {
     window.localStorage?.clear();
     harness.addItems.mockReset();
+    harness.selectedGraph = "primary";
     harness.selectedTab = "trace";
     harness.validatedFilters = {
       primaryTraceFilter: [traceSystemFilter],
@@ -447,6 +463,28 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
     };
     harness.traceStore.reset();
     harness.spanStore.reset();
+  });
+
+  it("enables only the visible compare grid", async () => {
+    harness.selectedGraph = "compare";
+    await renderView();
+
+    expect(await screen.findByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
+    expect(screen.getByTestId("compare-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+    expect(screen.getByTestId("primary-span-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
+    expect(screen.getByTestId("compare-span-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
   });
 
   it("submits trace exclusions with mixed catalog, eval-only, and display filters", async () => {

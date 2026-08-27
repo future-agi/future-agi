@@ -449,7 +449,7 @@ def test_system_filter_value_cursor_receives_view_owned_deadline(monkeypatch):
     deadline_start.assert_called_once_with(
         dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
     )
-    assert dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS == 4_000
+    assert dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS == 30_000
     selector_factory.assert_called_once_with(
         typed_only=True,
         json_attribute_mode="arrays",

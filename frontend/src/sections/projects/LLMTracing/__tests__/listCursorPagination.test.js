@@ -13,6 +13,7 @@ import {
   LIST_CURSOR_MODES,
   requestListWithLegacyCursorFallback,
   resumeEmptyListPage,
+  shareInFlightListPage,
 } from "../listCursorPagination";
 
 describe("list cursor pagination", () => {
@@ -41,6 +42,48 @@ describe("list cursor pagination", () => {
       ...options,
     });
   };
+
+  it("shares an in-flight visible-page load and releases it after settlement", async () => {
+    const inFlight = new Map();
+    let resolveLoad;
+    const load = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve;
+        }),
+    );
+
+    const first = shareInFlightListPage({
+      inFlight,
+      key: "7:0",
+      load,
+    });
+    const duplicate = shareInFlightListPage({
+      inFlight,
+      key: "7:0",
+      load,
+    });
+
+    expect(duplicate).toBe(first);
+    await Promise.resolve();
+    expect(load).toHaveBeenCalledOnce();
+
+    resolveLoad("page");
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      "page",
+      "page",
+    ]);
+    await Promise.resolve();
+    expect(inFlight.has("7:0")).toBe(false);
+
+    await expect(
+      shareInFlightListPage({
+        inFlight,
+        key: "7:0",
+        load: () => Promise.resolve("fresh"),
+      }),
+    ).resolves.toBe("fresh");
+  });
 
   const legacyUnknownFieldError = (field = "cursor_mode") => ({
     response: {
@@ -398,7 +441,69 @@ describe("list cursor pagination", () => {
     ).toThrow("repeated continuation cursor");
   });
 
-  it("rejects a cursor replay even when it crosses visible pages", () => {
+  it("allows an evicted visible page to replay the same proven cursor edge", () => {
+    const pagination = createListCursorPagination();
+
+    pagination.recordResponse(0, {
+      has_more: true,
+      next_cursor: "page-1-start",
+    });
+
+    expect(() =>
+      pagination.recordResponse(0, {
+        has_more: true,
+        next_cursor: "page-1-start",
+      }),
+    ).not.toThrow();
+    expect(pagination.requestParams(1, { page_size: 25 })).toEqual({
+      page_size: 25,
+      cursor_mode: true,
+      cursor: "page-1-start",
+    });
+  });
+
+  it("re-loads an evicted exact block without corrupting its cursor chain", async () => {
+    const pagination = createListCursorPagination();
+    const response = exactResponse(
+      Array.from({ length: 25 }, (_, index) => ({ id: index + 1 })),
+      true,
+      "page-1-start",
+    );
+
+    const first = await loadExactPage({
+      pagination,
+      responses: [response],
+    });
+    const replay = await loadExactPage({
+      pagination,
+      responses: [response],
+    });
+
+    expect(replay.rows).toEqual(first.rows);
+    expect(pagination.requestParams(1, { page_size: 25 })).toEqual({
+      page_size: 25,
+      cursor_mode: true,
+      cursor: "page-1-start",
+    });
+  });
+
+  it("rejects a replay that changes a proven cursor edge", () => {
+    const pagination = createListCursorPagination();
+
+    pagination.recordResponse(0, {
+      has_more: true,
+      next_cursor: "page-1-start",
+    });
+
+    expect(() =>
+      pagination.recordResponse(0, {
+        has_more: true,
+        next_cursor: "different-page-1-start",
+      }),
+    ).toThrow("changed a proven continuation cursor");
+  });
+
+  it("rejects a continuation for a page without an input cursor", () => {
     const pagination = createListCursorPagination();
 
     pagination.recordEmptyContinuation(0, {
@@ -410,7 +515,7 @@ describe("list cursor pagination", () => {
         has_more: true,
         next_cursor: "page-scoped-token",
       }),
-    ).toThrow("repeated continuation cursor");
+    ).toThrow("unavailable for this page");
   });
 
   it("rejects a non-advancing next-page response cursor", () => {

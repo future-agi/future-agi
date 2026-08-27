@@ -22,8 +22,8 @@ NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 PROJECT_ID = "00000000-0000-4000-8000-000000000001"
 
 
-def test_system_filter_values_reserve_transport_inside_ten_second_sla():
-    assert FILTER_VALUE_READ_TIMEOUT_MS == 8_000
+def test_system_filter_values_use_the_reviewed_thirty_second_wall():
+    assert FILTER_VALUE_READ_TIMEOUT_MS == 30_000
 
 
 def _read(

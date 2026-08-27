@@ -48,6 +48,7 @@ import {
   loadExactListPage,
   retryServerSideCursorLoad,
   resumePendingListPage,
+  shareInFlightListPage,
 } from "./listCursorPagination";
 import ListCursorContinuationNotice from "./ListCursorContinuationNotice";
 import { getListReadMessage, getListTotalState } from "./listTotalMetadata";
@@ -60,6 +61,10 @@ import {
   getCanonicalColumnSnapshot,
   mergeColumnsWithAuthoritativeConfig,
 } from "./defaultColumns";
+import {
+  OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
+  OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
+} from "src/config/runtime_limits";
 
 const ROWS_LIMIT = 25;
 const traceRowIdentity = (row) => {
@@ -138,8 +143,7 @@ const TraceGrid = React.forwardRef(
       [columns],
     );
 
-    // Prefetch cache: stores next page data so scroll feels instant
-    const prefetchCache = useRef(new Map());
+    const inFlightPageLoads = useRef(new Map());
     const cursorPagination = useRef(createListCursorPagination());
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
@@ -148,7 +152,7 @@ const TraceGrid = React.forwardRef(
       }));
     const refreshGrid = useCallback(
       (purge = true) => {
-        prefetchCache.current.clear();
+        inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
@@ -279,7 +283,7 @@ const TraceGrid = React.forwardRef(
 
     const dataSource = useMemo(
       () => {
-        prefetchCache.current.clear();
+        inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
         return {
           getRows: async (params) => {
@@ -335,28 +339,24 @@ const TraceGrid = React.forwardRef(
                   ...(dateInterval && { interval: dateInterval }),
                 });
 
-              // Use prefetched data if available, otherwise fetch
-              let cached = prefetchCache.current.get(pageNumber);
-              prefetchCache.current.delete(pageNumber);
-              const exactPage = await loadExactListPage({
-                pagination: cursorPagination.current,
-                pageNumber,
-                targetRowCount: ROWS_LIMIT,
-                loadResponse: (signal) => {
-                  const prefetched = cached;
-                  cached = undefined;
-                  return (
-                    prefetched ||
-                    loadTraceObservePage(buildParams(pageNumber), signal)
-                  );
-                },
-                rowsFromResponse: (response) => response.data.table,
-                metadataFromResponse: (response) => response.data.metadata,
-                rowIdentity: traceRowIdentity,
-                isCurrent: () =>
-                  cursorPagination.current.isCurrent(requestGeneration),
-                nextResponse: (_cursor, signal) =>
-                  loadTraceObservePage(buildParams(pageNumber), signal),
+              const exactPage = await shareInFlightListPage({
+                inFlight: inFlightPageLoads.current,
+                key: `${requestGeneration}:${pageNumber}`,
+                load: () =>
+                  loadExactListPage({
+                    pagination: cursorPagination.current,
+                    pageNumber,
+                    targetRowCount: ROWS_LIMIT,
+                    loadResponse: (signal) =>
+                      loadTraceObservePage(buildParams(pageNumber), signal),
+                    rowsFromResponse: (response) => response.data.table,
+                    metadataFromResponse: (response) => response.data.metadata,
+                    rowIdentity: traceRowIdentity,
+                    isCurrent: () =>
+                      cursorPagination.current.isCurrent(requestGeneration),
+                    nextResponse: (_cursor, signal) =>
+                      loadTraceObservePage(buildParams(pageNumber), signal),
+                  }),
               });
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 // A newer filter/range owns the grid now. Do not let this stale
@@ -470,20 +470,6 @@ const TraceGrid = React.forwardRef(
                 });
                 if (ids.length > 0) setVisibleTraceIds(ids);
               }, 0);
-
-              // Prefetch next page so scroll feels instant
-              if (exactPage.canPrefetch) {
-                loadTraceObservePage(
-                  buildParams(pageNumber + 1),
-                  cursorPagination.current.cancellationSignal(),
-                )
-                  .then((res) => {
-                    if (cursorPagination.current.isCurrent(requestGeneration)) {
-                      prefetchCache.current.set(pageNumber + 1, res);
-                    }
-                  })
-                  .catch(() => {});
-              }
             } catch (error) {
               if (isListCursorContinuationLimitError(error)) {
                 // Keep the signed checkpoint and any existing rows. This is a
@@ -499,7 +485,7 @@ const TraceGrid = React.forwardRef(
                   error,
                 )
               ) {
-                prefetchCache.current.clear();
+                inFlightPageLoads.current.clear();
                 cursorPagination.current.disableCursor();
                 params.fail();
                 params.api?.refreshServerSide?.({ purge: true });
@@ -766,7 +752,8 @@ const TraceGrid = React.forwardRef(
           rowSelection={{ mode: "multiRow", enableClickSelection: false }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
-          maxBlocksInCache={undefined}
+          maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
+          maxConcurrentDatasourceRequests={OBSERVE_GRID_MAX_CONCURRENT_REQUESTS}
           rowBuffer={5}
           suppressServerSideFullWidthLoadingRow={true}
           rowModelType="serverSide"
