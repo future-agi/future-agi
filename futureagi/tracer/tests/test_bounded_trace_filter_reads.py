@@ -1785,10 +1785,37 @@ def test_long_window_scalar_trace_uses_exact_classifier_without_witness() -> Non
         == 10
     )
     assert builder.recommended_filter_page_hydration_reserve_ms() == 750
+    assert builder.fill_bounded_cursor_page_across_slices() is True
     assert builder.recommended_filter_classify_read_settings() == {
         "max_block_size": 2_048,
         "preferred_max_column_in_block_size_bytes": 1_048_576,
     }
+
+
+@pytest.mark.parametrize(
+    "builder_kwargs",
+    [
+        {"bounded_internal_scan": True, "bounded_identity_only": True},
+        {
+            "bounded_internal_scan": True,
+            "bounded_identity_only": True,
+            "bounded_bulk_scan": True,
+        },
+        {"bounded_sampling_salt": "sample", "bounded_sampling_rate": 10.0},
+        {"page_size": 501},
+    ],
+    ids=["internal", "bulk", "sampled", "oversized"],
+)
+def test_non_public_trace_readers_do_not_fill_cursor_pages_across_slices(
+    builder_kwargs: dict[str, object],
+) -> None:
+    builder = TraceListQueryBuilder(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(END - timedelta(days=14), END)],
+        **builder_kwargs,
+    )
+
+    assert builder.fill_bounded_cursor_page_across_slices() is False
 
 
 def test_long_window_attribute_plus_search_keeps_bounded_root_batch() -> None:

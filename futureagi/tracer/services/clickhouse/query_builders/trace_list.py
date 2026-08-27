@@ -1546,6 +1546,25 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         return not self._bounded_identity_only
 
+    def fill_bounded_cursor_page_across_slices(self) -> bool:
+        """Fill one public trace page before publishing a slice checkpoint.
+
+        Sparse filters can produce only a handful of matches in each finite
+        time slice.  Those matches are already exact and can safely accumulate
+        across adjacent slices inside the selector's existing request wall,
+        query-count, memory, and byte limits.  Internal, bulk, population-proof,
+        and sampled readers retain their smaller checkpoint contract.
+        """
+
+        return bool(
+            not self._bounded_internal_scan
+            and not self._bounded_identity_only
+            and not self._bounded_bulk_scan
+            and not self._bounded_population_proof
+            and self._bounded_sampling_rate is None
+            and 1 <= self.page_size <= 500
+        )
+
     @staticmethod
     def recommended_filter_page_hydration_reserve_ms() -> int:
         """Reserve one bounded statement for exact-root page hydration."""
