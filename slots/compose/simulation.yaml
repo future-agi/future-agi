@@ -1,0 +1,67 @@
+# Private hosted simulation runner. It uses the selected backend state tuple.
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  simulation:
+    container_name: ${SLOT_SIMULATION_NAME:?SLOT_SIMULATION_NAME is required}
+    build:
+      context: ${SLOT_WORKTREE:?SLOT_WORKTREE is required}
+      dockerfile: Dockerfile.simulation-runner.dev
+      args:
+        BACKEND_IMAGE: ${SLOT_BACKEND_IMAGE_REF:?SLOT_BACKEND_IMAGE_REF is required}
+    image: ${SLOT_SIMULATION_IMAGE:-futureagi/slot-simulation}:${SLOT_ID:?SLOT_ID is required}
+    working_dir: /app/backend
+    env_file:
+      - ${SLOT_ENV_FILE:?SLOT_ENV_FILE is required}
+    environment:
+      ENV_TYPE: local
+      DJANGO_SETTINGS_MODULE: tfc.settings.settings
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: simulation_runner
+      TEMPORAL_ALL_QUEUES: "false"
+      TEMPORAL_HOST: ${SLOT_TEMPORAL_HOST:-${SLOTS_TEMPORAL_NAME:-futureagi-slots-temporal}}:7233
+      TEMPORAL_NAMESPACE: ${SLOT_TEMPORAL_NAMESPACE:?SLOT_TEMPORAL_NAMESPACE is required}
+      PG_HOST: ${SLOT_PG_HOST:-${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}}
+      PG_PORT: "5432"
+      PG_DB: ${SLOT_PG_DB:?SLOT_PG_DB is required}
+      PG_USER: ${SLOTS_PG_USER:-futureagi}
+      PG_PASSWORD: ${SLOTS_PG_PASSWORD:-futureagi}
+      PGBOUNCER_HOST: ${SLOT_PG_HOST:-${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}}
+      PGBOUNCER_PORT: "5432"
+      CH_HOST: ${SLOT_CH_HOST:-${SLOTS_CLICKHOUSE_NAME:-futureagi-slots-clickhouse}}
+      CH_PORT: "9000"
+      CH_HTTP_PORT: "8123"
+      CH_DATABASE: ${SLOT_CH_DATABASE:?SLOT_CH_DATABASE is required}
+      CH25_DATABASE: ${SLOT_CH_DATABASE:?SLOT_CH_DATABASE is required}
+      REDIS_HOST: ${SLOT_REDIS_HOST:-${SLOTS_REDIS_NAME:-futureagi-slots-redis}}
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://${SLOT_REDIS_HOST:-${SLOTS_REDIS_NAME:-futureagi-slots-redis}}:6379/${SLOT_REDIS_DB:?SLOT_REDIS_DB is required}
+      REDIS_CACHE_URL: redis://${SLOT_REDIS_HOST:-${SLOTS_REDIS_NAME:-futureagi-slots-redis}}:6379/${SLOT_REDIS_CACHE_DB:?SLOT_REDIS_CACHE_DB is required}
+      REDIS_LOCK_URL: redis://${SLOT_REDIS_HOST:-${SLOTS_REDIS_NAME:-futureagi-slots-redis}}:6379/${SLOT_REDIS_LOCK_DB:?SLOT_REDIS_LOCK_DB is required}
+      CELERY_BROKER_URL: amqp://${SLOTS_RABBITMQ_USER:-user}:${SLOTS_RABBITMQ_PASSWORD:-password}@${SLOT_RABBITMQ_HOST:-${SLOTS_RABBITMQ_NAME:-futureagi-slots-rabbitmq}}:5672/${SLOT_RABBITMQ_VHOST:?SLOT_RABBITMQ_VHOST is required}
+      STORAGE_BACKEND: minio
+      S3_ENDPOINT_URL: http://${SLOT_MINIO_HOST:-${SLOTS_MINIO_NAME:-futureagi-slots-minio}}:9000
+      MINIO_URL: http://minio.${SLOT:?SLOT is required}.localhost:${SLOTS_HTTP_PORT:-80}
+      S3_ACCESS_KEY: ${SLOTS_MINIO_ROOT_USER:-futureagi}
+      S3_SECRET_KEY: ${SLOTS_MINIO_ROOT_PASSWORD:-futureagi}
+      S3_BUCKET: ${SLOT_MINIO_BUCKET:?SLOT_MINIO_BUCKET is required}
+      UPLOAD_BUCKET_NAME: ${SLOT_MINIO_BUCKET:?SLOT_MINIO_BUCKET is required}
+      ALK_RUNNER_API_URL: http://${SLOT_BACKEND_HOST:-${SLOT_BACKEND_NAME:-backend}}:80
+      FAST_STARTUP: "true"
+      HOSTED_RUNNER_ENABLED: "true"
+      ALK_RUNNER_MAX_CONCURRENCY: ${SLOT_SIMULATION_CONCURRENCY:-4}
+    volumes:
+      - ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/futureagi:/app/backend
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/backend/Vertex_AI_Creds.json:ro
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /app/backend/manage.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true

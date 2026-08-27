@@ -1,0 +1,227 @@
+# Run only the selected profile(s) for ISOLATE_INFRA.  The planner writes the
+# matching SLOT_*_HOST values into the env file and owns exact volume purges.
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  isolated-postgres:
+    profiles: [isolated-postgres]
+    image: postgres:16
+    container_name: ${SLOT_ISOLATED_POSTGRES_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-postgres}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=25", "-c", "max_replication_slots=25"]
+    environment:
+      POSTGRES_USER: ${SLOTS_PG_USER:-futureagi}
+      POSTGRES_PASSWORD: ${SLOTS_PG_PASSWORD:-futureagi}
+      POSTGRES_DB: ${SLOT_PG_DB:?SLOT_PG_DB is required}
+    ports: ["127.0.0.1:${SLOT_POSTGRES_PORT:?SLOT_POSTGRES_PORT is required}:5432"]
+    volumes: ["slot-postgres-data:/var/lib/postgresql/data"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  isolated-clickhouse:
+    profiles: [isolated-clickhouse]
+    image: clickhouse/clickhouse-server:25.3-alpine
+    container_name: ${SLOT_ISOLATED_CLICKHOUSE_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-clickhouse}
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: ${SLOT_CH_DATABASE:?SLOT_CH_DATABASE is required}
+    ports:
+      - "127.0.0.1:${SLOT_CLICKHOUSE_HTTP_PORT:?SLOT_CLICKHOUSE_HTTP_PORT is required}:8123"
+      - "127.0.0.1:${SLOT_CLICKHOUSE_NATIVE_PORT:?SLOT_CLICKHOUSE_NATIVE_PORT is required}:9000"
+    volumes:
+      - slot-clickhouse-data:/var/lib/clickhouse
+      - ${SLOT_CLICKHOUSE_STORAGE_CONFIG:-./futureagi/.ci/clickhouse-storage-policy.xml}:/etc/clickhouse-server/config.d/storage-policy.xml:ro
+      - ${SLOTS_CLICKHOUSE_TEST_CONFIG:-./futureagi/.ci/clickhouse-test-config.xml}:/etc/clickhouse-server/config.d/test-overrides.xml:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  isolated-redis:
+    profiles: [isolated-redis]
+    image: redis:7-alpine
+    container_name: ${SLOT_ISOLATED_REDIS_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-redis}
+    command: ["redis-server", "--appendonly", "yes", "--databases", "64"]
+    ports: ["127.0.0.1:${SLOT_REDIS_PORT:?SLOT_REDIS_PORT is required}:6379"]
+    volumes: ["slot-redis-data:/data"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  isolated-rabbitmq:
+    profiles: [isolated-rabbitmq]
+    image: rabbitmq:3-management
+    container_name: ${SLOT_ISOLATED_RABBITMQ_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-rabbitmq}
+    environment:
+      RABBITMQ_DEFAULT_USER: ${SLOTS_RABBITMQ_USER:-user}
+      RABBITMQ_DEFAULT_PASS: ${SLOTS_RABBITMQ_PASSWORD:-password}
+      # RabbitMQ creates this vhost (and grants the default user access) on
+      # first boot.  It is the same vhost supplied to provider containers.
+      RABBITMQ_DEFAULT_VHOST: ${SLOT_RABBITMQ_VHOST:?SLOT_RABBITMQ_VHOST is required}
+    ports:
+      - "127.0.0.1:${SLOT_RABBITMQ_PORT:?SLOT_RABBITMQ_PORT is required}:5672"
+      - "127.0.0.1:${SLOT_RABBITMQ_MANAGEMENT_PORT:?SLOT_RABBITMQ_MANAGEMENT_PORT is required}:15672"
+    volumes: ["slot-rabbitmq-data:/var/lib/rabbitmq"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  isolated-minio:
+    profiles: [isolated-minio]
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    container_name: ${SLOT_ISOLATED_MINIO_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-minio}
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${SLOTS_MINIO_ROOT_USER:-futureagi}
+      MINIO_ROOT_PASSWORD: ${SLOTS_MINIO_ROOT_PASSWORD:-futureagi}
+    ports:
+      - "127.0.0.1:${SLOT_MINIO_API_PORT:?SLOT_MINIO_API_PORT is required}:9000"
+      - "127.0.0.1:${SLOT_MINIO_CONSOLE_PORT:?SLOT_MINIO_CONSOLE_PORT is required}:9001"
+    volumes: ["slot-minio-data:/data"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "http://127.0.0.1:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # The planner runs this profile service explicitly with `run --rm` after
+  # isolated-minio is healthy.  It owns no volume and is idempotent, so a
+  # repeated start never recreates or deletes provider data.
+  isolated-minio-init:
+    profiles: [isolated-minio]
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until mc alias set local http://${SLOT_ISOLATED_MINIO_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-minio}:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done;
+        mc mb --ignore-existing "local/${SLOT_MINIO_BUCKET:?SLOT_MINIO_BUCKET is required}"
+    environment:
+      MINIO_ROOT_USER: ${SLOTS_MINIO_ROOT_USER:-futureagi}
+      MINIO_ROOT_PASSWORD: ${SLOTS_MINIO_ROOT_PASSWORD:-futureagi}
+    depends_on:
+      isolated-minio:
+        condition: service_healthy
+    networks: [slots]
+    restart: "no"
+
+  isolated-temporal:
+    profiles: [isolated-temporal]
+    image: temporalio/auto-setup:1.29.1
+    container_name: ${SLOT_ISOLATED_TEMPORAL_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal}
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: ${SLOT_TEMPORAL_POSTGRES_USER:-temporal}
+      POSTGRES_PWD: ${SLOT_TEMPORAL_POSTGRES_PASSWORD:-temporal}
+      POSTGRES_SEEDS: ${SLOT_ISOLATED_TEMPORAL_POSTGRES_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal-postgres}
+      DBNAME: ${SLOT_TEMPORAL_POSTGRES_DB:-temporal}
+      ENABLE_ES: "false"
+    ports: ["127.0.0.1:${SLOT_TEMPORAL_PORT:?SLOT_TEMPORAL_PORT is required}:7233"]
+    networks: [slots]
+    depends_on:
+      isolated-temporal-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x temporal-server"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 90s
+    restart: unless-stopped
+
+  # The isolated Temporal server gets its own database.  It is profile-scoped
+  # and owns the exact `temporal` volume allocated by state.volume_name().
+  isolated-temporal-postgres:
+    profiles: [isolated-temporal]
+    image: postgres:16
+    container_name: ${SLOT_ISOLATED_TEMPORAL_POSTGRES_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal-postgres}
+    environment:
+      POSTGRES_USER: ${SLOT_TEMPORAL_POSTGRES_USER:-temporal}
+      POSTGRES_PASSWORD: ${SLOT_TEMPORAL_POSTGRES_PASSWORD:-temporal}
+      POSTGRES_DB: ${SLOT_TEMPORAL_POSTGRES_DB:-temporal}
+    volumes: ["slot-temporal-data:/var/lib/postgresql/data"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Namespace creation is deliberately a separate one-shot service: the
+  # auto-setup server must first become reachable.  The planner must include
+  # this service whenever it starts the isolated-temporal profile.
+  isolated-temporal-init:
+    profiles: [isolated-temporal]
+    image: temporalio/admin-tools:1.29.6
+    container_name: ${SLOT_ISOLATED_TEMPORAL_INIT_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal-init}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        temporal operator namespace describe --address "$${TEMPORAL_CLI_ADDRESS}" --namespace "${SLOT_TEMPORAL_NAMESPACE:?SLOT_TEMPORAL_NAMESPACE is required}" >/dev/null 2>&1 ||
+        temporal operator namespace create --address "$${TEMPORAL_CLI_ADDRESS}" --namespace "${SLOT_TEMPORAL_NAMESPACE:?SLOT_TEMPORAL_NAMESPACE is required}"
+    environment:
+      TEMPORAL_CLI_ADDRESS: ${SLOT_ISOLATED_TEMPORAL_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal}:7233
+    depends_on:
+      isolated-temporal:
+        condition: service_healthy
+    networks: [slots]
+    restart: "no"
+
+  isolated-temporal-ui:
+    profiles: [isolated-temporal]
+    image: temporalio/ui:2.43.3
+    # This fallback keeps the isolated profile usable with the generated env
+    # files from Wave 1; a runtime may emit SLOT_TEMPORAL_UI_NAME explicitly.
+    container_name: ${SLOT_TEMPORAL_UI_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal-ui}
+    environment:
+      TEMPORAL_ADDRESS: ${SLOT_ISOLATED_TEMPORAL_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-temporal}:7233
+      TEMPORAL_CORS_ORIGINS: http://${SLOT:?SLOT is required}.localhost,http://${SLOT:?SLOT is required}.localhost:${SLOTS_HTTP_PORT:-80}
+    networks: [slots]
+    depends_on:
+      isolated-temporal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true
+
+volumes:
+  slot-postgres-data:
+    name: ${SLOT_POSTGRES_VOLUME:-futureagi_slot_${SLOT_ID:?SLOT_ID is required}_postgres_data}
+  slot-clickhouse-data:
+    name: ${SLOT_CLICKHOUSE_VOLUME:-futureagi_slot_${SLOT_ID:?SLOT_ID is required}_clickhouse_data}
+  slot-redis-data:
+    name: ${SLOT_REDIS_VOLUME:-futureagi_slot_${SLOT_ID:?SLOT_ID is required}_redis_data}
+  slot-rabbitmq-data:
+    name: ${SLOT_RABBITMQ_VOLUME:-futureagi_slot_${SLOT_ID:?SLOT_ID is required}_rabbitmq_data}
+  slot-minio-data:
+    name: ${SLOT_MINIO_VOLUME:-futureagi_slot_${SLOT_ID:?SLOT_ID is required}_minio_data}
+  slot-temporal-data:
+    name: ${SLOT_TEMPORAL_VOLUME:-futureagi_slot_${SLOT_ID:?SLOT_ID is required}_temporal_data}

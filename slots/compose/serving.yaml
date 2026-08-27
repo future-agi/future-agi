@@ -1,0 +1,27 @@
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  serving:
+    container_name: ${SLOT_SERVING_NAME:?SLOT_SERVING_NAME is required}
+    build:
+      context: ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/futureagi/model_serving
+      dockerfile: Dockerfile
+    image: ${SLOT_SERVING_IMAGE:-futureagi/slot-serving}:${SLOT_ID:?SLOT_ID is required}
+    env_file:
+      - ${SLOT_ENV_FILE:?SLOT_ENV_FILE is required}
+    working_dir: /app/embedding
+    volumes:
+      - ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/futureagi/model_serving:/app/embedding
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true

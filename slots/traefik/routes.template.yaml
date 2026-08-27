@@ -1,0 +1,78 @@
+# Render one file per slot.  Tokens are intentionally not Compose variables:
+# Traefik's file provider does not interpolate environment variables.
+# The planner replaces every __TOKEN__ before atomically publishing the file.
+http:
+  routers:
+    slot-__SLOT_ID__-frontend:
+      rule: "Host(`__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-frontend
+    slot-__SLOT_ID__-backend:
+      rule: "Host(`api.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-backend
+    slot-__SLOT_ID__-temporal:
+      rule: "Host(`temporal.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-temporal-ui
+    slot-__SLOT_ID__-minio:
+      rule: "Host(`minio.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-minio-api
+    slot-__SLOT_ID__-minio-console:
+      rule: "Host(`minio-console.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-minio-console
+    slot-__SLOT_ID__-rabbitmq:
+      rule: "Host(`rabbitmq.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-rabbitmq-management
+    slot-__SLOT_ID__-gateway:
+      rule: "Host(`gateway.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-gateway
+    slot-__SLOT_ID__-serving:
+      rule: "Host(`serving.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-serving
+    slot-__SLOT_ID__-collector:
+      rule: "Host(`collector.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-collector
+    slot-__SLOT_ID__-executor:
+      rule: "Host(`executor.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-executor
+    slot-__SLOT_ID__-jaeger:
+      rule: "Host(`jaeger.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-jaeger
+    slot-__SLOT_ID__-peerdb:
+      rule: "Host(`peerdb.__SLOT__.localhost`)"
+      entryPoints: [web]
+      service: slot-__SLOT_ID__-peerdb
+  services:
+    slot-__SLOT_ID__-frontend:
+      loadBalancer: {servers: [{url: "http://__FRONTEND_NAME__:3000"}]}
+    slot-__SLOT_ID__-backend:
+      loadBalancer: {servers: [{url: "http://__BACKEND_NAME__:80"}]}
+    slot-__SLOT_ID__-temporal-ui:
+      loadBalancer: {servers: [{url: "http://__TEMPORAL_UI_NAME__:8080"}]}
+    slot-__SLOT_ID__-minio-api:
+      loadBalancer: {servers: [{url: "http://__MINIO_NAME__:9000"}]}
+    slot-__SLOT_ID__-minio-console:
+      loadBalancer: {servers: [{url: "http://__MINIO_NAME__:9001"}]}
+    slot-__SLOT_ID__-rabbitmq-management:
+      loadBalancer: {servers: [{url: "http://__RABBITMQ_NAME__:15672"}]}
+    slot-__SLOT_ID__-gateway:
+      loadBalancer: {servers: [{url: "http://__GATEWAY_NAME__:8080"}]}
+    slot-__SLOT_ID__-serving:
+      loadBalancer: {servers: [{url: "http://__SERVING_NAME__:8080"}]}
+    slot-__SLOT_ID__-collector:
+      loadBalancer: {servers: [{url: "http://__COLLECTOR_NAME__:9464"}]}
+    slot-__SLOT_ID__-executor:
+      loadBalancer: {servers: [{url: "http://__EXECUTOR_NAME__:8060"}]}
+    slot-__SLOT_ID__-jaeger:
+      loadBalancer: {servers: [{url: "http://__OBSERVABILITY_NAME__:16686"}]}
+    slot-__SLOT_ID__-peerdb:
+      loadBalancer: {servers: [{url: "http://__PEERDB_UI_NAME__:3000"}]}

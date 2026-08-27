@@ -10,7 +10,8 @@
 // Config priority (later overrides earlier):
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
-//  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
+//  3. Environment overrides (FI_CH_URL, FI_AUTH_REDIS_ADDR,
+//     FI_AUTH_REDIS_DB, FI_GRPC_ADDR, FI_HTTP_ADDR,
 //     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
@@ -22,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -46,8 +48,17 @@ type rootConfig struct {
 
 func main() {
 	var configPath string
+	var healthcheck bool
 	flag.StringVar(&configPath, "config", "/etc/fi-collector/config.yaml", "path to YAML config")
+	flag.BoolVar(&healthcheck, "healthcheck", false, "probe the local admin health endpoint and exit")
 	flag.Parse()
+	if healthcheck {
+		if err := probeHealth("http://127.0.0.1:9464/healthz"); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -68,7 +79,10 @@ func main() {
 
 	var rdb *redis.Client
 	if cfg.Auth.RedisAddr != "" {
-		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
+		rdb = redis.NewClient(&redis.Options{
+			Addr: cfg.Auth.RedisAddr,
+			DB:   cfg.Auth.RedisDB,
+		})
 		defer rdb.Close()
 	} else {
 		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
@@ -122,6 +136,19 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("shutdown complete", "stats", writer.Snapshot())
+}
+
+func probeHealth(endpoint string) error {
+	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get(endpoint)
+	if err != nil {
+		return fmt.Errorf("collector health probe failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("collector health probe returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 // loadPriceTable resolves the token-pricing table. FI_PRICING_JSON is
@@ -220,6 +247,13 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	}
 	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
 		c.Auth.RedisAddr = v
+	}
+	if v := os.Getenv("FI_AUTH_REDIS_DB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n < 64 {
+			c.Auth.RedisDB = n
+		} else {
+			log.Warn("ignoring invalid FI_AUTH_REDIS_DB", "value", v)
+		}
 	}
 }
 

@@ -4,11 +4,35 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestProbeHealth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if err := probeHealth(server.URL); err != nil {
+		t.Fatalf("healthy endpoint failed: %v", err)
+	}
+}
+
+func TestProbeHealthRejectsNonOK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	if err := probeHealth(server.URL); err == nil {
+		t.Fatal("unhealthy endpoint unexpectedly passed")
+	}
+}
 
 // logLines parses newline-delimited slog JSON output into a slice of
 // decoded records for easy assertions.
@@ -106,5 +130,34 @@ func TestLoadPriceTable_SkippedEntriesWarns(t *testing.T) {
 	}
 	if !sawSkippedWarn {
 		t.Error("want a WARN log reporting the skipped-entry count")
+	}
+}
+
+func TestApplyEnvOverridesRedisDB(t *testing.T) {
+	t.Setenv("FI_AUTH_REDIS_DB", "17")
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	cfg := rootConfig{}
+
+	applyEnvOverrides(log, &cfg)
+
+	if cfg.Auth.RedisDB != 17 {
+		t.Fatalf("want Redis DB 17, got %d", cfg.Auth.RedisDB)
+	}
+}
+
+func TestApplyEnvOverridesRejectsInvalidRedisDB(t *testing.T) {
+	t.Setenv("FI_AUTH_REDIS_DB", "64")
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	cfg := rootConfig{}
+
+	applyEnvOverrides(log, &cfg)
+
+	if cfg.Auth.RedisDB != 0 {
+		t.Fatalf("invalid override changed Redis DB to %d", cfg.Auth.RedisDB)
+	}
+	if !strings.Contains(buf.String(), "ignoring invalid FI_AUTH_REDIS_DB") {
+		t.Fatal("want invalid FI_AUTH_REDIS_DB warning")
 	}
 }

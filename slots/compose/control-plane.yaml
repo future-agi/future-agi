@@ -1,0 +1,157 @@
+# Shared services are started once, using a project controlled by Make.
+# All mutable data lives in named volumes; generated routes live outside a worktree.
+name: ${SLOTS_CONTROL_PROJECT:-futureagi-slots}
+
+services:
+  traefik:
+    image: traefik:v3.3
+    container_name: ${SLOTS_TRAEFIK_NAME:-futureagi-slots-traefik}
+    command: ["--configFile=/etc/traefik/traefik.yaml"]
+    ports:
+      - "127.0.0.1:${SLOTS_HTTP_PORT:-80}:80"
+    volumes:
+      - ${SLOTS_TRAEFIK_STATIC_CONFIG:-./slots/traefik/traefik.yaml}:/etc/traefik/traefik.yaml:ro
+      - ${SLOTS_ROUTE_DIR:?SLOTS_ROUTE_DIR must point outside every worktree}:/etc/traefik/dynamic:ro
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    container_name: ${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=25", "-c", "max_replication_slots=25"]
+    environment:
+      POSTGRES_USER: ${SLOTS_PG_USER:-futureagi}
+      POSTGRES_PASSWORD: ${SLOTS_PG_PASSWORD:-futureagi}
+      POSTGRES_DB: ${SLOTS_PG_CONTROL_DB:-futureagi}
+    volumes:
+      - slots-postgres-data:/var/lib/postgresql/data
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3-alpine
+    container_name: ${SLOTS_CLICKHOUSE_NAME:-futureagi-slots-clickhouse}
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: ${SLOTS_CH_CONTROL_DB:-default}
+    volumes:
+      - slots-clickhouse-data:/var/lib/clickhouse
+      - ${SLOTS_CLICKHOUSE_STORAGE_CONFIG:-./futureagi/.ci/clickhouse-storage-policy.xml}:/etc/clickhouse-server/config.d/storage-policy.xml:ro
+      - ${SLOTS_CLICKHOUSE_TEST_CONFIG:-./futureagi/.ci/clickhouse-test-config.xml}:/etc/clickhouse-server/config.d/test-overrides.xml:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${SLOTS_REDIS_NAME:-futureagi-slots-redis}
+    command: ["redis-server", "--appendonly", "yes", "--databases", "64"]
+    volumes:
+      - slots-redis-data:/data
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ${SLOTS_RABBITMQ_NAME:-futureagi-slots-rabbitmq}
+    environment:
+      RABBITMQ_DEFAULT_USER: ${SLOTS_RABBITMQ_USER:-user}
+      RABBITMQ_DEFAULT_PASS: ${SLOTS_RABBITMQ_PASSWORD:-password}
+    volumes:
+      - slots-rabbitmq-data:/var/lib/rabbitmq
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    container_name: ${SLOTS_MINIO_NAME:-futureagi-slots-minio}
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${SLOTS_MINIO_ROOT_USER:-futureagi}
+      MINIO_ROOT_PASSWORD: ${SLOTS_MINIO_ROOT_PASSWORD:-futureagi}
+    volumes:
+      - slots-minio-data:/data
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/auto-setup:1.29.1
+    container_name: ${SLOTS_TEMPORAL_NAME:-futureagi-slots-temporal}
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: ${SLOTS_PG_USER:-futureagi}
+      POSTGRES_PWD: ${SLOTS_PG_PASSWORD:-futureagi}
+      POSTGRES_SEEDS: ${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}
+      DBNAME: ${SLOTS_PG_CONTROL_DB:-futureagi}
+      ENABLE_ES: "false"
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x temporal-server"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 90s
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:2.43.3
+    container_name: ${SLOTS_TEMPORAL_UI_NAME:-futureagi-slots-temporal-ui}
+    environment:
+      TEMPORAL_ADDRESS: ${SLOTS_TEMPORAL_NAME:-futureagi-slots-temporal}:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost,http://*.localhost
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true
+
+volumes:
+  slots-postgres-data:
+    name: ${SLOTS_POSTGRES_VOLUME:-futureagi-slots-postgres-data}
+  slots-clickhouse-data:
+    name: ${SLOTS_CLICKHOUSE_VOLUME:-futureagi-slots-clickhouse-data}
+  slots-redis-data:
+    name: ${SLOTS_REDIS_VOLUME:-futureagi-slots-redis-data}
+  slots-rabbitmq-data:
+    name: ${SLOTS_RABBITMQ_VOLUME:-futureagi-slots-rabbitmq-data}
+  slots-minio-data:
+    name: ${SLOTS_MINIO_VOLUME:-futureagi-slots-minio-data}
