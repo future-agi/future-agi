@@ -126,6 +126,7 @@ class ModelConfigs:
         max_tokens=50000,
         supports_audio=True,
         supports_pdf=True,
+        vertex_location="global",
     )
 
     VERTEX_GEMINI_3_PRO: Final[ModelConfig] = ModelConfig(
@@ -149,6 +150,7 @@ class ModelConfigs:
         model_name="vertex_ai/gemini-3.6-flash",
         temperature=0.2,
         max_tokens=8100,
+        vertex_location="global",
     )
 
     VERTEX_GEMINI_3_1_FLASH_LITE: Final[ModelConfig] = ModelConfig(
