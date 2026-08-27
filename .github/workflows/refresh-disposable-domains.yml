@@ -22,7 +22,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Scheduled runs always check out the default branch (main), regardless
+      # of which branch this workflow file lives on. The refresh PR targets
+      # dev, so the diff has to be computed against dev too.
       - uses: actions/checkout@v4
+        with:
+          ref: dev
 
       - name: Fetch the latest source list
         id: fetch
@@ -50,19 +55,8 @@ jobs:
           python3 scripts/generate_disposable_domains.py \
             --domains /tmp/upstream_domains.txt \
             --version "${{ steps.fetch.outputs.version }}" \
-            --out futureagi/accounts/disposable_domains.py
-
-          if git diff --quiet -- futureagi/accounts/disposable_domains.py; then
-            echo "No change — already up to date."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          added=$(git diff -- futureagi/accounts/disposable_domains.py | grep -c '^+        "')
-          removed=$(git diff -- futureagi/accounts/disposable_domains.py | grep -c '^-        "')
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "added=$added" >> "$GITHUB_OUTPUT"
-          echo "removed=$removed" >> "$GITHUB_OUTPUT"
+            --out futureagi/accounts/disposable_domains.py \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Mint an app token
         # A GITHUB_TOKEN-authored push never triggers other workflows, so the
@@ -88,10 +82,20 @@ jobs:
           git config user.email "future-agi-bot[bot]@users.noreply.github.com"
 
           branch="chore/disposable-domains-$VERSION"
-          git checkout -b "$branch"
+
+          # A refresh PR for this version may already be open from a prior
+          # run (e.g. still under review). Rebuild the branch on top of
+          # current dev rather than failing on an existing remote branch.
+          git checkout -B "$branch"
           git add futureagi/accounts/disposable_domains.py
           git commit -m "chore(accounts): refresh disposable email domain list ($VERSION)"
-          git push origin "$branch"
+          git fetch origin "$branch" || true
+          git push --force-with-lease origin "$branch"
+
+          if gh pr view "$branch" --repo future-agi/future-agi >/dev/null 2>&1; then
+            echo "PR already open for $branch — branch updated, skipping pr create."
+            exit 0
+          fi
 
           gh pr create \
             --base dev \

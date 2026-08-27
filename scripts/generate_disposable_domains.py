@@ -12,6 +12,8 @@ the PR diff, and safe to run locally for the same result:
 """
 
 import argparse
+import ast
+from pathlib import Path
 
 TEMPLATE = '''"""Disposable/throwaway email domains used to reject signups.
 
@@ -33,7 +35,44 @@ DISPOSABLE_EMAIL_DOMAINS = frozenset(
 '''
 
 
-def main():
+def load_domains(path):
+    with open(path) as f:
+        return {line.strip() for line in f if line.strip()}
+
+
+def load_existing_domains(out_path):
+    """Parse the domain set out of a previously generated module.
+
+    The upstream source is untrusted, so a previous run of this script could
+    in principle have produced anything; this walks the AST and literal_evals
+    just the set passed to frozenset() rather than importing the file.
+    """
+    path = Path(out_path)
+    if not path.exists():
+        return set()
+
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "DISPOSABLE_EMAIL_DOMAINS"
+            for target in node.targets
+        ):
+            set_literal = node.value.args[0]
+            return set(ast.literal_eval(set_literal))
+    return set()
+
+
+def render(domains, version):
+    # repr() rather than an f-string interpolation: the domain came from an
+    # untrusted upstream file, and this text becomes a Python module that
+    # gets imported. repr() always produces a quoted, escaped string literal,
+    # so a value like `x", __import__("os").system("..."), "y` stays inert
+    # data instead of becoming code.
+    body = "\n".join(f"        {d!r}," for d in sorted(domains))
+    return TEMPLATE.format(version=version, body=body)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--domains", required=True, help="path to a sorted, one-domain-per-line file"
@@ -42,18 +81,30 @@ def main():
         "--version", required=True, help="upstream disposable-email-domains version"
     )
     parser.add_argument("--out", required=True, help="output path for the generated module")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--github-output",
+        help="if set, append changed/added/removed to this $GITHUB_OUTPUT file",
+    )
+    args = parser.parse_args(argv)
 
-    with open(args.domains) as f:
-        domains = sorted({line.strip() for line in f if line.strip()})
-
-    body = "\n".join(f'        "{d}",' for d in domains)
-    content = TEMPLATE.format(version=args.version, body=body)
+    new_domains = load_domains(args.domains)
+    old_domains = load_existing_domains(args.out)
 
     with open(args.out, "w") as f:
-        f.write(content)
+        f.write(render(new_domains, args.version))
 
-    print(f"Wrote {len(domains)} domains to {args.out}")
+    added = len(new_domains - old_domains)
+    removed = len(old_domains - new_domains)
+    changed = new_domains != old_domains
+
+    print(f"Wrote {len(new_domains)} domains to {args.out}")
+    print(f"changed={str(changed).lower()} added={added} removed={removed}")
+
+    if args.github_output:
+        with open(args.github_output, "a") as f:
+            f.write(f"changed={str(changed).lower()}\n")
+            f.write(f"added={added}\n")
+            f.write(f"removed={removed}\n")
 
 
 if __name__ == "__main__":
