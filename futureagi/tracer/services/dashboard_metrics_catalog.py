@@ -502,7 +502,13 @@ def _resolve_metrics_catalog_project_scope(
     requested_project_ids = [
         value.strip() for value in project_ids_param.split(",") if value.strip()
     ]
-    project_filters: dict[str, object] = {"workspace": workspace}
+    # A workspace foreign key is not sufficient tenant authority on legacy or
+    # inconsistent rows.  Every catalog scope must prove the denormalized
+    # project organization matches the already-authorized workspace too.
+    project_filters: dict[str, object] = {
+        "workspace": workspace,
+        "organization_id": workspace.organization_id,
+    }
     if eligible_trace_type:
         project_filters["trace_type"] = eligible_trace_type
     if requested_project_ids:

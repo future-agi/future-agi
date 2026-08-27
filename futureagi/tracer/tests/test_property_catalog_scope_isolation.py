@@ -13,12 +13,17 @@ from tracer.services.dashboard_metrics_catalog import (
     resolve_property_catalog_project_scope,
 )
 
+ORGANIZATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
 
 def test_property_catalog_project_scope_uses_explicit_workspace_manager():
     """Authorization cannot inherit an unrelated ambient workspace scope."""
 
     project_id = "11111111-1111-4111-8111-111111111111"
-    workspace = SimpleNamespace(id="22222222-2222-4222-8222-222222222222")
+    workspace = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        organization_id=ORGANIZATION_ID,
+    )
     explicit_manager = MagicMock()
     explicit_manager.filter.return_value.order_by.return_value.values_list.return_value = [
         project_id
@@ -41,6 +46,7 @@ def test_property_catalog_project_scope_uses_explicit_workspace_manager():
     assert resolved == [project_id]
     explicit_manager.filter.assert_called_once_with(
         workspace=workspace,
+        organization_id=ORGANIZATION_ID,
         trace_type="observe",
         id__in=[project_id],
     )
@@ -52,7 +58,10 @@ def test_property_catalog_workspace_scope_materializes_every_eligible_observe_pr
         "11111111-1111-4111-8111-111111111111",
         "33333333-3333-4333-8333-333333333333",
     ]
-    workspace = SimpleNamespace(id="22222222-2222-4222-8222-222222222222")
+    workspace = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        organization_id=ORGANIZATION_ID,
+    )
     explicit_manager = MagicMock()
     explicit_manager.filter.return_value.order_by.return_value.values_list.return_value = project_ids
 
@@ -73,13 +82,17 @@ def test_property_catalog_workspace_scope_materializes_every_eligible_observe_pr
     assert resolved == project_ids
     explicit_manager.filter.assert_called_once_with(
         workspace=workspace,
+        organization_id=ORGANIZATION_ID,
         trace_type="observe",
     )
 
 
 def test_legacy_metrics_scope_does_not_inherit_observe_only_eligibility():
     project_ids = ["11111111-1111-4111-8111-111111111111"]
-    workspace = SimpleNamespace(id="22222222-2222-4222-8222-222222222222")
+    workspace = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        organization_id=ORGANIZATION_ID,
+    )
     explicit_manager = MagicMock()
     explicit_manager.filter.return_value.order_by.return_value.values_list.return_value = project_ids
 
@@ -99,7 +112,10 @@ def test_legacy_metrics_scope_does_not_inherit_observe_only_eligibility():
 
     assert resolved == project_ids
     assert explicit is False
-    explicit_manager.filter.assert_called_once_with(workspace=workspace)
+    explicit_manager.filter.assert_called_once_with(
+        workspace=workspace,
+        organization_id=ORGANIZATION_ID,
+    )
 
 
 @pytest.mark.parametrize(
@@ -112,7 +128,10 @@ def test_legacy_metrics_scope_does_not_inherit_observe_only_eligibility():
 def test_property_catalog_project_scope_rejects_malformed_or_oversized_input(
     project_ids,
 ):
-    workspace = SimpleNamespace(id="22222222-2222-4222-8222-222222222222")
+    workspace = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        organization_id=ORGANIZATION_ID,
+    )
 
     with (
         patch.object(Project, "no_workspace_objects") as manager,
@@ -130,7 +149,10 @@ def test_property_catalog_project_scope_rejects_malformed_or_oversized_input(
 def test_property_catalog_project_scope_rejects_mixed_foreign_ids():
     authorized = "11111111-1111-4111-8111-111111111111"
     foreign = "33333333-3333-4333-8333-333333333333"
-    workspace = SimpleNamespace(id="22222222-2222-4222-8222-222222222222")
+    workspace = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        organization_id=ORGANIZATION_ID,
+    )
     explicit_manager = MagicMock()
     explicit_manager.filter.return_value.order_by.return_value.values_list.return_value = [
         authorized
