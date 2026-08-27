@@ -93,6 +93,60 @@ describe("BoundedCursorPaginationControl", () => {
     expect(loadNextPage).toHaveBeenCalledTimes(2);
   });
 
+  it("requires a new viewport entry before advancing a searched continuation", async () => {
+    const intersect = installObserver();
+    const firstPage = deferred();
+    const secondPage = deferred();
+    const loadNextPage = vi
+      .fn()
+      .mockImplementationOnce(() => firstPage.promise)
+      .mockImplementationOnce(() => secondPage.promise);
+    const { rerender } = render(
+      <BoundedCursorPaginationControl
+        autoAdvanceWhileVisible={false}
+        channels={[
+          {
+            channelKey: "attributes",
+            hasNextPage: true,
+            continuationKey: "cursor-1",
+            loadNextPage,
+          },
+        ]}
+      />,
+    );
+
+    intersect(true);
+    expect(loadNextPage).toHaveBeenCalledOnce();
+    await act(async () => {
+      firstPage.resolve();
+      await firstPage.promise;
+    });
+    rerender(
+      <BoundedCursorPaginationControl
+        autoAdvanceWhileVisible={false}
+        channels={[
+          {
+            channelKey: "attributes",
+            hasNextPage: true,
+            continuationKey: "cursor-2",
+            loadNextPage,
+          },
+        ]}
+      />,
+    );
+
+    await act(async () => undefined);
+    expect(loadNextPage).toHaveBeenCalledOnce();
+
+    intersect(false);
+    intersect(true);
+    expect(loadNextPage).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      secondPage.resolve();
+      await secondPage.promise;
+    });
+  });
+
   it("advances independent catalog and attribute channels together", async () => {
     const intersect = installObserver();
     const loadCatalog = vi.fn().mockResolvedValue(undefined);

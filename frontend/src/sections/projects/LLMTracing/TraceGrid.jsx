@@ -473,7 +473,10 @@ const TraceGrid = React.forwardRef(
 
               // Prefetch next page so scroll feels instant
               if (exactPage.canPrefetch) {
-                loadTraceObservePage(buildParams(pageNumber + 1))
+                loadTraceObservePage(
+                  buildParams(pageNumber + 1),
+                  cursorPagination.current.cancellationSignal(),
+                )
                   .then((res) => {
                     if (cursorPagination.current.isCurrent(requestGeneration)) {
                       prefetchCache.current.set(pageNumber + 1, res);

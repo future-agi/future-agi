@@ -206,6 +206,7 @@ export const createListCursorPagination = ({
 
   let mode = UNKNOWN_MODE;
   let generation = 0;
+  let generationController = new AbortController();
   const cursorByPage = new Map([[0, null]]);
   const transportCursorByPage = new Map();
   const bufferedVisiblePageByPage = new Map();
@@ -225,8 +226,14 @@ export const createListCursorPagination = ({
     seenCursors.add(cursor);
   };
 
-  const reset = () => {
+  const advanceGeneration = () => {
     generation += 1;
+    generationController.abort();
+    generationController = new AbortController();
+  };
+
+  const reset = () => {
+    advanceGeneration();
     mode = UNKNOWN_MODE;
     cursorByPage.clear();
     cursorByPage.set(0, null);
@@ -248,7 +255,7 @@ export const createListCursorPagination = ({
   };
 
   const disableCursor = () => {
-    generation += 1;
+    advanceGeneration();
     fallbackToNumbered();
   };
 
@@ -453,6 +460,7 @@ export const createListCursorPagination = ({
     mode: () => mode,
     generation: () => generation,
     isCurrent: (requestGeneration) => requestGeneration === generation,
+    cancellationSignal: () => generationController.signal,
     canRecoverFromContinuationError: (pageNumber, error) =>
       mode === CURSOR_MODE &&
       pageNumber > 0 &&
@@ -522,6 +530,11 @@ export const loadExactListPage = async ({
   if (!Number.isFinite(maxElapsedMs) || maxElapsedMs < 1) {
     throw new Error("Invalid list continuation deadline");
   }
+  const activeCancellationSignal =
+    cancellationSignal ||
+    (typeof pagination.cancellationSignal === "function"
+      ? pagination.cancellationSignal()
+      : undefined);
 
   let buffered = pagination.bufferedVisiblePage(pageNumber);
   const accumulatedRows = [];
@@ -578,7 +591,7 @@ export const loadExactListPage = async ({
           continuationCount === 0 && !resumeBufferedCheckpoint
             ? (signal) => loadResponse(signal)
             : (signal) => nextResponse(metadata.next_cursor, signal),
-        cancellationSignal,
+        cancellationSignal: activeCancellationSignal,
         remainingMs,
       });
       if (!transport.completed) {

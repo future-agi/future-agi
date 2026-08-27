@@ -1554,6 +1554,7 @@ export function shouldUseRetainedAttributePages({
 export function PropertyPickerPaginationControl({
   scrollRootRef,
   resetKey,
+  autoAdvanceWhileVisible,
   attributePageAvailable,
   attributeContinuationKey,
   isFetchingAttributePage,
@@ -1569,6 +1570,7 @@ export function PropertyPickerPaginationControl({
     <BoundedCursorPaginationControl
       rootRef={scrollRootRef}
       resetKey={resetKey}
+      autoAdvanceWhileVisible={autoAdvanceWhileVisible}
       channels={[
         {
           channelKey: "attributes",
@@ -2477,6 +2479,11 @@ function PropertyPicker({
                     category,
                     debouncedSearch,
                   ])}
+                  // A missing exact key may publish many bounded checkpoints.
+                  // Advance only once per real viewport-entry gesture while
+                  // searching instead of draining the retained window merely
+                  // because an empty sentinel remains visible.
+                  autoAdvanceWhileVisible={!search.trim()}
                   scrollRootRef={propertyOptionsListRef}
                   attributePageAvailable={attributePageAvailable}
                   attributeContinuationKey={exactAttributeContinuationKey}

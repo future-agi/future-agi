@@ -21,15 +21,19 @@ import { PROPERTY_PICKER_PREFETCH_MARGIN_PX } from "src/config/runtime_limits";
  *
  * A channel is either a catalog page or a retained-attribute page. Multiple
  * channels may advance together. A newly published continuation may load while
- * the sentinel remains visible, but a continuation already attempted by this
- * mounted picker can never be replayed automatically. Failed channels are
- * retried only by the explicit retry control. Changing resetKey starts a new
- * logical cursor chain and makes its continuations eligible again.
+ * the sentinel remains visible when autoAdvanceWhileVisible is enabled, but a
+ * continuation already attempted by this mounted picker can never be replayed
+ * automatically. Search surfaces disable that follow-on behavior so an empty
+ * exact lookup cannot drain a retained window without another viewport-entry
+ * gesture. Failed channels are retried only by the explicit retry control.
+ * Changing resetKey starts a new logical cursor chain and makes its
+ * continuations eligible again.
  */
 const BoundedCursorPaginationControl = ({
   channels,
   rootRef,
   resetKey,
+  autoAdvanceWhileVisible = true,
   loadingLabel = "Loading more…",
   retryLabel = "Retry loading properties",
   errorMessage,
@@ -40,6 +44,7 @@ const BoundedCursorPaginationControl = ({
   const channelsRef = useRef(channels);
   const activeRequestRef = useRef(null);
   const isIntersectingRef = useRef(false);
+  const visibleEntryConsumedRef = useRef(false);
   const attemptedContinuationsRef = useRef(new Set());
   const [isRequestPending, setIsRequestPending] = useState(false);
 
@@ -133,6 +138,7 @@ const BoundedCursorPaginationControl = ({
 
   useLayoutEffect(() => {
     attemptedContinuationsRef.current.clear();
+    visibleEntryConsumedRef.current = false;
     activeRequestRef.current = null;
     setIsRequestPending(false);
   }, [resetKey]);
@@ -158,7 +164,15 @@ const BoundedCursorPaginationControl = ({
       ([entry]) => {
         const isIntersecting = Boolean(entry?.isIntersecting);
         isIntersectingRef.current = isIntersecting;
-        if (isIntersecting) loadAtVisibleEnd();
+        if (!isIntersecting) {
+          visibleEntryConsumedRef.current = false;
+          return;
+        }
+        if (!autoAdvanceWhileVisible && visibleEntryConsumedRef.current) {
+          return;
+        }
+        visibleEntryConsumedRef.current = true;
+        loadAtVisibleEnd();
       },
       {
         root,
@@ -168,14 +182,20 @@ const BoundedCursorPaginationControl = ({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadAtVisibleEnd, rootRef, shouldRender]);
+  }, [autoAdvanceWhileVisible, loadAtVisibleEnd, rootRef, shouldRender]);
 
   useEffect(() => {
-    if (!loading && isIntersectingRef.current && !hasRetryableError) {
+    if (
+      autoAdvanceWhileVisible &&
+      !loading &&
+      isIntersectingRef.current &&
+      !hasRetryableError
+    ) {
       loadAtVisibleEnd();
     }
   }, [
     continuationSignature,
+    autoAdvanceWhileVisible,
     hasRetryableError,
     loadAtVisibleEnd,
     loading,
@@ -242,6 +262,7 @@ BoundedCursorPaginationControl.propTypes = {
   ).isRequired,
   rootRef: PropTypes.shape({ current: PropTypes.any }),
   resetKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  autoAdvanceWhileVisible: PropTypes.bool,
   loadingLabel: PropTypes.string,
   retryLabel: PropTypes.string,
   errorMessage: PropTypes.string,

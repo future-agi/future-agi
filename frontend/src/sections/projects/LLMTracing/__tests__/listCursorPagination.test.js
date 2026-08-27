@@ -968,6 +968,44 @@ describe("list cursor pagination", () => {
     expect(requestSignal.aborted).toBe(true);
   });
 
+  it("aborts an in-flight exact-page request when its grid generation resets", async () => {
+    const pagination = createListCursorPagination();
+    let requestSignal;
+    let markStarted;
+    const started = new Promise((resolve) => {
+      markStarted = resolve;
+    });
+    const page = loadExactListPage({
+      pagination,
+      pageNumber: 0,
+      targetRowCount: 1,
+      loadResponse: (signal) => {
+        requestSignal = signal;
+        markStarted();
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () =>
+              reject(
+                Object.assign(new Error("canceled"), { code: "ERR_CANCELED" }),
+              ),
+            { once: true },
+          );
+        });
+      },
+      nextResponse: vi.fn(),
+      rowsFromResponse: (response) => response.rows,
+      metadataFromResponse: (response) => response.metadata,
+      rowIdentity: (row) => row.id,
+    });
+
+    await started;
+    pagination.reset();
+
+    expect(requestSignal.aborted).toBe(true);
+    await expect(page).rejects.toMatchObject({ code: "ERR_CANCELED" });
+  });
+
   it("fails closed when a non-empty continuation repeats its cursor", async () => {
     const pagination = createListCursorPagination();
     await expect(
