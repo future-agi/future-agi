@@ -1,0 +1,267 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# Development installs may use the bundled MinIO service. Production mode
+# requires external S3 or GCS object storage and a pre-created Secret.
+deploymentMode: development
+
+global:
+  imagePullSecrets: []
+  imageRegistry: ""
+  storageClass: ""
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+secrets:
+  # Use an existing Secret to keep credentials outside Helm release values.
+  # Required keys are documented in README.md.
+  existingSecret: ""
+  djangoSecretKey: ""
+  integrationEncryptionKey: ""
+  agentccInternalApiKey: ""
+  agentccAdminToken: ""
+  postgresqlPassword: ""
+  clickhousePassword: ""
+  rabbitmqPassword: ""
+  minioRootUser: futureagi
+  minioRootPassword: ""
+  objectStorageAccessKey: ""
+  objectStorageSecretKey: ""
+
+config:
+  frontendUrl: http://localhost:3000
+  backendUrl: http://localhost:8000
+  helpLink: ""
+  telemetryDisabled: false
+  telemetryJitterSeconds: 1800
+  storageBackend: minio
+  s3Bucket: futureagi
+  # Used when minio.enabled=false. Empty defaults to the provider endpoint.
+  s3Endpoint: ""
+  s3Region: us-east-2
+  s3Secure: true
+  # Browser-facing object-storage URL. Empty uses the internal MinIO service.
+  minioUrl: ""
+  temporalNamespace: default
+  clickhouseDatabase: default
+  extraEnv: []
+  providerEnv: []
+
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: futureagi/frontend
+    tag: v1.23.1
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  # The published nginx image binds port 80 and writes config.js at startup.
+  # Keep its image-defined user; enforce a non-root profile only with a
+  # compatible custom image/listen port.
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+
+backend:
+  replicaCount: 1
+  image:
+    repository: futureagi/future-agi
+    tag: v1.23.1
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    httpPort: 80
+    grpcPort: 50051
+  granianWorkers: 1
+  granianThreads: 2
+  enableGrpc: true
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+
+worker:
+  enabled: true
+  replicaCount: 1
+  allQueues: true
+  excludedQueues: simulation_runner
+  maxConcurrentActivities: 50
+  maxConcurrentWorkflowTasks: 50
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+
+agentccGateway:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: futureagi/agentcc-gateway
+    tag: v1.23.1
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  config: |-
+    server:
+      port: 8080
+      host: "0.0.0.0"
+      read_timeout: 5s
+      write_timeout: 300s
+      idle_timeout: 120s
+      shutdown_timeout: 30s
+      max_request_body_size: 10485760
+      default_request_timeout: 60s
+    providers:
+      openai:
+        base_url: "https://api.openai.com"
+        api_key: "${OPENAI_API_KEY}"
+        api_format: "openai"
+        models: [gpt-4o, gpt-4o-mini]
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+
+serving:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: futureagi/serving
+    tag: v1.23.1
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+
+codeExecutor:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: futureagi/code-executor
+    tag: v1.23.1
+    pullPolicy: IfNotPresent
+  service:
+    port: 8060
+  privileged: true
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "2", memory: 1Gi}
+
+fiCollector:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: futureagi/fi-collector
+    tag: v1.23.1
+    pullPolicy: IfNotPresent
+  service:
+    grpcPort: 4317
+    httpPort: 4318
+    adminPort: 9464
+  persistence:
+    enabled: true
+    size: 1Gi
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities: {drop: [ALL]}
+    readOnlyRootFilesystem: true
+
+postgresql:
+  enabled: true
+  image: {repository: postgres, tag: "16", pullPolicy: IfNotPresent}
+  database: futureagi
+  username: futureagi
+  external: {host: "", port: 5432}
+  persistence: {enabled: true, size: 8Gi}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+clickhouse:
+  enabled: true
+  image: {repository: clickhouse/clickhouse-server, tag: 25.3-alpine, pullPolicy: IfNotPresent}
+  external: {host: "", tcpPort: 9000, httpPort: 8123, username: default}
+  persistence: {enabled: true, size: 10Gi}
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 4Gi}
+
+redis:
+  enabled: true
+  image: {repository: redis, tag: 7-alpine, pullPolicy: IfNotPresent}
+  external: {host: "", port: 6379}
+  persistence: {enabled: true, size: 2Gi}
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+rabbitmq:
+  enabled: true
+  image: {repository: rabbitmq, tag: 3-management, pullPolicy: IfNotPresent}
+  username: futureagi
+  external: {host: "", port: 5672, username: futureagi}
+  persistence: {enabled: true, size: 2Gi}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+minio:
+  # Development and Minikube convenience only. Production mode rejects this.
+  enabled: true
+  image: {repository: minio/minio, tag: RELEASE.2025-02-07T23-21-09Z, pullPolicy: IfNotPresent}
+  persistence: {enabled: true, size: 5Gi}
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+temporal:
+  enabled: true
+  image: {repository: temporalio/auto-setup, tag: 1.29.1, pullPolicy: IfNotPresent}
+  external: {host: "", port: 7233}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: futureagi.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls: []

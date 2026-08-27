@@ -1,0 +1,47 @@
+# Reduced local footprint for Minikube smoke tests. Do not use these resource
+# settings for production. The chart generates and preserves random secrets.
+deploymentMode: development
+
+config:
+  frontendUrl: http://localhost:3000
+  backendUrl: http://localhost:8000
+  minioUrl: http://localhost:9005
+  telemetryDisabled: true
+
+global:
+  storageClass: standard
+
+backend:
+  enableGrpc: false
+  resources:
+    requests: {cpu: 100m, memory: 384Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+worker:
+  maxConcurrentActivities: 10
+  maxConcurrentWorkflowTasks: 10
+  resources:
+    requests: {cpu: 100m, memory: 384Mi}
+    limits: {cpu: "1", memory: 768Mi}
+
+serving:
+  enabled: false
+
+codeExecutor:
+  enabled: false
+
+postgresql:
+  persistence: {enabled: false, size: 1Gi}
+clickhouse:
+  persistence: {enabled: false, size: 2Gi}
+  resources:
+    requests: {cpu: 100m, memory: 384Mi}
+    limits: {cpu: "1", memory: 2Gi}
+redis:
+  persistence: {enabled: false, size: 1Gi}
+rabbitmq:
+  persistence: {enabled: false, size: 1Gi}
+minio:
+  persistence: {enabled: false, size: 1Gi}
+fiCollector:
+  persistence: {enabled: false, size: 1Gi}

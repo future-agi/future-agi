@@ -1,0 +1,10 @@
+.DS_Store
+.git/
+.github/
+.idea/
+.project
+.tmp/
+.vscode/
+*.swp
+*.tmp
+*.tgz

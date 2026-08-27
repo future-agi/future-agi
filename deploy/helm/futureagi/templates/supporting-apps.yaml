@@ -1,0 +1,162 @@
+{{- if .Values.agentccGateway.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.fullname" . }}-agentcc-gateway
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agentcc-gateway
+spec:
+  replicas: {{ .Values.agentccGateway.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.componentLabels" (dict "root" . "component" "agentcc-gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" (dict "root" . "component" "agentcc-gateway") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Values.agentccGateway.config | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      securityContext: {{ toYaml .Values.agentccGateway.podSecurityContext | nindent 8 }}
+      containers:
+        - name: agentcc-gateway
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.agentccGateway.image) }}
+          imagePullPolicy: {{ .Values.agentccGateway.image.pullPolicy }}
+          securityContext: {{ toYaml .Values.agentccGateway.containerSecurityContext | nindent 12 }}
+          args: ["--config", "/app/config.yaml"]
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - name: AGENTCC_INTERNAL_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: agentcc-internal-api-key}}
+            - name: AGENTCC_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: agentcc-admin-token}}
+            {{- with .Values.config.providerEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          volumeMounts: [{name: config, mountPath: /app/config.yaml, subPath: config.yaml, readOnly: true}]
+          startupProbe: {httpGet: {path: /livez, port: http}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /livez, port: http}, periodSeconds: 20}
+          resources: {{ toYaml .Values.agentccGateway.resources | nindent 12 }}
+      volumes: [{name: config, configMap: {name: {{ include "futureagi.fullname" . }}-agentcc-config}}]
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-agentcc-gateway
+  labels: {{ include "futureagi.labels" . | nindent 4 }}
+spec:
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "agentcc-gateway") | nindent 4 }}
+  ports: [{name: http, port: {{ .Values.agentccGateway.service.port }}, targetPort: http}]
+{{- end }}
+{{- if .Values.serving.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.fullname" . }}-serving
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: serving
+spec:
+  replicas: {{ .Values.serving.replicaCount }}
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "serving") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "serving") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      securityContext: {{ toYaml .Values.serving.podSecurityContext | nindent 8 }}
+      containers:
+        - name: serving
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.serving.image) }}
+          imagePullPolicy: {{ .Values.serving.image.pullPolicy }}
+          securityContext: {{ toYaml .Values.serving.containerSecurityContext | nindent 12 }}
+          ports: [{name: http, containerPort: 8080}]
+          envFrom: [{configMapRef: {name: {{ include "futureagi.fullname" . }}-env}}]
+          env:
+            - name: SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: django-secret-key}}
+            - name: INTEGRATION_ENCRYPTION_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: integration-encryption-key}}
+            - name: AGENTCC_INTERNAL_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: agentcc-internal-api-key}}
+            - name: AGENTCC_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: agentcc-admin-token}}
+            - name: PG_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: postgresql-password}}
+            - name: CH_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: clickhouse-password}}
+            - name: RABBITMQ_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: rabbitmq-password}}
+            - name: S3_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-access-key}}
+            - name: S3_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-secret-key}}
+            - name: GCS_HMAC_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-access-key}}
+            - name: GCS_HMAC_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-secret-key}}
+            - name: CELERY_BROKER_URL
+              value: {{ printf "amqp://%s:$(RABBITMQ_PASSWORD)@%s:%v//" (ternary .Values.rabbitmq.username .Values.rabbitmq.external.username .Values.rabbitmq.enabled) (include "futureagi.rabbitmqHost" .) (ternary 5672 .Values.rabbitmq.external.port .Values.rabbitmq.enabled) | quote }}
+            {{- with .Values.config.providerEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+            {{- with .Values.config.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          startupProbe: {tcpSocket: {port: http}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {tcpSocket: {port: http}, periodSeconds: 10}
+          livenessProbe: {tcpSocket: {port: http}, periodSeconds: 20}
+          resources: {{ toYaml .Values.serving.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-serving
+  labels: {{ include "futureagi.labels" . | nindent 4 }}
+spec:
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "serving") | nindent 4 }}
+  ports: [{name: http, port: {{ .Values.serving.service.port }}, targetPort: http}]
+{{- end }}
+{{- if .Values.codeExecutor.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.fullname" . }}-code-executor
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: code-executor
+spec:
+  replicas: {{ .Values.codeExecutor.replicaCount }}
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "code-executor") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "code-executor") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: code-executor
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.codeExecutor.image) }}
+          imagePullPolicy: {{ .Values.codeExecutor.image.pullPolicy }}
+          securityContext: {privileged: {{ .Values.codeExecutor.privileged }}}
+          ports: [{name: http, containerPort: 8060}]
+          startupProbe: {httpGet: {path: /health, port: http}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {httpGet: {path: /health, port: http}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /health, port: http}, periodSeconds: 20}
+          resources: {{ toYaml .Values.codeExecutor.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-code-executor
+  labels: {{ include "futureagi.labels" . | nindent 4 }}
+spec:
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "code-executor") | nindent 4 }}
+  ports: [{name: http, port: {{ .Values.codeExecutor.service.port }}, targetPort: http}]
+{{- end }}

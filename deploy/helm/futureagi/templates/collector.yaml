@@ -1,0 +1,75 @@
+{{- if .Values.fiCollector.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "futureagi.fullname" . }}-fi-collector
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fi-collector
+spec:
+  serviceName: {{ include "futureagi.fullname" . }}-fi-collector
+  replicas: {{ .Values.fiCollector.replicaCount }}
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "fi-collector") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "fi-collector") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      securityContext: {{ toYaml .Values.fiCollector.podSecurityContext | nindent 8 }}
+      containers:
+        - name: fi-collector
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.fiCollector.image) }}
+          imagePullPolicy: {{ .Values.fiCollector.image.pullPolicy }}
+          securityContext: {{ toYaml .Values.fiCollector.containerSecurityContext | nindent 12 }}
+          ports:
+            - {name: grpc, containerPort: 4317}
+            - {name: http, containerPort: 4318}
+            - {name: admin, containerPort: 9464}
+          env:
+            - {name: FI_CH_URL, value: {{ printf "http://%s:%v" (include "futureagi.clickhouseHost" .) (ternary 8123 .Values.clickhouse.external.httpPort .Values.clickhouse.enabled) | quote }}}
+            - {name: FI_CH_DATABASE, value: {{ .Values.config.clickhouseDatabase | quote }}}
+            - {name: FI_CH_USERNAME, value: {{ .Values.clickhouse.external.username | quote }}}
+            - name: FI_CH_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: clickhouse-password}}
+            - name: PG_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: postgresql-password}}
+            - name: FI_PG_WRITE
+              value: {{ printf "postgres://%s:$(PG_PASSWORD)@%s:%v/%s?sslmode=disable" .Values.postgresql.username (include "futureagi.postgresqlHost" .) (ternary 5432 .Values.postgresql.external.port .Values.postgresql.enabled) .Values.postgresql.database | quote }}
+            - name: FI_PG_READ
+              value: {{ printf "postgres://%s:$(PG_PASSWORD)@%s:%v/%s?sslmode=disable" .Values.postgresql.username (include "futureagi.postgresqlHost" .) (ternary 5432 .Values.postgresql.external.port .Values.postgresql.enabled) .Values.postgresql.database | quote }}
+            - {name: FI_AUTH_REDIS_ADDR, value: {{ printf "%s:%v" (include "futureagi.redisHost" .) (ternary 6379 .Values.redis.external.port .Values.redis.enabled) | quote }}}
+            - {name: FI_GRPC_ADDR, value: ":4317"}
+            - {name: FI_HTTP_ADDR, value: ":4318"}
+            - {name: FI_ADMIN_ADDR, value: ":9464"}
+            - {name: FI_DEAD_LETTER_FILE, value: /var/lib/fi-collector/dead_letter.jsonl}
+          volumeMounts: [{name: data, mountPath: /var/lib/fi-collector}]
+          startupProbe: {httpGet: {path: /healthz, port: admin}, failureThreshold: 30, periodSeconds: 5}
+          readinessProbe: {httpGet: {path: /healthz, port: admin}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /healthz, port: admin}, periodSeconds: 20}
+          resources: {{ toYaml .Values.fiCollector.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+  {{- if .Values.fiCollector.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end }}
+        resources: {requests: {storage: {{ .Values.fiCollector.persistence.size }}}}
+  {{- else }}
+      volumes: [{name: data, emptyDir: {}}]
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-fi-collector
+  labels: {{ include "futureagi.labels" . | nindent 4 }}
+spec:
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "fi-collector") | nindent 4 }}
+  ports:
+    - {name: grpc, port: {{ .Values.fiCollector.service.grpcPort }}, targetPort: grpc}
+    - {name: http, port: {{ .Values.fiCollector.service.httpPort }}, targetPort: http}
+    - {name: admin, port: {{ .Values.fiCollector.service.adminPort }}, targetPort: admin}
+{{- end }}
