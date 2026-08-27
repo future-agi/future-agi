@@ -25,8 +25,8 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 474,
-    "direct_swagger_auto_schema_decorators": 243,
+    "runtime_backed_validated_request_decorators": 475,
+    "direct_swagger_auto_schema_decorators": 244,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
