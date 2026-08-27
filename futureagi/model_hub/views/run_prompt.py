@@ -2823,7 +2823,7 @@ class RunPromptForRowsView(APIView):
             return self._gm.internal_server_error_response(error_message)
 
 
-@temporal_activity(time_limit=3600, queue="tasks_l")
+@temporal_activity(time_limit=4 * 3600, queue="tasks_l")
 def run_all_prompts_task(run_prompt_ids, row_ids):
     try:
         for run_prompt_id in run_prompt_ids:
@@ -2839,7 +2839,7 @@ def run_all_prompts_task(run_prompt_ids, row_ids):
             Cell.objects.filter(
                 row_id__in=row_ids, column__source_id=run_prompt_id, deleted=False
             ).update(
-                status=StatusType.RUNNING.value, value=None, value_infos=json.dumps({})
+                status=CellStatus.RUNNING.value, value=None, value_infos=json.dumps({})
             )
 
             # Run the prompt for each row ID
