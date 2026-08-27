@@ -18,7 +18,11 @@ const (
 	maxRevisionFenceBytes   = 1 << 20
 	maxRevisionFenceEntries = 256
 	maxRevisionProjects     = 256
-	maxRevisionLease        = 30 * time.Minute
+	// Keep this hard safety bound aligned with
+	// PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS. Extended initial backfills
+	// may use up to the setting's supported 60-minute maximum while preserving
+	// lease headroom for the drain handshake.
+	maxRevisionLease = 60 * time.Minute
 )
 
 // RevisionFence is an activation-control-plane-owned build assignment. The

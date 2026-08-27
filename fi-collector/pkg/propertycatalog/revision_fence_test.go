@@ -143,7 +143,7 @@ func TestFileRevisionProviderValidatesDrainingBoundaryAndDeadline(t *testing.T) 
 func TestFileRevisionProviderAcceptsExtendedInitialBuildLease(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fence.json")
 	draining := testRevisionFence(17, "draining")
-	draining.IssuedAt = "2026-08-14 11:30:00.000000"
+	draining.IssuedAt = "2026-08-14 11:00:00.000000"
 	draining.ExpiresAt = "2026-08-14 12:00:00.000000"
 	draining.DrainDeadline = draining.ExpiresAt
 	draining.FencedSequence = 3
@@ -160,7 +160,7 @@ func TestFileRevisionProviderAcceptsExtendedInitialBuildLease(t *testing.T) {
 		return value
 	}
 	if _, err := provider.CurrentRevision(context.Background(), testOrganization, testWorkspace); err != nil {
-		t.Fatalf("30-minute Python lease was rejected: %v", err)
+		t.Fatalf("60-minute Python lease was rejected: %v", err)
 	}
 
 	draining.ExpiresAt = "2026-08-14 12:00:00.000001"
