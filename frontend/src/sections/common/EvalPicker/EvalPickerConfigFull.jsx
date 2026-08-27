@@ -127,8 +127,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
-  // TH-7177: Error Localization is unavailable on OSS; there the control is
-  // hidden entirely instead of rendering something that cannot run.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed) — seed the model default raw and
   // only strip it here, never off `locked` (true while loading), so entitled
@@ -1729,9 +1727,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 />
               )}
 
-              {/* Error Localization (hidden on OSS per TH-7177; single-eval concern,
-                  LLM/Agent only — code evals don't produce the model traces
-                  the feature introspects). */}
+              {/* Single-eval concern, LLM/Agent only — code evals don't produce
+                  the model traces the feature introspects. */}
               {errorLocalizerAvailable &&
                 !isComposite &&
                 evalType !== "code" && (

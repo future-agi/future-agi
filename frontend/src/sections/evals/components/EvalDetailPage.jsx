@@ -137,8 +137,6 @@ const EvalDetailPage = () => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
-  // TH-7177: Error Localization is unavailable on OSS; there the control is
-  // hidden entirely instead of rendering something that cannot run.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed the default model raw and
   // only strip it on confirmed denial, so entitled users don't lose the
@@ -1708,7 +1706,6 @@ const EvalDetailPage = () => {
                     />
                   ))}
 
-                {/* Error Localization — hidden on OSS (TH-7177) */}
                 {errorLocalizerAvailable &&
                   !isComposite &&
                   evalType !== "code" && (

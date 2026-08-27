@@ -154,8 +154,6 @@ const EvalCreatePage = () => {
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
-  // TH-7177: Error Localization is unavailable on OSS; there the control is
-  // hidden entirely instead of rendering something that cannot run.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed defaults raw and only
   // strip them on confirmed denial — seeding off `locked` (which is true
@@ -1125,9 +1123,8 @@ const EvalCreatePage = () => {
                     />
                   )}
 
-                  {/* Error Localization — hidden on OSS (TH-7177), LLM/Agent only. Code
-                      evals don't produce model traces for the localizer to
-                      introspect. */}
+                  {/* LLM/Agent only — code evals don't produce model traces for
+                      the localizer to introspect. */}
                   {errorLocalizerAvailable && evalType !== "code" && (
                     <Box>
                       <CustomTooltip

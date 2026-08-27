@@ -147,8 +147,8 @@ const EvaluationMappingFormChild = ({
 }) => {
   const { role } = useAuthContext();
   const theme = useTheme();
-  // TH-7177: the form defaults errorLocalizer to true, so gate the submitted
-  // value too - on OSS the hidden field must never post true.
+  // The form defaults errorLocalizer to true, so hiding the field is not enough —
+  // the submitted value has to be gated as well.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
 
   // Get the id for fetching JSON schemas

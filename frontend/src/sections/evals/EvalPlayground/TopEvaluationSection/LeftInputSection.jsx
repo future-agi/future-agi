@@ -150,7 +150,6 @@ const LeftInputSection = ({
   const navigate = useNavigate();
   const { role } = useAuthContext();
   const theme = useTheme();
-  // TH-7177: Error Localization is unavailable on OSS; hide the control there.
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   const evalId = evaluation?.id;
   const {
