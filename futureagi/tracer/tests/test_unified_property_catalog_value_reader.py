@@ -985,6 +985,31 @@ def test_value_reader_rejects_partial_workspace_activation_coverage(settings):
     assert len(executor.calls) == 1
 
 
+def test_value_reader_accepts_workspace_scope_with_deleted_project_tombstones(
+    settings,
+):
+    settings.SECRET_KEY = "property-value-reader-secret"
+    executor = FakeExecutor(
+        [
+            [
+                _activation_row(
+                    covered_project_ids=(PROJECT_ID, OTHER_PROJECT_ID),
+                )
+            ],
+            [_definition_row()],
+            [{"value_conflicts": 0}],
+            [],
+        ]
+    )
+
+    _read(
+        _reader(executor),
+        scope=_scope(project_ids=(PROJECT_ID,), workspace_scope=True),
+    )
+
+    assert executor.calls[1]["params"]["catalog_project_ids"] == (PROJECT_ID,)
+
+
 def test_value_reader_workspace_scope_uses_authorized_project_ids(settings):
     settings.SECRET_KEY = "property-value-reader-secret"
     executor = FakeExecutor(

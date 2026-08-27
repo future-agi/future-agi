@@ -1046,6 +1046,33 @@ def test_catalog_reader_rejects_partial_workspace_activation_coverage(settings):
     assert len(executor.calls) == 1
 
 
+def test_catalog_reader_accepts_workspace_scope_with_deleted_project_tombstones(
+    settings,
+):
+    settings.SECRET_KEY = "property-reader-secret"
+    executor = FakeExecutor(
+        [
+            [
+                _activation_row(
+                    covered_project_ids=(PROJECT_ID, OTHER_PROJECT_ID),
+                )
+            ],
+            [_conflict_row(catalog_count_all=0, catalog_count_custom_attribute=0)],
+            [],
+        ]
+    )
+
+    PropertyCatalogReader(
+        executor, catalog_database="property_catalog_dev_test"
+    ).read_page(
+        scope=_scope(project_ids=(PROJECT_ID,), workspace_scope=True),
+        query=QUERY,
+        page_size=50,
+    )
+
+    assert executor.calls[1]["params"]["catalog_project_ids"] == (PROJECT_ID,)
+
+
 def test_catalog_reader_rejects_unproven_empty_project_scope(settings):
     settings.SECRET_KEY = "property-reader-secret"
     executor = FakeExecutor([[_activation_row()]])

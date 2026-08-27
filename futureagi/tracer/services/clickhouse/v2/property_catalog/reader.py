@@ -1191,15 +1191,13 @@ def require_property_catalog_activation_coverage(
         raise unavailable_type("activation_scope_invalid")
     requested_projects = frozenset(scope["project_ids"])
     covered_projects = frozenset(source_scope.project_ids)
-    workspace_scope = scope.get("workspace_scope") is True
-    if workspace_scope:
-        # The API materializes the full currently-eligible Observe-project set
-        # for a workspace request. Equality prevents both stale extra projects
-        # and newly-created uncovered projects from producing a partial exact
-        # response.
-        if requested_projects != covered_projects:
-            raise unavailable_type("activation_scope_incomplete")
-    elif not requested_projects or not requested_projects.issubset(covered_projects):
+    # The API materializes the complete *live* authorized project set. A full
+    # repair deliberately freezes soft-deleted projects too so it can publish
+    # their tombstones, therefore its immutable source scope may be a strict
+    # superset. The query predicate still contains only requested_projects, so
+    # accepting that proven superset never widens visibility. A newly-created
+    # live project remains fail-closed because it is absent from covered_projects.
+    if not requested_projects or not requested_projects.issubset(covered_projects):
         raise unavailable_type("activation_scope_incomplete")
 
     if (requested_span_since_us is None) != (requested_span_until_us is None):
