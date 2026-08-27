@@ -12,7 +12,7 @@ def create_llm(temperature: float = 0.3, max_tokens: int = 400) -> LLM:
 
     Uses Gemini 2.5 Flash for fast classification/categorization tasks.
     """
-    config = ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE
+    config = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
     return LLM(
         model_name=config.model_name,
         provider=config.provider,

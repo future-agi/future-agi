@@ -101,7 +101,7 @@ class TranscriptSimulator:
     def __init__(
         self,
         agent_model: str = "vertex_ai/gemini-3.7-flash",
-        customer_model: str = "vertex_ai/gemini-3.5-flash-lite",
+        customer_model: str = "vertex_ai/gemini-3.7-flash",
         single_llm: bool = True,  # Default to fast single-LLM mode
         inbound: bool = True,  # Default to Inbound (Customer calls Agent)
     ):

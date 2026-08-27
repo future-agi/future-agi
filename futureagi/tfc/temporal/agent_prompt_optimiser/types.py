@@ -67,8 +67,8 @@ class EvaluatorConfig:
     eval_configs: List[SerializedEvalConfig] = field(default_factory=list)
     issues: List[Dict[str, Any]] = field(default_factory=list)
     use_synthetic: bool = True
-    simulator_model: str = "gemini-3.5-flash-lite"
-    customer_model: str = "gemini-3.5-flash-lite"
+    simulator_model: str = "gemini-3.7-flash"
+    customer_model: str = "gemini-3.7-flash"
     max_parallel_evals: int = 5
     use_issues: bool = True
     use_evals: bool = True
