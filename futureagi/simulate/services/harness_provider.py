@@ -178,6 +178,13 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             else None
         ),
     }
+    # Surface the resolved transport connector so the environments list can show
+    # the agent Type (voice/chat). ``resolve_authored_connector`` pins a concrete
+    # connector (e.g. "livekit") on the payload during authoring; before that it
+    # is "auto" and the type genuinely is not known yet.
+    _agent_cfg = job.payload.get("agent") or {}
+    _connector = str(_agent_cfg.get("connector") or "").strip().lower()
+    detected_connectors = [_connector] if _connector and _connector != "auto" else []
     return {
         "job": {
             "job_id": str(job.id),
@@ -208,6 +215,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             (job.payload.get("metadata") or {}).get("adjustments") or []
         ),
         "platform": platform,
+        "credentials": {"detected_connectors": detected_connectors},
     }
 
 
