@@ -1,6 +1,7 @@
 import type { APIRequestContext } from '@playwright/test';
 import { ApiClient, Tokens } from './api-client';
 import { E2E } from './env';
+import { setKnownPassword } from './ee-password';
 
 export interface TestActor {
   email: string; password: string;
@@ -23,7 +24,19 @@ export async function provisionActor(req: APIRequestContext, label: string): Pro
   const password = `E2e-${label}-${runId}`;
   const anon = new ApiClient(req, E2E.apiUrl);
 
-  await anon.post('/accounts/signup/', { email, full_name: `E2E ${label}`, password });
+  // OSS signup accepts `password` and returns the login payload straight away.
+  // EE/cloud drops `password` from its field allowlist and returns only a
+  // "check your email" message, leaving the (already active) account with a
+  // server-generated password — so there is nothing to log in with until we
+  // set one. Detecting it from the response keeps this a real toggle: the same
+  // harness provisions against either mode with no env flag to keep in sync.
+  // NB: signup wraps its payload in `result` (unlike /accounts/token/, which
+  // returns the tokens flat), so the OSS auto-login shows up as result.access.
+  const signup = await anon.post<{ result?: Partial<Tokens> }>(
+    '/accounts/signup/', { email, full_name: `E2E ${label}`, password },
+  );
+  if (!signup?.result?.access) await setKnownPassword(email, password);
+
   const tokens = await anon.post<Tokens>('/accounts/token/', { email, password, remember_me: true });
 
   let api = anon.withAuth(tokens);

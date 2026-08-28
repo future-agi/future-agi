@@ -3,10 +3,45 @@ services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
     mem_limit: 3g
+    volumes:
+      # Compose resolves paths in an override file against the project
+      # directory (the first -f file's dir = repo root), not this file's dir.
+      # `zz-` so it sorts after the storage policy the root compose mounts.
+      - ./e2e/stack/clickhouse-memory.xml:/etc/clickhouse-server/config.d/zz-e2e-memory.xml:ro
   backend:
     restart: "no"
+    environment: &falcon-agent-env
+      # Agent evals bypass LiteLLM and the org's BYOK model config: `_run_agent`
+      # builds a FalconLLMClient, and off-cloud (no `falcon_ai` entitlement) it
+      # falls back to a "direct provider" derived from the model name
+      # (gpt-4o-mini -> openai). That branch reads its endpoint/key from
+      # FALCON_AI_* env, which the root compose never sets — so it defaulted to
+      # https://api.openai.com and every agent eval died on 401 after three
+      # retries. Point it at the same gateway the judge lane uses so the agent
+      # lane resolves to mock-llm and stays deterministic.
+      FALCON_AI_LLM_URL: http://agentcc-gateway:8080
+      FALCON_AI_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      # EE takes a different path to the same models: with a license the
+      # `falcon_ai` entitlement resolves, so `_run_agent` uses the MANAGED
+      # transport instead of the direct-provider fallback above. That transport
+      # first POSTs /v1/self-hosted/activations to FUTURE_AGI_LICENSE_URL
+      # (default https://api.futureagi.com, unreachable from this stack) for a
+      # service token. Point it at mock-llm, which answers with a token for the
+      # gateway — so the OSS and EE lanes converge on one deterministic
+      # upstream instead of EE dying on ACTIVATION_FAILED.
+      FUTURE_AGI_LICENSE_URL: http://mock-llm:8080
+      # AuthMonitoringMiddleware (accounts/authentication.py) short-circuits on
+      # is_oss(), so this only bites in EE — where it counts EVERY request to
+      # login/token/signup, not just failed ones, against one per-IP bucket.
+      # provisionActor spends two per actor, so the stock 10/hour blocks the
+      # whole suite after five tests and then 403s for a full hour. Set here
+      # rather than in root .env because compose reads that file with
+      # required:false and CI runners do not have it.
+      MAX_LOGIN_ATTEMPTS_PER_HOUR: "100000"
+      IP_BLOCK_DURATION_SECONDS: "1"
   worker:
     restart: "no"
+    environment: *falcon-agent-env
   fi-collector:
     # Root compose reuses FUTURE_AGI_VERSION for this image; the e2e stack
     # decouples it so CI can retag the backend without inventing a
@@ -20,6 +55,10 @@ services:
   mock-llm:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
+    environment:
+      # Handed straight back as the activation access_token, so it must be the
+      # key agentcc-gateway itself authenticates against.
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
     volumes:
       # Compose resolves paths in an override file against the project
       # directory (the first -f file's dir = repo root), not this file's dir.

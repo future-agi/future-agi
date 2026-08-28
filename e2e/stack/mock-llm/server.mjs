@@ -4,6 +4,16 @@ import { createServer } from "node:http";
 
 const PORT = process.env.PORT || 8080;
 const MODELS = ["gpt-4o-mini", "gpt-4o", "text-embedding-3-small"];
+// Self-hosted EE exchanges its license for a short-lived service token before
+// any managed-AI call (ee/licensing/activation_client.py). Unstubbed, that
+// exchange goes to https://api.futureagi.com and fails closed here, surfacing
+// as ACTIVATION_FAILED -> the user-facing "Evaluation failed" on every agent
+// eval. The token we hand back is the gateway's own internal key, so the
+// managed lane lands on the same agentcc-gateway -> mock-llm path the OSS
+// direct-provider lane uses and both modes stay deterministic.
+const GATEWAY_URL = process.env.ACTIVATION_GATEWAY_URL ?? "http://agentcc-gateway:8080";
+const GATEWAY_KEY =
+  process.env.AGENTCC_INTERNAL_API_KEY ?? "local-dev-only-shared-secret-replace-me";
 
 const reply = (messages) => {
   const last = [...(messages ?? [])].reverse().find((m) => m.role === "user");
@@ -39,6 +49,18 @@ createServer((req, res) => {
       });
     }
     const path = req.url.split("?")[0];
+    if (path === "/v1/self-hosted/activations") {
+      // `scope` must not be "oss": call_managed_service rejects that as
+      // NO_ENTERPRISE_LICENSE before it ever reaches the gateway.
+      return json(res, 200, {
+        access_token: GATEWAY_KEY,
+        gateway_url: GATEWAY_URL,
+        expires_in: 3600,
+        allowed_services: ["chat", "embeddings"],
+        allowed_models: MODELS,
+        scope: "enterprise",
+      });
+    }
     if (path === "/v1/models") {
       return json(res, 200, {
         object: "list",
