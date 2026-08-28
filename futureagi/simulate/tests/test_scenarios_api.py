@@ -23,6 +23,7 @@ from model_hub.models.choices import DatasetSourceChoices, SourceChoices, Status
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.persona import Persona
 from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
 
@@ -1021,6 +1022,66 @@ class TestCreateScenarioView:
 
         assert_unknown_field_error(response, "legacy_extra")
         mock_workflow.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCreateScenarioAddPersonaAutomatically:
+    """POST /simulate/scenarios/create/ with add_persona_automatically toggle."""
+
+    @pytest.fixture
+    def persona(self, db, organization):
+        return Persona.objects.create(
+            gender="female", age_group="25-32", organization=organization
+        )
+
+    @patch("simulate.views.scenarios.start_create_script_scenario_workflow_sync")
+    def test_auto_flag_drops_user_picked_personas_from_metadata(
+        self, mock_workflow, auth_client, agent_definition, persona
+    ):
+        payload = {
+            "name": "Auto persona scenario",
+            "description": "user opted in to auto",
+            "kind": "script",
+            "script_url": "https://example.com/script.txt",
+            "agent_definition_id": str(agent_definition.id),
+            "no_of_rows": 10,
+            "personas": [str(persona.id)],
+            "add_persona_automatically": True,
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        scenario = Scenarios.objects.get(id=response.json()["scenario"]["id"])
+        assert "persona_ids" not in (scenario.metadata or {})
+        assert scenario.metadata.get("add_persona_automatically") is True
+
+    @patch("simulate.views.scenarios.start_create_script_scenario_workflow_sync")
+    def test_no_auto_flag_keeps_user_picked_personas(
+        self, mock_workflow, auth_client, agent_definition, persona
+    ):
+        payload = {
+            "name": "Explicit persona scenario",
+            "description": "user picked personas",
+            "kind": "script",
+            "script_url": "https://example.com/script.txt",
+            "agent_definition_id": str(agent_definition.id),
+            "no_of_rows": 10,
+            "personas": [str(persona.id)],
+            "add_persona_automatically": False,
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        scenario = Scenarios.objects.get(id=response.json()["scenario"]["id"])
+        assert scenario.metadata.get("persona_ids") == [str(persona.id)]
+        assert "add_persona_automatically" not in (scenario.metadata or {})
 
 
 # ============================================================================

@@ -14,6 +14,7 @@ class ColumnDefinitionSerializer(StrictInputSerializer):
     name = serializers.CharField(max_length=50)
     data_type = serializers.ChoiceField(choices=DataTypeChoices.get_choices())
     description = serializers.CharField(max_length=200)
+    property = serializers.DictField(required=False, allow_null=True)
 
     def validate_name(self, value):
         if not value.strip():

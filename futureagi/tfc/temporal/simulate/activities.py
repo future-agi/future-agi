@@ -30,7 +30,17 @@ from agentic_eval.core.utils.model_config import (
 
 logger = structlog.get_logger(__name__)
 
+
+def _effective_persona_ids(validated_data: dict) -> list:
+    """Persona ids honoring add_persona_automatically: True drops user picks."""
+    if validated_data.get("add_persona_automatically", False):
+        return []
+    return validated_data.get("personas", [])
+
+
 from accounts.models.user import User
+
+from model_hub.utils.kb_indexer import build_agent_kb_payload
 
 # Use the activity-aware stub: invocations raise a Temporal non-retryable
 # ApplicationError so the workflow fails once instead of retrying.
@@ -935,11 +945,11 @@ def _add_scenario_columns(
     existing_column_names: set,
     agent_definition,
     mode: str,
+    custom_columns: list | None = None,
 ) -> dict:
-    """Add scenario-specific columns to the dataset.
-
-    Returns:
-        Dict mapping column names to their IDs.
+    """Add scenario-specific columns to the dataset. deterministic=True columns
+    (conversation_branch, branch_category) get their values from graph traversal
+    / post-generation categorization; the rest get SDA-generated values.
     """
     import uuid as uuid_module
 
@@ -947,24 +957,42 @@ def _add_scenario_columns(
         "persona": {
             "data_type": DataTypeChoices.PERSONA.value,
             "description": "Customer persona profile",
+            "deterministic": False,
         },
         "situation": {
             "data_type": DataTypeChoices.TEXT.value,
             "description": "Customer situation or scenario",
+            "deterministic": False,
         },
         "outcome": {
             "data_type": DataTypeChoices.TEXT.value,
             "description": "Conversation outcome",
+            "deterministic": False,
         },
         "conversation_branch": {
             "data_type": DataTypeChoices.TEXT.value,
             "description": "Branch name in workflow graph",
+            "deterministic": True,
         },
         "branch_category": {
             "data_type": DataTypeChoices.TEXT.value,
             "description": "Type of branch in the scenario graph",
+            "deterministic": True,
         },
     }
+    for col in custom_columns or []:
+        col_name = col.get("name")
+        if (
+            col_name
+            and col_name not in existing_column_names
+            and col_name not in scenario_columns_config
+        ):
+            scenario_columns_config[col_name] = {
+                "data_type": col.get("data_type", DataTypeChoices.TEXT.value),
+                "description": col.get("description", ""),
+                "deterministic": False,
+                "custom_property": col.get("property") or {},
+            }
 
     new_scenario_columns = {}
     new_columns = []
@@ -1063,12 +1091,11 @@ def _build_sda_payload(
     new_dataset: Dataset,
     agent_definition,
     mode: str,
+    scenario=None,
+    custom_columns: list | None = None,
+    custom_instruction: str | None = None,
 ) -> dict:
-    """Build the payload for SyntheticDataAgent.generate_column_data.
-
-    Returns:
-        Dict with requirements, constraints, and schema.
-    """
+    """Build the payload for SyntheticDataAgent.generate_column_data."""
     try:
         from ee.agenthub.scenario_graph.persona_configurator import (
             PersonaConfigurator,
@@ -1078,12 +1105,20 @@ def _build_sda_payload(
             logger.warning("Could not import ee.agenthub.scenario_graph.persona_configurator", exc_info=True)
         return None
 
+    custom_columns = custom_columns or []
+    custom_instruction = (custom_instruction or "").strip()
     property_dict = PersonaConfigurator.get_property_dict(mode)
 
-    agent_name = getattr(agent_definition, "agent_name", "")
-    agent_description = getattr(agent_definition, "description", "")
-    agent_languages = getattr(agent_definition, "languages", [])
-    is_inbound = getattr(agent_definition, "inbound", False)
+    from simulate.models.agent_version import (
+        pinned_or_live,
+        resolve_configuration_snapshot,
+    )
+
+    _snap = resolve_configuration_snapshot(scenario)
+    agent_name = pinned_or_live(_snap, agent_definition, "agent_name") or ""
+    agent_description = pinned_or_live(_snap, agent_definition, "description") or ""
+    agent_languages = pinned_or_live(_snap, agent_definition, "languages") or []
+    is_inbound = pinned_or_live(_snap, agent_definition, "inbound") or False
     call_type_val = "Inbound" if is_inbound else "Outbound"
     interaction_term = "call" if mode == "voice" else "chat session"
 
@@ -1096,18 +1131,24 @@ def _build_sda_payload(
         "Include typos or short phrasing if appropriate for the situation. Write in third-person."
     )
 
+    objective = (
+        f"Generate realistic persona, situation, and outcome for {agent_name} scenarios "
+        f"that align with conversation branch context provided."
+    )
+    if custom_instruction:
+        objective = f"{objective} {custom_instruction}"
+    scenario_desc = getattr(scenario, "description", None) if scenario else None
+    scenario_focus = f"Scenario focus: {scenario_desc}. " if scenario_desc else ""
     requirements = {
         "Dataset Name": new_dataset.name,
         "Dataset Description": (
             f"Scenario dataset for {agent_name}. "
             f"Agent Purpose: {agent_description}. "
             f"Supported Languages: {agent_languages}. "
-            f"Call Type: {call_type_val}."
+            f"Call Type: {call_type_val}. "
+            f"{scenario_focus}"
         ),
-        "Objective": (
-            f"Generate realistic persona, situation, and outcome for {agent_name} scenarios "
-            f"that align with conversation branch context provided."
-        ),
+        "Objective": objective,
     }
 
     constraints = [
@@ -1156,12 +1197,23 @@ def _build_sda_payload(
         "outcome": {"type": "text"},
     }
 
-    return {
+    from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+    apply_custom_column_constraints(constraints, schema, custom_columns, agent_name)
+
+    result = {
         "requirements": requirements,
         "constraints": constraints,
         "schema": schema,
         "property_dict": property_dict,
     }
+    if scenario is not None:
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb_payload = build_agent_kb_payload(agent_definition, scenario=scenario)
+        if kb_payload:
+            result["knowledge_base"] = kb_payload
+    return result
 
 
 def _resolve_scenario_agent(scenario, source_type):
@@ -1322,10 +1374,25 @@ def _create_dataset_scenario_sync(
                 Column.objects.bulk_create(new_columns)
 
             # ========================================
-            # PHASE 2: Add 5 scenario columns
+            # PHASE 2: Add scenario columns (5 base + user custom_columns)
             # ========================================
+            custom_columns_input = validated_data.get("custom_columns") or []
+            custom_instruction_input = None
+            if scenario.metadata:
+                _meta = scenario.metadata
+                if isinstance(_meta, str):
+                    try:
+                        _meta = json.loads(_meta)
+                    except Exception:
+                        _meta = {}
+                if isinstance(_meta, dict):
+                    custom_instruction_input = _meta.get("custom_instruction")
             new_scenario_columns, scenario_columns_config = _add_scenario_columns(
-                new_dataset, existing_column_names, agent_definition, mode
+                new_dataset,
+                existing_column_names,
+                agent_definition,
+                mode,
+                custom_columns=custom_columns_input,
             )
 
             # Update column_order with new column IDs
@@ -1503,12 +1570,21 @@ def _create_dataset_scenario_sync(
 
         # Build SDA payload for the 3 LLM-generated columns
         # (conversation_branch and branch_category are filled deterministically)
-        sda_payload_data = _build_sda_payload(new_dataset, agent_definition, mode)
+        sda_payload_data = _build_sda_payload(
+            new_dataset,
+            agent_definition,
+            mode,
+            scenario=scenario,
+            custom_columns=custom_columns_input,
+            custom_instruction=custom_instruction_input,
+        )
         base_payload = {
             "requirements": sda_payload_data["requirements"],
             "constraints": sda_payload_data["constraints"],
             "schema": sda_payload_data["schema"],
         }
+        if "knowledge_base" in sda_payload_data:
+            base_payload["knowledge_base"] = sda_payload_data["knowledge_base"]
         property_dict = sda_payload_data["property_dict"]
 
         # ========================================
@@ -1529,17 +1605,17 @@ def _create_dataset_scenario_sync(
             status=StatusType.RUNNING.value
         )
 
+        llm_generated_names = [
+            name
+            for name, cfg in scenario_columns_config.items()
+            if not cfg.get("deterministic")
+        ]
+        branch_persist_names = llm_generated_names + ["conversation_branch"]
+
         # Create placeholder cells with RUNNING status for all scenario columns
-        # This makes cells visible to users immediately
         placeholder_cells = []
         for row_id in ordered_new_row_ids:
-            for col_name in [
-                "persona",
-                "situation",
-                "outcome",
-                "conversation_branch",
-                "branch_category",
-            ]:
+            for col_name in scenario_columns_config.keys():
                 if col_name in scenario_columns_by_name:
                     placeholder_cells.append(
                         Cell(
@@ -1564,12 +1640,7 @@ def _create_dataset_scenario_sync(
             Cell.objects.filter(
                 dataset=new_dataset,
                 row_id__in=ordered_new_row_ids,
-                column__name__in=[
-                    "persona",
-                    "situation",
-                    "outcome",
-                    "conversation_branch",
-                ],
+                column__name__in=branch_persist_names,
             ).select_related("column")
         )
         cell_lookup = {
@@ -1630,23 +1701,24 @@ def _create_dataset_scenario_sync(
                     for df_idx, row_idx in enumerate(row_indices):
                         row_id = ordered_new_row_ids[row_idx]
 
-                        # Update persona, situation, outcome cells
-                        for col_name in ["persona", "situation", "outcome"]:
+                        # SDA-generated columns (persona/situation/outcome + custom)
+                        for col_name in llm_generated_names:
                             if col_name not in scenario_columns_by_name:
                                 continue
                             cell_key = (str(row_id), col_name)
-                            if cell_key in cell_lookup:
-                                cell = cell_lookup[cell_key]
-                                value = ""
-                                if df_idx < len(branch_df):
-                                    value = branch_df.iloc[df_idx].get(col_name, "")
-                                    if col_name == "persona" and isinstance(
-                                        value, dict
-                                    ):
-                                        value = json.dumps(value)
-                                cell.value = value
-                                cell.status = CellStatus.PASS.value
-                                cells_to_update.append(cell)
+                            if cell_key not in cell_lookup:
+                                continue
+                            cell = cell_lookup[cell_key]
+                            value = ""
+                            if df_idx < len(branch_df):
+                                value = branch_df.iloc[df_idx].get(col_name, "")
+                                if isinstance(value, (dict, list)):
+                                    value = json.dumps(value)
+                                elif value is None:
+                                    value = ""
+                            cell.value = value
+                            cell.status = CellStatus.PASS.value
+                            cells_to_update.append(cell)
 
                         # Update conversation_branch cell (deterministic)
                         if "conversation_branch" in scenario_columns_by_name:
@@ -1841,7 +1913,7 @@ def _create_dataset_scenario_sync(
         scenario.status = StatusType.COMPLETED.value
 
         # Store persona_ids in metadata if provided
-        persona_ids = validated_data.get("personas", [])
+        persona_ids = _effective_persona_ids(validated_data)
         if persona_ids:
             current_metadata = scenario.metadata if scenario.metadata else {}
             if isinstance(current_metadata, str):
@@ -2018,8 +2090,14 @@ def _create_script_scenario_sync(
 
         no_of_rows = validated_data.get("no_of_rows", 20)
         script_url = validated_data.get("script_url")
-        agent_definition_id = validated_data.get("agent_definition_id")
-        persona_ids = validated_data.get("personas", [])
+        source_type = validated_data.get("source_type", "agent_definition")
+        agent_definition = _resolve_scenario_agent(scenario, source_type)
+        if not agent_definition:
+            raise ValueError(
+                "Either agent_definition or prompt_template is required on "
+                "the scenario for script scenario creation"
+            )
+        persona_ids = _effective_persona_ids(validated_data)
         custom_columns = validated_data.get("custom_columns", [])
 
         script_content = ""
@@ -2044,27 +2122,26 @@ def _create_script_scenario_sync(
         scenario.metadata = current_metadata
         scenario.save()
 
-        # Handle graph generation or use provided graph data
+        # Handle graph generation. Prompt-based scripts share the adapter path.
         generated_graph_data = None
-        if agent_definition_id:
-            # Generate graph using ConversationGraphGenerator
-            try:
-                graph_generator = ConversationGraphGenerator(
-                    agent_definition_id=str(agent_definition_id),
-                    scenario=scenario,
-                    script_url=script_url,
-                )
-                generated_graph_data = graph_generator.generate_graph(save_to_db=True)
-
-            except Exception as e:
-                scenario.status = StatusType.FAILED.value
-                scenario.save()
-                raise Exception(f"Failed to generate graph: {str(e)}")
+        try:
+            graph_generator = ConversationGraphGenerator(
+                scenario=scenario,
+                agent_definition=agent_definition,
+                script_url=script_url,
+            )
+            generated_graph_data = graph_generator.generate_graph(save_to_db=True)
+        except Exception as e:
+            scenario.status = StatusType.FAILED.value
+            scenario.save()
+            raise Exception(f"Failed to generate graph: {str(e)}")
 
         enhanced_agent = EnhancedScenariosAgent(
-            str(agent_definition_id),
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
+            agent_definition=agent_definition,
+            knowledge_base=build_agent_kb_payload(agent_definition, scenario=scenario),
+            scenario_description=scenario.description,
         )
         s, d = enhanced_agent.run(
             name=scenario.name,
@@ -2430,70 +2507,17 @@ def _create_graph_scenario_sync(
             logger.warning("usage_precheck_failed", exc_info=True)
 
         no_of_rows = validated_data.get("no_of_rows", 20)
-        persona_ids = validated_data.get("personas", [])
+        persona_ids = _effective_persona_ids(validated_data)
         custom_columns = validated_data.get("custom_columns", [])
         transcripts = validated_data.get("transcripts", [])
         # Convert persona IDs to property_list
         property_list = convert_personas_to_property_list(persona_ids)
 
-        # Build agent_definition object — real DB lookup or adapter for prompt sources
-        if source_type == "prompt" and scenario.prompt_template:
-            # Extract full prompt content from prompt_version config for graph generation
-            prompt_content = ""
-            prompt_version = scenario.prompt_version
-            if not prompt_version:
-                # Fallback to default version from template
-                prompt_version = scenario.prompt_template.all_executions.filter(
-                    is_default=True, deleted=False
-                ).first()
-
-            if prompt_version and prompt_version.prompt_config_snapshot:
-                config_snapshot = prompt_version.prompt_config_snapshot
-                # Handle both list and dict formats
-                config = (
-                    config_snapshot[0]
-                    if isinstance(config_snapshot, list)
-                    else config_snapshot
-                )
-                if isinstance(config, dict):
-                    messages = config.get("messages", [])
-                    # Format all messages into a readable prompt description
-                    formatted_messages = []
-                    for msg in messages:
-                        role = msg.get("role", "unknown")
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            # Handle multimodal content - extract text parts
-                            text_parts = [
-                                p.get("text", "")
-                                for p in content
-                                if isinstance(p, dict) and p.get("type") == "text"
-                            ]
-                            content = "\n".join(text_parts)
-                        if content:
-                            formatted_messages.append(f"[{role}]: {content}")
-                    prompt_content = "\n\n".join(formatted_messages)
-
-            # Use full prompt content if available, otherwise fall back to description
-            agent_description = (
-                prompt_content or scenario.prompt_template.description or ""
-            )
-
-            agent_definition = types.SimpleNamespace(
-                id=scenario.prompt_template.id,
-                agent_name=scenario.prompt_template.name,
-                description=agent_description,
-                agent_type="text",
-                languages=["en"],
-                language="en",
-                inbound=True,
-                contact_number=None,
-                organization=scenario.organization,
-                workspace=scenario.workspace,
-            )
-        else:
-            agent_definition = AgentDefinition.no_workspace_objects.get(
-                id=agent_definition_id
+        agent_definition = _resolve_scenario_agent(scenario, source_type)
+        if not agent_definition:
+            raise ValueError(
+                "Either agent_definition or prompt_template is required on "
+                "the scenario for graph scenario creation"
             )
 
         # Update scenario source
@@ -2538,9 +2562,20 @@ def _create_graph_scenario_sync(
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
             agent_definition=agent_definition,
+            knowledge_base=build_agent_kb_payload(agent_definition, scenario=scenario),
+            scenario_description=scenario.description,
         )
 
-        agent_description = getattr(agent_definition, "description", "")
+        # Honor version-pin for downstream user-intent and use-case LLM prompts.
+        from simulate.models.agent_version import (
+            pinned_or_live,
+            resolve_configuration_snapshot,
+        )
+
+        _snap = resolve_configuration_snapshot(scenario)
+        agent_description = (
+            pinned_or_live(_snap, agent_definition, "description") or ""
+        )
 
         def get_user_intent(transcript: str, agent_description: str) -> str:
             """Extract user intent from the transcript using LLM.
@@ -2847,7 +2882,7 @@ def _setup_graph_scenario_sync(
         generate_graph = validated_data.get("generate_graph", False)
         graph_data = validated_data.get("graph")
         no_of_rows = validated_data.get("no_of_rows", 20)
-        persona_ids = validated_data.get("personas", [])
+        persona_ids = _effective_persona_ids(validated_data)
         custom_columns = validated_data.get("custom_columns", [])
         transcripts = validated_data.get("transcripts", [])
 
@@ -2868,66 +2903,20 @@ def _setup_graph_scenario_sync(
 
         property_list = convert_personas_to_property_list(persona_ids)
 
-        # Build agent_definition object
-        if source_type == "prompt" and scenario.prompt_template:
-            prompt_content = ""
-            prompt_version = scenario.prompt_version
-            if not prompt_version:
-                prompt_version = scenario.prompt_template.all_executions.filter(
-                    is_default=True, deleted=False
-                ).first()
-
-            if prompt_version and prompt_version.prompt_config_snapshot:
-                config_snapshot = prompt_version.prompt_config_snapshot
-                config = (
-                    config_snapshot[0]
-                    if isinstance(config_snapshot, list)
-                    else config_snapshot
-                )
-                if isinstance(config, dict):
-                    messages = config.get("messages", [])
-                    formatted_messages = []
-                    for msg in messages:
-                        role = msg.get("role", "unknown")
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            text_parts = [
-                                p.get("text", "")
-                                for p in content
-                                if isinstance(p, dict) and p.get("type") == "text"
-                            ]
-                            content = "\n".join(text_parts)
-                        if content:
-                            formatted_messages.append(f"[{role}]: {content}")
-                    prompt_content = "\n\n".join(formatted_messages)
-
-            agent_description = (
-                prompt_content or scenario.prompt_template.description or ""
-            )
-
-            agent_definition = types.SimpleNamespace(
-                id=scenario.prompt_template.id,
-                agent_name=scenario.prompt_template.name,
-                description=agent_description,
-                agent_type="text",
-                languages=["en"],
-                language="en",
-                inbound=True,
-                contact_number=None,
-                organization=scenario.organization,
-                workspace=scenario.workspace,
-            )
-        else:
-            try:
-                agent_definition = AgentDefinition.no_workspace_objects.get(
-                    id=agent_definition_id
-                )
-            except AgentDefinition.DoesNotExist:
-                return {
-                    "scenario_id": scenario_id,
-                    "status": "FAILED",
-                    "error": f"Agent definition '{agent_definition_id}' not found. Please verify the agent_definition_id.",
-                }
+        try:
+            agent_definition = _resolve_scenario_agent(scenario, source_type)
+        except AgentDefinition.DoesNotExist:
+            return {
+                "scenario_id": scenario_id,
+                "status": "FAILED",
+                "error": f"Agent definition '{agent_definition_id}' not found. Please verify the agent_definition_id.",
+            }
+        if not agent_definition:
+            return {
+                "scenario_id": scenario_id,
+                "status": "FAILED",
+                "error": "Either agent_definition or prompt_template is required on the scenario.",
+            }
 
         # Update scenario source and mark as processing
         scenario.source = "Graph-based scenario"
@@ -2974,11 +2963,20 @@ def _setup_graph_scenario_sync(
                 scenario.save()
                 raise Exception(f"Failed to save graph data: {str(e)}")
 
-        # Serialize agent definition for passing to other activities
+        from simulate.models.agent_version import (
+            pinned_or_live as _pinned_or_live,
+            resolve_configuration_snapshot,
+        )
+
+        configuration_snapshot = resolve_configuration_snapshot(scenario)
+        kb_payload = build_agent_kb_payload(agent_definition, scenario=scenario)
         enhanced_agent = EnhancedScenariosAgent(
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
             agent_definition=agent_definition,
+            knowledge_base=kb_payload,
+            scenario_description=scenario.description,
+            configuration_snapshot=configuration_snapshot,
         )
         agent_definition_data = enhanced_agent.serialize_agent_definition()
 
@@ -2998,15 +2996,23 @@ def _setup_graph_scenario_sync(
                     metadata = {}
             custom_instruction = metadata.get("custom_instruction")
 
-        # Build flat agent_context for v3 activities (no ORM objects)
+        # Flat, ORM-free dict for v3 sub-activities. ids/org/workspace come from
+        # live because the snapshot stores UUID strings, not FKs. knowledge_base +
+        # scenario_description propagate to the v3 payload builder so the v3 SDA
+        # payload matches what the ESA-inline builder emits on script / add-rows.
+        _inbound_pin = _pinned_or_live(configuration_snapshot, agent_definition, "inbound")
         agent_context = {
-            "agent_name": getattr(agent_definition, "agent_name", ""),
-            "description": getattr(agent_definition, "description", ""),
-            "agent_type": str(getattr(agent_definition, "agent_type", "voice")),
-            "languages": getattr(agent_definition, "languages", ["en"]),
-            "language": getattr(agent_definition, "language", "en"),
-            "inbound": getattr(agent_definition, "inbound", True),
-            "contact_number": getattr(agent_definition, "contact_number", None),
+            "agent_name": _pinned_or_live(configuration_snapshot, agent_definition, "agent_name") or "",
+            "description": _pinned_or_live(configuration_snapshot, agent_definition, "description") or "",
+            "agent_type": str(
+                _pinned_or_live(configuration_snapshot, agent_definition, "agent_type") or "voice"
+            ),
+            "languages": _pinned_or_live(configuration_snapshot, agent_definition, "languages") or ["en"],
+            "language": _pinned_or_live(configuration_snapshot, agent_definition, "language") or "en",
+            "inbound": _inbound_pin if _inbound_pin is not None else True,
+            "contact_number": _pinned_or_live(configuration_snapshot, agent_definition, "contact_number"),
+            "knowledge_base": kb_payload,
+            "scenario_description": scenario.description,
             "agent_definition_id": str(getattr(agent_definition, "id", "")),
             "organization_id": (
                 str(agent_definition.organization.id)
@@ -3020,16 +3026,6 @@ def _setup_graph_scenario_sync(
             ),
             "mode": mode,
         }
-
-        # Load configuration_snapshot from AgentVersion if available
-        configuration_snapshot = None
-        version_id = validated_data.get("agent_definition_version_id")
-        if version_id:
-            from simulate.models.agent_version import AgentVersion
-
-            version = AgentVersion.objects.filter(id=version_id).first()
-            if version:
-                configuration_snapshot = version.configuration_snapshot
 
         # Usage emit (graph generation LLM cost)
         try:
