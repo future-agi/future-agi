@@ -148,6 +148,71 @@ class TestOnClusterAttachment:
         assert out.upper().count("ON CLUSTER") == 1
 
 
+class TestDictionaryOnCluster:
+    """Dictionaries are node-local objects — a CREATE DICTIONARY without
+    ON CLUSTER lands only on the replica apply_schema connected to. This
+    shipped: us2 prod had `end_users_dict` / `trace_sessions_dict` on 1 of
+    3 replicas, so queries load-balanced to the other two failed Code 36.
+    """
+
+    @pytest.mark.parametrize(
+        "stmt, expected",
+        [
+            (
+                "CREATE DICTIONARY IF NOT EXISTS end_users_dict (a UInt8) PRIMARY KEY a "
+                "SOURCE(CLICKHOUSE(TABLE 'end_users')) LIFETIME(60) LAYOUT(FLAT())",
+                "end_users_dict",
+            ),
+            (
+                "CREATE OR REPLACE DICTIONARY trace_dict (a UInt8) PRIMARY KEY a "
+                "SOURCE(CLICKHOUSE(TABLE 'traces')) LIFETIME(60) LAYOUT(FLAT())",
+                "trace_dict",
+            ),
+            (
+                "CREATE DICTIONARY analytics.trace_dict (a UInt8) PRIMARY KEY a "
+                "SOURCE(CLICKHOUSE(TABLE 'traces')) LIFETIME(60) LAYOUT(FLAT())",
+                "trace_dict",
+            ),
+            ("DROP DICTIONARY trace_dict", None),
+            ("SYSTEM RELOAD DICTIONARY trace_dict", None),
+        ],
+    )
+    def test_extracts_or_skips(self, stmt, expected):
+        assert _extract_table_name(stmt) == expected
+
+    def test_create_dictionary_gets_on_cluster(self):
+        out = _rewrite(
+            "CREATE DICTIONARY IF NOT EXISTS end_users_dict\n"
+            "(\n    end_user_id UUID,\n    user_id String\n)\n"
+            "PRIMARY KEY end_user_id\n"
+            "SOURCE(CLICKHOUSE(TABLE 'end_users' WHERE 'is_deleted = 0'))\n"
+            "LIFETIME(MIN 60 MAX 120)\n"
+            "LAYOUT(COMPLEX_KEY_HASHED());",
+            table="end_users_dict",
+        )
+        assert (
+            "CREATE DICTIONARY IF NOT EXISTS end_users_dict ON CLUSTER 'default'" in out
+        )
+
+    def test_create_dictionary_without_engine_does_not_raise(self):
+        # Dictionaries have no ENGINE clause — the CREATE-TABLE fail-closed
+        # path must not fire on them.
+        out = _rewrite(
+            "CREATE DICTIONARY d (a UInt8) PRIMARY KEY a "
+            "SOURCE(CLICKHOUSE(TABLE 't')) LIFETIME(60) LAYOUT(FLAT())",
+            table="d",
+        )
+        assert out.upper().count("ON CLUSTER") == 1
+
+    def test_idempotent_on_already_clustered(self):
+        stmt = (
+            "CREATE DICTIONARY d ON CLUSTER 'shard1' (a UInt8) PRIMARY KEY a "
+            "SOURCE(CLICKHOUSE(TABLE 't')) LIFETIME(60) LAYOUT(FLAT())"
+        )
+        out = _rewrite(stmt, table="d")
+        assert out.upper().count("ON CLUSTER") == 1
+
+
 class TestCustomZkPrefix:
     def test_zk_prefix_substituted(self):
         out = rewrite_for_replicated(
@@ -206,6 +271,29 @@ class TestAllShippedSchemas:
                     continue
                 rewritten = _rewrite(stmt, table=name)
                 assert "ON CLUSTER" in rewritten
+
+    def test_every_create_dictionary_gets_on_cluster(self, schema_files):
+        # The gate for the us2 incident: 015/017/018 ship dictionaries, and
+        # every one of them must fan out to all replicas in prod mode.
+        import re
+
+        create_dict = re.compile(
+            r"\s*CREATE\s+(?:OR\s+REPLACE\s+)?DICTIONARY", re.IGNORECASE
+        )
+        seen = 0
+        for f in schema_files:
+            for stmt in split_statements(f.read_text()):
+                name = _extract_table_name(stmt)
+                if name is None:
+                    continue
+                if not create_dict.match(stmt):
+                    continue
+                seen += 1
+                rewritten = _rewrite(stmt, table=name)
+                assert "ON CLUSTER" in rewritten, (
+                    f"{f.name}: CREATE DICTIONARY for {name} missing ON CLUSTER."
+                )
+        assert seen >= 3, "expected the shipped dictionary DDLs to be swept"
 
     def test_every_alter_table_gets_on_cluster(self, schema_files):
         for f in schema_files:
