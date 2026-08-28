@@ -391,7 +391,7 @@
 ### EVAL-E2E-024 — author a new Agent eval, attach an external connector, test it and publish
 
 **Goal:** A developer creates an Agent-type eval, attaches an external MCP connector as a tool the evaluator can use, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-agent-connectors.spec.ts:79`  
+**Spec:** `flows/evals/eval-playground-agent-connectors.spec.ts:85`  
 **Tags:** —
 
 **User steps:**
@@ -416,7 +416,7 @@
 ### EVAL-E2E-025 — author a new Agent eval, attach a knowledge base, test it and publish
 
 **Goal:** A developer creates an Agent-type eval, attaches a knowledge base for the evaluator to draw context from, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-agent-knowledge-base.spec.ts:30`  
+**Spec:** `flows/evals/eval-playground-agent-knowledge-base.spec.ts:32`  
 **Tags:** —
 
 **User steps:**
@@ -441,7 +441,7 @@
 ### EVAL-E2E-026 — author a new Agent eval, turn on data injection, test it and publish
 
 **Goal:** A developer creates an Agent-type eval and configures full span context to be injected when it runs, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-agent-data-injection.spec.ts:29`  
+**Spec:** `flows/evals/eval-playground-agent-data-injection.spec.ts:31`  
 **Tags:** —
 
 **User steps:**
@@ -465,7 +465,7 @@
 ### EVAL-E2E-027 — author a new Agent eval, configure a long then a custom summary, test it and publish
 
 **Goal:** A developer creates an Agent-type eval, tries the built-in "Long" summary preset, then switches to a saved custom summary template, testing after each change, and publishes  
-**Spec:** `flows/evals/eval-playground-agent-summary.spec.ts:30`  
+**Spec:** `flows/evals/eval-playground-agent-summary.spec.ts:32`  
 **Tags:** —
 
 **User steps:**
