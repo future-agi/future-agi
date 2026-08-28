@@ -14,6 +14,17 @@ export interface TestActor {
 interface UserInfo { organization: { id: string }; default_workspace_id: string | null }
 interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
+// A stable, private, per-actor IPv4 derived from the actor's run id. 10/8 so
+// nothing here can collide with a real routable address, and derived rather
+// than random so a blocked bucket in the backend logs traces back to exactly
+// one actor.
+function actorClientIp(runId: string): string {
+  let hash = 0;
+  for (const ch of runId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  // Avoid .0 and .255 in the low octet; the middle octets can take any value.
+  return `10.${(hash >> 16) & 0xff}.${(hash >> 8) & 0xff}.${(hash % 254) + 1}`;
+}
+
 export async function provisionActor(req: APIRequestContext, label: string): Promise<TestActor> {
   // futureagi.com domain: belt (special-email recaptcha bypass) to the
   // localhost-Host suspenders; also gives the auto-created org a stable name.
@@ -22,7 +33,26 @@ export async function provisionActor(req: APIRequestContext, label: string): Pro
   const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const email = `e2e-${label}-${runId}@futureagi.com`;
   const password = `E2e-${label}-${runId}`;
-  const anon = new ApiClient(req, E2E.apiUrl);
+
+  // Sign up and log in from a client IP unique to this actor.
+  //
+  // `AuthMonitoringMiddleware` (futureagi/accounts/authentication.py:688) is
+  // EE-only — it short-circuits on is_oss() — and buckets login/token/signup
+  // by client IP, counting EVERY request rather than only failed ones
+  // (`requests.append(now)` at :752 is unconditional, despite the "multiple
+  // failed attempts" wording). The stock budget is 10/hour and a block lasts
+  // an hour. Provisioning one tenant spends two, and the suite provisions one
+  // per worker plus more on every Playwright worker restart, so a real run
+  // exhausts a single bucket and then 403s for the rest of the hour.
+  //
+  // Rather than weaken the limit for everyone, give each simulated tenant its
+  // own origin — which is what distinct users actually look like.
+  // `get_client_ip` (:611-625) reads the first entry of X-Forwarded-For ahead
+  // of REMOTE_ADDR, so this is the same key the middleware would derive behind
+  // a real proxy. Deliberately NOT a way of dodging the limiter: a single
+  // actor still shares one bucket across its own requests, so a genuine
+  // per-IP regression would still surface.
+  const anon = new ApiClient(req, E2E.apiUrl, { 'X-Forwarded-For': actorClientIp(runId) });
 
   // OSS signup accepts `password` and returns the login payload straight away.
   // EE/cloud drops `password` from its field allowlist and returns only a
