@@ -1255,6 +1255,7 @@ const PrimaryGraph = ({
                     },
                   ]}
                   rootRef={metricPickerScrollRef}
+                  requireUserAdvanceGesture
                   loadingLabel="Loading more metrics…"
                   retryLabel="Retry loading more metrics"
                   errorMessage={

@@ -461,6 +461,19 @@ export function useLegacyCursorAttributeInventory({
   const shouldAdvanceRetained = !debouncedRawSearch || !exactHasNextPage;
   const hasNextPage =
     exactHasNextPage || (shouldAdvanceRetained && retainedHasNextPage);
+  const continuationKey = exactHasNextPage
+    ? `exact:${
+        getAttributeKeyNextCursor(exactPages.at(-1)) ||
+        exactStopSignature ||
+        "fresh-chain-retry"
+      }`
+    : shouldAdvanceRetained && retainedHasNextPage
+      ? `retained:${
+          getAttributeKeyNextCursor(retainedPages.at(-1)) ||
+          retainedStopSignature ||
+          "fresh-chain-retry"
+        }`
+      : null;
 
   const rawAttributes = useMemo(() => {
     return mergeCursorAttributeRows(
@@ -656,6 +669,7 @@ export function useLegacyCursorAttributeInventory({
     filteredAttributes,
     rawAttributes,
     hasNextPage,
+    continuationKey,
     fetchNextPage,
     isFetchingNextPage,
     isLoading: retainedQuery.isLoading,
@@ -669,6 +683,7 @@ export function useLegacyCursorAttributeInventory({
     pageCount: retainedPages.length + exactPages.length,
     inventoryControlProps: {
       hasNextPage,
+      continuationKey,
       onLoadMore: fetchNextPage,
       isFetchingNextPage,
       isError: retainedInitialError,
@@ -794,6 +809,7 @@ export function useCursorAttributeInventory({
     filteredAttributes,
     rawAttributes,
     hasNextPage: Boolean(catalog.hasNextPage),
+    continuationKey: catalog.continuationKey,
     fetchNextPage,
     isFetchingNextPage: catalog.isFetchingNextPage,
     isLoading,
@@ -807,6 +823,7 @@ export function useCursorAttributeInventory({
     pageCount: catalog.data?.pages?.length || 0,
     inventoryControlProps: {
       hasNextPage: Boolean(catalog.hasNextPage),
+      continuationKey: catalog.continuationKey,
       onLoadMore: fetchNextPage,
       isFetchingNextPage: catalog.isFetchingNextPage,
       isError: initialError,

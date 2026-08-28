@@ -60,6 +60,7 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
     "command",
     [
         "backfill_score_tracer_project",
+        "backfill_dashboard_root_spans",
         "ch25_apply_schema",
         "ch25_property_catalog_dev_rollout",
         "createcachetable",
@@ -78,6 +79,7 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
     "command",
     [
         "backfill_score_tracer_project",
+        "backfill_dashboard_root_spans",
         "ch25_apply_schema",
         "ch25_property_catalog_dev_rollout",
         "ch25_remove_pg",
@@ -147,6 +149,7 @@ def test_operator_bootstrap_does_not_authorize_open_ended_processes(monkeypatch,
         ["manage.py", "ch25_activate_attribute_catalog"],
         ["manage.py", "ch25_backfill_attribute_catalog"],
         ["manage.py", "ch25_property_catalog_oss_supervisor"],
+        ["manage.py", "benchmark_dashboard_complex_query"],
         ["manage.py", "generate_swagger", "/tmp/swagger.json"],
         ["/app/backend/manage.py", "grpcrunaioserver"],
         ["/usr/lib/python3/site-packages/django/__main__.py", "runserver"],

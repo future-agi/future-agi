@@ -7769,12 +7769,10 @@ def test_exact_user_graph_uses_one_full_window_current_state_statement():
     assert "candidate_trace_ids AS" in query
     assert "HAVING min(start_time) >= %(start_date)s" in query
     assert "start_time >= %(snapshot_start_date)s" in query
-    assert "SELECT toString(trace_id) FROM candidate_trace_ids" in query
     assert "GROUP BY end_user_id, trace_id" in query
-    assert "FROM user_rows" in query
-    assert "candidate_physical_end_user_ids AS" in query
-    assert "candidate_end_user_remap_target_new_ids AS" in query
-    assert "candidate_user_session_remap_target_new_ids AS" in query
+    assert "FROM end_users AS dimension_user FINAL" in query
+    assert "FROM user_rows" not in query
+    assert "candidate_user_session_remap_target_new_ids AS" not in query
     assert "OVER (PARTITION BY new_id)" not in query
     assert "additional_table_filters" not in settings
     assert result["query_complete"] is True

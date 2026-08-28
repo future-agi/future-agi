@@ -65,6 +65,8 @@ import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
 } from "src/config/runtime_limits";
+import { boundObserveListRow } from "./observeListPayload";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 
 const ROWS_LIMIT = 25;
 const traceRowIdentity = (row) => {
@@ -349,7 +351,8 @@ const TraceGrid = React.forwardRef(
                     targetRowCount: ROWS_LIMIT,
                     loadResponse: (signal) =>
                       loadTraceObservePage(buildParams(pageNumber), signal),
-                    rowsFromResponse: (response) => response.data.table,
+                    rowsFromResponse: (response) =>
+                      response.data.table.map(boundObserveListRow),
                     metadataFromResponse: (response) => response.data.metadata,
                     rowIdentity: traceRowIdentity,
                     isCurrent: () =>
@@ -471,6 +474,10 @@ const TraceGrid = React.forwardRef(
                 if (ids.length > 0) setVisibleTraceIds(ids);
               }, 0);
             } catch (error) {
+              if (isExpectedRequestCancellation(error)) {
+                params.fail();
+                return;
+              }
               if (isListCursorContinuationLimitError(error)) {
                 // Keep the signed checkpoint and any existing rows. This is a
                 // bounded exact read awaiting an explicit retry, not an empty

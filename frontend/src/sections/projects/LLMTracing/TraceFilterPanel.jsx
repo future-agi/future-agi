@@ -1385,13 +1385,19 @@ export function buildTraceFilterProperties(
 
 export function useLegacyTraceFilterProperties(
   projectId,
-  { enabled = true, isSimulator = false, sourceScope = null } = {},
+  {
+    enabled = true,
+    isSimulator = false,
+    sourceScope = null,
+    allowWorkspaceScope = false,
+  } = {},
 ) {
+  const requestScope = projectId || (allowWorkspaceScope ? "workspace" : "");
   const query = useInfiniteQuery({
-    // Key on projectId only — isSimulator/sourceScope affect only the
+    // Key on request scope only — isSimulator/sourceScope affect only the
     // per-observer `select`, not the request, so keying on them duplicated fetches.
-    queryKey: ["trace-filter-properties-v2", projectId],
-    enabled: enabled && Boolean(projectId),
+    queryKey: ["trace-filter-properties-v2", requestScope],
+    enabled: enabled && Boolean(requestScope),
     queryFn: async ({ pageParam = 1, signal }) => {
       const params = {
         page: pageParam,
@@ -1458,15 +1464,17 @@ export function useTraceFilterProperties(
     perEvalConfig: true,
     pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
     enabled: enabled && hasCatalogScope,
-    // The retained page-number endpoint requires one project. Workspace
-    // mode therefore stays on the authorized unified catalog.
-    allowLegacyNotReadyFallback: Boolean(projectId),
+    // The legacy definition endpoint is organization-scoped when project_ids
+    // is omitted. Keep it dormant unless the typed catalog explicitly reports
+    // not-ready, then use it as a bounded compatibility read for Users pages.
+    allowLegacyNotReadyFallback: Boolean(projectId || allowWorkspaceScope),
     fallbackScopeKey,
   });
   const legacy = useLegacyTraceFilterProperties(projectId, {
     enabled: enabled && catalog.legacyFallbackRequired,
     isSimulator,
     sourceScope,
+    allowWorkspaceScope,
   });
 
   if (catalog.legacyFallbackRequired) {
@@ -1573,6 +1581,7 @@ export function PropertyPickerPaginationControl({
       rootRef={scrollRootRef}
       resetKey={resetKey}
       autoAdvanceWhileVisible={autoAdvanceWhileVisible}
+      requireUserAdvanceGesture
       channels={[
         {
           channelKey: "attributes",
@@ -3198,6 +3207,8 @@ function ValuePicker({
           <BoundedCursorPaginationControl
             key={`${projectId || "workspace"}:${filterValueSource}:${property?.registryId || propertyId}:${metricType}:${backendValueSearch}`}
             rootRef={valueOptionsListRef}
+            autoAdvanceWhileVisible={false}
+            requireUserAdvanceGesture
             channels={[
               {
                 channelKey: "values",

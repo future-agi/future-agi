@@ -148,6 +148,7 @@ from tracer.services.clickhouse.v2.query_builders.span_list import (
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 from tracer.services.clickhouse.v2.span_selectors import (
+    bound_observe_list_value,
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
@@ -2412,8 +2413,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             entry = {
                 "project_id": str(row.get("project_id", "")),
                 "span_id": span_id,
-                "input": row.get("input", ""),
-                "output": row.get("output", ""),
+                "input": bound_observe_list_value(row.get("input", "")),
+                "output": bound_observe_list_value(row.get("output", "")),
                 "trace_id": str(row.get("trace_id", "")),
                 "created_at": row.get("created_at"),
                 "node_type": row.get("observation_type", ""),

@@ -572,10 +572,10 @@ def test_dashboard_query_uses_direct_write_backend_independent_of_routing(
 
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
-    assert response.json()["result"]["query_provenance"] == "materialized_rollup"
+    assert response.json()["result"]["query_provenance"] == "merged_span_compatibility"
     assert v2_client.execute_read.call_count == 1
     v2_builder.assert_called_once()
-    exact_snapshot.assert_called_once()
+    exact_snapshot.assert_not_called()
     dispatch.assert_not_called()
     legacy_analytics.assert_not_called()
 
@@ -648,10 +648,10 @@ def test_widget_trace_queries_use_direct_write_backend_independent_of_routing(
 
     assert response.status_code == 200
     assert response.json()["result"]["query_status"] == "complete"
-    assert response.json()["result"]["query_provenance"] == "materialized_rollup"
+    assert response.json()["result"]["query_provenance"] == "merged_span_compatibility"
     assert v2_client.execute_read.call_count == 1
     v2_builder.assert_called_once()
-    exact_snapshot.assert_called_once()
+    exact_snapshot.assert_not_called()
     dispatch.assert_not_called()
     legacy_analytics.assert_not_called()
     legacy_client.assert_not_called()

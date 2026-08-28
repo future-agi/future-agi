@@ -69,9 +69,59 @@ def test_large_tenant_reads_scan_widely_without_unbounding_memory_or_results():
     assert values["CLICKHOUSE_APPLICATION_READ_MAX_BYTES"] == 1024**4
     assert values["DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES"] == 36 * 1024**3
     assert values["OBSERVABILITY_LIST_MAX_MEMORY_BYTES"] == 36 * 1024**3
+    assert values["OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES"] == 16 * 1024
     assert values["DASHBOARD_TRACE_READ_MAX_RESULT_BYTES"] == 64 * 1024**2
     assert values["DASHBOARD_FILTER_VALUE_MAX_RESULT_BYTES"] == 64 * 1024**2
     assert values["ATTRIBUTE_READ_MAX_RESULT_BYTES"] == 64 * 1024**2
+
+
+def test_exact_graph_workers_have_a_larger_bounded_wall_than_http_reads():
+    values = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+
+    assert values["INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS"] == 30_000
+    assert values["GRAPH_BACKGROUND_WALL_MS"] == 120_000
+    assert values["CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS"] == 120_000
+    validate_interactive_read_settings(values)
+
+
+def test_dashboard_complex_query_slo_is_below_the_hard_wall():
+    values = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+
+    assert values["DASHBOARD_COMPLEX_QUERY_P95_TARGET_MS"] == 10_000
+    assert values["DASHBOARD_COMPLEX_QUERY_HARD_WALL_MS"] == 30_000
+    assert values["INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS"] == 30_000
+    validate_interactive_read_settings(values)
+
+
+def test_dashboard_complex_query_p95_target_cannot_be_relaxed_above_ten_seconds():
+    with pytest.raises(ValueError, match="DASHBOARD_COMPLEX_QUERY_P95_TARGET_MS"):
+        load_numeric_settings(
+            INTERACTIVE_READ_SETTING_SPECS,
+            source={"DASHBOARD_COMPLEX_QUERY_P95_TARGET_MS": "10001"},
+        )
+
+
+def test_dashboard_complex_query_wall_cannot_exceed_analytics_wall():
+    values = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={"INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS": "20000"},
+    )
+
+    with pytest.raises(ValueError, match="dashboard query wall"):
+        validate_interactive_read_settings(values)
+
+
+def test_dashboard_root_span_batch_cannot_exceed_configured_maximum():
+    values = load_numeric_settings(
+        INTERACTIVE_READ_SETTING_SPECS,
+        source={
+            "DASHBOARD_ROOT_SPANS_BACKFILL_BATCH_HOURS": "24",
+            "DASHBOARD_ROOT_SPANS_BACKFILL_MAX_BATCH_HOURS": "12",
+        },
+    )
+
+    with pytest.raises(ValueError, match="root-span backfill batch"):
+        validate_interactive_read_settings(values)
 
 
 def test_blank_source_value_uses_fallback_before_default():

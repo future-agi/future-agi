@@ -34,6 +34,7 @@ const BoundedCursorPaginationControl = ({
   rootRef,
   resetKey,
   autoAdvanceWhileVisible = true,
+  requireUserAdvanceGesture = false,
   loadingLabel = "Loading more…",
   retryLabel = "Retry loading properties",
   errorMessage,
@@ -45,6 +46,7 @@ const BoundedCursorPaginationControl = ({
   const activeRequestRef = useRef(null);
   const isIntersectingRef = useRef(false);
   const visibleEntryConsumedRef = useRef(false);
+  const userAdvanceGestureRef = useRef(!requireUserAdvanceGesture);
   const attemptedContinuationsRef = useRef(new Set());
   const [isRequestPending, setIsRequestPending] = useState(false);
 
@@ -139,9 +141,19 @@ const BoundedCursorPaginationControl = ({
   useLayoutEffect(() => {
     attemptedContinuationsRef.current.clear();
     visibleEntryConsumedRef.current = false;
+    userAdvanceGestureRef.current = !requireUserAdvanceGesture;
     activeRequestRef.current = null;
     setIsRequestPending(false);
-  }, [resetKey]);
+  }, [requireUserAdvanceGesture, resetKey]);
+
+  useLayoutEffect(() => {
+    if (requireUserAdvanceGesture) {
+      // A settled page publishes a new continuation while a short list may
+      // leave the sentinel visible. Make that new cursor eligible, but keep
+      // the gesture token consumed so it cannot auto-drain the next page.
+      visibleEntryConsumedRef.current = false;
+    }
+  }, [continuationSignature, requireUserAdvanceGesture]);
 
   const loadAtVisibleEnd = useCallback(() => {
     if (hasRetryableError || loadingRef.current) {
@@ -149,6 +161,45 @@ const BoundedCursorPaginationControl = ({
     }
     runOneBoundedPage();
   }, [hasRetryableError, runOneBoundedPage]);
+
+  useLayoutEffect(() => {
+    if (!requireUserAdvanceGesture || !shouldRender) return undefined;
+
+    const sentinel = sentinelRef.current;
+    const root = rootRef?.current || sentinel?.parentElement;
+    if (!root?.addEventListener) return undefined;
+
+    const recordAdvanceGesture = (event) => {
+      if (event?.type === "wheel" && Number(event.deltaY) <= 0) return;
+      if (
+        loadingRef.current ||
+        activeRequestRef.current ||
+        visibleEntryConsumedRef.current ||
+        hasRetryableError
+      ) {
+        return;
+      }
+      userAdvanceGestureRef.current = true;
+      if (isIntersectingRef.current) {
+        visibleEntryConsumedRef.current = true;
+        userAdvanceGestureRef.current = false;
+        loadAtVisibleEnd();
+      }
+    };
+
+    root.addEventListener("scroll", recordAdvanceGesture, { passive: true });
+    root.addEventListener("wheel", recordAdvanceGesture, { passive: true });
+    return () => {
+      root.removeEventListener("scroll", recordAdvanceGesture);
+      root.removeEventListener("wheel", recordAdvanceGesture);
+    };
+  }, [
+    hasRetryableError,
+    loadAtVisibleEnd,
+    requireUserAdvanceGesture,
+    rootRef,
+    shouldRender,
+  ]);
 
   useLayoutEffect(() => {
     const sentinel = sentinelRef.current;
@@ -168,10 +219,16 @@ const BoundedCursorPaginationControl = ({
           visibleEntryConsumedRef.current = false;
           return;
         }
+        if (requireUserAdvanceGesture && !userAdvanceGestureRef.current) {
+          return;
+        }
         if (!autoAdvanceWhileVisible && visibleEntryConsumedRef.current) {
           return;
         }
         visibleEntryConsumedRef.current = true;
+        if (requireUserAdvanceGesture) {
+          userAdvanceGestureRef.current = false;
+        }
         loadAtVisibleEnd();
       },
       {
@@ -182,13 +239,20 @@ const BoundedCursorPaginationControl = ({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [autoAdvanceWhileVisible, loadAtVisibleEnd, rootRef, shouldRender]);
+  }, [
+    autoAdvanceWhileVisible,
+    loadAtVisibleEnd,
+    requireUserAdvanceGesture,
+    rootRef,
+    shouldRender,
+  ]);
 
   useEffect(() => {
     if (
       autoAdvanceWhileVisible &&
       !loading &&
       isIntersectingRef.current &&
+      (!requireUserAdvanceGesture || userAdvanceGestureRef.current) &&
       !hasRetryableError
     ) {
       loadAtVisibleEnd();
@@ -199,6 +263,7 @@ const BoundedCursorPaginationControl = ({
     hasRetryableError,
     loadAtVisibleEnd,
     loading,
+    requireUserAdvanceGesture,
     resetKey,
   ]);
 
@@ -263,6 +328,7 @@ BoundedCursorPaginationControl.propTypes = {
   rootRef: PropTypes.shape({ current: PropTypes.any }),
   resetKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   autoAdvanceWhileVisible: PropTypes.bool,
+  requireUserAdvanceGesture: PropTypes.bool,
   loadingLabel: PropTypes.string,
   retryLabel: PropTypes.string,
   errorMessage: PropTypes.string,

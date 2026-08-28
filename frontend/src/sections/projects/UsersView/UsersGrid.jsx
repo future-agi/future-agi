@@ -40,6 +40,7 @@ import {
   isUserGlobalSortSupported,
   sanitizeUserSortModel,
 } from "./userSortContract";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -478,6 +479,10 @@ const UsersGrid = React.memo(
               rowCount: gridRowCount,
             });
           } catch (error) {
+            if (isExpectedRequestCancellation(error)) {
+              params.fail();
+              return;
+            }
             if (
               requestGeneration !== null &&
               !cursorPagination.current.isCurrent(requestGeneration)

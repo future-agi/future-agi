@@ -138,6 +138,7 @@ from tracer.services.clickhouse.v2.query_builders.agent_graph import (
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
 from tracer.services.clickhouse.v2.span_selectors import (
+    bound_observe_list_value,
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
@@ -5352,8 +5353,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "project_id": (
                     str(row.get("project_id")) if row.get("project_id") else None
                 ),
-                "input": row.get("input", ""),
-                "output": row.get("output", ""),
+                "input": bound_observe_list_value(row.get("input", "")),
+                "output": bound_observe_list_value(row.get("output", "")),
                 "created_at": (
                     _format_trace_list_created_at(row.get("start_time"))
                     if row.get("start_time")
@@ -6886,8 +6887,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             entry = {
                 "node_type": row.get("observation_type", ""),
                 "trace_id": trace_id,
-                "input": row.get("input", ""),
-                "output": row.get("output", ""),
+                "input": bound_observe_list_value(row.get("input", "")),
+                "output": bound_observe_list_value(row.get("output", "")),
                 "trace_name": row.get("trace_name") or row.get("span_name") or "",
                 "start_time": row.get("start_time"),
                 "status": row.get("status"),

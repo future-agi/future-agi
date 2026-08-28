@@ -456,7 +456,7 @@ _DASHBOARD_TRACE_READ_SETTINGS = {
 _DASHBOARD_TRACE_MAX_CONCURRENT_METRICS = (
     settings.DASHBOARD_TRACE_MAX_CONCURRENT_METRICS
 )
-_DASHBOARD_EXACT_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+_DASHBOARD_EXACT_QUERY_TIMEOUT_MS = settings.DASHBOARD_COMPLEX_QUERY_HARD_WALL_MS
 
 # Property/value pickers use the reviewed environment-backed interaction wall.
 # Begin that request-owned wall before project and cursor preparation.
@@ -1244,12 +1244,21 @@ def _finite_filter_value_cursor_page(
 # the interactive analytics surface. The rollup route issues at most two
 # statements (span states plus the independently keyed trace-count states),
 # and both consume one request-owned deadline.
-_DASHBOARD_INTERACTIVE_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+_DASHBOARD_INTERACTIVE_TIMEOUT_MS = settings.DASHBOARD_COMPLEX_QUERY_HARD_WALL_MS
 _DASHBOARD_ROLLUP_MAX_QUERIES = settings.DASHBOARD_ROLLUP_MAX_QUERIES
 _DASHBOARD_ROLLUP_MAX_POINTS = settings.DASHBOARD_ROLLUP_MAX_POINTS
 _DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS = (
     settings.DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _DashboardCompatibilityFallback:
+    """Skip another synchronous read after the compatibility lane was tried."""
+
+    error_code: str
+
+
 _DASHBOARD_ROLLUP_READ_SETTINGS = {
     "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
     "max_bytes_to_read": settings.DASHBOARD_TRACE_READ_MAX_BYTES,
@@ -1917,7 +1926,7 @@ def _read_dashboard_merged_span_compatibility_path(
     else:
         try:
             prepared = DashboardViewSet._prepare_metric_queries(builder)
-        except DashboardExactReadError:
+        except (DashboardExactReadError, ValueError):
             return _dashboard_degraded_payload(
                 frozen_config,
                 error_code="query_failed",
@@ -1932,17 +1941,15 @@ def _read_dashboard_merged_span_compatibility_path(
                 not uses_rollup
                 and window_seconds > _DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS
             ):
-                return _dashboard_degraded_payload(
-                    frozen_config,
-                    error_code="materialized_rollup_unavailable",
-                )
+                # Never launch the raw wide scan on the synchronous request
+                # lane. Returning ``None`` hands this shape to the
+                # deduplicated exact-snapshot scheduler, whose worker owns a
+                # separate bounded wall and publishes only complete results.
+                return None
 
         analytics = V2AnalyticsQueryService()
         if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
-            return _dashboard_degraded_payload(
-                frozen_config,
-                error_code="read_settings_unavailable",
-            )
+            return _DashboardCompatibilityFallback("read_settings_unavailable")
         started = monotonic()
 
         def _fetch_rows(sql, params):
@@ -1964,24 +1971,21 @@ def _read_dashboard_merged_span_compatibility_path(
             )
         except Exception as exc:
             if is_read_budget_error(exc):
-                error_code = "read_budget_exceeded"
                 logger.warning("dashboard_compat_read_budget_exceeded")
+                error_code = "read_budget_exceeded"
             elif is_clickhouse_query_error(exc):
-                error_code = "query_failed"
                 logger.warning(
                     "dashboard_compat_read_unavailable",
                     error_type=type(exc).__name__,
                 )
-            else:
                 error_code = "query_failed"
+            else:
                 logger.exception(
                     "dashboard_compat_read_failed",
                     error_type=type(exc).__name__,
                 )
-            return _dashboard_degraded_payload(
-                frozen_config,
-                error_code=error_code,
-            )
+                error_code = "query_failed"
+            return _DashboardCompatibilityFallback(error_code)
         if any(
             metric_info.get("query_complete") is not True
             or metric_info.get("query_status") != "complete"
@@ -1989,10 +1993,7 @@ def _read_dashboard_merged_span_compatibility_path(
             or bool(metric_info.get("error"))
             for metric_info, _rows in metric_results
         ):
-            return _dashboard_degraded_payload(
-                frozen_config,
-                error_code="read_budget_exceeded",
-            )
+            return _DashboardCompatibilityFallback("read_budget_exceeded")
         query_count = len(prepared)
         rows_returned = sum(len(rows) for _metric, rows in metric_results)
 
@@ -2006,10 +2007,7 @@ def _read_dashboard_merged_span_compatibility_path(
         )
     except Exception:
         logger.exception("dashboard_compat_format_failed")
-        return _dashboard_degraded_payload(
-            frozen_config,
-            error_code="query_failed",
-        )
+        return _DashboardCompatibilityFallback("query_failed")
     formatted.update(
         {
             "query_complete": True,
@@ -2068,7 +2066,11 @@ def _read_public_dashboard_query(
         query_config,
         deadline=deadline,
     )
-    if compatibility_payload is not None:
+    compatibility_fallback = isinstance(
+        compatibility_payload,
+        _DashboardCompatibilityFallback,
+    )
+    if compatibility_payload is not None and not compatibility_fallback:
         return compatibility_payload
     try:
         snapshot = read_or_schedule_exact_snapshot(
@@ -2082,6 +2084,12 @@ def _read_public_dashboard_query(
         snapshot = {"query_refreshing": False, "query_refresh_failed": True}
     if _dashboard_snapshot_is_renderable(snapshot):
         return _decorate_dashboard_exact_payload(snapshot)
+    if compatibility_fallback:
+        return _dashboard_refresh_or_degraded(
+            query_config,
+            refresh_state=snapshot,
+            error_code=compatibility_payload.error_code,
+        )
     return _read_dashboard_rollup_fast_path(
         query_config,
         refresh_state=snapshot if isinstance(snapshot, dict) else None,

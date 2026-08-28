@@ -45,6 +45,7 @@ const triggerPropertyPageIntersection = () => {
     .reverse()
     .find((candidate) => candidate.targets.has(sentinel));
   expect(observer).toBeDefined();
+  fireEvent.wheel(observer.root || sentinel.parentElement, { deltaY: 1 });
   act(() => {
     observer.callback([{ isIntersecting: true, target: sentinel }]);
   });
@@ -56,6 +57,7 @@ const triggerValuePageIntersection = () => {
     .reverse()
     .find((candidate) => candidate.targets.has(sentinel));
   expect(observer).toBeDefined();
+  fireEvent.wheel(observer.root || sentinel.parentElement, { deltaY: 1 });
   act(() => {
     observer.callback([{ isIntersecting: true, target: sentinel }]);
   });
@@ -145,8 +147,9 @@ const GLOBAL_CATALOG_SEARCH_CASES = [
 beforeEach(() => {
   intersectionObservers = [];
   globalThis.IntersectionObserver = class IntersectionObserver {
-    constructor(callback) {
+    constructor(callback, options = {}) {
       this.callback = callback;
+      this.root = options.root;
       this.targets = new Set();
       intersectionObservers.push(this);
     }
@@ -261,6 +264,7 @@ describe("PropertyPickerPaginationControl", () => {
     await waitFor(() => expect(loadProjectOne).toHaveBeenCalledOnce());
 
     rerender(renderControl("project-two", loadProjectTwo));
+    triggerPropertyPageIntersection();
     await waitFor(() => expect(loadProjectTwo).toHaveBeenCalledOnce());
   });
 });
@@ -389,9 +393,40 @@ describe("TraceFilterPanel workspace property scope", () => {
       expect.objectContaining({
         projectIds: [],
         enabled: true,
-        allowLegacyNotReadyFallback: false,
+        allowLegacyNotReadyFallback: true,
       }),
     );
+  });
+
+  it("falls back to the bounded organization property page when the catalog is not ready", async () => {
+    const get = vi.spyOn(axios, "get").mockResolvedValue({
+      data: {
+        result: {
+          metrics: [],
+          has_more: false,
+          page: 1,
+        },
+      },
+    });
+    propertyCatalogMock.mockReturnValue({
+      metrics: [],
+      legacyFallbackRequired: true,
+      usesUnifiedCatalog: false,
+    });
+
+    renderPanel({ allowWorkspaceScope: true });
+
+    await waitFor(() =>
+      expect(get).toHaveBeenCalledWith(
+        endpoints.dashboard.metrics,
+        expect.objectContaining({
+          params: expect.not.objectContaining({
+            project_ids: expect.anything(),
+          }),
+        }),
+      ),
+    );
+    get.mockRestore();
   });
 
   it("does not read property inventories for a mounted but closed panel", () => {
@@ -4240,6 +4275,12 @@ describe("filter-value picker bounded-read UX", () => {
       continuationKey: "value-cursor-3",
     };
     rerenderPanel();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchNextPage).toHaveBeenCalledOnce();
+
+    triggerValuePageIntersection();
     await waitFor(() => expect(fetchNextPage).toHaveBeenCalledTimes(2));
 
     triggerValuePageIntersection();

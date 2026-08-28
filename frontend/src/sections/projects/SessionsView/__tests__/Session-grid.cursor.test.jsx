@@ -461,6 +461,21 @@ describe("SessionGrid cursor continuation", () => {
     );
   });
 
+  it("does not show an error toast for a superseded scroll request", async () => {
+    getMock.mockRejectedValueOnce(
+      Object.assign(new Error("canceled"), { code: "ERR_CANCELED" }),
+    );
+    renderGrid();
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    const params = makeParams();
+    await getRows(params);
+
+    expect(params.fail).toHaveBeenCalledTimes(1);
+    expect(params.success).not.toHaveBeenCalled();
+    expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+  });
+
   it("fails a degraded HTTP 200 instead of displaying a false empty session grid", async () => {
     getMock.mockResolvedValueOnce(
       sessionResponse({

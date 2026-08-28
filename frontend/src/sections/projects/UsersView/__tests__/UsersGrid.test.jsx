@@ -543,6 +543,21 @@ describe("UsersGrid deterministic pagination", () => {
     },
   );
 
+  it("treats a superseded request cancellation as neutral", async () => {
+    getMock.mockRejectedValueOnce(
+      Object.assign(new Error("canceled"), { code: "ERR_CANCELED" }),
+    );
+    const props = renderGrid();
+    const params = makeGridParams();
+
+    await readPage(params);
+
+    expect(params.fail).toHaveBeenCalledTimes(1);
+    expect(params.success).not.toHaveBeenCalled();
+    expect(props.setSearchState).not.toHaveBeenCalledWith("error");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("fails a degraded HTTP 200 instead of accepting a false empty Users page", async () => {
     getMock.mockResolvedValueOnce(
       usersResponse({

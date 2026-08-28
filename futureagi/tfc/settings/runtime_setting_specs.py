@@ -303,6 +303,35 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("DASHBOARD_ROLLUP_MAX_QUERIES", 2, 1, 16),
             ("DASHBOARD_ROLLUP_MAX_POINTS", 10_000, 100, 100_000),
             (
+                "DASHBOARD_COMPLEX_QUERY_P95_TARGET_MS",
+                10_000,
+                100,
+                10_000,
+            ),
+            (
+                "DASHBOARD_COMPLEX_QUERY_HARD_WALL_MS",
+                30_000,
+                100,
+                30_000,
+            ),
+            ("DASHBOARD_COMPLEX_QUERY_BENCHMARK_SAMPLES", 20, 5, 100),
+            ("DASHBOARD_COMPLEX_QUERY_BENCHMARK_WARMUPS", 1, 0, 10),
+            ("DASHBOARD_ROOT_SPANS_BACKFILL_BATCH_HOURS", 1, 1, 168),
+            ("DASHBOARD_ROOT_SPANS_BACKFILL_MAX_BATCH_HOURS", 168, 1, 744),
+            ("DASHBOARD_ROOT_SPANS_BACKFILL_MAX_THREADS", 4, 1, 16),
+            (
+                "DASHBOARD_ROOT_SPANS_BACKFILL_WALL_SECONDS",
+                900,
+                30,
+                3_600,
+            ),
+            (
+                "DASHBOARD_ROOT_SPANS_BACKFILL_TRANSPORT_GRACE_SECONDS",
+                30,
+                0,
+                300,
+            ),
+            (
                 "DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS",
                 6 * 60 * 60,
                 60,
@@ -326,16 +355,22 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("OBSERVABILITY_LIST_MAX_BLOCK_SIZE", 8192, 1, 65_536),
             ("OBSERVABILITY_LIST_MAX_BYTES", 1024**4, 64 * 1024**2, 2 * 1024**4),
             (
+                "OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES",
+                16 * 1024,
+                1_024,
+                1024**2,
+            ),
+            (
                 "OBSERVABILITY_LIST_MAX_MEMORY_BYTES",
                 36 * 1024**3,
                 64 * 1024**2,
                 128 * 1024**3,
             ),
             ("OBSERVABILITY_LIST_MAX_RESULT_ROWS", 5_001, 1, 100_000),
-            ("CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS", 30_000, 100, 120_000),
+            ("CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS", 120_000, 100, 120_000),
             ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", 6_000, 100, 60_000),
             ("MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS", 1_000, 100, 10_000),
-            ("GRAPH_BACKGROUND_WALL_MS", 30_000, 1_000, 120_000),
+            ("GRAPH_BACKGROUND_WALL_MS", 120_000, 1_000, 120_000),
             ("GRAPH_EVENT_LIMIT", 2_000, 1, 100_000),
             ("GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT", 40, 1, 4_096),
             ("GRAPH_SPAN_METRIC_BATCH_SIZE", 1_024, 1, 4_096),
@@ -873,6 +908,21 @@ def validate_interactive_read_settings(values: Mapping[str, Numeric]) -> None:
         values["DASHBOARD_TRACE_MAX_CONCURRENT_METRICS"],
         values["CLICKHOUSE_APPLICATION_READ_MAX_THREADS"],
         "dashboard metric concurrency cannot exceed ClickHouse read threads",
+    )
+    _require_at_most(
+        values["DASHBOARD_COMPLEX_QUERY_P95_TARGET_MS"],
+        values["DASHBOARD_COMPLEX_QUERY_HARD_WALL_MS"],
+        "dashboard complex-query p95 target cannot exceed the dashboard hard wall",
+    )
+    _require_at_most(
+        values["DASHBOARD_COMPLEX_QUERY_HARD_WALL_MS"],
+        values["INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS"],
+        "dashboard query wall cannot exceed the analytics wall",
+    )
+    _require_at_most(
+        values["DASHBOARD_ROOT_SPANS_BACKFILL_BATCH_HOURS"],
+        values["DASHBOARD_ROOT_SPANS_BACKFILL_MAX_BATCH_HOURS"],
+        "dashboard root-span backfill batch cannot exceed its configured maximum",
     )
     _require_at_most(
         values["SMART_FILTER_VALUE_READ_WALL_MS"],

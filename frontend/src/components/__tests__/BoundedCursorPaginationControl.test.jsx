@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -145,6 +151,67 @@ describe("BoundedCursorPaginationControl", () => {
       secondPage.resolve();
       await secondPage.promise;
     });
+  });
+
+  it("does not read a continuation until the user advances the scroll surface", () => {
+    let callback;
+    class Observer {
+      constructor(nextCallback) {
+        callback = nextCallback;
+      }
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", Observer);
+    const root = document.createElement("div");
+    const rootRef = createRef();
+    rootRef.current = root;
+    const loadNextPage = vi.fn();
+
+    const { rerender } = render(
+      <BoundedCursorPaginationControl
+        autoAdvanceWhileVisible={false}
+        requireUserAdvanceGesture
+        channels={[
+          {
+            channelKey: "values",
+            hasNextPage: true,
+            continuationKey: "cursor-2",
+            loadNextPage,
+          },
+        ]}
+        rootRef={rootRef}
+      />,
+    );
+
+    act(() => callback([{ isIntersecting: true }]));
+    expect(loadNextPage).not.toHaveBeenCalled();
+
+    fireEvent.wheel(root, { deltaY: 1 });
+    expect(loadNextPage).toHaveBeenCalledOnce();
+    // Browsers normally emit scroll after wheel. It belongs to the same
+    // gesture and must not arm the next continuation.
+    fireEvent.scroll(root);
+
+    rerender(
+      <BoundedCursorPaginationControl
+        autoAdvanceWhileVisible={false}
+        requireUserAdvanceGesture
+        channels={[
+          {
+            channelKey: "values",
+            hasNextPage: true,
+            continuationKey: "cursor-3",
+            loadNextPage,
+          },
+        ]}
+        rootRef={rootRef}
+      />,
+    );
+    expect(loadNextPage).toHaveBeenCalledOnce();
+
+    fireEvent.wheel(root, { deltaY: 1 });
+    expect(loadNextPage).toHaveBeenCalledTimes(2);
   });
 
   it("advances independent catalog and attribute channels together", async () => {

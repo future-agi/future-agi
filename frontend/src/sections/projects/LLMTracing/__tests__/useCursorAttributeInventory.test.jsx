@@ -203,6 +203,7 @@ describe("useCursorAttributeInventory", () => {
         },
       ],
       hasNextPage: true,
+      continuationKey: "catalog-cursor-2",
       fetchNextPage,
       isFetchingNextPage: false,
       isLoading: false,
@@ -238,6 +239,10 @@ describe("useCursorAttributeInventory", () => {
         property_id: "custom_attribute:customer.tier",
       }),
     ]);
+    expect(result.current.continuationKey).toBe("catalog-cursor-2");
+    expect(result.current.inventoryControlProps.continuationKey).toBe(
+      "catalog-cursor-2",
+    );
     await act(async () => result.current.fetchNextPage());
     expect(fetchNextPage).toHaveBeenCalledTimes(1);
   });
@@ -337,6 +342,10 @@ describe("useCursorAttributeInventory", () => {
       expect.arrayContaining(["archive.status", "recent.status"]),
     );
     expect(result.current.hasNextPage).toBe(true);
+    expect(result.current.continuationKey).toBe("retained:retained-2");
+    expect(result.current.inventoryControlProps.continuationKey).toBe(
+      "retained:retained-2",
+    );
 
     await act(async () => result.current.fetchNextPage());
     await waitFor(() => expect(result.current.hasNextPage).toBe(false));

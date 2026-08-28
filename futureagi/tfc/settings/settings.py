@@ -1814,6 +1814,25 @@ DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE = (
     else None
 )
 
+# Exact root-span dashboard routing is independently gated from aggregate
+# rollups. Keep it disabled until the additive table has been backfilled and
+# the oldest fully covered event timestamp is supplied.
+DASHBOARD_ROOT_SPANS_ENABLED = (
+    os.getenv("DASHBOARD_ROOT_SPANS_ENABLED", "false").lower() == "true"
+)
+_dashboard_root_spans_covered_since = os.getenv("DASHBOARD_ROOT_SPANS_COVERED_SINCE")
+DASHBOARD_ROOT_SPANS_COVERED_SINCE = (
+    datetime.fromisoformat(_dashboard_root_spans_covered_since)
+    if _dashboard_root_spans_covered_since
+    else None
+)
+DASHBOARD_ROOT_SPANS_PROJECT_ALLOWLIST = frozenset(
+    value.lower() for value in _split_env("DASHBOARD_ROOT_SPANS_PROJECT_ALLOWLIST")
+)
+DASHBOARD_ROOT_SPANS_ALL_PROJECTS_COVERED = (
+    os.getenv("DASHBOARD_ROOT_SPANS_ALL_PROJECTS_COVERED", "false").lower() == "true"
+)
+
 # Eval-logger table read by the trace/voice/user eval-config discovery queries.
 # The CH25 spans cutover intentionally kept the legacy peerdb CDC table
 # `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table

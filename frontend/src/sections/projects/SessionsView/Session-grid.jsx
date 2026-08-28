@@ -40,6 +40,7 @@ import {
   resumePendingListPage,
 } from "src/sections/projects/LLMTracing/listCursorPagination";
 import ListCursorContinuationNotice from "src/sections/projects/LLMTracing/ListCursorContinuationNotice";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 
 const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -470,6 +471,10 @@ const SessionGrid = React.forwardRef(
                 });
               }
             } catch (error) {
+              if (isExpectedRequestCancellation(error)) {
+                params.fail();
+                return;
+              }
               if (
                 requestGeneration !== null &&
                 !cursorPagination.current.isCurrent(requestGeneration)

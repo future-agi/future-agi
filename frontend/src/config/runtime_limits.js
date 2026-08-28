@@ -132,6 +132,12 @@ export const OBSERVE_GRID_MAX_BLOCKS_IN_CACHE = readBoundedRuntimeInteger(
   { minimum: 1, maximum: 100 },
 );
 
+export const OBSERVE_LIST_CELL_PREVIEW_MAX_CHARS = readBoundedRuntimeInteger(
+  "VITE_OBSERVE_LIST_CELL_PREVIEW_MAX_CHARS",
+  16 * 1024,
+  { minimum: 1_024, maximum: 1024 * 1024 },
+);
+
 export const CHUNK_IMPORT_TIMEOUT_MS = readBoundedRuntimeInteger(
   "VITE_CHUNK_IMPORT_TIMEOUT_MS",
   10_000,

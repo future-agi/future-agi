@@ -266,16 +266,72 @@ def test_unfiltered_custom_metric_uses_main_compatibility_path(monkeypatch):
 
 
 @pytest.mark.unit
-def test_long_string_breakdown_without_rollup_fails_before_raw_scan(
+def test_covered_long_common_breakdown_uses_materialized_compatibility_path(
     monkeypatch,
 ):
-    monkeypatch.setattr(django_settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False)
+    analytics = _CompatibilityAnalytics()
+    monkeypatch.setattr(django_settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", True)
+    monkeypatch.setattr(
+        django_settings,
+        "DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE",
+        datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", lambda: analytics)
     monkeypatch.setattr(
         dashboard_view,
         "read_or_schedule_exact_snapshot",
         lambda *args, **kwargs: pytest.fail(
-            "an unsupported long breakdown must not enqueue an exact replay"
+            "a covered common breakdown must not enqueue exact replay"
         ),
+    )
+    breakdown = {
+        "type": "custom_attribute",
+        "name": "user.country",
+        "source": "traces",
+        "attribute_type": "string",
+    }
+    metric = {
+        "id": "latency",
+        "name": "latency",
+        "type": "system_metric",
+        "source": "traces",
+        "aggregation": "avg",
+        "filters": [],
+    }
+
+    result = _read_public_dashboard_query(
+        _query_config(
+            preset="12M",
+            metrics=[metric],
+            breakdowns=[breakdown],
+        ),
+        cache_identity={"workspace_id": "workspace", "query_config": {}},
+        refresh=False,
+    )
+
+    assert result["query_status"] == "complete"
+    assert result["query_provenance"] == "merged_span_compatibility"
+    assert len(analytics.calls) == 1
+    query, _params, _timeout_ms, _read_settings = analytics.calls[0]
+    assert "FROM dashboard_attr_rollup_common_keys" in query
+    assert "FROM spans" not in query
+
+
+@pytest.mark.unit
+def test_long_string_breakdown_without_rollup_queues_exact_worker_before_raw_scan(
+    monkeypatch,
+):
+    monkeypatch.setattr(django_settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False)
+    scheduled = []
+
+    def schedule(*args, **kwargs):
+        scheduled.append((args, kwargs))
+        return kwargs["pending_payload"]
+
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_or_schedule_exact_snapshot",
+        schedule,
     )
     monkeypatch.setattr(
         dashboard_view,
@@ -303,9 +359,14 @@ def test_long_string_breakdown_without_rollup_fails_before_raw_scan(
         refresh=False,
     )
 
-    assert result["query_status"] == "degraded"
-    assert result["query_error_code"] == "materialized_rollup_unavailable"
-    assert result["metrics"][0]["series"] == []
+    assert len(scheduled) == 1
+    assert scheduled[0][0][:2] == (
+        "dashboard-query",
+        {"workspace_id": "workspace", "query_config": {}},
+    )
+    assert result["query_status"] == "pending"
+    assert result["query_refreshing"] is True
+    assert result["metrics"] == []
 
 
 @pytest.mark.unit

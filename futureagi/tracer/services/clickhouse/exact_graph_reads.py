@@ -3714,6 +3714,30 @@ def _user_id_membership_sql(
     )
 
 
+def _active_user_dimension_membership_sql() -> str:
+    """Select curated live users without rebuilding full user aggregates.
+
+    Date-only user graphs do not need total-cost/session/eval membership. The
+    graph's ``latest_spans`` and ``eu_survivor_map`` CTEs already hold the
+    finite request population, so joining the active dimension here preserves
+    the curated-user contract without a second spans scan or session remap.
+    """
+
+    resolved_dimension_user = resolved_id_expr(
+        "dimension_user.end_user_id",
+        "dimension_user_remap",
+    )
+    return f"""
+        SELECT DISTINCT {resolved_dimension_user} AS end_user_id
+        FROM end_users AS dimension_user FINAL
+        LEFT JOIN eu_survivor_map AS dimension_user_remap
+          ON dimension_user.end_user_id = dimension_user_remap.any_id
+        WHERE dimension_user.project_id = toUUID(%(project_id)s)
+          AND dimension_user.is_deleted = 0
+          AND notEmpty(dimension_user.user_id)
+    """
+
+
 def _user_trace_membership_sql(
     *,
     project_id: str,
@@ -3822,15 +3846,25 @@ def read_exact_user_system_graph(
             started=started,
         )
 
-    user_membership_sql, user_membership_params, _needs_eval = _user_id_membership_sql(
-        project_id=str(project_id),
-        filters=filters,
-        start_date=start_date,
-        end_date=end_date,
-        # UserTimeSeriesQueryBuilderV2 defines this request-window CTE. The
-        # membership selector hydrates users owning one of those candidates.
-        candidate_trace_ids_sql=("SELECT toString(trace_id) FROM candidate_trace_ids"),
-    )
+    has_entity_filter = any(not _is_user_date_filter(item) for item in filters)
+    if has_entity_filter:
+        user_membership_sql, user_membership_params, _needs_eval = (
+            _user_id_membership_sql(
+                project_id=str(project_id),
+                filters=filters,
+                start_date=start_date,
+                end_date=end_date,
+                # UserTimeSeriesQueryBuilderV2 defines this request-window CTE.
+                # The membership selector hydrates users owning one of those
+                # candidates.
+                candidate_trace_ids_sql=(
+                    "SELECT toString(trace_id) FROM candidate_trace_ids"
+                ),
+            )
+        )
+    else:
+        user_membership_sql = _active_user_dimension_membership_sql()
+        user_membership_params = {}
     builder = UserTimeSeriesQueryBuilderV2(
         project_id=str(project_id),
         filters=filters,

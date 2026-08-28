@@ -4,8 +4,11 @@ Kept out of the view layer so the trace-list and span-list read paths share one
 implementation of the typed-attribute merge and heavy-content flattening.
 """
 
+import json
 from collections.abc import Sequence
 from typing import Any
+
+from django.conf import settings
 
 # Attribute keys hidden from custom columns: internal payloads / duplicates of
 # the input/output columns.
@@ -31,6 +34,46 @@ _CONTENT_FACTORY_DEFAULTS: dict[str, Any] = {
     "trace_tags": list,
 }
 
+_TRUNCATION_SUFFIX = "…"
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    suffix = _TRUNCATION_SUFFIX.encode("utf-8")
+    body_budget = max(0, max_bytes - len(suffix))
+    return encoded[:body_budget].decode("utf-8", errors="ignore") + (
+        _TRUNCATION_SUFFIX if max_bytes >= len(suffix) else ""
+    )
+
+
+def bound_observe_list_value(value: Any) -> Any:
+    """Bound one list-cell preview while preserving ordinary scalar types.
+
+    Trace/span detail endpoints remain the full-content source. List rows are
+    deliberately previews so one exceptionally large prompt or structured
+    attribute cannot be duplicated across the HTTP payload, AG Grid cache,
+    renderer and tooltip until the browser tab exhausts memory.
+    """
+
+    max_bytes = int(settings.OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES)
+    if isinstance(value, str):
+        return _truncate_utf8(value, max_bytes)
+    if isinstance(value, (dict, list, tuple)):
+        try:
+            rendered = json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            )
+        except (TypeError, ValueError):
+            rendered = str(value)
+        if len(rendered.encode("utf-8")) > max_bytes:
+            return _truncate_utf8(rendered, max_bytes)
+    return value
+
 
 def flatten_span_attributes_into_entry(
     entry: dict[str, Any], row: dict[str, Any]
@@ -54,7 +97,7 @@ def flatten_span_attributes_into_entry(
         if isinstance(value, str) and len(value) > 500:
             entry[key] = value[:500] + "..."
         else:
-            entry[key] = value
+            entry[key] = bound_observe_list_value(value)
 
 
 def merge_content_rows(

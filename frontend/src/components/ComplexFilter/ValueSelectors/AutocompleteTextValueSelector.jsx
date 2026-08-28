@@ -595,6 +595,8 @@ const AutocompleteTextValueSelector = ({
               <BoundedCursorPaginationControl
                 resetKey={`${paginationIdentity}:${paginationChainGeneration}`}
                 rootRef={valueOptionsListRef}
+                autoAdvanceWhileVisible={false}
+                requireUserAdvanceGesture
                 testId="attribute-value-pagination-sentinel"
                 loadingLabel="Loading more values…"
                 retryLabel="Retry loading values"

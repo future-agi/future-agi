@@ -71,6 +71,8 @@ import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
 } from "src/config/runtime_limits";
+import { boundObserveListRow } from "./observeListPayload";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 
 const ROWS_LIMIT = 25;
 const loadSpanObservePage = (params, signal) =>
@@ -522,7 +524,8 @@ const SpanGrid = React.forwardRef(
                     targetRowCount: ROWS_LIMIT,
                     loadResponse: (signal) =>
                       loadSpanObservePage(buildParams(pageNumber), signal),
-                    rowsFromResponse: (response) => response.data.table,
+                    rowsFromResponse: (response) =>
+                      response.data.table.map(boundObserveListRow),
                     metadataFromResponse: (response) => response.data.metadata,
                     rowIdentity: getSpanPhysicalRowId,
                     isCurrent: () =>
@@ -636,6 +639,10 @@ const SpanGrid = React.forwardRef(
               });
               setContinuationNotice(null);
             } catch (error) {
+              if (isExpectedRequestCancellation(error)) {
+                params.fail();
+                return;
+              }
               if (isListCursorContinuationLimitError(error)) {
                 // Preserve the exact checkpoint and current rows. A deliberate
                 // refresh may continue; do not publish a false empty page or

@@ -21,7 +21,7 @@ while its spans columns still need the v2 rewrite.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from tracer.services.clickhouse.query_builders.dashboard import (
     AGGREGATIONS,
@@ -115,6 +115,86 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
 
     def parse_time_range(self) -> tuple[datetime, datetime]:
         return self._resolved_time_range
+
+    def _dashboard_root_spans_window_covered(self) -> bool:
+        """Return whether the exact root fact table covers this full window.
+
+        A newly deployed table contains only post-deploy MV writes. Routing
+        before the historical backfill is proven would silently omit older
+        traces, so both the feature flag and an explicit coverage timestamp are
+        mandatory.
+        """
+
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_ROOT_SPANS_ENABLED", False):
+            return False
+        covered_since = getattr(
+            settings,
+            "DASHBOARD_ROOT_SPANS_COVERED_SINCE",
+            None,
+        )
+        if covered_since is None:
+            return False
+        project_ids = {
+            str(project_id).lower()
+            for project_id in self.config.get("project_ids", [])
+            if project_id
+        }
+        all_projects_covered = bool(
+            getattr(settings, "DASHBOARD_ROOT_SPANS_ALL_PROJECTS_COVERED", False)
+        )
+        covered_projects = {
+            str(project_id).lower()
+            for project_id in getattr(
+                settings,
+                "DASHBOARD_ROOT_SPANS_PROJECT_ALLOWLIST",
+                (),
+            )
+        }
+        if not project_ids or (
+            not all_projects_covered and not project_ids.issubset(covered_projects)
+        ):
+            return False
+        if covered_since.tzinfo is None:
+            covered_since = covered_since.replace(tzinfo=UTC)
+        start_date, _ = self.parse_time_range()
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        return start_date >= covered_since
+
+    def _spans_source(
+        self,
+        metric_name: str | None,
+        per_metric_filters: list[dict],
+        alias: str,
+        params: dict | None = None,
+    ) -> str:
+        """Use the exact root fact table for covered trace-latency queries.
+
+        Latency is explicitly root-scoped by the shared builder. Other metric
+        families retain their existing all-span semantics. User/session
+        dimensions also retain the authoritative id-remap source until that
+        derived relation accepts an alternate physical table.
+        """
+
+        normalized_metric = (metric_name or "").lower()
+        if (
+            normalized_metric == "latency"
+            and not self._query_references_id(metric_name, per_metric_filters)
+            and self._dashboard_root_spans_window_covered()
+        ):
+            return (
+                "dashboard_root_spans AS spans FINAL"
+                if alias == "spans"
+                else f"dashboard_root_spans AS {alias} FINAL"
+            )
+        return super()._spans_source(
+            metric_name,
+            per_metric_filters,
+            alias,
+            params=params,
+        )
 
     def _build_custom_attr_query(
         self,

@@ -625,6 +625,18 @@ export function mergeWidgetCursorAttributeOptions(
   });
 }
 
+export function shouldEnableWidgetAttributeFallback({
+  pickerOpen,
+  pickerCategory,
+  activeUsesLegacyCatalog,
+}) {
+  return Boolean(
+    pickerOpen &&
+      activeUsesLegacyCatalog &&
+      (pickerCategory === "all" || pickerCategory === "custom_attribute"),
+  );
+}
+
 export function getWidgetMetricCatalogRequest({
   pickerCategory,
   search,
@@ -672,6 +684,7 @@ export function WidgetCatalogPaginationControl({
     Boolean(attributeHasNextPage);
   return (
     <BoundedCursorPaginationControl
+      requireUserAdvanceGesture
       channels={[
         {
           channelKey: "catalog",
@@ -2064,6 +2077,8 @@ export function FilterValuePickerPopup({
             <BoundedCursorPaginationControl
               key={`${filterValuePickerScopeKey(filter, source)}:${debouncedSearch}`}
               rootRef={valueOptionsListRef}
+              autoAdvanceWhileVisible={false}
+              requireUserAdvanceGesture
               testId="widget-filter-value-pagination-sentinel"
               loadingLabel="Loading more values…"
               retryLabel="Retry next page"
@@ -2315,26 +2330,6 @@ export default function WidgetEditorView() {
     return [...keys];
   }, [breakdowns, filters, metrics]);
 
-  // The activated property catalog now owns trace attributes as well as the
-  // other property families. Keep the retained inventory hook mounted but
-  // disabled for rollout compatibility; the picker must have one cursor and
-  // one bounded end-of-list continuation lane.
-  const cursorAttributePickerActive = false;
-  const {
-    filteredAttributes: cursorAttributes,
-    inventoryControlProps: cursorAttributeControlProps,
-  } = useCursorAttributeInventory({
-    workspaceScope: true,
-    workspaceScopeKey: currentWorkspaceId,
-    rowType: "spans",
-    discoveryMode: "filter",
-    search: pickerSearch,
-    preservedKeys: preservedDashboardAttributeKeys,
-    enabled: cursorAttributePickerActive,
-    pageSize: PROPERTY_CATALOG_PAGE_SIZE,
-    cacheScopeKey: `widget-picker:${pickerCatalogSession}`,
-  });
-
   const trimmedPickerSearch = pickerSearch.trim();
   const trimmedDebouncedPickerSearch = debouncedPickerSearch.trim();
   const pickerSearchSettled =
@@ -2443,6 +2438,31 @@ export default function WidgetEditorView() {
   const activeUsesLegacyCatalog = scopedRequestOwnsResults
     ? scopedUsesLegacyCatalog
     : baseUsesLegacyCatalog;
+  // A typed catalog-not-ready response deliberately falls back to the bounded
+  // legacy metric endpoint. That endpoint excludes raw attributes so it does
+  // not rescan ClickHouse on every picker open. Pair it with the separately
+  // cursor-bounded attribute inventory only for the active legacy lane; the
+  // healthy unified catalog remains the sole source in normal operation.
+  const cursorAttributePickerActive = shouldEnableWidgetAttributeFallback({
+    pickerOpen,
+    pickerCategory,
+    activeUsesLegacyCatalog,
+  });
+  const {
+    filteredAttributes: cursorAttributes,
+    inventoryControlProps: cursorAttributeControlProps,
+    isLoading: cursorAttributeLoading,
+  } = useCursorAttributeInventory({
+    workspaceScope: true,
+    workspaceScopeKey: currentWorkspaceId,
+    rowType: "spans",
+    discoveryMode: "filter",
+    search: pickerSearch,
+    preservedKeys: preservedDashboardAttributeKeys,
+    enabled: cursorAttributePickerActive,
+    pageSize: PROPERTY_CATALOG_PAGE_SIZE,
+    cacheScopeKey: `widget-picker:${pickerCatalogSession}`,
+  });
   const activeRequestSettled = Boolean(
     pickerSearchSettled &&
       !activePropertyCatalog.isPlaceholderData &&
@@ -2565,7 +2585,9 @@ export default function WidgetEditorView() {
     [catalogMetricOptions, cursorAttributeOptions, cursorAttributePickerActive],
   );
 
-  const isPickerInventoryLoading = isPaginatedLoading;
+  const isPickerInventoryLoading =
+    isPaginatedLoading ||
+    (cursorAttributePickerActive && cursorAttributeLoading);
 
   // Chart tab — axis config
   const [axisConfig, setAxisConfig] = useState({

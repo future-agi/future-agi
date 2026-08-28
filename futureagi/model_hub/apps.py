@@ -17,6 +17,9 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         # acknowledgement and uses read-only source identities plus an
         # isolated catalog writer.
         "ch25_property_catalog_oss_supervisor",
+        # SELECT-only dashboard SLO qualification. The command rejects any
+        # non-SELECT statement before opening the ClickHouse read path.
+        "benchmark_dashboard_complex_query",
         "check",
         "collectstatic",
         "generate_swagger",
@@ -38,6 +41,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "ch25_property_catalog_dev_rollout",
         "ch25_remove_pg",
         "backfill_score_tracer_project",
+        "backfill_dashboard_root_spans",
         "createcachetable",
         "drop_legacy_observation_span",
         "migrate",

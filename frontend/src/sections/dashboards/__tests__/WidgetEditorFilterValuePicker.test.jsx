@@ -32,6 +32,7 @@ import {
   resolveWidgetCatalogResultMetrics,
   resolveWidgetCatalogSidebarCounts,
   restoreWidgetFilterConfig,
+  shouldEnableWidgetAttributeFallback,
   WidgetCatalogPaginationControl,
 } from "../WidgetEditorView";
 
@@ -68,7 +69,7 @@ afterEach(() => {
 });
 
 describe("WidgetEditor filter-value picker", () => {
-  it("automatically continues retained values at the list end without a load-more button", async () => {
+  it("continues retained values after a list-end scroll without a load-more button", async () => {
     const intersection = installIntersectionObserver();
     const nextPage = deferred();
     const fetchNextPage = vi.fn(() => nextPage.promise);
@@ -106,6 +107,7 @@ describe("WidgetEditor filter-value picker", () => {
     expect(intersection.observers.at(-1).options.root).toBe(
       sentinel.parentElement,
     );
+    fireEvent.scroll(sentinel.parentElement);
     intersection.emit(true);
     intersection.emit(true);
     expect(fetchNextPage).toHaveBeenCalledOnce();
@@ -220,7 +222,7 @@ describe("WidgetEditor filter-value picker", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("automatically loads each new cursor once while the end remains visible", async () => {
+  it("loads each new cursor once per fresh end-of-list gesture", async () => {
     const intersection = installIntersectionObserver();
     const firstPage = deferred();
     const secondPage = deferred();
@@ -244,6 +246,7 @@ describe("WidgetEditor filter-value picker", () => {
       screen.queryByRole("button", { name: /load more/i }),
     ).not.toBeInTheDocument();
 
+    fireEvent.scroll(sentinel.parentElement);
     intersection.emit(true);
     intersection.emit(true);
     expect(fetchNextPage).toHaveBeenCalledOnce();
@@ -262,7 +265,7 @@ describe("WidgetEditor filter-value picker", () => {
     expect(fetchNextPage).toHaveBeenCalledOnce();
 
     // A short appended page can leave the sentinel visible. Publishing a new
-    // cursor still advances exactly once without requiring an exit/re-entry.
+    // cursor does not recursively drain it; one fresh gesture advances it.
     rerender(
       <WidgetCatalogPaginationControl
         pickerCategory="all"
@@ -272,6 +275,9 @@ describe("WidgetEditor filter-value picker", () => {
         onLoadMore={fetchNextPage}
       />,
     );
+    await waitFor(() => expect(fetchNextPage).toHaveBeenCalledOnce());
+
+    fireEvent.scroll(sentinel.parentElement);
     await waitFor(() => expect(fetchNextPage).toHaveBeenCalledTimes(2));
 
     intersection.emit(true);
@@ -296,6 +302,8 @@ describe("WidgetEditor filter-value picker", () => {
       />,
     );
 
+    const sentinel = screen.getByTestId("widget-catalog-pagination-sentinel");
+    fireEvent.scroll(sentinel.parentElement);
     intersection.emit(true);
     intersection.emit(true);
 
@@ -317,6 +325,8 @@ describe("WidgetEditor filter-value picker", () => {
       />,
     );
 
+    const sentinel = screen.getByTestId("widget-catalog-pagination-sentinel");
+    fireEvent.scroll(sentinel.parentElement);
     intersection.emit(true);
     expect(fetchNextPage).toHaveBeenCalledOnce();
   });
@@ -1360,5 +1370,36 @@ describe("WidgetEditor filter-value picker", () => {
         pickerMode: "filter",
       }),
     ).toEqual(expect.objectContaining({ role: "" }));
+  });
+
+  it("opens the bounded attribute inventory only for a legacy catalog fallback", () => {
+    expect(
+      shouldEnableWidgetAttributeFallback({
+        pickerOpen: true,
+        pickerCategory: "all",
+        activeUsesLegacyCatalog: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldEnableWidgetAttributeFallback({
+        pickerOpen: true,
+        pickerCategory: "custom_attribute",
+        activeUsesLegacyCatalog: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldEnableWidgetAttributeFallback({
+        pickerOpen: true,
+        pickerCategory: "system_metric",
+        activeUsesLegacyCatalog: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldEnableWidgetAttributeFallback({
+        pickerOpen: true,
+        pickerCategory: "all",
+        activeUsesLegacyCatalog: false,
+      }),
+    ).toBe(false);
   });
 });
