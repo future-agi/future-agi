@@ -233,8 +233,19 @@ import {
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
+const getLiveGridRefApi = (gridRef) => {
+  const api = gridRef?.current?.api;
+  return isGridApiLive(api) ? api : null;
+};
+const withGridRefApi = (gridRef, callback) =>
+  withLiveGridApi(getLiveGridRefApi(gridRef), callback);
+const deselectGridRef = (gridRef) =>
+  withGridRefApi(gridRef, (api) => api.deselectAll?.());
+const refreshGridRef = (gridRef, options) =>
+  withGridRefApi(gridRef, (api) => api.refreshServerSide?.(options));
 
 // Eagerly load the trace grid (always visible)
 import TraceGrid from "./TraceGrid";
@@ -1198,9 +1209,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const gridRef =
       selectedTab === "trace" ? primaryTraceGridRef : primarySpanGridRef;
 
-    if (gridRef?.current?.api) {
-      gridRef.current.api.sizeColumnsToFit();
-    }
+    withGridRefApi(gridRef, (api) => api.sizeColumnsToFit());
   }, [observeId]);
 
   const handleAutoSize = () => {
@@ -1219,9 +1228,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             ? compareTraceGridRef
             : compareSpanGridRef;
 
-    if (!gridRef.current?.api) return;
-
-    const gridApi = gridRef.current.api;
+    const gridApi = gridRef.current?.api;
+    if (!isGridApiLive(gridApi)) return;
 
     if (!gridApi.isAnimationFrameQueueEmpty?.()) return;
 
@@ -1860,12 +1868,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           queryKey: ["callLogs"],
         });
       } else {
-        if (primaryTraceGridRef.current) {
-          primaryTraceGridRef.current.api.refreshServerSide();
-        }
-        if (primarySpanGridRef.current) {
-          primarySpanGridRef.current.api.refreshServerSide();
-        }
+        refreshGridRef(primaryTraceGridRef);
+        refreshGridRef(primarySpanGridRef);
         if (includeAggregations) {
           queryClient.invalidateQueries({
             queryKey: ["llm-tracing-graph"],
@@ -1883,13 +1887,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         setLatestActive(true);
       }
       trackEvent(Events.pObserveRefreshClicked);
-      if (compareTraceGridRef.current) {
-        compareTraceGridRef.current.api.refreshServerSide();
-      }
-
-      if (compareSpanGridRef.current) {
-        compareSpanGridRef.current.api.refreshServerSide();
-      }
+      refreshGridRef(compareTraceGridRef);
+      refreshGridRef(compareSpanGridRef);
 
       if (includeAggregations) {
         queryClient.invalidateQueries({
@@ -2181,9 +2180,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
       const activeApi =
         selectedTab === "trace"
-          ? primaryTraceGridRef.current?.api
-          : primarySpanGridRef.current?.api;
-      if (activeApi?.resetColumnState) activeApi.resetColumnState();
+          ? getLiveGridRefApi(primaryTraceGridRef)
+          : getLiveGridRefApi(primarySpanGridRef);
+      activeApi?.resetColumnState?.();
       return;
     }
     wasOnSavedViewRef.current = true;
@@ -2287,8 +2286,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
       const activeApi =
         viewTabType === "trace"
-          ? primaryTraceGridRef.current?.api
-          : primarySpanGridRef.current?.api;
+          ? getLiveGridRefApi(primaryTraceGridRef)
+          : getLiveGridRefApi(primarySpanGridRef);
       if (activeApi?.applyColumnState) {
         activeApi.applyColumnState({
           state: display.columnState,
@@ -2364,8 +2363,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       );
       const api =
         slotKey === "primary-trace"
-          ? primaryTraceGridRef.current?.api
-          : primarySpanGridRef.current?.api;
+          ? getLiveGridRefApi(primaryTraceGridRef)
+          : getLiveGridRefApi(primarySpanGridRef);
       if (
         api?.applyColumnState &&
         Array.isArray(pendingColumnStateRef.current)
@@ -2442,8 +2441,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     );
     const api =
       drainSlotKey === "primary-trace"
-        ? primaryTraceGridRef.current?.api
-        : primarySpanGridRef.current?.api;
+        ? getLiveGridRefApi(primaryTraceGridRef)
+        : getLiveGridRefApi(primarySpanGridRef);
     if (!api?.applyColumnState) return;
     api.applyColumnState({
       state: pendingColumnStateRef.current,
@@ -2666,8 +2665,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     // whitelists `display` for arbitrary subkeys.
     const activeGridApi =
       selectedTab === "trace"
-        ? primaryTraceGridRef.current?.api
-        : primarySpanGridRef.current?.api;
+        ? getLiveGridRefApi(primaryTraceGridRef)
+        : getLiveGridRefApi(primarySpanGridRef);
     // Voice (CallLogsGrid) has no grid api here — derive columnState from the store.
     const rawColumnState =
       projectSource === PROJECT_SOURCE.SIMULATOR
@@ -2873,7 +2872,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             primaryCallLogsGridRef,
             compareCallLogsGridRef,
           ];
-    gridRefs.forEach((ref) => ref.current?.api?.resetColumnState?.());
+    gridRefs.forEach((ref) =>
+      withGridRefApi(ref, (api) => api.resetColumnState?.()),
+    );
     try {
       localStorage.removeItem(displayStorageKey);
     } catch {
@@ -4011,7 +4012,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               groupBy={groupBy}
               onGroupByChange={handleGroupByChange}
               hiddenGroupByOptions={hiddenGroupByOptions}
-              rowCount={currentGridRef.current?.api?.totalRowCount}
+              rowCount={getLiveGridRefApi(currentGridRef)?.totalRowCount}
               onCompareToggle={() => setShowCompare(!showCompare)}
               isCompareActive={showCompare}
               onResetView={handleResetView}
@@ -4111,14 +4112,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   return;
                 }
                 if (selectedTab === "trace") {
-                  primaryTraceGridRef.current?.api?.deselectAll();
+                  deselectGridRef(primaryTraceGridRef);
                   if (selectedGraph === "compare") {
-                    compareTraceGridRef.current?.api?.deselectAll();
+                    deselectGridRef(compareTraceGridRef);
                   }
                 } else {
-                  primarySpanGridRef.current?.api?.deselectAll();
+                  deselectGridRef(primarySpanGridRef);
                   if (selectedGraph === "compare") {
-                    compareSpanGridRef.current?.api?.deselectAll();
+                    deselectGridRef(compareSpanGridRef);
                   }
                 }
               }}
@@ -4254,11 +4255,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   case "tags": {
                     // Snapshot the selection's current tags from the grid
                     // so the popover can merge against per-item state.
-                    const grid = (
+                    const grid = getLiveGridRefApi(
                       selectedTab === "trace"
                         ? primaryTraceGridRef
-                        : primarySpanGridRef
-                    ).current?.api;
+                        : primarySpanGridRef,
+                    );
                     const nodes = grid?.getSelectedNodes?.() || [];
                     setTagsBulkItems(
                       nodes
@@ -4356,8 +4357,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   alignItems={"center"}
                 >
                   <Box>
-                    {currentGridRef.current?.api && (
-                      <TotalRowsStatusBar api={currentGridRef.current?.api} />
+                    {getLiveGridRefApi(currentGridRef) && (
+                      <TotalRowsStatusBar
+                        api={getLiveGridRefApi(currentGridRef)}
+                      />
                     )}
                   </Box>
                   <Divider
@@ -4604,14 +4607,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       return;
                     }
                     if (selectedTab === "trace") {
-                      primaryTraceGridRef.current?.api?.deselectAll();
+                      deselectGridRef(primaryTraceGridRef);
                       if (selectedGraph === "compare") {
-                        compareTraceGridRef.current?.api?.deselectAll();
+                        deselectGridRef(compareTraceGridRef);
                       }
                     } else {
-                      primarySpanGridRef.current?.api?.deselectAll();
+                      deselectGridRef(primarySpanGridRef);
                       if (selectedGraph === "compare") {
-                        compareSpanGridRef.current?.api?.deselectAll();
+                        deselectGridRef(compareSpanGridRef);
                       }
                     }
                   }}
@@ -4635,15 +4638,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     compareCallLogsGridRef.current?.deselectAll?.();
                     setSelectedCallIds([]);
                   } else if (selectedTab === "trace") {
-                    primaryTraceGridRef.current?.api?.refreshServerSide?.({
-                      purge: true,
-                    });
-                    primaryTraceGridRef.current?.api?.deselectAll?.();
+                    refreshGridRef(primaryTraceGridRef, { purge: true });
+                    deselectGridRef(primaryTraceGridRef);
                   } else {
-                    primarySpanGridRef.current?.api?.refreshServerSide?.({
-                      purge: true,
-                    });
-                    primarySpanGridRef.current?.api?.deselectAll?.();
+                    refreshGridRef(primarySpanGridRef, { purge: true });
+                    deselectGridRef(primarySpanGridRef);
                   }
                   setTagsAnchorEl(null);
                   setTagsBulkItems([]);
@@ -4750,12 +4749,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 onSuccess={() => {
                   if (filterSelectionMode && selectedTab === "trace") {
                     setFilterSelectionMode(false);
-                    primaryTraceGridRef.current?.api?.deselectAll();
+                    deselectGridRef(primaryTraceGridRef);
                     return;
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
                     setSpanFilterSelectionMode(false);
-                    primarySpanGridRef.current?.api?.deselectAll();
+                    deselectGridRef(primarySpanGridRef);
                     return;
                   }
                   if (
@@ -4775,9 +4774,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     return;
                   }
                   if (selectedTab === "trace") {
-                    primaryTraceGridRef.current?.api?.deselectAll();
+                    deselectGridRef(primaryTraceGridRef);
                   } else {
-                    primarySpanGridRef.current?.api?.deselectAll();
+                    deselectGridRef(primarySpanGridRef);
                   }
                 }}
               />
@@ -4855,8 +4854,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   !filterSelectionMode
                 }
                 visibleCount={
-                  primaryTraceGridRef.current?.api?.getDisplayedRowCount?.() ||
-                  0
+                  getLiveGridRefApi(
+                    primaryTraceGridRef,
+                  )?.getDisplayedRowCount?.() || 0
                 }
                 totalMatching={
                   traceTotalIsLowerBound
@@ -4963,8 +4963,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     !spanFilterSelectionMode
                   }
                   visibleCount={
-                    primarySpanGridRef.current?.api?.getDisplayedRowCount?.() ||
-                    0
+                    getLiveGridRefApi(
+                      primarySpanGridRef,
+                    )?.getDisplayedRowCount?.() || 0
                   }
                   totalMatching={
                     spanTotalIsLowerBound

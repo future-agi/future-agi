@@ -148,6 +148,16 @@ describe("SessionGrid cursor continuation", () => {
     gridState.api = null;
   });
 
+  it("keeps cache purging enabled with a fixed row height", async () => {
+    renderGrid();
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    expect(gridState.props.getRowHeight).toBeUndefined();
+    expect(gridState.props.rowHeight).toBe(40);
+    expect(gridState.props.maxBlocksInCache).toBe(5);
+    expect(gridState.props.maxConcurrentDatasourceRequests).toBe(1);
+  });
+
   it("falls back to numbered prefetch when a sorted response omits cursor metadata", async () => {
     getMock
       .mockResolvedValueOnce(
@@ -525,6 +535,32 @@ describe("SessionGrid cursor continuation", () => {
     expect(currentParams.success).toHaveBeenCalledTimes(1);
     expect(staleParams.fail).not.toHaveBeenCalled();
     expect(staleParams.success).not.toHaveBeenCalled();
+    expect(enqueueSnackbarMock).not.toHaveBeenCalled();
+  });
+
+  it("drops a completed request after the grid is destroyed", async () => {
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+    renderGrid();
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    const params = makeParams();
+    let destroyed = false;
+    params.api.isDestroyed = () => destroyed;
+    const read = gridState.props.serverSideDatasource.getRows(params);
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+
+    destroyed = true;
+    resolveResponse(sessionResponse({ rows: [row(1)] }));
+    await act(async () => read);
+
+    expect(params.success).not.toHaveBeenCalled();
+    expect(params.fail).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
 });

@@ -41,6 +41,11 @@ import {
   sanitizeUserSortModel,
 } from "./userSortContract";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
+import { isGridApiLive } from "src/utils/gridApi";
+import {
+  OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
+  OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
+} from "src/config/runtime_limits";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -234,6 +239,7 @@ const UsersGrid = React.memo(
           let requestGeneration = null;
           let continuationPending = false;
           try {
+            if (!isGridApiLive(params.api)) return;
             setIsLoading(true);
             params.api.hideOverlay();
             const { request } = params;
@@ -373,6 +379,7 @@ const UsersGrid = React.memo(
                 params: buildParams(pageNumber),
               });
             }
+            if (!isGridApiLive(params.api)) return;
             if (!cursorPagination.current.isCurrent(requestGeneration)) {
               return;
             }
@@ -384,7 +391,10 @@ const UsersGrid = React.memo(
               resumePendingListPage({
                 page: exactPage,
                 resume: () => {
-                  if (cursorPagination.current.isCurrent(requestGeneration)) {
+                  if (
+                    cursorPagination.current.isCurrent(requestGeneration) &&
+                    isGridApiLive(params.api)
+                  ) {
                     params.fail();
                     if (params.api?.retryServerSideLoads) {
                       params.api.retryServerSideLoads();
@@ -481,6 +491,7 @@ const UsersGrid = React.memo(
             if (isExpectedRequestCancellation(error)) {
               return;
             }
+            if (!isGridApiLive(params.api)) return;
             if (
               requestGeneration !== null &&
               !cursorPagination.current.isCurrent(requestGeneration)
@@ -575,6 +586,7 @@ const UsersGrid = React.memo(
           return;
 
         const api = event.api;
+        if (!isGridApiLive(api)) return;
         if (selectedAll) {
           api.deselectAll();
           clearSelection();
@@ -590,6 +602,7 @@ const UsersGrid = React.memo(
       if (!gridApiRef.current) return;
 
       const api = gridApiRef.current.api;
+      if (!isGridApiLive(api)) return;
       const selectedNodes = api.getSelectedNodes();
       const selectedData = selectedNodes.map((node) => node.data);
 
@@ -600,6 +613,7 @@ const UsersGrid = React.memo(
 
     const onGridReady = useCallback(
       (params) => {
+        if (!isGridApiLive(params.api)) return;
         gridApiRef.current = params;
         setGridApi(params.api); // Store the grid API reference
 
@@ -661,6 +675,7 @@ const UsersGrid = React.memo(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        if (!isGridApiLive(params.api)) return;
         // User drags only; programmatic moves would feed back into setColumns.
         if (params.source !== "uiColumnMoved") return;
 
@@ -686,6 +701,7 @@ const UsersGrid = React.memo(
     );
 
     const onSortChanged = (params) => {
+      if (!isGridApiLive(params.api)) return;
       const requestedSortModel = params.api
         .getColumnState()
         .filter((col) => col.sort != null)
@@ -737,11 +753,14 @@ const UsersGrid = React.memo(
               paginationPageSize={25}
               rowModelType="serverSide"
               cacheBlockSize={25}
+              maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
+              maxConcurrentDatasourceRequests={
+                OBSERVE_GRID_MAX_CONCURRENT_REQUESTS
+              }
               paginationPageSizeSelector={[10, 25, 50, 100]}
               defaultColDef={defaultColDef}
               onColumnHeaderClicked={onColumnHeaderClicked}
               rowStyle={{ cursor: "pointer" }}
-              suppressSizeToFit={true}
               suppressAutoSize={true}
               suppressServerSideFullWidthLoadingRow={true}
               serverSideInitialRowCount={5}

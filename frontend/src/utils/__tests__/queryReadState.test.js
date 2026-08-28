@@ -612,4 +612,18 @@ describe("queryReadState", () => {
     expect(params.success).not.toHaveBeenCalled();
     expect(params.api.showNoRowsOverlay).toHaveBeenCalledOnce();
   });
+
+  it("does not report a late failure to a destroyed grid", () => {
+    const params = {
+      fail: vi.fn(),
+      api: {
+        isDestroyed: () => true,
+        showNoRowsOverlay: vi.fn(),
+      },
+    };
+
+    expect(failServerSideGridRead(params)).toBe(false);
+    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
+  });
 });

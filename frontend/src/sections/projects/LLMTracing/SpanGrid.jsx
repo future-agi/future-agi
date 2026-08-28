@@ -73,6 +73,7 @@ import {
 } from "src/config/runtime_limits";
 import { boundObserveListRow } from "./observeListPayload";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 
 const ROWS_LIMIT = 25;
 const loadSpanObservePage = (params, signal) =>
@@ -269,7 +270,9 @@ const SpanGrid = React.forwardRef(
         cursorPagination.current.reset();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
-        gridRef?.current?.api?.refreshServerSide({ purge });
+        withLiveGridApi(gridRef?.current?.api, (api) =>
+          api.refreshServerSide({ purge }),
+        );
       },
       [enabled, gridRef],
     );
@@ -303,10 +306,12 @@ const SpanGrid = React.forwardRef(
     const filterRequestKey = selectionQueryKey;
     const clearSelection = useCallback(() => {
       const api = gridRef?.current?.api;
-      api?.deselectAll?.();
-      api?.setServerSideSelectionState?.({
-        selectAll: false,
-        toggledNodes: [],
+      withLiveGridApi(api, (liveApi) => {
+        liveApi.deselectAll?.();
+        liveApi.setServerSideSelectionState?.({
+          selectAll: false,
+          toggledNodes: [],
+        });
       });
       setSelectedAll(false);
       useSpanGridStore.setState({
@@ -473,7 +478,7 @@ const SpanGrid = React.forwardRef(
               // Disabled/unresolved is not an exact empty response. Reporting
               // success here makes AG Grid publish "No spans" without ever
               // calling the list API.
-              params.fail();
+              withLiveGridApi(params.api, () => params.fail?.());
               return;
             }
             let pageNumber = 0;
@@ -534,6 +539,7 @@ const SpanGrid = React.forwardRef(
                       loadSpanObservePage(buildParams(pageNumber), signal),
                   }),
               });
+              if (!isGridApiLive(params.api)) return;
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 // A newer filter/range owns the grid now. Do not let this stale
                 // response replace its loading state with an empty overlay.
@@ -549,7 +555,10 @@ const SpanGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
-                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                    if (
+                      cursorPagination.current.isCurrent(requestGeneration) &&
+                      isGridApiLive(params.api)
+                    ) {
                       params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
@@ -642,6 +651,7 @@ const SpanGrid = React.forwardRef(
               if (isExpectedRequestCancellation(error)) {
                 return;
               }
+              if (!isGridApiLive(params.api)) return;
               if (isListCursorContinuationLimitError(error)) {
                 // Preserve the exact checkpoint and current rows. A deliberate
                 // refresh may continue; do not publish a false empty page or
@@ -720,6 +730,7 @@ const SpanGrid = React.forwardRef(
     );
 
     const onSelectionChanged = useCallback((params) => {
+      if (!isGridApiLive(params.api)) return;
       // Trust server-side selection state verbatim — [] is valid when
       // selectAll is true (no deselections). See TraceGrid for details.
       const isServerSide =
@@ -757,6 +768,7 @@ const SpanGrid = React.forwardRef(
           event.node.setSelected(!selected);
           // Belt-and-suspenders: sync store directly (see TraceGrid note).
           setTimeout(() => {
+            if (!isGridApiLive(event.api)) return;
             const isServerSide =
               typeof event.api.getServerSideSelectionState === "function";
             const ssState = isServerSide
@@ -889,6 +901,7 @@ const SpanGrid = React.forwardRef(
             if (event.column.colId !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN) {
               return;
             }
+            if (!isGridApiLive(event.api)) return;
 
             if (selectedAll) {
               event.api.deselectAll();

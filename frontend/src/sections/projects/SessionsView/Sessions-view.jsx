@@ -80,6 +80,12 @@ import { filtersContentEqual } from "../saved-view-utils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+
+const getLiveSessionGridApi = (gridRef) => {
+  const api = gridRef?.current?.api;
+  return isGridApiLive(api) ? api : null;
+};
 
 // ---------------------------------------------------------------------------
 // Base session filter fields (always available)
@@ -407,7 +413,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // whitelists `display` for arbitrary sub-keys (no top-level dateFilter).
   const buildViewConfig = useCallback(() => {
     const columnState =
-      sessionGridApiRef.current?.api?.getColumnState?.() ?? undefined;
+      getLiveSessionGridApi(sessionGridApiRef)?.getColumnState?.() ?? undefined;
     const hasVisibility = updateObj && Object.keys(updateObj).length > 0;
     // customColumns separately: AG Grid drops columnState for unknown colIds,
     // so without this list the custom cols can't be reconstructed on restore.
@@ -568,7 +574,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       setExtraFilters((prev) => (prev.length === 0 ? prev : []));
       viewLoadedUpdateObjRef.current = null;
       setUpdateObj(initialVisibility);
-      const api = sessionGridApiRef.current?.api;
+      const api = getLiveSessionGridApi(sessionGridApiRef);
       if (api?.setColumnsVisible) {
         const showIds = Object.keys(initialVisibility).filter(
           (id) => initialVisibility[id],
@@ -616,7 +622,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             pendingCustomColumnsRef.current = saved.customColumns.map((c) => ({
               ...c,
             }));
-            sessionGridApiRef.current?.api?.refreshServerSide?.({
+            getLiveSessionGridApi(sessionGridApiRef)?.refreshServerSide?.({
               purge: true,
             });
           }
@@ -640,7 +646,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (display.visibleColumns && typeof display.visibleColumns === "object") {
       const next = { ...display.visibleColumns };
       setUpdateObj(next);
-      const api = sessionGridApiRef.current?.api;
+      const api = getLiveSessionGridApi(sessionGridApiRef);
       if (api?.setColumnsVisible) {
         const toShow = [];
         const toHide = [];
@@ -671,7 +677,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // When extraFilters happen to equal current state, setExtraFilters
     // returns the same ref and the dataSource memo never recreates.
     if (savedCustomCols.length > 0) {
-      const api = sessionGridApiRef.current?.api;
+      const api = getLiveSessionGridApi(sessionGridApiRef);
       if (api?.refreshServerSide) {
         api.refreshServerSide({ purge: true });
       } else {
@@ -688,7 +694,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       if (savedCustomCols.length > 0) {
         pendingColumnStateRef.current = display.columnState;
       } else {
-        const api = sessionGridApiRef.current?.api;
+        const api = getLiveSessionGridApi(sessionGridApiRef);
         if (api?.applyColumnState) {
           api.applyColumnState({
             state: display.columnState,
@@ -832,16 +838,16 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // --- Refresh ---
   const refreshSessions = useCallback(() => {
     trackEvent(Events.pObserveRefreshClicked);
-    if (sessionGridApiRef.current) {
-      sessionGridApiRef.current.api.refreshServerSide();
-    }
+    withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
+      api.refreshServerSide?.(),
+    );
     queryClient.invalidateQueries({ queryKey: ["session-list"] });
   }, [queryClient]);
 
   // --- Auto-size columns ---
   const handleAutoSize = useCallback(() => {
-    if (!sessionGridApiRef?.current?.api) return;
-    const gridApi = sessionGridApiRef.current.api;
+    const gridApi = getLiveSessionGridApi(sessionGridApiRef);
+    if (!gridApi) return;
     const allColumnIds = [];
     gridApi.getColumnDefs()?.forEach((column) => {
       if (column?.field) allColumnIds.push(column.field);
@@ -875,6 +881,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const onGridReady = useCallback(
     (params) => {
+      if (!isGridApiLive(params.api)) return;
       sessionGridApiRef.current = params;
       setHeaderConfig((prev) => ({ ...prev, gridApi: params.api }));
       // Drain any saved-view columnState that arrived before the grid mounted.
@@ -904,7 +911,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // silently drop widths/order/sort for the unknown colIds.
   useEffect(() => {
     if (!pendingColumnStateRef.current) return;
-    const api = sessionGridApiRef.current?.api;
+    const api = getLiveSessionGridApi(sessionGridApiRef);
     if (!api?.applyColumnState) return;
     api.applyColumnState({
       state: pendingColumnStateRef.current,
@@ -1074,7 +1081,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         selectedCountIsLowerBound={selectedCountState.isLowerBound}
         allMatching={sessionFilterSelectionMode}
         onClearSelection={() => {
-          sessionGridApiRef.current?.api?.deselectAll();
+          withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
+            api.deselectAll?.(),
+          );
           useSessionsGridStore.setState({
             toggledNodes: [],
             selectAll: false,
@@ -1102,7 +1111,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           projectId={sessionFilterSelectionMode ? observeId : null}
           onSuccess={() => {
             setSessionFilterSelectionMode(false);
-            sessionGridApiRef.current?.api?.deselectAll();
+            withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
+              api.deselectAll?.(),
+            );
             useSessionsGridStore.setState({
               toggledNodes: [],
               selectAll: false,
@@ -1160,7 +1171,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       <SelectAllBanner
         visible={selectAll && !sessionFilterSelectionMode}
         visibleCount={
-          sessionGridApiRef.current?.api?.getDisplayedRowCount?.() || 0
+          getLiveSessionGridApi(sessionGridApiRef)?.getDisplayedRowCount?.() ||
+          0
         }
         totalMatching={
           totalRowCountIsLowerBound

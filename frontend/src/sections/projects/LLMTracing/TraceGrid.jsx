@@ -67,6 +67,7 @@ import {
 } from "src/config/runtime_limits";
 import { boundObserveListRow } from "./observeListPayload";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 
 const ROWS_LIMIT = 25;
 const traceRowIdentity = (row) => {
@@ -158,7 +159,9 @@ const TraceGrid = React.forwardRef(
         cursorPagination.current.reset();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
-        gridRef?.current?.api?.refreshServerSide({ purge });
+        withLiveGridApi(gridRef?.current?.api, (api) =>
+          api.refreshServerSide({ purge }),
+        );
       },
       [enabled, gridRef],
     );
@@ -203,10 +206,12 @@ const TraceGrid = React.forwardRef(
     );
     const clearSelection = useCallback(() => {
       const api = gridRef?.current?.api;
-      api?.deselectAll?.();
-      api?.setServerSideSelectionState?.({
-        selectAll: false,
-        toggledNodes: [],
+      withLiveGridApi(api, (liveApi) => {
+        liveApi.deselectAll?.();
+        liveApi.setServerSideSelectionState?.({
+          selectAll: false,
+          toggledNodes: [],
+        });
       });
       setSelectedAll(false);
       useTraceGridStore.setState({
@@ -293,7 +298,7 @@ const TraceGrid = React.forwardRef(
               // Disabled/unresolved is not an exact empty response. Reporting
               // success here makes AG Grid publish "No traces" without ever
               // calling the list API.
-              params.fail();
+              withLiveGridApi(params.api, () => params.fail?.());
               return;
             }
             let pageNumber = 0;
@@ -361,6 +366,7 @@ const TraceGrid = React.forwardRef(
                       loadTraceObservePage(buildParams(pageNumber), signal),
                   }),
               });
+              if (!isGridApiLive(params.api)) return;
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 // A newer filter/range owns the grid now. Do not let this stale
                 // response replace its loading state with an empty overlay.
@@ -376,7 +382,10 @@ const TraceGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
-                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                    if (
+                      cursorPagination.current.isCurrent(requestGeneration) &&
+                      isGridApiLive(params.api)
+                    ) {
                       params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
@@ -467,6 +476,7 @@ const TraceGrid = React.forwardRef(
 
               // Collect all loaded trace IDs for prev/next navigation
               setTimeout(() => {
+                if (!isGridApiLive(params.api)) return;
                 const ids = [];
                 params.api.forEachNode((node) => {
                   if (node.data?.trace_id) ids.push(node.data.trace_id);
@@ -477,6 +487,7 @@ const TraceGrid = React.forwardRef(
               if (isExpectedRequestCancellation(error)) {
                 return;
               }
+              if (!isGridApiLive(params.api)) return;
               if (isListCursorContinuationLimitError(error)) {
                 // Keep the signed checkpoint and any existing rows. This is a
                 // bounded exact read awaiting an explicit retry, not an empty
@@ -617,6 +628,7 @@ const TraceGrid = React.forwardRef(
       [columns, setColumns],
     );
     const onSelectionChanged = useCallback((params) => {
+      if (!isGridApiLive(params.api)) return;
       // In server-side row model, ssState.toggledNodes is authoritative —
       // an empty array is a valid, meaningful state (e.g. when selectAll is
       // true, [] means "no deselections, everything is selected"). Only
@@ -657,6 +669,7 @@ const TraceGrid = React.forwardRef(
           // onSelectionChanged logic — trust server-side state verbatim so
           // toggling under selectAll correctly inverts the selection.
           setTimeout(() => {
+            if (!isGridApiLive(event.api)) return;
             const isServerSide =
               typeof event.api.getServerSideSelectionState === "function";
             const ssState = isServerSide
@@ -788,6 +801,7 @@ const TraceGrid = React.forwardRef(
             if (event.column.colId !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN) {
               return;
             }
+            if (!isGridApiLive(event.api)) return;
 
             if (selectedAll) {
               event.api.deselectAll();

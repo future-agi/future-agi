@@ -41,6 +41,11 @@ import {
 } from "src/sections/projects/LLMTracing/listCursorPagination";
 import ListCursorContinuationNotice from "src/sections/projects/LLMTracing/ListCursorContinuationNotice";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
+  OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
+} from "src/config/runtime_limits";
 
 const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -246,6 +251,7 @@ const SessionGrid = React.forwardRef(
             let pageNumber = 0;
             let requestGeneration = null;
             try {
+              if (!isGridApiLive(params.api)) return;
               const { request } = params;
 
               pageNumber = Math.floor(request.startRow / DATASET_ROWS_LIMIT);
@@ -314,6 +320,7 @@ const SessionGrid = React.forwardRef(
                     signal,
                   }),
               });
+              if (!isGridApiLive(params.api)) return;
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
                 return;
               }
@@ -405,7 +412,10 @@ const SessionGrid = React.forwardRef(
                 resumePendingListPage({
                   page: exactPage,
                   resume: () => {
-                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                    if (
+                      cursorPagination.current.isCurrent(requestGeneration) &&
+                      isGridApiLive(params.api)
+                    ) {
                       params.fail();
                       if (params.api?.retryServerSideLoads) {
                         params.api.retryServerSideLoads();
@@ -473,6 +483,7 @@ const SessionGrid = React.forwardRef(
               if (isExpectedRequestCancellation(error)) {
                 return;
               }
+              if (!isGridApiLive(params.api)) return;
               if (
                 requestGeneration !== null &&
                 !cursorPagination.current.isCurrent(requestGeneration)
@@ -557,6 +568,7 @@ const SessionGrid = React.forwardRef(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        if (!isGridApiLive(params.api)) return;
         // User drags only; programmatic moves would loop with the order re-apply.
         if (params.source !== "uiColumnMoved") return;
 
@@ -621,13 +633,6 @@ const SessionGrid = React.forwardRef(
               <AgGridReact
                 ref={gridApiRef}
                 columnDefs={finalColumnDefs}
-                getRowHeight={(params) => {
-                  if (params?.node?.rowPinned === "bottom") return 30;
-                  return (
-                    userTraceRowHeightMapping[cellHeight]?.height ??
-                    userTraceRowHeightMapping.Short.height
-                  );
-                }}
                 rowHeight={
                   userTraceRowHeightMapping[cellHeight]?.height ??
                   userTraceRowHeightMapping.Short.height
@@ -640,7 +645,10 @@ const SessionGrid = React.forwardRef(
                 serverSideDatasource={dataSource}
                 pagination={false}
                 cacheBlockSize={DATASET_ROWS_LIMIT}
-                maxBlocksInCache={5}
+                maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
+                maxConcurrentDatasourceRequests={
+                  OBSERVE_GRID_MAX_CONCURRENT_REQUESTS
+                }
                 rowBuffer={5}
                 suppressServerSideFullWidthLoadingRow={true}
                 noRowsOverlayComponent={
@@ -654,14 +662,16 @@ const SessionGrid = React.forwardRef(
                 onSelectionChanged={onSelectionChanged}
                 getRowId={({ data }) => data.session_id}
                 onFirstDataRendered={({ api }) => {
-                  api.setServerSideSelectionState({
-                    selectAll: selectAll,
-                    toggledNodes: toggledNodes,
+                  withLiveGridApi(api, (liveApi) => {
+                    liveApi.setServerSideSelectionState({
+                      selectAll: selectAll,
+                      toggledNodes: toggledNodes,
+                    });
                   });
                 }}
                 onModelUpdated={({ api }) => {
                   if (!selectAll && !toggledNodes?.length) {
-                    api.deselectAll();
+                    withLiveGridApi(api, (liveApi) => liveApi.deselectAll());
                     return;
                   }
                 }}

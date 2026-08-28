@@ -2,6 +2,7 @@ import {
   ANALYTICS_REQUEST_TIMEOUT_MS,
   CURSOR_MAX_EMPTY_CONTINUATIONS,
 } from "src/config/runtime_limits";
+import { isGridApiLive } from "src/utils/gridApi";
 
 const CURSOR_MODE = "cursor";
 const NUMBERED_MODE = "numbered";
@@ -163,6 +164,7 @@ export const isListCursorContinuationLimitError = (error) =>
  * the signed checkpoint owned by the datasource.
  */
 export const retryServerSideCursorLoad = (api) => {
+  if (!isGridApiLive(api)) return false;
   if (typeof api?.retryServerSideLoads === "function") {
     api.retryServerSideLoads();
     return true;

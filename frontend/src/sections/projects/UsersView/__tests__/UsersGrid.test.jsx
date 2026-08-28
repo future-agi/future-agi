@@ -205,6 +205,13 @@ describe("UsersGrid deterministic pagination", () => {
     expect(firstId).not.toBe(secondId);
   });
 
+  it("bounds retained blocks and concurrent server-side reads", () => {
+    renderGrid();
+
+    expect(gridState.props.maxBlocksInCache).toBe(5);
+    expect(gridState.props.maxConcurrentDatasourceRequests).toBe(1);
+  });
+
   it("opts the first unsorted request into cursor mode with the active filters", async () => {
     getMock.mockResolvedValue(usersResponse());
     renderGrid();
@@ -608,5 +615,30 @@ describe("UsersGrid deterministic pagination", () => {
     expect(currentParams.success).toHaveBeenCalledTimes(1);
     expect(staleParams.fail).not.toHaveBeenCalled();
     expect(staleParams.success).not.toHaveBeenCalled();
+  });
+
+  it("drops a completed request after the grid is destroyed", async () => {
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+    renderGrid();
+
+    const params = makeGridParams();
+    let destroyed = false;
+    params.api.isDestroyed = () => destroyed;
+    const read = gridState.props.serverSideDatasource.getRows(params);
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+
+    destroyed = true;
+    resolveResponse(usersResponse({ rows: [row(1)] }));
+    await act(async () => read);
+
+    expect(params.success).not.toHaveBeenCalled();
+    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
   });
 });

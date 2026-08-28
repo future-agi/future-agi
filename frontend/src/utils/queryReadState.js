@@ -7,6 +7,7 @@ import {
   AGGREGATION_POLL_TIMEOUT_MS as CONFIGURED_AGGREGATION_POLL_TIMEOUT_MS,
   AGGREGATION_REQUEST_TIMEOUT_MS as CONFIGURED_AGGREGATION_REQUEST_TIMEOUT_MS,
 } from "src/config/runtime_limits";
+import { isGridApiLive } from "src/utils/gridApi";
 
 export const QUERY_READ_RETRY_MESSAGE =
   "Some results could not be loaded. Please try again.";
@@ -665,6 +666,8 @@ export function getRenderableGraphData(payload) {
  * empty successful dataset because that can truncate pagination state.
  */
 export function failServerSideGridRead(params) {
-  params.fail();
-  params.api?.showNoRowsOverlay();
+  if (params?.api && !isGridApiLive(params.api)) return false;
+  params?.fail?.();
+  params?.api?.showNoRowsOverlay?.();
+  return true;
 }

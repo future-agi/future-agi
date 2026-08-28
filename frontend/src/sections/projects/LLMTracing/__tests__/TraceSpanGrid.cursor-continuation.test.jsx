@@ -475,6 +475,35 @@ describe.each([
     expect(gridState.props.maxBlocksInCache).toBe(5);
   });
 
+  it("drops a response after its grid is destroyed", async () => {
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+
+    renderGrid(kind);
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    const params = makeParams();
+    let destroyed = false;
+    params.api.isDestroyed = () => destroyed;
+    const read = gridState.props.serverSideDatasource.getRows(params);
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+
+    destroyed = true;
+    await act(async () => {
+      resolveResponse(listResponse({ rows: [row] }));
+      await read;
+    });
+
+    expect(params.success).not.toHaveBeenCalled();
+    expect(params.fail).not.toHaveBeenCalled();
+    expect(params.api.forEachNode).not.toHaveBeenCalled();
+  });
+
   it("pauses neutrally and resumes the retained checkpoint after one click", async () => {
     Array.from({ length: 13 }, (_, index) =>
       listResponse({
