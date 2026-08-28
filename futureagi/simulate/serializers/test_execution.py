@@ -630,6 +630,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def _is_chat_simulation(self, obj):
         """Check if this call execution is a chat/text simulation (agent-based or prompt-based)."""
+        # The executed call is authoritative. Hosted harness runs may reuse an
+        # AgentDefinition whose legacy/default type is text while projecting a
+        # real voice call. Falling through to that stale definition hides voice
+        # duration and recordings from the call-details response.
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if simulation_call_type is not None:
+            return simulation_call_type == CallExecution.SimulationCallType.TEXT
         if not hasattr(obj, "test_execution") or not obj.test_execution:
             return False
         run_test = obj.test_execution.run_test
