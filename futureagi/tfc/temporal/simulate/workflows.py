@@ -39,6 +39,7 @@ with workflow.unsafe.imports_passed_through():
         CreateScenarioDatasetInput,
         CreateScriptScenarioWorkflowInput,
         CreateScriptScenarioWorkflowOutput,
+        ExtractIntentsInput,
         FinalizeGraphScenarioInput,
         GenerateCasesForIntentInput,
         GenerateColumnDataInput,
