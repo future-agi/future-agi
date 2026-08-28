@@ -2,11 +2,17 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData, selectJudgeModel } from '../../lib/eval-model';
 import { ApiError } from '../../lib/api-client';
+import { allowed } from '../../lib/capabilities';
 import type { TestActor } from '../../lib/provisioning';
 
-// The OSS half of EVAL-E2E-024. Kept beside the flow rather than in lib/ so
-// the two halves of the same product boundary read together.
-async function assertConnectorsDeniedOnOss(actor: TestActor): Promise<void> {
+// The unentitled half of EVAL-E2E-024. Kept beside the flow rather than in
+// lib/ so both halves of the same product boundary read together.
+//
+// Gated on the `falcon_ai` capability, NOT on deployment mode: mode reports
+// only that EE_LICENSE_KEY is set. This repo's dev key grants falcon_ai and
+// CI's does not, so a mode-gated version passed locally and failed CI on a 402
+// that was correct behaviour.
+async function assertConnectorsDenied(actor: TestActor): Promise<void> {
   const denied = await actor.api
     .post('/falcon-ai/mcp-connectors/', {
       name: 'e2e-oss-denied', server_url: 'https://example-mcp.e2e.invalid/sse',
@@ -92,7 +98,7 @@ test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test 
                     'the published eval\'s config.tools carries the connector id as a truthy key',
                     'the published eval\'s config.agent_mode is "quick"'],
   }),
-}, async ({ page, actor, deploymentMode }, testInfo) => {
+}, async ({ page, actor, capabilities }, testInfo) => {
   // OSS does not skip this flow — it asserts the other half of it. MCP
   // connectors sit behind `falcon_ai`, one of the four `oss_locked` features
   // (futureagi/tfc/capabilities/registry.py:81-83), so refusing to create one
@@ -100,8 +106,8 @@ test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test 
   // refusal here keeps the entitlement boundary itself covered — a regression
   // that silently handed OSS a working connector would otherwise pass
   // unnoticed — and keeps both lanes green without a permanent skip.
-  if (deploymentMode === 'oss') {
-    await assertConnectorsDeniedOnOss(actor);
+  if (!allowed(capabilities, 'falcon_ai')) {
+    await assertConnectorsDenied(actor);
     return;
   }
 

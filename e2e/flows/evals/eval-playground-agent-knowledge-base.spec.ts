@@ -1,5 +1,7 @@
 import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { allowed } from '../../lib/capabilities';
+import { assertAgentTabLocked } from '../../lib/agent-eval';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData, selectJudgeModel } from '../../lib/eval-model';
 
 // See eval-agent-connectors.spec.ts for the full trace of why Agent-type is
@@ -42,7 +44,14 @@ test('EVAL-E2E-025: author a new Agent eval, attach a knowledge base, test it an
                     'the published eval\'s config.knowledge_bases carries the created KB id',
                     'the published eval\'s config.agent_mode is "quick"'],
   }),
-}, async ({ page, actor }, testInfo) => {
+}, async ({ page, actor, capabilities }, testInfo) => {
+  // agentic_eval is oss_locked, so this flow needs a license naming it.
+  // Unentitled, assert the tab is locked rather than skipping.
+  if (!allowed(capabilities, 'agentic_eval')) {
+    await assertAgentTabLocked(page);
+    return;
+  }
+
 
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const evalName = `e2e-agent-kb-${suffix}`;
