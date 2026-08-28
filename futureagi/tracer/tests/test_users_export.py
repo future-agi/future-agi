@@ -16,6 +16,8 @@ from tracer.services.users_list_manager import (
     MAX_EXPORT_ROWS,
     USERS_EXPORT_COLUMNS,
     UsersListManager,
+    _users_attr_enrichment_query,
+    _users_attr_id_map_query,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.api]
@@ -471,6 +473,142 @@ class TestUserListQueryBuilderUnpaginated:
         assert "LIMIT %(max_rows)s" in query
         assert "count() OVER()" not in query
         assert params["max_rows"] == 10_000
+
+
+class TestUsersAttributeEnrichment:
+    def test_query_filters_by_scoped_projects_and_raw_end_user_ids(self):
+        project_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+        query, params = _users_attr_enrichment_query(project_ids)
+
+        assert "PREWHERE project_id IN %(attr_project_ids)s" in query
+        assert "end_user_id IN %(attr_span_eu_ids)s" in query
+        assert "idx_end_user_id" not in query
+        assert "end_user_id_remap" not in query
+        assert "resolved_end_user_id" not in query
+        assert "SETTINGS" in query
+        assert params["attr_project_ids"] == tuple(project_ids)
+
+    def test_id_map_query_limits_survivor_map_to_page_groups(self):
+        query, params = _users_attr_id_map_query()
+
+        assert "WITH relevant_new_ids AS" in query
+        assert "old_id IN %(page_eu_ids)s" in query
+        assert "new_id IN %(page_eu_ids)s" in query
+        assert "new_id IN (SELECT new_id FROM relevant_new_ids)" in query
+        assert "arrayJoin([old_id, new_id]) AS any_id" in query
+        assert "argMin(old_id, toString(old_id)) OVER" in query
+        assert "SETTINGS" in query
+        assert params == {}
+
+    def test_enrichment_merges_all_group_members_into_survivor(self):
+        project_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        survivor_id = str(uuid.uuid4())
+        old_id = str(uuid.uuid4())
+        new_id = str(uuid.uuid4())
+        rows = [{"user_id": "u1", "end_user_id": survivor_id}]
+        manager = UsersListManager(
+            organization_id=str(uuid.uuid4()),
+            allowed_project_ids=project_ids,
+        )
+        remap_rows = [
+            {"any_id": survivor_id, "survivor_id": survivor_id},
+            {"any_id": old_id, "survivor_id": survivor_id},
+            {"any_id": new_id, "survivor_id": survivor_id},
+        ]
+        attribute_rows = [
+            {
+                "end_user_id": survivor_id,
+                "attributes_extra": "{}",
+                "attrs_string": {"customer.plan": "enterprise"},
+                "attrs_number": {},
+            },
+            {
+                "end_user_id": old_id,
+                "attributes_extra": "{}",
+                "attrs_string": {"customer.plan": "free"},
+                "attrs_number": {},
+            },
+            {
+                "end_user_id": new_id,
+                "attributes_extra": "{}",
+                "attrs_string": {"customer.plan": "pro"},
+                "attrs_number": {},
+            },
+        ]
+
+        with patch.object(
+            AnalyticsQueryService,
+            "execute_ch_query",
+            side_effect=[_ch_stub(remap_rows), _ch_stub(attribute_rows)],
+        ) as execute:
+            manager._enrich_with_span_attributes(rows)
+
+        assert rows[0]["customer.plan"] == ["enterprise", "free", "pro"]
+        assert execute.call_count == 2
+        assert execute.call_args_list[0].args[1]["page_eu_ids"] == (
+            survivor_id,
+        )
+        attr_params = execute.call_args_list[1].args[1]
+        assert attr_params["attr_project_ids"] == tuple(project_ids)
+        assert set(attr_params["attr_span_eu_ids"]) == {
+            survivor_id,
+            old_id,
+            new_id,
+        }
+
+    def test_enrichment_keeps_unmapped_user_as_identity(self):
+        project_id = str(uuid.uuid4())
+        end_user_id = str(uuid.uuid4())
+        rows = [{"user_id": "u1", "end_user_id": end_user_id}]
+        manager = UsersListManager(
+            organization_id=str(uuid.uuid4()),
+            allowed_project_ids=[project_id],
+            project_id=project_id,
+        )
+        attribute_rows = [
+            {
+                "end_user_id": end_user_id,
+                "attributes_extra": '{"customer.region": "us"}',
+                "attrs_string": {},
+                "attrs_number": {},
+            }
+        ]
+
+        with patch.object(
+            AnalyticsQueryService,
+            "execute_ch_query",
+            side_effect=[_ch_stub([]), _ch_stub(attribute_rows)],
+        ) as execute:
+            manager._enrich_with_span_attributes(rows)
+
+        assert rows[0]["customer.region"] == "us"
+        assert execute.call_args_list[1].args[1]["attr_span_eu_ids"] == (
+            end_user_id,
+        )
+
+    def test_enrichment_does_not_relabel_non_survivor_page_row(self):
+        project_id = str(uuid.uuid4())
+        page_end_user_id = str(uuid.uuid4())
+        survivor_id = str(uuid.uuid4())
+        rows = [{"user_id": "u1", "end_user_id": page_end_user_id}]
+        manager = UsersListManager(
+            organization_id=str(uuid.uuid4()),
+            allowed_project_ids=[project_id],
+            project_id=project_id,
+        )
+
+        with patch.object(
+            AnalyticsQueryService,
+            "execute_ch_query",
+            return_value=_ch_stub(
+                [{"any_id": page_end_user_id, "survivor_id": survivor_id}]
+            ),
+        ) as execute:
+            manager._enrich_with_span_attributes(rows)
+
+        assert rows == [{"user_id": "u1", "end_user_id": page_end_user_id}]
+        assert execute.call_count == 1
 
 
 class TestUsersExportStreaming:
