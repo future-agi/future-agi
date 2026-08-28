@@ -33,6 +33,15 @@ class FeatureDefinition:
     # license state). Setting oss_locked=True additionally requires a valid
     # license off-cloud — reserved for managed compute and the error feed.
     oss_locked: bool = False
+    # The ee/ package that actually implements this feature, when one does.
+    # Entitlement and implementation are decided in different places: a
+    # non-oss_locked feature is allowed on every self-hosted deployment, but
+    # published OSS images ship without ee/, so the import falls through to
+    # `tfc.ee_stub._ee_stub` and every invocation raises 402. Left unnamed,
+    # that mismatch reaches the user as an enabled surface whose every run
+    # fails. Naming the module lets check() deny up front, so the UI locks the
+    # control instead of offering one that cannot work.
+    implementation_module: str | None = None
     required_service: str | None = None
     metering_dimension: str | None = None
     air_gap_behavior: AirGapBehavior = AirGapBehavior.AVAILABLE
@@ -131,6 +140,12 @@ FEATURE_AGENTIC_EVAL = FeatureDefinition(
     oss_baseline=False,
     requires_license=True,
     execution_location=ExecutionLocation.LOCAL,
+    # Runs free off-cloud wherever the evaluator is present, which is why this
+    # is not oss_locked — but the evaluator is `ee.evals.llm.agent_evaluator`
+    # (agentic_eval/core_evals/fi_evals/__init__.py imports AgentEvaluator from
+    # it, falling back to the 402 stub on ImportError). Without this, a build
+    # lacking ee/ reports the Agents tab enabled and then fails every run.
+    implementation_module="ee.evals.llm.agent_evaluator",
 )
 
 FEATURE_SYNTHETIC_DATA = FeatureDefinition(

@@ -7,6 +7,9 @@ Decision order:
 1. Is the feature registered? (unknown → programming error, deny)
 2. Is it an OSS baseline feature? (→ allow, subject to quota)
 3. Is this cloud? (→ delegate to cloud plan resolver)
+3.5 Self-hosted and not oss_locked? (→ allow, unless the feature names an
+    implementation_module this build does not ship, which denies with
+    EE_CODE_UNAVAILABLE rather than allowing a surface that cannot run)
 4. Is EE code available? (→ if not, deny with EE_CODE_UNAVAILABLE)
 5. Is a valid license present and active/grace/trial?
 6. Does the license include the feature?
@@ -19,6 +22,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
+from tfc.ee_loader import has_ee
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
     FeatureDefinition,
@@ -152,6 +156,19 @@ def check(
     # runs free off-cloud. Only oss_locked features fall through to the
     # license checks below.
     if not feature.oss_locked:
+        # ...provided this build can actually run it. Entitlement and
+        # implementation are separate facts: the feature is licensed free
+        # off-cloud, but its code may simply not be in this image. Denying
+        # here — rather than letting the ee_stub raise 402 at invocation —
+        # is what keeps the UI's enabled/locked state honest, since the
+        # frontend has no signal for code presence beyond this decision.
+        if feature.implementation_module and not has_ee(feature.implementation_module):
+            return CapabilityDecision(
+                allowed=False,
+                feature_id=feature_id,
+                reason_code=DenialReason.EE_CODE_UNAVAILABLE.value,
+                requires_network=feature.required_service is not None,
+            )
         return CapabilityDecision(allowed=True, feature_id=feature_id)
 
     # 4. EE code not available → deny
