@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tempfile
 from datetime import timedelta
 from typing import Any, BinaryIO
@@ -10,6 +11,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from simulate.models import (
+    AgentDefinition,
     CallExecution,
     CallTranscript,
     HostedHarnessArtifact,
@@ -29,6 +31,8 @@ from simulate.services.hosted_harness import (
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
+
+logger = logging.getLogger(__name__)
 
 _EVENT_TYPES = {
     "stage_changed",
@@ -762,6 +766,7 @@ def _apply_receipt_to_call(
             update_fields.append("provider_call_data")
     call.call_metadata = metadata
     from simulate.services.alk_simulate_ingestion import (
+        _apply_conversation_metrics,
         _apply_harness_evaluation_outputs,
         _dispatch_csat_once,
     )
@@ -770,12 +775,64 @@ def _apply_receipt_to_call(
     update_fields.append("eval_outputs")
     if body.get("failure"):
         call.error_message = body["failure"]["message"]
+    # A sealed voice call stores its transcript, but the hosted path never
+    # derived the conversation analytics the non-hosted voice flow computes
+    # (turn/message counts, talk ratio, WPM, interruptions, agent latency,
+    # token usage), leaving call-details empty.  Compute them from the stored
+    # transcript; keep it best-effort so a metrics error never fails ingestion.
+    if call.simulation_call_type == CallExecution.SimulationCallType.VOICE:
+        try:
+            _apply_conversation_metrics(call)
+        except Exception:  # noqa: BLE001 - metrics are best-effort, never fatal
+            logger.warning(
+                "hosted conversation metrics failed for call %s",
+                call.id,
+                exc_info=True,
+            )
+        else:
+            update_fields.extend(
+                [
+                    "avg_agent_latency_ms",
+                    "user_interruption_count",
+                    "user_interruption_rate",
+                    "ai_interruption_count",
+                    "ai_interruption_rate",
+                    "user_wpm",
+                    "bot_wpm",
+                    "talk_ratio",
+                    "avg_stop_time_after_interruption_ms",
+                    "message_count",
+                    "conversation_metrics_data",
+                    "duration_seconds",
+                ]
+            )
     call.save(update_fields=list(dict.fromkeys(update_fields)))
+    if resolved_modality == CallExecution.SimulationCallType.VOICE:
+        _ensure_run_agent_is_voice(registration.job)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         transaction.on_commit(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
         )
+
+
+def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:
+    """Promote the run's agent definition to voice from definitive evidence.
+
+    ``_resolve_scenario_modality`` runs at scenario-provision time, before the
+    authoring contract is guaranteed persisted on the job, so a voice run can
+    register a ``text`` agent definition and then render through the chat
+    schema -- effectively disappearing from call-details.  A sealed recording
+    is ground truth and arrives with the receipt, so correct the definition
+    here (idempotent; text runs never reach this path).
+    """
+    run_test = getattr(job, "run_test", None)
+    if run_test is None:
+        return
+    agent = run_test.agent_definition
+    if agent is not None and agent.agent_type != AgentDefinition.AgentTypeChoices.VOICE:
+        agent.agent_type = AgentDefinition.AgentTypeChoices.VOICE
+        agent.save(update_fields=["agent_type", "updated_at"])
 
 
 def _call_lifecycle_status(body: dict[str, Any]) -> str:
@@ -881,6 +938,22 @@ def _ingest_hosted_transcript(
         messages = payload.get("messages") if isinstance(payload, dict) else []
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
+            # The v2 transcript carries absolute speech timing
+            # (``started_speaking_at`` / ``stopped_speaking_at`` in epoch
+            # seconds).  Anchor to the earliest turn so CallTranscript stores
+            # real per-turn offsets in ms: conversation metrics (talk ratio,
+            # WPM, agent latency, interruptions) are all derived from these and
+            # collapse to zero when every turn shares the row index.
+            speech_starts = [
+                message["started_speaking_at"]
+                for message in messages
+                if isinstance(message, dict)
+                and isinstance(message.get("started_speaking_at"), (int, float))
+            ]
+            base_time = min(speech_starts) if speech_starts else None
+            valid_roles = {
+                choice for choice, _label in CallTranscript.SpeakerRole.choices
+            }
             for index, message in enumerate(messages):
                 if not isinstance(message, dict):
                     continue
@@ -888,16 +961,26 @@ def _ingest_hosted_transcript(
                 if content is None:
                     continue
                 role = str(message.get("role") or "unknown")
-                valid_roles = {
-                    choice for choice, _label in CallTranscript.SpeakerRole.choices
-                }
+                started = message.get("started_speaking_at")
+                stopped = message.get("stopped_speaking_at")
+                if base_time is not None and isinstance(started, (int, float)):
+                    start_ms = int(round((started - base_time) * 1000))
+                    end_ms = (
+                        int(round((stopped - base_time) * 1000))
+                        if isinstance(stopped, (int, float))
+                        else start_ms
+                    )
+                else:
+                    # Older guests emit no timing; preserve turn order only.
+                    start_ms = index
+                    end_ms = index
                 rows.append(
                     CallTranscript(
                         call_execution=call,
                         speaker_role=role if role in valid_roles else "unknown",
                         content=str(content),
-                        start_time_ms=index,
-                        end_time_ms=index,
+                        start_time_ms=start_ms,
+                        end_time_ms=end_ms,
                     )
                 )
         if not rows and isinstance(payload, dict) and payload.get("transcript"):
