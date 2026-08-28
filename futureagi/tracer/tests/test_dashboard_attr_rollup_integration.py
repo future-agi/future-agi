@@ -201,7 +201,10 @@ def test_soft_delete_rebuild_equals_raw(ch, settings):
     seed_ch_spans([tombstone], client=ch)
 
     # Reconcile the aggregate, then compare via the real builder call-path.
-    call_command("rebuild_dashboard_attr_rollup")
+    call_command(
+        "rebuild_dashboard_attr_rollup",
+        confirm_destructive_rebuild=True,
+    )
 
     config = _config(project_id, _DAY + timedelta(hours=10), _DAY + timedelta(hours=11))
     rollup_sql, params, _ = DashboardQueryBuilderV2(config).build_all_queries()[0]

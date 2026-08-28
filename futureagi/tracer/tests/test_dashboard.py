@@ -81,6 +81,7 @@ from tracer.services.clickhouse.query_builders.dataset_dashboard import (
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 from tracer.services.clickhouse.server_readonly import without_query_settings
 from tracer.services.clickhouse.v2.query_builders.dashboard import (
+    MERGED_SPAN_COMPATIBILITY_CONFIG_KEY,
     DashboardQueryBuilderV2,
 )
 from tracer.services.exact_aggregation_cache import snapshot_cache_key
@@ -6313,6 +6314,58 @@ class TestDashboardQueryBuilder:
         assert attribute_key not in sql
 
 
+@pytest.mark.unit
+def test_merged_span_compatibility_avoids_latest_state_replay():
+    config = {
+        "project_ids": [str(uuid.uuid4())],
+        "granularity": "day",
+        "time_range": {"preset": "30D"},
+        "metrics": [
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "aggregation": "avg",
+            }
+        ],
+        "filters": [],
+        "breakdowns": [],
+        MERGED_SPAN_COMPATIBILITY_CONFIG_KEY: True,
+    }
+
+    sql, _, _ = DashboardQueryBuilderV2(config).build_all_queries()[0]
+
+    assert " FINAL" not in sql
+    assert "latest_state" not in sql
+
+
+@pytest.mark.unit
+def test_merged_span_compatibility_avoids_custom_metric_identity_replay():
+    config = {
+        "project_ids": [str(uuid.uuid4())],
+        "granularity": "day",
+        "time_range": {"preset": "30D"},
+        "metrics": [
+            {
+                "id": "stt_latency_ms",
+                "name": "stt_latency_ms",
+                "type": "custom_attribute",
+                "attribute_key": "stt_latency_ms",
+                "attribute_type": "number",
+                "aggregation": "avg",
+            }
+        ],
+        "filters": [],
+        "breakdowns": [],
+        MERGED_SPAN_COMPATIBILITY_CONFIG_KEY: True,
+    }
+
+    sql, _, _ = DashboardQueryBuilderV2(config).build_all_queries()[0]
+
+    assert "custom_metric_candidate_identities" not in sql
+    assert " FINAL" not in sql
+
+
 class TestDashboardAttrRollupRouting:
     """Routing for the latency-avg × covered-attribute breakdown.
 
@@ -6374,6 +6427,9 @@ class TestDashboardAttrRollupRouting:
         settings.DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
             self._COVERED_SINCE if covered_since is None else covered_since
         )
+        settings.DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE = (
+            self._COVERED_SINCE if covered_since is None else covered_since
+        )
 
     def test_covered_breakdown_final_status_routes_to_rollup(self, settings):
         # [FIX] final_status → rollup. RED without the routing branch.
@@ -6403,6 +6459,31 @@ class TestDashboardAttrRollupRouting:
         assert "sumMerge(latency_sum) / countMerge(n)" in sql
         assert "span_attr_str" not in sql
         assert params["attr_key"] == "country"
+
+    @pytest.mark.parametrize("attribute_key", ["user.country", "llm.model_name"])
+    def test_common_saved_widget_breakdowns_route_to_rollup(
+        self,
+        settings,
+        attribute_key,
+    ):
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd(attribute_key)])
+
+        sql, params, _ = self._v2(config).build_all_queries()[0]
+
+        assert "dashboard_attr_rollup_common_keys" in sql
+        assert "FROM spans" not in sql
+        assert params["attr_key"] == attribute_key
+
+    def test_common_keys_require_their_own_backfill_coverage(self, settings):
+        self._enable(settings)
+        settings.DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE = None
+        config = self._config(breakdowns=[self._bd("user.country")])
+
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
 
     def test_v1_builder_never_routes_to_rollup(self, settings):
         # [FALLBACK] FIX 1 — base/v1 builder lacks the rollup table; even with
@@ -12707,35 +12788,31 @@ class TestXSSPayloadNonExecutable:
 
 
 @pytest.mark.django_db
-def test_dashboard_query_serves_inline_rollup_while_exact_refresh_runs(
+def test_dashboard_query_serves_main_compatibility_without_exact_refresh(
     auth_client,
     observe_project,
 ):
-    captured = {}
-
-    def _pending(namespace, identity, **kwargs):
-        captured.update(namespace=namespace, identity=identity, options=kwargs)
-        return kwargs["pending_payload"]
-
-    rollup_analytics = MagicMock()
-    rollup_analytics.execute_ch_query.return_value = SimpleNamespace(
+    compatibility_analytics = MagicMock()
+    compatibility_analytics.execute_ch_query.return_value = SimpleNamespace(
         data=[
             {
                 "time_bucket": datetime(2026, 8, 1, tzinfo=UTC),
-                "metric_0": 12.0,
+                "value": 12.0,
             }
         ],
-        columns=["time_bucket", "metric_0"],
+        columns=["time_bucket", "value"],
     )
 
     with (
         patch(
             "tracer.views.dashboard.read_or_schedule_exact_snapshot",
-            side_effect=_pending,
+            side_effect=AssertionError(
+                "main-compatible reads must not schedule exact replay"
+            ),
         ),
         patch(
             "tracer.views.dashboard.V2AnalyticsQueryService",
-            return_value=rollup_analytics,
+            return_value=compatibility_analytics,
         ),
         patch(
             "tracer.views.dashboard.AnalyticsQueryService",
@@ -12766,13 +12843,9 @@ def test_dashboard_query_serves_inline_rollup_while_exact_refresh_runs(
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
     assert result["query_exact"] is False
-    assert result["query_provenance"] == "materialized_rollup"
-    assert result["query_refreshing"] is True
-    assert captured["namespace"] == "dashboard-query"
-    assert captured["identity"]["query_config"]["project_ids"] == [
-        str(observe_project.id)
-    ]
-    assert captured["options"]["refresh"] is True
+    assert result["query_provenance"] == "merged_span_compatibility"
+    query = compatibility_analytics.execute_ch_query.call_args.args[0]
+    assert " FINAL" not in query
 
 
 @pytest.mark.django_db
@@ -12846,7 +12919,7 @@ def test_dashboard_query_replays_legacy_metric_filter_without_400(
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("action", ["execute", "preview"])
-def test_widget_query_serves_inline_rollup_while_exact_refresh_runs(
+def test_widget_query_serves_main_compatibility_without_exact_refresh(
     action,
     auth_client,
     dashboard,
@@ -12869,32 +12942,28 @@ def test_widget_query_serves_inline_rollup_while_exact_refresh_runs(
     dashboard_widget.query_config = query_config
     dashboard_widget.save(update_fields=["query_config"])
 
-    captured = {}
-
-    def _pending(_namespace, _identity, **kwargs):
-        captured.update(kwargs)
-        return kwargs["pending_payload"]
-
-    rollup_analytics = MagicMock()
-    rollup_analytics.execute_ch_query.return_value = SimpleNamespace(
+    compatibility_analytics = MagicMock()
+    compatibility_analytics.execute_ch_query.return_value = SimpleNamespace(
         data=[
             {
                 "time_bucket": datetime(2026, 8, 1, tzinfo=UTC),
-                "metric_0": 12.0,
+                "value": 12.0,
             }
         ],
-        columns=["time_bucket", "metric_0"],
+        columns=["time_bucket", "value"],
     )
 
     with (
         patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True),
         patch(
             "tracer.views.dashboard.read_or_schedule_exact_snapshot",
-            side_effect=_pending,
+            side_effect=AssertionError(
+                "main-compatible reads must not schedule exact replay"
+            ),
         ),
         patch(
             "tracer.views.dashboard.V2AnalyticsQueryService",
-            return_value=rollup_analytics,
+            return_value=compatibility_analytics,
         ),
         patch(
             "tracer.views.dashboard.get_clickhouse_client",
@@ -12919,6 +12988,4 @@ def test_widget_query_serves_inline_rollup_while_exact_refresh_runs(
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
     assert result["query_exact"] is False
-    assert result["query_provenance"] == "materialized_rollup"
-    assert result["query_refreshing"] is True
-    assert captured["refresh"] is True
+    assert result["query_provenance"] == "merged_span_compatibility"

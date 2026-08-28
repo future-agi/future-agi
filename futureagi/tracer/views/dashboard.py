@@ -159,6 +159,7 @@ from tracer.services.clickhouse.v2.property_catalog.value_reader import (
     PropertyCatalogValueUnavailable,
 )
 from tracer.services.clickhouse.v2.query_builders.dashboard import (
+    MERGED_SPAN_COMPATIBILITY_CONFIG_KEY,
     DashboardQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
@@ -1246,6 +1247,9 @@ def _finite_filter_value_cursor_page(
 _DASHBOARD_INTERACTIVE_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 _DASHBOARD_ROLLUP_MAX_QUERIES = settings.DASHBOARD_ROLLUP_MAX_QUERIES
 _DASHBOARD_ROLLUP_MAX_POINTS = settings.DASHBOARD_ROLLUP_MAX_POINTS
+_DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS = (
+    settings.DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS
+)
 _DASHBOARD_ROLLUP_READ_SETTINGS = {
     "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
     "max_bytes_to_read": settings.DASHBOARD_TRACE_READ_MAX_BYTES,
@@ -1822,6 +1826,213 @@ def _read_dashboard_rollup_fast_path(
     return formatted
 
 
+def _dashboard_merged_span_compatibility_eligible(query_config):
+    """Return whether main-compatible synchronous execution is safely bounded.
+
+    This lane is intentionally narrow. It restores the deployed ``main``
+    behavior for the unfiltered trace widgets that regressed when every public
+    request began scheduling a full latest-version replay. Filtered, mixed
+    source, eval, and annotation shapes keep the exact snapshot lane.
+    """
+
+    if query_config.get("filters"):
+        return False
+    metrics = query_config.get("metrics") or []
+    if not metrics:
+        return False
+    for metric in metrics:
+        if metric.get("source", "traces") not in {"traces", "both", "all"}:
+            return False
+        if metric.get("filters"):
+            return False
+        metric_type = metric.get("type", "system_metric")
+        if metric_type == "custom_attribute":
+            if metric.get("attribute_type", "number") != "number":
+                return False
+        elif metric_type != "system_metric":
+            return False
+
+    breakdowns = query_config.get("breakdowns") or []
+    if not breakdowns:
+        return True
+    if len(breakdowns) != 1 or len(metrics) != 1:
+        return False
+    breakdown = breakdowns[0]
+    metric = metrics[0]
+    metric_name = _dashboard_metric_key(metric)
+    return bool(
+        breakdown.get("type") == "custom_attribute"
+        and breakdown.get("source", "traces") in {"traces", "both", "all", ""}
+        and breakdown.get("attribute_type", "string") == "string"
+        and str(breakdown.get("name") or "").strip()
+        and metric_name == "latency"
+        and str(metric.get("aggregation") or "avg").lower() == "avg"
+    )
+
+
+def _read_dashboard_merged_span_compatibility_path(
+    query_config,
+    *,
+    deadline=None,
+):
+    """Execute the bounded subset that was healthy on ``main`` synchronously.
+
+    Long-range string breakdowns are admitted only when the query builder can
+    route them to a fully covered materialized rollup. This prevents the
+    compatibility lane from turning a browser retry into repeated wide Map
+    scans while still allowing short exploratory breakdowns.
+    """
+
+    if not _dashboard_merged_span_compatibility_eligible(query_config):
+        return None
+    if deadline is None:
+        deadline = ReadDeadline.start(_DASHBOARD_INTERACTIVE_TIMEOUT_MS)
+    try:
+        frozen_config, window_start, window_end = _dashboard_resolved_config(
+            query_config
+        )
+        deadline.remaining_ms(_DASHBOARD_INTERACTIVE_TIMEOUT_MS)
+    except DashboardBoundedReadError as exc:
+        return _dashboard_degraded_payload(
+            query_config,
+            error_code=exc.error_code,
+        )
+    except ReadDeadlineExceeded:
+        return _dashboard_degraded_payload(
+            query_config,
+            error_code="read_budget_exceeded",
+        )
+
+    compatibility_config = {
+        **frozen_config,
+        MERGED_SPAN_COMPATIBILITY_CONFIG_KEY: True,
+        "require_versioned_snapshot": False,
+    }
+    builder = DashboardQueryBuilderV2(compatibility_config)
+    project_ids = compatibility_config.get("project_ids", [])
+    if not project_ids:
+        metric_results = _complete_empty_metric_results(builder, "traces")
+        query_count = 0
+        rows_returned = 0
+    else:
+        try:
+            prepared = DashboardViewSet._prepare_metric_queries(builder)
+        except DashboardExactReadError:
+            return _dashboard_degraded_payload(
+                frozen_config,
+                error_code="query_failed",
+            )
+
+        if compatibility_config.get("breakdowns"):
+            uses_rollup = all(
+                "dashboard_attr_rollup" in sql for _metric, sql, _params in prepared
+            )
+            window_seconds = (window_end - window_start).total_seconds()
+            if (
+                not uses_rollup
+                and window_seconds > _DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS
+            ):
+                return _dashboard_degraded_payload(
+                    frozen_config,
+                    error_code="materialized_rollup_unavailable",
+                )
+
+        analytics = V2AnalyticsQueryService()
+        if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
+            return _dashboard_degraded_payload(
+                frozen_config,
+                error_code="read_settings_unavailable",
+            )
+        started = monotonic()
+
+        def _fetch_rows(sql, params):
+            return _fetch_exact_dashboard_rows(
+                analytics=analytics,
+                sql=sql,
+                params=params,
+                timeout_ms=deadline.remaining_ms(_DASHBOARD_INTERACTIVE_TIMEOUT_MS),
+                settings=_DASHBOARD_TRACE_READ_SETTINGS,
+            )
+
+        try:
+            metric_results = DashboardViewSet._run_metric_queries(
+                builder,
+                "traces",
+                _fetch_rows,
+                max_workers=_DASHBOARD_TRACE_MAX_CONCURRENT_METRICS,
+                prepared_queries=prepared,
+            )
+        except Exception as exc:
+            if is_read_budget_error(exc):
+                error_code = "read_budget_exceeded"
+                logger.warning("dashboard_compat_read_budget_exceeded")
+            elif is_clickhouse_query_error(exc):
+                error_code = "query_failed"
+                logger.warning(
+                    "dashboard_compat_read_unavailable",
+                    error_type=type(exc).__name__,
+                )
+            else:
+                error_code = "query_failed"
+                logger.exception(
+                    "dashboard_compat_read_failed",
+                    error_type=type(exc).__name__,
+                )
+            return _dashboard_degraded_payload(
+                frozen_config,
+                error_code=error_code,
+            )
+        if any(
+            metric_info.get("query_complete") is not True
+            or metric_info.get("query_status") != "complete"
+            or metric_info.get("query_sampled") is True
+            or bool(metric_info.get("error"))
+            for metric_info, _rows in metric_results
+        ):
+            return _dashboard_degraded_payload(
+                frozen_config,
+                error_code="read_budget_exceeded",
+            )
+        query_count = len(prepared)
+        rows_returned = sum(len(rows) for _metric, rows in metric_results)
+
+    try:
+        formatted = builder.format_results(metric_results)
+        deadline.remaining_ms(floor_ms=1)
+    except ReadDeadlineExceeded:
+        return _dashboard_degraded_payload(
+            frozen_config,
+            error_code="read_budget_exceeded",
+        )
+    except Exception:
+        logger.exception("dashboard_compat_format_failed")
+        return _dashboard_degraded_payload(
+            frozen_config,
+            error_code="query_failed",
+        )
+    formatted.update(
+        {
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+            "query_exact": False,
+            "query_provenance": "merged_span_compatibility",
+            "query_count": query_count,
+            "query_rows_returned": rows_returned,
+        }
+    )
+    if project_ids:
+        formatted["query_elapsed_ms"] = round((monotonic() - started) * 1000, 2)
+    for metric in formatted.get("metrics", []):
+        metric.update(
+            {
+                "query_exact": False,
+                "query_provenance": "merged_span_compatibility",
+            }
+        )
+    return formatted
+
+
 def _read_public_dashboard_query(
     query_config,
     *,
@@ -1853,6 +2064,12 @@ def _read_public_dashboard_query(
             query_config,
             error_code="read_budget_exceeded",
         )
+    compatibility_payload = _read_dashboard_merged_span_compatibility_path(
+        query_config,
+        deadline=deadline,
+    )
+    if compatibility_payload is not None:
+        return compatibility_payload
     try:
         snapshot = read_or_schedule_exact_snapshot(
             "dashboard-query",

@@ -1805,6 +1805,14 @@ DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
     if _dashboard_attr_rollup_covered_since
     else None
 )
+_dashboard_attr_rollup_common_keys_covered_since = os.getenv(
+    "DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE"
+)
+DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE = (
+    datetime.fromisoformat(_dashboard_attr_rollup_common_keys_covered_since)
+    if _dashboard_attr_rollup_common_keys_covered_since
+    else None
+)
 
 # Eval-logger table read by the trace/voice/user eval-config discovery queries.
 # The CH25 spans cutover intentionally kept the legacy peerdb CDC table

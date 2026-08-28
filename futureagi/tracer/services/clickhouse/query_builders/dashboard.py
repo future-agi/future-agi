@@ -195,8 +195,12 @@ METRIC_UNITS: dict[str, str] = {
 # ``rescale_rate_to_percent`` so the result matches the ``%`` unit.
 _RATE_INDICATOR_METRICS = frozenset({"error_rate"})
 
-# Covered by dashboard_attr_rollup. Adding one: extend the MV's ARRAY JOIN list too.
-_ROLLUP_COVERED_ATTRS = frozenset({"final_status", "country"})
+# Keep additive key families physically isolated. Existing deployments can
+# create/backfill the common-key table without altering, truncating, or
+# double-counting the original dashboard_attr_rollup table.
+_ROLLUP_BASE_ATTRS = frozenset({"final_status", "country"})
+_ROLLUP_COMMON_KEYS = frozenset({"user.country", "llm.model_name"})
+_ROLLUP_COVERED_ATTRS = _ROLLUP_BASE_ATTRS | _ROLLUP_COMMON_KEYS
 
 # Rollup is hour-resolution; sub-hour granularities keep the spans scan.
 _ROLLUP_GRANULARITIES = frozenset({"hour", "day", "week", "month", "year"})
@@ -1544,7 +1548,12 @@ class DashboardQueryBuilder:
     # System metric
     # ------------------------------------------------------------------
 
-    def _attr_rollup_window_covered(self, start_date: datetime) -> bool:
+    def _attr_rollup_window_covered(
+        self,
+        start_date: datetime,
+        *,
+        attr_key: str,
+    ) -> bool:
         """True only when the rollup flag is on AND the requested window starts
         within the backfilled-and-covered range — fail-closed on a fresh deploy
         (off until ops backfills the rollup and sets the coverage date)."""
@@ -1552,7 +1561,12 @@ class DashboardQueryBuilder:
 
         if not getattr(settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False):
             return False
-        covered_since = getattr(settings, "DASHBOARD_ATTR_ROLLUP_COVERED_SINCE", None)
+        coverage_setting = (
+            "DASHBOARD_ATTR_ROLLUP_COMMON_KEYS_COVERED_SINCE"
+            if attr_key in _ROLLUP_COMMON_KEYS
+            else "DASHBOARD_ATTR_ROLLUP_COVERED_SINCE"
+        )
+        covered_since = getattr(settings, coverage_setting, None)
         if covered_since is None:
             return False
         if covered_since.tzinfo is None:
@@ -1582,7 +1596,10 @@ class DashboardQueryBuilder:
             and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
             and not per_metric_filters
             and not self.global_filters
-            and self._attr_rollup_window_covered(start_date)
+            and self._attr_rollup_window_covered(
+                start_date,
+                attr_key=single_bd.get("name", ""),
+            )
         )
 
     def _build_system_metric_query(
@@ -1608,6 +1625,11 @@ class DashboardQueryBuilder:
         ):
             params = dict(params)
             params["attr_key"] = _sanitize_attr_key(single_bd["name"])
+            rollup_table = (
+                "dashboard_attr_rollup_common_keys"
+                if single_bd["name"] in _ROLLUP_COMMON_KEYS
+                else "dashboard_attr_rollup"
+            )
             # Rollup is hourly — snap the window to whole hours so no partial bucket.
             params["start_date"] = _snap_to_hour(params["start_date"])
             params["end_date"] = _snap_to_hour(params["end_date"])
@@ -1615,7 +1637,7 @@ class DashboardQueryBuilder:
                 f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
                 "       attr_value AS breakdown_value,\n"
                 "       sumMerge(latency_sum) / countMerge(n) AS value\n"
-                "FROM dashboard_attr_rollup\n"
+                f"FROM {rollup_table}\n"
                 "WHERE project_id IN %(project_ids)s\n"
                 "  AND attr_key = %(attr_key)s\n"
                 "  AND hour >= %(start_date)s\n"

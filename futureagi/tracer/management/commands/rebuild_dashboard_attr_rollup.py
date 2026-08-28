@@ -8,10 +8,10 @@ prints the SQL without writing.
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from tracer.services.clickhouse.query_builders.dashboard import (
-    _ROLLUP_COVERED_ATTRS,
+    _ROLLUP_BASE_ATTRS,
     _sanitize_attr_key,
 )
 from tracer.services.clickhouse.v2 import get_v2_config
@@ -30,6 +30,14 @@ class Command(BaseCommand):
             "--dry-run",
             action="store_true",
             help="Print the rebuild SQL and exit; no TRUNCATE / INSERT.",
+        )
+        parser.add_argument(
+            "--confirm-destructive-rebuild",
+            action="store_true",
+            help=(
+                "Explicitly acknowledge that the command truncates the existing "
+                "rollup table before rebuilding it."
+            ),
         )
 
     def _client(self):
@@ -51,9 +59,10 @@ class Command(BaseCommand):
         )
 
     def _rebuild_sql(self) -> str:
-        # Same covered set as the router gate — single source of truth.
+        # Rebuild only the original table's keys. Additive key families live
+        # in their own tables and must never be mixed into this truncate path.
         attr_keys = ", ".join(
-            f"'{_sanitize_attr_key(k)}'" for k in sorted(_ROLLUP_COVERED_ATTRS)
+            f"'{_sanitize_attr_key(k)}'" for k in sorted(_ROLLUP_BASE_ATTRS)
         )
         return (
             f"INSERT INTO {_ROLLUP_TABLE}\n"
@@ -79,6 +88,11 @@ class Command(BaseCommand):
             self.stdout.write(f"TRUNCATE TABLE {_ROLLUP_TABLE};")
             self.stdout.write(sql)
             return
+        if not opts["confirm_destructive_rebuild"]:
+            raise CommandError(
+                "Refusing to truncate dashboard_attr_rollup without "
+                "--confirm-destructive-rebuild."
+            )
 
         client = self._client()
         try:

@@ -303,6 +303,12 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("DASHBOARD_ROLLUP_MAX_QUERIES", 2, 1, 16),
             ("DASHBOARD_ROLLUP_MAX_POINTS", 10_000, 100, 100_000),
             (
+                "DASHBOARD_COMPAT_RAW_BREAKDOWN_MAX_WINDOW_SECONDS",
+                6 * 60 * 60,
+                60,
+                24 * 60 * 60,
+            ),
+            (
                 "DASHBOARD_ROLLUP_MAX_RESULT_BYTES",
                 32 * 1024**2,
                 64 * 1024,

@@ -47,6 +47,8 @@ _USAGE_CDC_COLUMN_RE = re.compile(
     r"(?P<column>_peerdb_is_deleted|_peerdb_version)\b"
 )
 
+MERGED_SPAN_COMPATIBILITY_CONFIG_KEY = "_merged_span_compatibility"
+
 
 def _protect_usage_cdc_columns(sql: str) -> str:
     return _USAGE_CDC_COLUMN_RE.sub(
@@ -92,15 +94,20 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
     # makes root metric queries ineligible for proj_root_spans.
     _spans_partitioned_by_created_at: bool = False
 
-    # Aggregate values are customer-visible totals. Always collapse the
-    # direct-write ReplacingMergeTree explicitly; background merges and
-    # query-local settings are not correctness boundaries.
+    # Exact/background reads collapse the direct-write ReplacingMergeTree.
+    # The bounded public dashboard compatibility path deliberately mirrors
+    # main's merged-row semantics: it avoids replaying every physical version
+    # for long-range, unfiltered widgets while the exact path remains available
+    # for shapes that require it.
     _latest_state_spans_required: bool = True
 
     _v2_rewrite_exclude = frozenset({"build_metric_query", "build_all_queries"})
 
     def __init__(self, query_config: dict) -> None:
         super().__init__(query_config)
+        self._latest_state_spans_required = not bool(
+            query_config.get(MERGED_SPAN_COMPATIBILITY_CONFIG_KEY, False)
+        )
         # A preset range is relative to ``now``. Freeze it once per request so
         # every concurrent metric uses identical endpoints—even across
         # midnight while an asynchronous dashboard refresh is running.
@@ -127,7 +134,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         More complex shapes keep the general builder path.
         """
 
-        if (
+        if self.config.get(MERGED_SPAN_COMPATIBILITY_CONFIG_KEY, False) or (
             metric.get("attribute_type", "number") != "number"
             or self.breakdowns
             or self.global_filters
@@ -278,4 +285,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         return sql, params
 
 
-__all__ = ["DashboardQueryBuilderV2"]
+__all__ = [
+    "DashboardQueryBuilderV2",
+    "MERGED_SPAN_COMPATIBILITY_CONFIG_KEY",
+]

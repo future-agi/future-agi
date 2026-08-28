@@ -9,6 +9,7 @@ from tracer.views import dashboard as dashboard_view
 from tracer.views.dashboard import (
     _DASHBOARD_INTERACTIVE_TIMEOUT_MS,
     _DASHBOARD_ROLLUP_READ_SETTINGS,
+    _DASHBOARD_TRACE_READ_SETTINGS,
     _read_dashboard_rollup_fast_path,
     _read_public_dashboard_query,
 )
@@ -33,6 +34,18 @@ class _RollupAnalytics:
         row = {"time_bucket": params["start_date"]}
         row.update({alias: index + 1 for index, alias in enumerate(aliases)})
         return SimpleNamespace(data=[row], columns=["time_bucket", *aliases])
+
+
+class _CompatibilityAnalytics:
+    def __init__(self):
+        self.calls = []
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        self.calls.append((query, dict(params), timeout_ms, dict(settings)))
+        return SimpleNamespace(
+            data=[{"time_bucket": params["start_date"], "value": 12.0}],
+            columns=["time_bucket", "value"],
+        )
 
 
 def _query_config(*, preset="30D", granularity="day", metrics=None, **overrides):
@@ -211,6 +224,88 @@ def test_filtered_cold_miss_keeps_exact_refresh_pending(monkeypatch):
     assert result["query_status"] == "pending"
     assert result["query_refreshing"] is True
     assert result["metrics"] == []
+
+
+@pytest.mark.unit
+def test_unfiltered_custom_metric_uses_main_compatibility_path(monkeypatch):
+    analytics = _CompatibilityAnalytics()
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", lambda: analytics)
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_or_schedule_exact_snapshot",
+        lambda *args, **kwargs: pytest.fail(
+            "the compatibility path must not enqueue a full exact replay"
+        ),
+    )
+    metric = {
+        "id": "stt_latency_ms",
+        "name": "stt_latency_ms",
+        "type": "custom_attribute",
+        "attribute_key": "stt_latency_ms",
+        "attribute_type": "number",
+        "source": "traces",
+        "aggregation": "avg",
+        "filters": [],
+    }
+
+    result = _read_public_dashboard_query(
+        _query_config(metrics=[metric]),
+        cache_identity={"workspace_id": "workspace", "query_config": {}},
+        refresh=False,
+    )
+
+    assert result["query_status"] == "complete"
+    assert result["query_provenance"] == "merged_span_compatibility"
+    assert result["query_exact"] is False
+    assert len(analytics.calls) == 1
+    query, _params, timeout_ms, read_settings = analytics.calls[0]
+    assert "custom_metric_candidate_identities" not in query
+    assert " FINAL" not in query
+    assert 0 < timeout_ms <= _DASHBOARD_INTERACTIVE_TIMEOUT_MS
+    assert read_settings == _DASHBOARD_TRACE_READ_SETTINGS
+
+
+@pytest.mark.unit
+def test_long_string_breakdown_without_rollup_fails_before_raw_scan(
+    monkeypatch,
+):
+    monkeypatch.setattr(django_settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False)
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_or_schedule_exact_snapshot",
+        lambda *args, **kwargs: pytest.fail(
+            "an unsupported long breakdown must not enqueue an exact replay"
+        ),
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "V2AnalyticsQueryService",
+        lambda: pytest.fail("an unsupported long breakdown must not scan spans"),
+    )
+    breakdown = {
+        "type": "custom_attribute",
+        "name": "user.country",
+        "source": "traces",
+        "attribute_type": "string",
+    }
+    metric = {
+        "id": "latency",
+        "name": "latency",
+        "type": "system_metric",
+        "source": "traces",
+        "aggregation": "avg",
+        "filters": [],
+    }
+
+    result = _read_public_dashboard_query(
+        _query_config(metrics=[metric], breakdowns=[breakdown]),
+        cache_identity={"workspace_id": "workspace", "query_config": {}},
+        refresh=False,
+    )
+
+    assert result["query_status"] == "degraded"
+    assert result["query_error_code"] == "materialized_rollup_unavailable"
+    assert result["metrics"][0]["series"] == []
 
 
 @pytest.mark.unit
