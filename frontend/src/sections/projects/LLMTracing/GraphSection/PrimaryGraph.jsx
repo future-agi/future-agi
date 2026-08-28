@@ -10,7 +10,13 @@
  * Metric dropdown shows ALL metrics from the dashboard metrics API:
  * system metrics, evals, annotations — same as what the dashboard module uses.
  */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import {
   Badge,
@@ -101,11 +107,16 @@ const COMPARE_DATE_OPTIONS = [
 // ---------------------------------------------------------------------------
 // Hook: fetch all metrics from dashboard API (system + eval + annotation)
 // ---------------------------------------------------------------------------
-function useGraphMetrics() {
+function useGraphMetrics(projectId) {
   return useQuery({
-    queryKey: ["graph-metrics-all"],
+    // The catalog is project-scoped, so the project id belongs in the key: a
+    // shared key served one project's evals and annotation labels to the next
+    // project the user opened (TH-6787).
+    queryKey: ["graph-metrics-all", projectId || null],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.dashboard.metrics);
+      const { data } = await axios.get(endpoints.dashboard.metrics, {
+        params: projectId ? { project_ids: projectId } : undefined,
+      });
       return data?.result?.metrics || [];
     },
     select: (metrics) => {
@@ -267,8 +278,9 @@ const PrimaryGraph = ({
   };
 
   // Fetch all available metrics (system + eval + annotation)
-  const { data: dynamicMetricGroups } = useGraphMetrics();
-  // Use staticMetrics if provided (for sessions/users), otherwise dynamic
+  const { data: dynamicMetricGroups } = useGraphMetrics(effectiveObserveId);
+  // Use staticMetrics if provided, otherwise dynamic. No caller passes
+  // staticMetrics today — sessions and users use the dynamic catalog too.
   const metricGroups = staticMetrics || dynamicMetricGroups;
 
   // Flatten groups into a single options list for lookup
@@ -289,6 +301,15 @@ const PrimaryGraph = ({
       },
     [allMetrics, selectedMetric],
   );
+
+  // A metric selected in one project may not exist in the next one's catalog.
+  // Drop it once loaded so the trigger label and picker highlight agree.
+  useEffect(() => {
+    if (!metricGroups || !allMetrics.length) return;
+    if (!allMetrics.some((m) => m.id === selectedMetric)) {
+      setSelectedMetric(metricDef.id);
+    }
+  }, [metricGroups, allMetrics, selectedMetric, metricDef.id]);
 
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
@@ -319,6 +340,12 @@ const PrimaryGraph = ({
       "primary-graph",
       effectiveObserveId,
       selectedMetric,
+      // metricDef resolves asynchronously: while the project's scoped catalog
+      // loads it is the hardcoded latency fallback, so keying on selectedMetric
+      // alone pinned that first response for the real metric — the chart then
+      // showed latency data under the eval's name and unit (TH-6787).
+      metricDef.id,
+      metricDef.apiType,
       selectedInterval,
       combinedFilters,
       apiEndpoint,
