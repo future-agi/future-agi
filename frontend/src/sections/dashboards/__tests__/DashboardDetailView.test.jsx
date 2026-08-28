@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
 
@@ -8,6 +8,7 @@ import { DATE_PRESETS } from "../constants";
 const h = vi.hoisted(() => ({
   deleteWidget: { mutate: vi.fn(), isPending: false },
   deleteDashboard: { mutate: vi.fn(), isPending: false },
+  widgetChartProps: null,
   widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
   // Permission state the useCanEditDashboard mock returns; per-test controllable
   // so we can drive both the writer and viewer (read-only) paths.
@@ -61,7 +62,10 @@ vi.mock("../hooks/useCanEditDashboard", () => ({
 }));
 
 vi.mock("../WidgetChart", () => ({
-  default: () => <div data-testid="widget-chart" />,
+  default: (props) => {
+    h.widgetChartProps = props;
+    return <div data-testid="widget-chart" />;
+  },
 }));
 
 vi.mock("src/components/snackbar", () => ({
@@ -152,6 +156,45 @@ describe("DashboardDetailView — time filter bar visibility", () => {
     render(<DashboardDetailView />);
     expect(screen.getByText(presetLabel)).toBeInTheDocument();
     expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — time filter debounce", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    h.canEdit = { ...WRITER };
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    h.widgetChartProps = null;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("updates the selected chip immediately but only changes the chart range once", () => {
+    render(<DashboardDetailView />);
+
+    fireEvent.click(screen.getByText("Today"));
+    fireEvent.click(screen.getByText("7D"));
+    fireEvent.click(screen.getByText("30D"));
+
+    expect(screen.getByText("30D").closest(".MuiChip-root")).toHaveClass(
+      "MuiChip-filled",
+    );
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+
+    act(() => vi.advanceTimersByTime(499));
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+
+    act(() => vi.advanceTimersByTime(1));
+
+    expect(h.widgetChartProps.globalDateRange).toEqual(
+      expect.objectContaining({
+        start: expect.any(String),
+        end: expect.any(String),
+      }),
+    );
   });
 });
 
