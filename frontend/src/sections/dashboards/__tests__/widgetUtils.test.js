@@ -6,6 +6,8 @@ import {
   groupPieSeries,
   isAdditiveAggregation,
   getYAxisRangeWarning,
+  getAutoYAxisBounds,
+  parseBound,
   makeSeriesKey,
   resolveSavedSelection,
   resolveVisibleSeries,
@@ -544,5 +546,78 @@ describe("resolveSavedSelection", () => {
     expect(
       resolveSavedSelection(["old1", "old2"], seriesWithKeys(["new1", "new2"])),
     ).toBeUndefined();
+  });
+});
+
+const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+
+describe("parseBound", () => {
+  it("treats empty, undefined and non-numeric input as unset", () => {
+    expect(parseBound("")).toBeNull();
+    expect(parseBound(undefined)).toBeNull();
+    expect(parseBound("abc")).toBeNull();
+    expect(parseBound(NaN)).toBeNull();
+  });
+
+  it("returns finite numbers, including zero", () => {
+    expect(parseBound(0)).toBe(0);
+    expect(parseBound("1500")).toBe(1500);
+    expect(parseBound(-4)).toBe(-4);
+  });
+});
+
+describe("getAutoYAxisBounds", () => {
+  const opts = { tickAmount: 5 };
+
+  it("tightens the reported case: peak 7043 gives 7500, not 10000", () => {
+    expect(getAutoYAxisBounds([{ data: pts(219, 7043, 1500) }], opts)).toEqual({
+      min: 0,
+      max: 7500,
+    });
+  });
+
+  it("never places the max below the peak, and fits exactly when it can", () => {
+    expect(getAutoYAxisBounds([{ data: pts(0, 5000) }], opts).max).toBe(5000);
+    expect(getAutoYAxisBounds([{ data: pts(0, 200) }], opts).max).toBe(200);
+  });
+
+  it("scales across magnitudes", () => {
+    expect(getAutoYAxisBounds([{ data: pts(0, 87) }], opts).max).toBe(100);
+    expect(getAutoYAxisBounds([{ data: pts(0, 4.2) }], opts).max).toBe(5);
+  });
+
+  it("handles sub-1 values without floating point drift", () => {
+    const { max } = getAutoYAxisBounds([{ data: pts(0, 0.3) }], opts);
+    expect(max).toBeGreaterThanOrEqual(0.3);
+    expect(max).toBeLessThanOrEqual(0.5);
+  });
+
+  it("sums per bucket for stacked charts", () => {
+    const series = [{ data: pts(0, 4000) }, { data: pts(0, 3000) }];
+    const stacked = getAutoYAxisBounds(series, { ...opts, stacked: true });
+    const plain = getAutoYAxisBounds(series, opts);
+    expect(stacked.max).toBeGreaterThanOrEqual(7000);
+    expect(plain.max).toBeLessThan(stacked.max);
+  });
+
+  it("ignores non-finite values instead of poisoning the peak", () => {
+    expect(
+      getAutoYAxisBounds([{ data: pts(0, null, NaN, 200) }], opts).max,
+    ).toBe(200);
+  });
+
+  it("declines a narrow high band, where zero-anchoring would make it worse", () => {
+    expect(getAutoYAxisBounds([{ data: pts(40e6, 60e6) }], opts)).toBeNull();
+  });
+
+  it("declines cases it cannot scale safely", () => {
+    expect(getAutoYAxisBounds([], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: [] }], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: pts(5) }], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: pts(0, 0, 0) }], opts)).toBeNull();
+    expect(getAutoYAxisBounds([{ data: pts(-5, 100) }], opts)).toBeNull();
+    expect(
+      getAutoYAxisBounds([{ data: pts(0, 100) }], { ...opts, logarithmic: true }),
+    ).toBeNull();
   });
 });

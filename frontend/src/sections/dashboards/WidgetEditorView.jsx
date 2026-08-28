@@ -88,6 +88,9 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  getAutoYAxisBounds,
+  getSeriesExtent,
+  parseBound,
   makeSeriesKey,
   resolveSavedSelection,
   toAxisConfigPayload,
@@ -2550,17 +2553,30 @@ export default function WidgetEditorView() {
           axisConfig.rightY.visible &&
           Object.values(axisConfig.seriesAxis).some((s) => s === "right");
         if (!hasRightAxis) {
+          const auto = getAutoYAxisBounds(chartSeries, {
+            stacked: isStacked,
+            logarithmic: axisConfig.leftY.scale === "logarithmic",
+            tickAmount: 5,
+          });
+          // Bounds resolve per side, and "Out of Bounds: Visible" widens a
+          // typed bound that would cut data off — see WidgetChart.jsx. Kept in
+          // step with it so the preview matches the saved widget.
+          const extent = getSeriesExtent(chartSeries, { stacked: isStacked });
+          const widen = axisConfig.leftY.outOfBounds !== "hidden" && extent;
+          const clipsBelow = widen && parseBound(axisConfig.leftY.min) > extent.min;
+          const clipsAbove = widen && parseBound(axisConfig.leftY.max) < extent.max;
+          const userMin = clipsBelow ? null : parseBound(axisConfig.leftY.min);
+          const userMax = clipsAbove ? null : parseBound(axisConfig.leftY.max);
+          const min = userMin ?? auto?.min;
+          const max = userMax ?? auto?.max;
           return {
             show: axisConfig.leftY.visible,
             tickAmount: 5,
             forceNiceScale: axisConfig.leftY.outOfBounds !== "hidden",
             logarithmic: axisConfig.leftY.scale === "logarithmic",
-            ...(axisConfig.leftY.min !== "" && {
-              min: Number(axisConfig.leftY.min),
-            }),
-            ...(axisConfig.leftY.max !== "" && {
-              max: Number(axisConfig.leftY.max),
-            }),
+            // Never emit null — see the note in WidgetChart.jsx.
+            ...(min != null && { min }),
+            ...(max != null && { max }),
             ...(axisConfig.leftY.label && {
               title: {
                 text: axisConfig.leftY.label,

@@ -20,6 +20,7 @@ vi.mock("react-apexcharts", () => ({
       data-series={JSON.stringify(props.series)}
       data-labels={JSON.stringify(props.options?.labels ?? null)}
       data-colors={JSON.stringify(props.options?.colors ?? null)}
+      data-yaxis={JSON.stringify(props.options?.yaxis ?? null)}
     />
   ),
 }));
@@ -483,5 +484,95 @@ describe("WidgetChart — legend swatches match the plotted line colours", () =>
     // The names above hash away from the identity mapping, so a positional
     // legend would disagree here — that is exactly the bug being guarded.
     expect(new Set(legendColors).size).toBe(items.length);
+  });
+});
+
+// TH-7680: the y-axis left dead space above the data because ApexCharts rounded
+// the max onto its own coarse ladder. Auto-scaling fills only the sides the user
+// left empty in Threshold Bounds.
+describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
+  const at = (hour, value) => ({
+    timestamp: `2026-07-09T${String(hour).padStart(2, "0")}:00:00Z`,
+    value,
+  });
+
+  const yaxisOf = () =>
+    JSON.parse(screen.getByTestId("apex-line").getAttribute("data-yaxis"));
+
+  const renderWith = (axis_config) => {
+    h.query.data = queryResult([at(0, 219), at(1, 7043), at(2, 1500)]);
+    render(
+      <WidgetChart
+        widget={{
+          ...baseWidget,
+          chart_config: {
+            ...baseWidget.chart_config,
+            ...(axis_config ? { axis_config } : {}),
+          },
+        }}
+        globalDateRange={null}
+      />,
+    );
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = null;
+  });
+
+  it("tightens the max to fit the data when no bounds are set", () => {
+    renderWith(null);
+    expect(yaxisOf()).toMatchObject({ min: 0, max: 7500 });
+  });
+
+  it("lets a typed max win over auto-scaling", () => {
+    renderWith({ left_y: { max: "50000" } });
+    expect(yaxisOf().max).toBe(50000);
+  });
+
+  // 100 sits below the series floor (219), so it clips nothing and survives
+  // the Out of Bounds widening — this is the per-side mix, not the widening.
+  it("mixes a typed min with an auto max, per side", () => {
+    renderWith({ left_y: { min: "100" } });
+    expect(yaxisOf()).toMatchObject({ min: 100, max: 7500 });
+  });
+
+  it("ignores a non-numeric bound rather than passing NaN to the chart", () => {
+    renderWith({ left_y: { max: "abc" } });
+    expect(yaxisOf().max).toBe(7500);
+  });
+
+  // "Out of Bounds: Visible" has to mean what it says: a typed bound that would
+  // cut data off is widened so every point stays on the chart. Hidden keeps the
+  // bound as a hard cap and clips. Data peaks at 7043.
+  it("widens a typed max that would clip data when Out of Bounds is Visible", () => {
+    renderWith({ left_y: { max: "5000", out_of_bounds: "visible" } });
+    const { max } = yaxisOf();
+    expect(max === undefined || max >= 7043).toBe(true);
+  });
+
+  it("clips at the typed max when Out of Bounds is Hidden", () => {
+    renderWith({ left_y: { max: "5000", out_of_bounds: "hidden" } });
+    expect(yaxisOf().max).toBe(5000);
+  });
+
+  it("leaves a typed max alone when no data falls outside it", () => {
+    renderWith({ left_y: { max: "50000", out_of_bounds: "visible" } });
+    expect(yaxisOf().max).toBe(50000);
+  });
+
+  it("widens a typed min that would clip data when Out of Bounds is Visible", () => {
+    renderWith({ left_y: { min: "2000", out_of_bounds: "visible" } });
+    const { min } = yaxisOf();
+    expect(min === undefined || min <= 219).toBe(true);
+  });
+
+  // Nothing can be out of bounds when no bounds are typed, so the toggle has
+  // nothing to act on and auto-scaling applies either way.
+  it("auto-scales regardless of the toggle when no bounds are typed", () => {
+    renderWith({ left_y: { out_of_bounds: "hidden" } });
+    expect(yaxisOf().max).toBe(7500);
   });
 });

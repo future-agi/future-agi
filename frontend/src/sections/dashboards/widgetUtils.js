@@ -250,11 +250,6 @@ export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
   if (hasRightAxis) return null;
 
   const leftAxisConfig = axisConfig?.leftY || {};
-  const parseBound = (value) => {
-    if (value === undefined || value === "") return null;
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  };
   const min = parseBound(leftAxisConfig.min);
   const max = parseBound(leftAxisConfig.max);
   if (min == null && max == null) return null;
@@ -280,6 +275,103 @@ export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
     return `Data is outside your configured Y-axis minimum (${min}). Adjust bounds to see your data.`;
   }
   return `Data is outside your configured Y-axis maximum (${max}). Adjust bounds to see your data.`;
+};
+
+// A bound counts as user-set only when it parses to a finite number. The
+// Threshold Bounds inputs are untyped text, so "abc" must read as unset rather
+// than reaching ApexCharts as NaN.
+export const parseBound = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Mantissas for the axis step. Finer than the {1,2,5,10} table ApexCharts uses
+// internally (settings/Globals.js niceScaleAllowedMagMsd), which is what leaves
+// the dead space this helper exists to remove: a 7,043 peak needs a step of
+// 1,408.6, which that table rounds to 2,000 and so an axis max of 10,000.
+const STEP_MANTISSAS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+
+// Round to 12 significant digits before the ladder lookup. Without it,
+// 0.3 / 10 ** Math.floor(Math.log10(0.3)) is 2.9999999999999996 and picks the
+// rung above the right one — which sub-1 metrics (rates, cost per call) hit
+// constantly.
+const normalize = (n) => Number(n.toPrecision(12));
+
+const niceCeil = (value) => {
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const mantissa = normalize(value / magnitude);
+  const rung = STEP_MANTISSAS.find((m) => m >= mantissa) ?? 10;
+  return normalize(rung * magnitude);
+};
+
+/**
+ * Lowest and highest value the chart actually plots, or null if there is
+ * nothing finite to measure. Stacked charts are read off the summed height.
+ */
+export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
+  const totals = [];
+  if (stacked) {
+    // The backend pads every bucket (null for gaps) so series are aligned and
+    // equal-length — the same positional sum ApexCharts itself does.
+    const byIndex = [];
+    for (const s of series) {
+      (s?.data || []).forEach((pt, i) => {
+        const value = Number(typeof pt === "number" ? pt : pt?.y);
+        if (!Number.isFinite(value)) return;
+        byIndex[i] = (byIndex[i] || 0) + value;
+      });
+    }
+    totals.push(...byIndex.filter((v) => Number.isFinite(v)));
+  } else {
+    for (const s of series) {
+      for (const pt of s?.data || []) {
+        const value = Number(typeof pt === "number" ? pt : pt?.y);
+        if (Number.isFinite(value)) totals.push(value);
+      }
+    }
+  }
+
+  if (totals.length < 2) return null;
+  return { min: Math.min(...totals), max: Math.max(...totals) };
+};
+
+/**
+ * Zero-anchored axis bounds sized to the data, or null to leave ApexCharts alone.
+ *
+ * Derives the step first and multiplies up (max = step * tickAmount) so tick
+ * labels stay round, rather than rounding the max onto a coarse ladder.
+ *
+ * Returns null — meaning "keep current behaviour" — whenever zero-anchoring
+ * would be wrong or unsafe, most importantly for a narrow band sitting well
+ * above zero (40M-60M), where ApexCharts already picks a non-zero floor and
+ * forcing 0 would waste *more* space than it saves.
+ */
+export const getAutoYAxisBounds = (
+  series = [],
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+) => {
+  if (logarithmic) return null;
+
+  const extent = getSeriesExtent(series, { stacked });
+  if (!extent) return null;
+
+  const { max: peak, min: floor } = extent;
+  if (floor < 0) return null;
+  if (peak <= 0) return null;
+
+  // Only act where the data already runs most of the way to zero. Above that
+  // the series is a narrow high band and zero-anchoring is a regression.
+  if (floor > 0.3 * peak) return null;
+
+  const step = niceCeil(peak / tickAmount);
+  const max = normalize(step * tickAmount);
+
+  // max === peak is left alone deliberately: it is a perfect fit. Nudging it to
+  // clear the topmost marker would mean either an off-ladder max (0/48/96/...
+  // instead of 0/40/80/...) or a whole extra rung, which on a 5,000 peak means
+  // a 7,500 axis — reintroducing the dead space this exists to remove.
+  return { min: 0, max };
 };
 
 export const formatValueWithConfig = (

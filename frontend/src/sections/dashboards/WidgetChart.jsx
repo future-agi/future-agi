@@ -15,6 +15,9 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  getAutoYAxisBounds,
+  getSeriesExtent,
+  parseBound,
   groupPieSeries,
   makeSeriesKey,
   resolveSavedSelection,
@@ -981,15 +984,37 @@ export default function WidgetChart({ widget, globalDateRange }) {
         rightCfg.visible && Object.values(sa).some((s) => s === "right");
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";
+        const auto = getAutoYAxisBounds(chartSeries, {
+          stacked: isStacked,
+          logarithmic: leftCfg.scale === "logarithmic",
+          tickAmount: 5,
+        });
+        // Bounds resolve per side (TH-7680): a typed bound is used as given,
+        // a side left empty is auto-scaled to the data.
+        //
+        // "Out of Bounds: Visible" means exactly what it says: a typed bound
+        // that would cut data off the chart is widened so every point stays
+        // visible. "Hidden" keeps the bound as a hard cap and clips. With no
+        // typed bounds nothing can be out of bounds, so the toggle has nothing
+        // to act on and auto-scaling applies either way.
+        const extent = getSeriesExtent(chartSeries, { stacked: isStacked });
+        const widen = !hideOOB && extent;
+        const clipsBelow = widen && parseBound(leftCfg.min) > extent.min;
+        const clipsAbove = widen && parseBound(leftCfg.max) < extent.max;
+        const userMin = clipsBelow ? null : parseBound(leftCfg.min);
+        const userMax = clipsAbove ? null : parseBound(leftCfg.max);
+        const min = userMin ?? auto?.min;
+        const max = userMax ?? auto?.max;
         return {
           show: leftCfg.visible !== false,
           tickAmount: 5,
           forceNiceScale: !hideOOB,
           logarithmic: leftCfg.scale === "logarithmic",
-          ...(leftCfg.min !== undefined &&
-            leftCfg.min !== "" && { min: Number(leftCfg.min) }),
-          ...(leftCfg.max !== undefined &&
-            leftCfg.max !== "" && { max: Number(leftCfg.max) }),
+          // Never emit null: apexcharts 3.49.1 reads `min !== null` when
+          // deciding whether an explicit max was given (Scales.js:33), so a
+          // null min silently discards both bounds.
+          ...(min != null && { min }),
+          ...(max != null && { max }),
           ...(leftCfg.label && {
             title: {
               text: leftCfg.label,
