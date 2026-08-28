@@ -67,6 +67,14 @@ jobs:
     if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    name: e2e (${{ matrix.mode }})
+    strategy:
+      # Both modes always report. A failure in one is a real result about that
+      # mode, not a reason to cancel the other — knowing a change breaks EE but
+      # not OSS (or the reverse) is the entire point of running both.
+      fail-fast: false
+      matrix:
+        mode: [oss, ee]
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
@@ -74,6 +82,11 @@ jobs:
       BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
       BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
       BUILD_GATEWAY: ${{ needs.changes.outputs.gateway }}
+      # Presence of this key IS the mode switch: tfc/views/deployment.py reports
+      # "ee" when EE_LICENSE_KEY is set and "oss" when it is not, and root
+      # docker-compose.yml:29 forwards it into the backend and worker. Empty on
+      # the oss leg, so that leg is unaffected by whether the secret exists.
+      EE_LICENSE_KEY: ${{ matrix.mode == 'ee' && secrets.E2E_EE_LICENSE_KEY || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -234,8 +247,31 @@ jobs:
         working-directory: e2e
         run: yarn catalog:check
 
+      - name: Require the EE licence key on the ee leg
+        # Without this the leg does NOT fail — it silently succeeds as a second
+        # OSS run, because an empty EE_LICENSE_KEY is exactly how deployment.py
+        # decides "oss". Two green lanes would then claim EE coverage that was
+        # never exercised. Fail here instead, naming the missing secret.
+        if: matrix.mode == 'ee' && env.EE_LICENSE_KEY == ''
+        run: |
+          echo "::error::secrets.E2E_EE_LICENSE_KEY is not set — the ee leg cannot run."
+          exit 1
+
       - name: Boot the e2e stack
         run: bin/e2e up
+
+      - name: Verify the stack came up in the expected mode
+        # Belt to the check above's braces: asserts what the BACKEND reports,
+        # so a key that is present but rejected (expired, malformed, wrong
+        # signing key) is caught here rather than quietly downgrading the leg.
+        run: |
+          port=$(grep '^BACKEND_PORT=' e2e/stack/e2e.env | cut -d= -f2)
+          actual=$(curl -fsS "http://localhost:${port}/api/deployment-info/" | jq -r '.result.mode')
+          echo "deployment-info mode=${actual} (expected ${{ matrix.mode }})"
+          [ "$actual" = "${{ matrix.mode }}" ] || {
+            echo "::error::stack booted in '${actual}' but this leg is '${{ matrix.mode }}'"
+            exit 1
+          }
 
       - name: Run E2E suite
         run: bin/e2e test
@@ -244,7 +280,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.mode }}
           path: e2e/playwright-report
           retention-days: 7
           # A job that dies before the suite runs has no report; the real
