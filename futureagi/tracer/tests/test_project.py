@@ -629,6 +629,124 @@ class TestProjectUpdateConfigAPI:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestProjectUpdateSessionConfigAPI:
+    """Tests for POST /tracer/project/update_project_session_config/ endpoint."""
+
+    def _visibility(self, project, column_id):
+        entry = next(
+            (c for c in project.session_config if c.get("id") == column_id), None
+        )
+        return entry["is_visible"] if entry else None
+
+    def test_update_existing_entry(self, auth_client, observe_project):
+        """Toggle visibility on a column already in the stored config."""
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"session_input": False},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "session_input") is False
+
+    def test_stale_config_merges_missing_defaults(self, auth_client, observe_project):
+        """A default column missing from a stale stored config is persisted, not dropped."""
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"total_tokens": True},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "total_tokens") is True
+        # Pre-existing stored entries survive the merge.
+        assert self._visibility(observe_project, "session_input") is True
+
+    def test_empty_config_seeds_defaults(self, auth_client, observe_project):
+        """An empty stored config is seeded from defaults so toggles persist."""
+        observe_project.session_config = []
+        observe_project.save()
+
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"user_id_type": True, "session_id": False},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "user_id_type") is True
+        assert self._visibility(observe_project, "session_id") is False
+        # Untoggled merged-in defaults keep their default visibility.
+        assert self._visibility(observe_project, "total_tokens") is False
+        assert self._visibility(observe_project, "user_id") is True
+
+    def test_stored_default_entry_not_duplicated(self, auth_client, observe_project):
+        """A default column already stored is updated in place, not re-appended."""
+        observe_project.session_config = [
+            {"id": "total_tokens", "name": "Total Tokens", "is_visible": True},
+        ]
+        observe_project.save()
+
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"total_tokens": False},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        total_tokens_entries = [
+            c for c in observe_project.session_config if c.get("id") == "total_tokens"
+        ]
+        assert len(total_tokens_entries) == 1
+        assert total_tokens_entries[0]["is_visible"] is False
+
+    def test_unknown_ids_are_not_appended(self, auth_client, observe_project):
+        """Custom/annotation column ids don't pollute the stored config."""
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"attributes.custom.key": True},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "attributes.custom.key") is None
+
+    def test_save_is_scoped_to_session_config(self, auth_client, observe_project):
+        """Persist narrows to session_config so a concurrent field write isn't clobbered."""
+        from unittest.mock import patch
+
+        with patch("tracer.models.project.Project.save", autospec=True) as mock_save:
+            response = auth_client.post(
+                "/tracer/project/update_project_session_config/",
+                {
+                    "project_id": str(observe_project.id),
+                    "visibility": {"total_tokens": True},
+                },
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_save.called
+        _, kwargs = mock_save.call_args
+        assert kwargs.get("update_fields") == ["session_config"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestProjectListProjectIdsAPI:
     """Tests for GET /tracer/project/list_project_ids/ endpoint."""
 

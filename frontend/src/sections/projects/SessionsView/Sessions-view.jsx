@@ -57,7 +57,7 @@ const SESSION_BULK_ACTIONS = [
 
 // Session-specific
 import SessionGrid from "./Session-grid";
-import { initialVisibility } from "./common";
+import { initialVisibility, resolveColumnVisibility } from "./common";
 import { REPLAY_MODULES } from "./ReplaySessions/configurations";
 import {
   useReplaySessionsStoreShallow,
@@ -932,7 +932,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const displayColumns = useMemo(() => {
     return sessionColumns.map((col) => ({
       ...col,
-      isVisible: updateObj[col.id] ?? true,
+      isVisible: resolveColumnVisibility(col, updateObj),
     }));
   }, [sessionColumns, updateObj]);
 
