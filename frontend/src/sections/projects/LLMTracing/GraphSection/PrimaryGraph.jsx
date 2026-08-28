@@ -589,6 +589,7 @@ const PrimaryGraph = ({
 
           {/* Metric picker trigger */}
           <ButtonBase
+            data-testid="graph-metric-picker-trigger"
             onClick={(e) => setPickerAnchor(e.currentTarget)}
             sx={{
               height: 26,

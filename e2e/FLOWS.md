@@ -87,3 +87,23 @@
 - all four spans of both traces present in CH `spans` (FINAL)
 - project row auto-created in PG tracer_project, scoped to the actor org
 - UI row set equals the span-list API result for the equivalent filter (same CH dispatch)
+
+### OBS-E2E-003 — graph metric picker lists only the current project's evals
+
+**Goal:** A developer picking a metric to graph sees only the evals attached to the project they are viewing  
+**Spec:** `flows/observe/graph-metric-scoping.spec.ts:51`  
+**Tags:** —
+
+**User steps:**
+
+1. seed two projects in one org
+2. attach a distinctly-named eval to each
+3. open the first project's Observe graph view
+4. open the metric picker
+5. search the picker for the seeded eval names
+6. read the EVALS section
+
+**Backend state verified:**
+
+- the metrics catalog scoped to each project returns that project's eval template and not its sibling's
+- the frontend requests the catalog with project_ids set to the project being viewed
