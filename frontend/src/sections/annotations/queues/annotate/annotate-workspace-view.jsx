@@ -59,7 +59,7 @@ import {
   resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
-import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
+import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole, shortId } from "../constants";
 
 const MAX_HISTORY = 50;
 
@@ -127,12 +127,6 @@ function isOpenBlockingReviewFeedback(comment) {
     isBlockingReviewFeedback(comment) &&
     (!comment?.thread_status || isOpenReviewStatus(comment.thread_status))
   );
-}
-
-function shortId(value) {
-  if (!value) return "";
-  const text = String(value);
-  return text.length > 8 ? text.slice(0, 8) : text;
 }
 
 function itemContextLabel(item, itemId) {
