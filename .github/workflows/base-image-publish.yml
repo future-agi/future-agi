@@ -8,8 +8,11 @@
 # digests into one multi-arch tag. Tags are immutable: publishing a version that
 # already exists fails in preflight instead of overwriting it.
 #
-# Dispatch from the branch whose Dockerfile.base / requirements you want baked in
-# — the ref picker in the "Run workflow" dropdown controls what gets checked out.
+# The optional "ref" input controls which branch/SHA gets checked out and baked
+# in; it defaults to the ref you dispatched from. GitHub validates workflow
+# files at the dispatching ref, so dispatching FROM a branch only works if that
+# branch carries this file — the ref input is how you build a branch that
+# doesn't (e.g. a PR branch that only changes requirements.txt).
 name: Publish base image
 
 run-name: Publish ${{ inputs.image }}:${{ inputs.version }}
@@ -28,6 +31,11 @@ on:
       version:
         description: "New version tag (e.g. v1.1.0) — existing tags are never overwritten"
         required: true
+        type: string
+      ref:
+        description: "Branch/SHA to build from (defaults to the ref you dispatch on)"
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -148,6 +156,9 @@ jobs:
           docker-images: false
           swap-storage: false
       - uses: actions/checkout@v4
+        with:
+          # An empty ref means checkout's default: the dispatching ref.
+          ref: ${{ inputs.ref }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
