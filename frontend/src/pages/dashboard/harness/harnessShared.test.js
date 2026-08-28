@@ -102,7 +102,9 @@ describe("stageState", () => {
 
   it("marks the stage a run is in as active, not done", () => {
     const status = { stage: "generating_environment" };
-    expect(stageState(status, at("understanding_agent"))).toBe(STAGE_STATE.DONE);
+    expect(stageState(status, at("understanding_agent"))).toBe(
+      STAGE_STATE.DONE,
+    );
     expect(stageState(status, at("generating_environment"))).toBe(
       STAGE_STATE.ACTIVE,
     );
@@ -176,16 +178,21 @@ describe("canceledProgress", () => {
       started("environment"),
       completed("environment"),
     ]);
-    ["generating_environment", "building_environment", "validating_environment", "generating_data"].forEach(
-      (stage) => expect(doneStages.has(stage)).toBe(true),
-    );
+    [
+      "generating_environment",
+      "building_environment",
+      "validating_environment",
+      "generating_data",
+    ].forEach((stage) => expect(doneStages.has(stage)).toBe(true));
   });
 
   it("never credits a group that only started", () => {
     const { doneStages } = canceledProgress([started("environment")]);
-    ["building_environment", "validating_environment", "generating_data"].forEach(
-      (stage) => expect(doneStages.has(stage)).toBe(false),
-    );
+    [
+      "building_environment",
+      "validating_environment",
+      "generating_data",
+    ].forEach((stage) => expect(doneStages.has(stage)).toBe(false));
   });
 
   // The runner emits cleaning_up BEFORE uploading_artifacts, the reverse of the declared
@@ -270,13 +277,23 @@ describe("errorMessage", () => {
   });
 
   it("unwraps DRF field errors", () => {
-    expect(errorMessage({ detail: { source_id: ["This field is required."] } })).toBe(
-      "This field is required.",
-    );
+    expect(
+      errorMessage({ detail: { source_id: ["This field is required."] } }),
+    ).toBe("This field is required.");
   });
 
   it("falls back to message when there was no response at all", () => {
     expect(errorMessage({ message: "Network Error" })).toBe("Network Error");
+    expect(
+      errorMessage({ response: { data: { detail: "Create request rejected" } } }),
+    ).toBe("Create request rejected");
+  });
+
+  it("surfaces string and platform error-envelope messages", () => {
+    expect(errorMessage("Submission failed")).toBe("Submission failed");
+    expect(errorMessage({ error: "Credential reference is unsupported" })).toBe(
+      "Credential reference is unsupported",
+    );
   });
 
   it("never returns an empty string", () => {
@@ -342,7 +359,9 @@ describe("runElapsed", () => {
   // A queued job has emitted nothing, so there is no start to measure from.
   it("is unmeasurable with no usable events", () => {
     expect(runElapsed([], Date.now(), false)).toBeNull();
-    expect(runElapsed([{ wall_time: "nonsense" }], Date.now(), false)).toBeNull();
+    expect(
+      runElapsed([{ wall_time: "nonsense" }], Date.now(), false),
+    ).toBeNull();
   });
 });
 
@@ -366,11 +385,15 @@ describe("stageElapsed", () => {
   it("returns null for a stage the runner never emits", () => {
     const events = [started("calls", "2026-08-25T11:55:45Z")];
     expect(stageElapsed({ stage: "grading" }, events, Date.now())).toBeNull();
-    expect(stageElapsed({ stage: "validating_scenarios" }, events, Date.now())).toBeNull();
+    expect(
+      stageElapsed({ stage: "validating_scenarios" }, events, Date.now()),
+    ).toBeNull();
   });
 
   it("returns null when the stage has not started yet", () => {
-    expect(stageElapsed({ stage: "understanding_agent" }, [], Date.now())).toBeNull();
+    expect(
+      stageElapsed({ stage: "understanding_agent" }, [], Date.now()),
+    ).toBeNull();
   });
 });
 
@@ -408,7 +431,11 @@ describe("adjustmentStatus", () => {
   it("names the stage a change landed at", () => {
     expect(
       adjustmentStatus(
-        { status: "applied", target_stage: "understand", applied_stage: "environment" },
+        {
+          status: "applied",
+          target_stage: "understand",
+          applied_stage: "environment",
+        },
         "completed",
       ),
     ).toBe("Applied at Environment");
@@ -435,29 +462,41 @@ describe("tabState", () => {
   const at = (stage) => ({ stage });
 
   it("spins the tab the runner is inside", () => {
-    expect(tabState("contract", at("understanding_agent"))).toBe(TAB_STATE.WORKING);
+    expect(tabState("contract", at("understanding_agent"))).toBe(
+      TAB_STATE.WORKING,
+    );
   });
 
   // Environment covers four checklist stages, three of which never emit an event.
   it("spins Environment on a stage that is never reported", () => {
-    expect(tabState("environment", at("building_environment"))).toBe(TAB_STATE.WORKING);
+    expect(tabState("environment", at("building_environment"))).toBe(
+      TAB_STATE.WORKING,
+    );
   });
 
   it("ticks a tab the run has moved past", () => {
-    expect(tabState("contract", at("generating_scenarios"))).toBe(TAB_STATE.DONE);
+    expect(tabState("contract", at("generating_scenarios"))).toBe(
+      TAB_STATE.DONE,
+    );
   });
 
   it("leaves a tab bare until its turn", () => {
-    expect(tabState("scenarios", at("understanding_agent"))).toBe(TAB_STATE.PENDING);
+    expect(tabState("scenarios", at("understanding_agent"))).toBe(
+      TAB_STATE.PENDING,
+    );
   });
 
   // An artifact is proof on its own: Runs is the catch-all and holds outputs from stages the
   // checklist never reaches in order.
   it("ticks a tab holding an artifact regardless of stage", () => {
-    expect(tabState("runs", at("understanding_agent"), [], true)).toBe(TAB_STATE.DONE);
+    expect(tabState("runs", at("understanding_agent"), [], true)).toBe(
+      TAB_STATE.DONE,
+    );
   });
 
   it("stops spinning once the run is terminal", () => {
-    expect(tabState("environment", at("canceled"), [])).not.toBe(TAB_STATE.WORKING);
+    expect(tabState("environment", at("canceled"), [])).not.toBe(
+      TAB_STATE.WORKING,
+    );
   });
 });

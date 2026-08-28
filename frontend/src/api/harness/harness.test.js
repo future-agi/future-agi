@@ -5,7 +5,11 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 import axios from "src/utils/axios";
-import { cancelHarnessJob } from "./harness";
+import {
+  cancelHarnessJob,
+  createHarnessJob,
+  harnessIdempotencyKey,
+} from "./harness";
 
 const JOB_ID = "d1fd7560-0143-4cb8-88ed-36518b848cbf";
 const URL = `/simulate/api/harness-jobs/${JOB_ID}/cancel/`;
@@ -37,5 +41,37 @@ describe("cancelHarnessJob", () => {
     await cancelHarnessJob(JOB_ID, "x".repeat(600));
     const [, body] = axios.post.mock.calls[0];
     expect(body.reason).toHaveLength(500);
+  });
+});
+
+describe("createHarnessJob", () => {
+  beforeEach(() => {
+    axios.post.mockClear();
+  });
+
+  it("sends the create request with an explicit idempotency key", async () => {
+    const payload = { schema_version: "futureagi.harness-job.v1" };
+    await createHarnessJob(payload, "test-create-key");
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-jobs/",
+      payload,
+      { headers: { "Idempotency-Key": "test-create-key" } },
+    );
+  });
+
+  it("can create a key when randomUUID is unavailable", () => {
+    const originalCrypto = globalThis.crypto;
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: {},
+    });
+    try {
+      expect(harnessIdempotencyKey()).toMatch(/^harness-[a-z0-9]+-[a-z0-9]+$/);
+    } finally {
+      Object.defineProperty(globalThis, "crypto", {
+        configurable: true,
+        value: originalCrypto,
+      });
+    }
   });
 });

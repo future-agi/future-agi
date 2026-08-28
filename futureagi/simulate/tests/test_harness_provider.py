@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from simulate.services.harness_provider import (
@@ -12,19 +14,50 @@ from simulate.services.harness_provider import (
     SandboxHarnessProvider,
     get_harness_provider,
 )
+from simulate.services.hosted_harness import create_hosted_job
 
 
 def _v1_payload(**overrides):
     payload = {
+        "schema_version": "futureagi.harness-job.v1",
         "source": {
             "kind": "github",
             "repository": "acme/agent",
             "ref": "main",
             "visibility": "public",
         },
-        "agent": {"connector": "auto"},
+        "agent": {"connector": "auto", "config": {}, "secret_refs": {}},
         "scenario_count": 10,
-        "artifacts": {"level": "full"},
+        "seed": 42,
+        "runtime": {
+            "isolation": "dedicated_vm",
+            "cpu_units": 4,
+            "memory_mb": 8192,
+            "parallelism": 1,
+            "concurrency_weight": 1,
+            "max_duration_seconds": 600,
+            "network_policy": "live",
+        },
+        "security": {
+            "untrusted_source": True,
+            "read_only_source": True,
+            "allow_privileged": False,
+            "allow_host_runtime_control": False,
+            "allowed_egress_domains": ["api.example.com"],
+        },
+        "retry": {
+            "max_infrastructure_attempts": 2,
+            "initial_backoff_seconds": 1,
+            "max_backoff_seconds": 15,
+            "retryable_domains": ["infrastructure"],
+        },
+        "artifacts": {
+            "level": "full",
+            "retention_days": 30,
+            "allow_bundle_download": False,
+            "max_artifact_bytes": 1024,
+        },
+        "metadata": {},
     }
     payload.update(overrides)
     return payload
@@ -32,6 +65,24 @@ def _v1_payload(**overrides):
 
 def test_default_provider_is_daytona():
     assert isinstance(get_harness_provider(), DaytonaHarnessProvider)
+
+
+def test_harness_create_cors_preflight_allows_idempotency_key():
+    response = APIClient().options(
+        "/simulate/api/harness-jobs/",
+        HTTP_ORIGIN="http://localhost:3000",
+        HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        HTTP_ACCESS_CONTROL_REQUEST_HEADERS=(
+            "authorization,content-type,idempotency-key,x-workspace-id"
+        ),
+    )
+
+    assert response.status_code == 200
+    allowed = {
+        header.strip().lower()
+        for header in response["Access-Control-Allow-Headers"].split(",")
+    }
+    assert "idempotency-key" in allowed
 
 
 @override_settings(HARNESS_PROVIDER="sandbox")
@@ -187,9 +238,60 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
 
 
 @pytest.mark.django_db
+@override_settings(
+    HARNESS_PROVIDER="daytona",
+    HARNESS_PUBLIC_BASE_URL="https://harness.example.test",
+)
+def test_daytona_saved_rerun_reuses_job_and_starts_fresh_attempt_cycle(user, workspace):
+    job, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="daytona-rerun",
+        workspace=workspace,
+    )
+    job.state = job.State.COMPLETED
+    job.current_stage = "completed"
+    job.current_attempt_number = 3
+    job.completed_count = 10
+    job.terminal_at = job.created_at
+    job.save(
+        update_fields=[
+            "state",
+            "current_stage",
+            "current_attempt_number",
+            "completed_count",
+            "terminal_at",
+            "updated_at",
+        ]
+    )
+
+    with patch(
+        "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+    ) as start:
+        result = DaytonaHarnessProvider().rerun_saved(
+            str(job.id),
+            organization=user.organization,
+            workspace=workspace,
+            environment_values={"LIVEKIT_URL": "wss://customer.example.test"},
+        )
+
+    job.refresh_from_db()
+    assert job.state == job.State.QUEUED
+    assert job.current_stage == "queued"
+    assert job.completed_count == 0
+    assert job.terminal_at is None
+    assert job.payload["metadata"]["attempt_cycle_start"] == 4
+    livekit_ref = job.payload["agent"]["secret_refs"]["LIVEKIT_URL"]
+    assert livekit_ref["manager"] == "platform-vault"
+    assert "customer.example.test" not in json.dumps(job.payload)
+    assert result["job"]["job_id"] == str(job.id)
+    start.assert_called_once()
+
+
+@pytest.mark.django_db
 def test_secret_file_upload_returns_only_opaque_reference(user):
-    # Kept endpoint (base): credential files never echo their contents; the
-    # response and the stored row hold only an opaque, encrypted reference.
+    # Daytona receives a normal platform-vault ref. The guest recreates the
+    # credential file from the JSON alias; no host-local path crosses the seam.
     client = APIClient()
     client.force_authenticate(user=user)
     raw = b'{"type":"service_account","private_key":"must-not-be-echoed"}'
@@ -206,17 +308,40 @@ def test_secret_file_upload_returns_only_opaque_reference(user):
 
     assert response.status_code == 201
     result = response.json()
-    assert result["environment_name"] == "GOOGLE_APPLICATION_CREDENTIALS"
+    assert result["environment_name"] == "GOOGLE_APPLICATION_CREDENTIALS_JSON"
     assert result["size"] == len(raw)
-    assert result["secret_ref"]["manager"] == "harness_environment_file"
+    assert result["secret_ref"]["manager"] == "platform-vault"
+    assert result["secret_ref"]["purpose"] == "target_provider"
     assert result["secret_ref"]["key"]
     assert raw.decode() not in response.content.decode()
 
-    from simulate.models import HarnessCredentialFile
+    from simulate.models import HostedHarnessSecret
 
-    record = HarnessCredentialFile.objects.get(id=result["secret_ref"]["key"])
-    assert raw.decode() not in record.encrypted_content
-    assert record.get_content() == raw
+    record = HostedHarnessSecret.objects.get(name=result["secret_ref"]["key"])
+    assert raw.decode() not in record.encrypted_value
+    assert json.loads(record.get_value()) == json.loads(raw)
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="sandbox")
+def test_secret_file_upload_keeps_local_sandbox_file_reference(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    raw = b'{"type":"service_account"}'
+
+    response = client.post(
+        "/simulate/api/harness-jobs/secret-files/",
+        {
+            "file": SimpleUploadedFile("google.json", raw),
+            "environment_name": "GOOGLE_APPLICATION_CREDENTIALS",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    assert result["environment_name"] == "GOOGLE_APPLICATION_CREDENTIALS"
+    assert result["secret_ref"]["manager"] == "harness_environment_file"
 
 
 @pytest.mark.django_db
@@ -261,6 +386,7 @@ def test_secret_values_reject_runner_owned_names(user):
 
 
 @pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="sandbox")
 def test_harness_job_adjustment_is_validated_and_forwarded(user):
     # Kept endpoint (base): a validated adjustment is forwarded to the sandbox
     # client verbatim.
@@ -277,7 +403,7 @@ def test_harness_job_adjustment_is_validated_and_forwarded(user):
     }
 
     with patch(
-        "simulate.views.harness_job.HarnessSandboxClient.adjust",
+        "simulate.services.harness_sandbox.HarnessSandboxClient.adjust",
         return_value=expected,
     ) as adjust:
         response = client.post(
@@ -287,6 +413,30 @@ def test_harness_job_adjustment_is_validated_and_forwarded(user):
     assert response.status_code == 200
     assert response.json() == expected
     adjust.assert_called_once_with("job-1", payload)
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_harness_job_adjustment_routes_to_daytona_provider(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    job_id = "11111111-1111-1111-1111-111111111111"
+    payload = {
+        "instruction": "Create 1 more scenario covering discounts",
+        "client_request_id": "browser-1",
+    }
+    expected = {"adjustments": [{"status": "pending"}]}
+
+    with patch.object(
+        DaytonaHarnessProvider, "adjust", return_value=Response(expected)
+    ) as adjust:
+        response = client.post(
+            f"/simulate/api/harness-jobs/{job_id}/adjust/", payload, format="json"
+        )
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert adjust.call_args.args[1] == job_id
 
 
 @pytest.mark.django_db

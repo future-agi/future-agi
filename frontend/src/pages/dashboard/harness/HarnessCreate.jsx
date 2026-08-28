@@ -204,13 +204,15 @@ export default function HarnessCreate() {
       formData.append("file", file);
       formData.append("environment_name", environmentName);
       const uploaded = await uploadHarnessSecretFile(formData);
+      const resolvedEnvironmentName =
+        uploaded.environment_name || environmentName;
       setSecretFileRefs((existing) => ({
         ...existing,
-        [environmentName]: uploaded.secret_ref,
+        [resolvedEnvironmentName]: uploaded.secret_ref,
       }));
       setSecretFileUploads((existing) => ({
         ...existing,
-        [environmentName]: { name: file.name, size: uploaded.size },
+        [resolvedEnvironmentName]: { name: file.name, size: uploaded.size },
       }));
       // A pasted path and an uploaded file are mutually exclusive for the same variable.
       setEnvironmentValues((existing) => {
@@ -221,6 +223,7 @@ export default function HarnessCreate() {
       setConfigurationValues((existing) => {
         const next = { ...existing };
         delete next[environmentName];
+        delete next[resolvedEnvironmentName];
         return next;
       });
       setPreflightDirty(Boolean(preflight));
@@ -283,9 +286,13 @@ export default function HarnessCreate() {
     },
     metadata: {
       name:
-        uploadedSource?.name || githubRepository.trim().split("/").pop() || "agent",
+        uploadedSource?.name ||
+        githubRepository.trim().split("/").pop() ||
+        "agent",
       authoring_key:
-        uploadedSource?.name || githubRepository.trim().split("/").pop() || "agent",
+        uploadedSource?.name ||
+        githubRepository.trim().split("/").pop() ||
+        "agent",
     },
   });
 

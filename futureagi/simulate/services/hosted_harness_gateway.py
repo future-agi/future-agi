@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import jwt
 import requests
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
@@ -67,6 +68,56 @@ _ENTRYPOINT_COMMAND_ID_FILE = "/run/futureagi/entrypoint-command-id"
 _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
+_ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
+_ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
+_DIRECT_IMAGE_WITH_ADJUSTMENTS = "direct-image-adjustments-v1"
+
+
+def _scenario_delta(instruction: str) -> int | None:
+    number_words = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    match = re.search(
+        r"\b(?:add|create|generate|write)\s+"
+        r"(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:more\s+)?scenarios?\b",
+        instruction,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    value = match.group(1).lower()
+    return min(100, int(value) if value.isdigit() else number_words[value])
+
+
+def _adjustment_stage(instruction: str, current_stage: str) -> str:
+    lowered = instruction.lower()
+    if any(word in lowered for word in ("scenario", "persona", "test case")):
+        return "scenarios"
+    if any(
+        word in lowered
+        for word in ("environment", "database", "service", "seed", "test data")
+    ):
+        return "environment"
+    if any(word in lowered for word in ("contract", "tool", "capability")):
+        return "understand"
+    return {
+        "understanding_agent": "understand",
+        "generating_environment": "environment",
+        "building_environment": "environment",
+        "validating_environment": "environment",
+        "generating_scenarios": "scenarios",
+        "validating_scenarios": "scenarios",
+    }.get(current_stage, "scenarios")
 
 
 def _hosted_scenario_repair_script(*, name: str, expected: int, actual: int) -> str:
@@ -796,7 +847,11 @@ class DaytonaHostedGateway:
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=self.snapshot or "direct-image",
+            snapshot_name=(
+                _DIRECT_IMAGE_WITH_ADJUSTMENTS
+                if getattr(self, "dockerfile", "")
+                else self.snapshot
+            ),
             snapshot_digest=(self.snapshot_digest or None) if self.snapshot else None,
         )
         attempt = capability.attempt
@@ -898,6 +953,21 @@ class DaytonaHostedGateway:
                 ).encode(),
                 "/run/futureagi/capabilities.json",
             )
+            # Adjustments are durable job inputs, not attempt-local state.  A retry starts a
+            # fresh sandbox after the previous attempt has gone away, so seed its inbox from the
+            # persisted payload before authoring begins.  Without this, the durable
+            # ``scenario_count`` includes an applied chat delta while the retried guest authors
+            # the original number of scenarios, and platform pre-allocation correctly rejects
+            # the cardinality mismatch.
+            adjustments = list(
+                (dispatch_payload.get("metadata") or {}).get("adjustments") or []
+            )
+            if adjustments:
+                adjustment_body = "".join(
+                    json.dumps(item, separators=(",", ":")) + "\n"
+                    for item in adjustments
+                ).encode("utf-8")
+                sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
             prepared = sandbox.process.exec(
@@ -927,7 +997,8 @@ class DaytonaHostedGateway:
                     command=(
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
-                        "/work/job.json --source /work/source --output /work/authoring; "
+                        "/work/job.json --source /work/source --output /work/authoring "
+                        f"--adjustments {_ADJUSTMENTS_PATH}; "
                         "fi && "
                         "python -m fi.alk.harness.bundle_author_v2 "
                         "--job /work/job.json --source /work/source "
@@ -1029,6 +1100,131 @@ class DaytonaHostedGateway:
             )
         return observation
 
+    def adjust(
+        self, job: HostedHarnessJob, request: dict[str, Any]
+    ) -> HostedHarnessJob:
+        """Deliver a user correction to the active ALK authoring process.
+
+        The database record is the durable control-plane copy; the JSONL file is
+        the attempt-local inbox consumed by ALK at stage boundaries. Keeping the
+        whole inbox in metadata also makes retries and the UI deterministic.
+        """
+        from daytona import DaytonaNotFoundError
+
+        terminal_states = {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        if job.state in terminal_states:
+            raise HostedHarnessError(
+                "adjustment_too_late",
+                "a completed run cannot be adjusted; start a follow-up run",
+                status_code=409,
+            )
+        if job.current_stage in {
+            "connecting_agent",
+            "running",
+            "grading",
+            "uploading_artifacts",
+            "cleaning_up",
+        }:
+            raise HostedHarnessError(
+                "adjustment_too_late",
+                "scenario authoring has finished; start a follow-up run to change it",
+                status_code=409,
+            )
+
+        attempt = (
+            HostedHarnessAttempt.no_workspace_objects.filter(
+                job=job, attempt_number=job.current_attempt_number
+            )
+            .exclude(provider_ref__isnull=True)
+            .first()
+        )
+        if attempt is None or not attempt.provider_ref:
+            raise HostedHarnessError(
+                "adjustment_not_ready",
+                "the hosted sandbox is not ready for messages yet; retry in a few seconds",
+                status_code=409,
+                retryable=True,
+            )
+        if attempt.snapshot_name != _DIRECT_IMAGE_WITH_ADJUSTMENTS:
+            raise HostedHarnessError(
+                "adjustment_protocol_unavailable",
+                "this run started before live messages were enabled; start a new run to use them",
+                status_code=409,
+            )
+        try:
+            sandbox = self.client.get(str(attempt.provider_ref))
+        except DaytonaNotFoundError as exc:
+            raise HostedHarnessError(
+                "adjustment_sandbox_missing",
+                "the active hosted sandbox no longer exists",
+                status_code=409,
+            ) from exc
+
+        instruction = str(request["instruction"]).strip()
+        client_request_id = str(request.get("client_request_id") or "") or None
+        with transaction.atomic():
+            locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            payload = dict(locked.payload)
+            metadata = dict(payload.get("metadata") or {})
+            adjustments = list(metadata.get("adjustments") or [])
+            if client_request_id:
+                existing = next(
+                    (
+                        item
+                        for item in adjustments
+                        if item.get("client_request_id") == client_request_id
+                    ),
+                    None,
+                )
+                if existing is not None:
+                    return locked
+
+            delta = _scenario_delta(instruction)
+            if delta and locked.scenario_count + delta > 10:
+                raise HostedHarnessError(
+                    "scenario_limit_exceeded",
+                    "a hosted run can contain at most 10 scenarios",
+                    status_code=422,
+                )
+            record = {
+                "adjustment_id": str(uuid.uuid4()),
+                "client_request_id": client_request_id,
+                "instruction": instruction,
+                "target_stage": _adjustment_stage(instruction, locked.current_stage),
+                "scenario_delta": delta,
+                "status": "pending",
+                "created_at": timezone.now().isoformat(),
+            }
+            adjustments.append(record)
+            metadata["adjustments"] = adjustments
+            payload["metadata"] = metadata
+            locked.payload = payload
+            update_fields = ["payload", "updated_at"]
+            if delta:
+                locked.scenario_count += delta
+                update_fields.append("scenario_count")
+            locked.save(update_fields=update_fields)
+
+            body = "".join(
+                json.dumps(item, separators=(",", ":")) + "\n" for item in adjustments
+            ).encode("utf-8")
+            try:
+                sandbox.fs.upload_file(body, _ADJUSTMENTS_PATH)
+            except Exception as exc:
+                raise HostedHarnessError(
+                    "adjustment_delivery_failed",
+                    "the message could not be delivered to the hosted run; retry",
+                    status_code=503,
+                    retryable=True,
+                ) from exc
+        return locked
+
     @staticmethod
     def _sync_authoring_progress(attempt: HostedHarnessAttempt, sandbox) -> None:
         """Expose safe in-sandbox authoring outputs while the unified command is running."""
@@ -1041,9 +1237,25 @@ class DaytonaHostedGateway:
 
         contract = _json("/work/authoring/contract.json")
         environment = _json("/work/authoring/environment.json")
+        # The current hosted authoring pipeline writes the deterministic environment compiler
+        # output under ``environment-bundle``.  Keep reading the legacy flat artifact for cached
+        # runs, but do not leave the UI stuck on Generating environment when the V2 plan already
+        # exists and scenario authoring has started.
+        if not isinstance(environment, dict):
+            environment = _json(
+                "/work/authoring/environment-bundle/environment-plan.json"
+            )
+        authored_bundle = _json(
+            "/work/authoring/environment-bundle/manifest.json"
+        )
         scenarios = _json("/work/authoring/scenarios.json")
         bundle = _json("/work/bundle/manifest.json")
-        outputs = authoring_stage_outputs(contract, environment, scenarios, bundle)
+        outputs = authoring_stage_outputs(
+            contract,
+            environment,
+            scenarios,
+            bundle if isinstance(bundle, dict) else authored_bundle,
+        )
         stage = "understanding_agent"
         if isinstance(contract, dict):
             stage = "generating_environment"
@@ -1051,9 +1263,10 @@ class DaytonaHostedGateway:
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
             stage = "validating_environment"
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+        DaytonaHostedGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
-        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         # Once the guest event channel advances into runtime stages it is authoritative.
         if job.current_stage in {
             "queued",
@@ -1078,6 +1291,36 @@ class DaytonaHostedGateway:
             merged.values(), key=lambda item: order.get(item.get("kind"), 99)
         )
         job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
+
+    @staticmethod
+    def _sync_adjustment_progress(job: HostedHarnessJob, sandbox) -> None:
+        try:
+            raw = sandbox.fs.download_file(_ADJUSTMENT_STATUS_PATH).decode("utf-8")
+        except Exception:  # noqa: BLE001 - status file does not exist before first boundary
+            return
+        statuses: dict[str, dict[str, Any]] = {}
+        for line in raw.splitlines():
+            try:
+                value = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(value, dict) and value.get("adjustment_id"):
+                statuses[str(value["adjustment_id"])] = value
+        if not statuses:
+            return
+        payload = dict(job.payload)
+        metadata = dict(payload.get("metadata") or {})
+        adjustments = list(metadata.get("adjustments") or [])
+        merged = [
+            {**item, **statuses.get(str(item.get("adjustment_id")), {})}
+            for item in adjustments
+        ]
+        if merged == adjustments:
+            return
+        metadata["adjustments"] = merged
+        payload["metadata"] = metadata
+        job.payload = payload
+        job.save(update_fields=["payload", "updated_at"])
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
         from daytona import DaytonaNotFoundError
@@ -1125,9 +1368,13 @@ class DaytonaHostedGateway:
         # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
         # (superseded) never reach here.
         retry = attempt.job.payload.get("retry", {})
-        return domain in retry.get(
-            "retryable_domains", []
-        ) and attempt.attempt_number < retry.get("max_infrastructure_attempts", 1)
+        cycle_start = int(
+            (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
+        )
+        attempts_in_cycle = attempt.attempt_number - cycle_start + 1
+        return domain in retry.get("retryable_domains", []) and attempts_in_cycle < retry.get(
+            "max_infrastructure_attempts", 1
+        )
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt

@@ -15,9 +15,23 @@ const secretValuesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-values/");
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
+
+// `crypto.randomUUID` is not available in every browser/webview context.  This
+// key is only used to make a create request idempotent; failing to construct it
+// must never prevent the request from leaving the browser.
+export const harnessIdempotencyKey = () => {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (typeof randomUUID === "function") {
+    return randomUUID.call(globalThis.crypto);
+  }
+  return `harness-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+};
+
 export const createHarnessJob = async (
   payload,
-  idempotencyKey = crypto.randomUUID(),
+  idempotencyKey = harnessIdempotencyKey(),
 ) =>
   (
     await axios.post(jobsPath(), payload, {

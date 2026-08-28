@@ -7,9 +7,11 @@ Tests cover:
 """
 
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 
@@ -17,7 +19,12 @@ from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import AgentDefinition, Scenarios, SimulateEvalConfig
+from simulate.models import (
+    AgentDefinition,
+    HostedHarnessJob,
+    Scenarios,
+    SimulateEvalConfig,
+)
 from simulate.models.run_test import CreateCallExecution, RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import (
@@ -342,6 +349,7 @@ class TestCallExecutionRerunView:
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
 
     @pytest.mark.requires_ee
+    @override_settings(HARNESS_PROVIDER="sandbox")
     @patch(
         "simulate.services.harness_credentials.credentials_for_rerun",
         return_value=({"LIVEKIT_URL": "wss://example.invalid"}, {}),
@@ -356,8 +364,30 @@ class TestCallExecutionRerunView:
         call_execution,
     ):
         job_id = uuid.uuid4()
-        test_execution.execution_metadata = {"harness_job_id": str(job_id)}
-        test_execution.save(update_fields=["execution_metadata"])
+        # Repository registrations may use a generic TEXT shell even when the
+        # authoritative ALK contract is voice. That shell must not block the
+        # saved environment rerun.
+        agent = test_execution.run_test.agent_definition
+        agent.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        agent.save(update_fields=["agent_type"])
+        HostedHarnessJob.no_workspace_objects.create(
+            id=job_id,
+            organization=test_execution.run_test.organization,
+            workspace=test_execution.run_test.workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=f"rerun-{job_id}",
+            request_digest=f"sha256:{'0' * 64}",
+            schema_version="1.4",
+            payload={},
+            state=HostedHarnessJob.State.COMPLETED,
+            seed=1,
+            scenario_count=1,
+            artifact_level="standard",
+            max_artifact_bytes=1,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            run_test=test_execution.run_test,
+            test_execution=test_execution,
+        )
         rerun_saved_job.return_value = {
             "status": {"stage": "queued", "detail": "waiting to restart"}
         }
@@ -397,6 +427,7 @@ class TestRepositoryRunAgainView:
 
     URL_TEMPLATE = "/simulate/test-executions/{}/rerun-calls/"
 
+    @override_settings(HARNESS_PROVIDER="sandbox")
     @patch("simulate.views.run_test._voice_sim_gate_response", return_value=None)
     @patch(
         "simulate.services.harness_credentials.credentials_for_rerun",
@@ -414,6 +445,8 @@ class TestRepositoryRunAgainView:
         scenario,
     ):
         job_id = uuid.uuid4()
+        run_test.agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        run_test.agent_definition.save(update_fields=["agent_type"])
         test_execution.execution_metadata = {"harness_job_id": str(job_id)}
         test_execution.scenario_ids = [str(scenario.id)]
         test_execution.save(update_fields=["execution_metadata", "scenario_ids"])
@@ -576,6 +609,7 @@ class TestTestExecutionRerunView:
 
     URL_TEMPLATE = "/simulate/run-tests/{}/rerun-test-executions/"
 
+    @override_settings(HARNESS_PROVIDER="sandbox")
     @patch("simulate.views.run_test._voice_sim_gate_response", return_value=None)
     @patch(
         "simulate.services.harness_credentials.credentials_for_rerun",
@@ -593,6 +627,8 @@ class TestTestExecutionRerunView:
         call_execution,
     ):
         job_id = uuid.uuid4()
+        run_test.agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        run_test.agent_definition.save(update_fields=["agent_type"])
         test_execution.execution_metadata = {"harness_job_id": str(job_id)}
         test_execution.save(update_fields=["execution_metadata"])
         rerun_saved_job.return_value = {"status": {"stage": "queued"}}

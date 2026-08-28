@@ -89,7 +89,9 @@ export const canceledProgress = (events = []) => {
   // The run stopped inside the last group that started and never reported completing.
   const stalled =
     lastStarted && !completedGroups.has(lastStarted) ? lastStarted : null;
-  const stoppedAt = stalled ? stages.indexOf(EVENT_STAGE_GROUPS[stalled][0]) : -1;
+  const stoppedAt = stalled
+    ? stages.indexOf(EVENT_STAGE_GROUPS[stalled][0])
+    : -1;
   if (stoppedAt >= 0) done.delete(stages[stoppedAt]);
 
   return { doneStages: done, stoppedAt };
@@ -120,7 +122,11 @@ const eventMillis = (event) => {
 
 // Wall-clock time the run has been going. There is no started_at on the job, so the first
 // event is the earliest moment we can prove; a run with no events yet is unmeasurable.
-export const runElapsed = (events = [], now = Date.now(), isTerminal = false) => {
+export const runElapsed = (
+  events = [],
+  now = Date.now(),
+  isTerminal = false,
+) => {
   const stamps = events.map(eventMillis).filter((at) => at !== null);
   if (!stamps.length) return null;
   const first = Math.min(...stamps);
@@ -139,8 +145,7 @@ export const stageElapsed = (status, events = [], now = Date.now()) => {
   const started = events
     .filter(
       (event) =>
-        event?.payload?.stage === group[0] &&
-        event?.type?.endsWith(".started"),
+        event?.payload?.stage === group[0] && event?.type?.endsWith(".started"),
     )
     .map(eventMillis)
     .filter((at) => at !== null);
@@ -159,7 +164,9 @@ export const shortDuration = (ms) => {
     const hours = Math.floor(minutes / 60);
     return `${hours}h ${minutes % 60}m`;
   }
-  return minutes ? `${minutes}m ${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
+  return minutes
+    ? `${minutes}m ${String(seconds).padStart(2, "0")}s`
+    : `${seconds}s`;
 };
 
 // Run ids are "harness-<uuid>" — 44 characters that nobody reads and everybody copies. Show
@@ -250,7 +257,10 @@ export const tabState = (tab, status, events = [], hasOutput = false) => {
     stageState(status, stages.indexOf(name), events),
   );
   if (states.includes(STAGE_STATE.ACTIVE)) return TAB_STATE.WORKING;
-  if (hasOutput || (states.length && states.every((s) => s === STAGE_STATE.DONE)))
+  if (
+    hasOutput ||
+    (states.length && states.every((s) => s === STAGE_STATE.DONE))
+  )
     return TAB_STATE.DONE;
   return TAB_STATE.PENDING;
 };
@@ -306,9 +316,12 @@ export function eventMessage(event) {
   if (payload.message) return String(payload.message);
   if (payload.stage) {
     // "Calls completed" reads better than "Calls Harness.stage.completed".
-    if (event.type?.endsWith(".started")) return `${readable(payload.stage)} started`;
-    if (event.type?.endsWith(".completed")) return `${readable(payload.stage)} completed`;
-    if (event.type?.endsWith(".failed")) return `${readable(payload.stage)} failed`;
+    if (event.type?.endsWith(".started"))
+      return `${readable(payload.stage)} started`;
+    if (event.type?.endsWith(".completed"))
+      return `${readable(payload.stage)} completed`;
+    if (event.type?.endsWith(".failed"))
+      return `${readable(payload.stage)} failed`;
     return `${readable(payload.stage)} updated`;
   }
   return readable(event.type || "Progress updated");
@@ -332,19 +345,30 @@ export const jobProgress = (status) => {
 export const adjustmentStatus = (adjustment, jobStage) => {
   if (adjustment.status === "applied")
     return `Applied at ${readable(adjustment.applied_stage || adjustment.target_stage)}`;
-  if (jobStage === "canceled") return "Not applied — the run was canceled first";
+  if (jobStage === "canceled")
+    return "Not applied — the run was canceled first";
   if (jobStage === "failed") return "Not applied — the run failed first";
   if (jobStage === "completed") return "Not applied — the run finished first";
   return `${readable(adjustment.status)} · will land at ${readable(adjustment.target_stage)}`;
 };
 
 export const errorMessage = (error) => {
-  const detail = error?.detail;
+  if (typeof error === "string" && error.trim()) return error;
+  // Axios keeps the actionable API payload under response.data. Contract
+  // validation errors instead expose their explanation directly on the Error.
+  const payload = error?.response?.data || error;
+  const detail = payload?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
   // DRF field errors arrive as {field: ["message"]} rather than a string.
   if (detail && typeof detail === "object") {
     const first = Object.values(detail).flat().find(Boolean);
     if (typeof first === "string") return first;
   }
-  return error?.message || "Something went wrong";
+  if (typeof payload?.error === "string" && payload.error.trim())
+    return payload.error;
+  if (typeof payload?.message === "string" && payload.message.trim())
+    return payload.message;
+  if (typeof error?.message === "string" && error.message.trim())
+    return error.message;
+  return "Something went wrong";
 };

@@ -19,9 +19,12 @@ never changes the platform's public request schema.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -201,6 +204,9 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "stage_outputs": stage_outputs,
         "scenarios": scenarios,
         "receipts": receipts,
+        "adjustments": list(
+            (job.payload.get("metadata") or {}).get("adjustments") or []
+        ),
         "platform": platform,
     }
 
@@ -346,6 +352,152 @@ class DaytonaHarnessProvider:
         job.refresh_from_db()
         return Response(serialize_job(job))
 
+    def adjust(self, request, pk) -> Response:
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Hosted harness job not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            job = DaytonaHostedGateway().adjust(job, request.validated_data)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(serialize_job(job))
+
+    def rerun_saved(
+        self,
+        job_id: str,
+        *,
+        organization,
+        workspace,
+        environment_values: dict[str, str],
+    ) -> dict[str, Any]:
+        """Start a fresh Daytona attempt for an existing repository job.
+
+        Reruns deliberately keep the registered RunTest/TestExecution and their
+        completed call data visible until replacement receipts arrive. The
+        source, contract, scenario registrations, adjustments and encrypted
+        credential references remain attached to the same durable job.
+        """
+        from datetime import timedelta
+        from uuid import uuid4
+
+        from simulate.models import HostedHarnessSecret
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+        base_url = str(
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or ""
+        ).rstrip("/")
+        if not base_url:
+            raise HostedHarnessError(
+                "public_base_url_missing",
+                "HARNESS_PUBLIC_BASE_URL is required to rerun a hosted harness job",
+                status_code=503,
+            )
+        terminal_states = {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        with transaction.atomic():
+            job = (
+                HostedHarnessJob.no_workspace_objects.select_for_update()
+                .filter(id=job_id, organization=organization, workspace=workspace)
+                .first()
+            )
+            if job is None:
+                raise HostedHarnessError(
+                    "job_not_found", "saved hosted harness job was not found", status_code=404
+                )
+            if job.state not in terminal_states:
+                raise HostedHarnessError(
+                    "job_not_terminal",
+                    f"hosted harness job cannot be rerun while it is {job.state}",
+                    status_code=409,
+                )
+
+            payload = copy.deepcopy(job.payload)
+            secret_refs = dict((payload.get("agent") or {}).get("secret_refs") or {})
+            for alias, value in environment_values.items():
+                key = f"harness-{alias.lower()}-{uuid4().hex}"
+                HostedHarnessSecret.objects.create(
+                    organization=organization,
+                    name=key,
+                    version="1",
+                    encrypted_value=value,
+                )
+                secret_refs[alias] = {
+                    "manager": "platform-vault",
+                    "key": key,
+                    "version": "1",
+                    "purpose": "target_provider",
+                }
+            payload.setdefault("agent", {})["secret_refs"] = secret_refs
+            metadata = payload.setdefault("metadata", {})
+            # Retry limits are per user-triggered run, not over the lifetime of
+            # the durable job. The gateway uses this marker when deciding if a
+            # fresh infrastructure attempt remains available.
+            metadata["attempt_cycle_start"] = job.current_attempt_number + 1
+
+            duration = int(payload["runtime"]["max_duration_seconds"])
+            job.payload = payload
+            job.state = HostedHarnessJob.State.QUEUED
+            job.current_stage = "queued"
+            job.completed_count = 0
+            job.failed_count = 0
+            job.uploaded_artifact_bytes = 0
+            job.deadline_at = timezone.now() + timedelta(seconds=duration)
+            job.cancel_requested_at = None
+            job.cancel_reason = None
+            job.terminal_at = None
+            job.failure = None
+            job.save(
+                update_fields=[
+                    "payload",
+                    "state",
+                    "current_stage",
+                    "completed_count",
+                    "failed_count",
+                    "uploaded_artifact_bytes",
+                    "deadline_at",
+                    "cancel_requested_at",
+                    "cancel_reason",
+                    "terminal_at",
+                    "failure",
+                    "updated_at",
+                ]
+            )
+
+        retry_cfg = payload["retry"]
+        try:
+            start_hosted_harness_gateway_workflow(
+                str(job.id),
+                base_url,
+                retry_cfg["max_infrastructure_attempts"],
+                retry_cfg["initial_backoff_seconds"],
+                retry_cfg["max_backoff_seconds"],
+            )
+        except Exception:
+            HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+                state=HostedHarnessJob.State.FAILED,
+                current_stage="failed",
+                terminal_at=timezone.now(),
+                failure={
+                    "domain": "infrastructure",
+                    "stage": "queued",
+                    "code": "scheduler_unavailable",
+                    "message": "Hosted rerun could not be scheduled",
+                },
+            )
+            raise
+        job.refresh_from_db()
+        return serialize_job(job)
+
     def source_upload(self, request) -> Response:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
@@ -417,6 +569,32 @@ class SandboxHarnessProvider:
         from simulate.services.harness_sandbox import HarnessSandboxClient
 
         return HarnessSandboxClient()
+
+    def rerun_saved(
+        self,
+        job_id: str,
+        *,
+        organization,
+        workspace,
+        environment_values: dict[str, str],
+    ) -> dict[str, Any]:
+        from simulate.services.harness_credentials import credentials_for_rerun
+
+        client = self._client()
+        saved_environment, secret_refs = credentials_for_rerun(
+            job_id,
+            organization=organization,
+            client=client,
+            environment_overrides=environment_values,
+        )
+        return client.rerun(
+            job_id,
+            {
+                "environment_values": saved_environment,
+                "secret_refs": secret_refs,
+                "only": [],
+            },
+        )
 
     @staticmethod
     def _flatten_source(data: dict[str, Any]) -> dict[str, Any]:
@@ -524,6 +702,21 @@ class SandboxHarnessProvider:
 
         try:
             return Response(self._client().cancel(str(pk)))
+        except HarnessSandboxRejected as exc:
+            return Response({"detail": str(exc)}, status=exc.status_code)
+        except HarnessSandboxUnavailable as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+    def adjust(self, request, pk) -> Response:
+        from simulate.services.harness_sandbox import (
+            HarnessSandboxRejected,
+            HarnessSandboxUnavailable,
+        )
+
+        try:
+            return Response(self._client().adjust(str(pk), request.validated_data))
         except HarnessSandboxRejected as exc:
             return Response({"detail": str(exc)}, status=exc.status_code)
         except HarnessSandboxUnavailable as exc:

@@ -6421,10 +6421,21 @@ def _hosted_execution_eligible(run_test) -> bool:
 def _repository_harness_job_id(test_execution) -> str | None:
     """Return the ALK job owning this repository-backed execution, if any.
 
-    New executions carry an explicit immutable reference. The name fallback keeps already-created
-    development runs rerunnable; it accepts only ALK's exact content-free ``harness-<uuid>`` name
-    and therefore does not redirect native/provider-only runs.
+    The HostedHarnessJob relation is authoritative. Metadata is retained for
+    detached/read-model compatibility, and the strict name fallback keeps
+    already-created development runs rerunnable without redirecting native or
+    provider-only simulations.
     """
+
+    from simulate.models import HostedHarnessJob
+
+    related_job_id = (
+        HostedHarnessJob.no_workspace_objects.filter(test_execution_id=test_execution.id)
+        .values_list("id", flat=True)
+        .first()
+    )
+    if related_job_id:
+        return str(related_job_id)
 
     metadata = test_execution.execution_metadata or {}
     explicit = str(metadata.get("harness_job_id") or "").strip()
@@ -6450,26 +6461,16 @@ def _latest_repository_harness_execution(run_test):
 def _dispatch_repository_harness_rerun(
     test_execution, *, environment_values: dict[str, str]
 ) -> dict:
-    from simulate.services.harness_credentials import credentials_for_rerun
-    from simulate.services.harness_sandbox import HarnessSandboxClient
+    from simulate.services.harness_provider import get_harness_provider
 
     job_id = _repository_harness_job_id(test_execution)
     if not job_id:
         raise ValueError("execution has no saved repository harness job")
-    client = HarnessSandboxClient()
-    saved_environment, secret_refs = credentials_for_rerun(
+    return get_harness_provider().rerun_saved(
         job_id,
         organization=test_execution.run_test.organization,
-        client=client,
-        environment_overrides=environment_values,
-    )
-    return client.rerun(
-        job_id,
-        {
-            "environment_values": saved_environment,
-            "secret_refs": secret_refs,
-            "only": [],
-        },
+        workspace=test_execution.run_test.workspace,
+        environment_values=environment_values,
     )
 
 
@@ -6569,8 +6570,19 @@ class CallExecutionRerunView(APIView):
             # just re-score existing transcripts).
             is_hosted = _hosted_execution_eligible(test_execution.run_test)
 
-            # Validate CHAT/TEXT agents can only use eval_only rerun type
-            if rerun_type != "eval_only" and test_execution.run_test.agent_definition:
+            # Repository-backed harness executions own their modality in the
+            # saved ALK contract. Their platform AgentDefinition is only a
+            # registration shell and may still be typed TEXT, so the native
+            # connector guard must not reject a full environment rerun before
+            # it reaches the harness provider.
+            repository_job_id = _repository_harness_job_id(test_execution)
+
+            # Validate native CHAT/TEXT agents can only use eval_only rerun type.
+            if (
+                rerun_type != "eval_only"
+                and not repository_job_id
+                and test_execution.run_test.agent_definition
+            ):
                 agent_type = test_execution.run_test.agent_definition.agent_type
                 if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
                     return self._gm.bad_request(
@@ -6623,7 +6635,6 @@ class CallExecutionRerunView(APIView):
             # must go back through that saved session so Compose/processes, seed/reset, agent,
             # calls, grading and cleanup happen together. The generic hosted voice path below is
             # intentionally retained for native/connect-only/Vapi/Retell runs.
-            repository_job_id = _repository_harness_job_id(test_execution)
             if rerun_type == "call_and_eval" and repository_job_id:
                 if not select_all or call_execution_ids:
                     return self._gm.bad_request(
@@ -7215,8 +7226,17 @@ class TestExecutionRerunView(APIView):
             # only); native ones keep the RerunCoordinatorWorkflow path.
             is_hosted = _hosted_execution_eligible(run_test)
 
-            # Validate CHAT/TEXT agents can only use eval_only rerun type
-            if rerun_type != "eval_only" and run_test.agent_definition:
+            # Repository-uploaded agents carry their authoritative modality in
+            # the saved ALK contract. Do not apply the native AgentDefinition
+            # TEXT guard to that durable harness execution.
+            repository_execution = _latest_repository_harness_execution(run_test)
+
+            # Validate native CHAT/TEXT agents can only use eval_only rerun type.
+            if (
+                rerun_type != "eval_only"
+                and repository_execution is None
+                and run_test.agent_definition
+            ):
                 agent_type = run_test.agent_definition.agent_type
                 if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
                     return self._gm.bad_request(

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import uuid
+
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -19,17 +22,12 @@ from simulate.serializers.harness_job import (
     HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
 )
-from simulate.services.harness_provider import get_harness_provider
-from simulate.services.harness_sandbox import (
-    HarnessSandboxClient,
-    HarnessSandboxRejected,
-    HarnessSandboxUnavailable,
-)
 from simulate.services.harness_credentials import (
     credential_file_ref,
     request_scope,
     store_credential_file,
 )
+from simulate.services.harness_provider import get_harness_provider
 from tfc.utils.api_contracts import validated_request
 
 
@@ -42,9 +40,6 @@ class HarnessJobViewSet(viewsets.ViewSet):
     """
 
     permission_classes = [IsAuthenticated]
-
-    def _client(self) -> HarnessSandboxClient:
-        return HarnessSandboxClient()
 
     @validated_request(
         request_serializer=HarnessJobCreateSerializer,
@@ -136,17 +131,66 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        record = store_credential_file(
-            uploaded,
-            environment_name,
-            organization=organization,
-            workspace=workspace,
-        )
-        result = {
-            "environment_name": environment_name,
-            "secret_ref": credential_file_ref(record),
-            "size": record.size,
-        }
+        # Daytona cannot dereference the local-sandbox
+        # ``harness_environment_file`` manager. Google ADC crosses the hosted
+        # seam as encrypted JSON; the guest recreates the 0600 file and exports
+        # GOOGLE_APPLICATION_CREDENTIALS inside the sandbox.
+        if get_harness_provider().name == "daytona":
+            if environment_name != "GOOGLE_APPLICATION_CREDENTIALS":
+                return Response(
+                    {
+                        "detail": (
+                            "Hosted credential uploads currently support only "
+                            "GOOGLE_APPLICATION_CREDENTIALS JSON files"
+                        )
+                    },
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+            content = uploaded.read()
+            try:
+                document = json.loads(content.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return Response(
+                    {"detail": "Google credential file must contain valid UTF-8 JSON"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not isinstance(document, dict):
+                return Response(
+                    {"detail": "Google credential JSON must contain an object"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from simulate.models import HostedHarnessSecret
+
+            key = f"harness-google-adc-{uuid.uuid4().hex}"
+            HostedHarnessSecret.objects.create(
+                organization=organization,
+                name=key,
+                version="1",
+                encrypted_value=json.dumps(document, separators=(",", ":")),
+            )
+            result = {
+                "environment_name": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+                "secret_ref": {
+                    "manager": "platform-vault",
+                    "key": key,
+                    "version": "1",
+                    "purpose": "target_provider",
+                },
+                "size": len(content),
+            }
+        else:
+            record = store_credential_file(
+                uploaded,
+                environment_name,
+                organization=organization,
+                workspace=workspace,
+            )
+            result = {
+                "environment_name": environment_name,
+                "secret_ref": credential_file_ref(record),
+                "size": record.size,
+            }
         return Response(result, status=status.HTTP_201_CREATED)
 
     @validated_request(
@@ -202,6 +246,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
     def retrieve(self, request, pk=None):
         return get_harness_provider().retrieve(request, pk)
+
     @validated_request(
         request_serializer=HarnessJobActionSerializer,
         responses={200: HarnessJobReadSerializer},
@@ -217,14 +262,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def adjust(self, request, pk=None):
-        try:
-            return Response(self._client().adjust(str(pk), request.validated_data))
-        except HarnessSandboxRejected as exc:
-            return Response({"detail": str(exc)}, status=exc.status_code)
-        except HarnessSandboxUnavailable as exc:
-            return Response(
-                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+        return get_harness_provider().adjust(request, pk)
 
     @action(detail=False, methods=["get"])
     def health(self, request):

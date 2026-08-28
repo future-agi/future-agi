@@ -15,6 +15,54 @@ import Iconify from "src/components/iconify";
 
 import { readable } from "./harnessShared";
 
+function RawDetails({ data }) {
+  return (
+    <Box
+      component="details"
+      sx={{
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 1,
+        mt: 0.5,
+        "&[open]": { pb: 1 },
+      }}
+    >
+      <Box
+        component="summary"
+        sx={{
+          color: "text.secondary",
+          cursor: "pointer",
+          fontSize: 12,
+          fontWeight: 600,
+          px: 1.25,
+          py: 1,
+          userSelect: "none",
+        }}
+      >
+        View raw details
+      </Box>
+      <Box
+        component="pre"
+        sx={{
+          color: "text.secondary",
+          fontSize: 12,
+          m: 0,
+          maxHeight: 420,
+          overflow: "auto",
+          px: 1.25,
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {JSON.stringify(data, null, 2)}
+      </Box>
+    </Box>
+  );
+}
+
+RawDetails.propTypes = {
+  data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]).isRequired,
+};
+
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
@@ -62,7 +110,9 @@ export default function StageOutput({ output }) {
               variant="outlined"
               color="inherit"
               size="small"
-              endIcon={<Iconify icon="solar:arrow-right-up-linear" width={16} />}
+              endIcon={
+                <Iconify icon="solar:arrow-right-up-linear" width={16} />
+              }
             >
               Open simulation
             </Button>
@@ -95,12 +145,7 @@ export default function StageOutput({ output }) {
                 • {String(constraint)}
               </Typography>
             ))}
-            <Box
-              component="pre"
-              sx={{ m: 0, whiteSpace: "pre-wrap", fontSize: 12, color: "text.secondary" }}
-            >
-              {JSON.stringify(data, null, 2)}
-            </Box>
+            <RawDetails data={data} />
           </Stack>
         )}
 
@@ -127,12 +172,7 @@ export default function StageOutput({ output }) {
                 {name} → {String(value)}
               </Typography>
             ))}
-            <Box
-              component="pre"
-              sx={{ m: 0, whiteSpace: "pre-wrap", fontSize: 12, color: "text.secondary" }}
-            >
-              {JSON.stringify(data, null, 2)}
-            </Box>
+            <RawDetails data={data} />
           </Stack>
         )}
 
@@ -158,14 +198,7 @@ export default function StageOutput({ output }) {
 
         {!["contract", "environment", "scenarios", "simulation"].includes(
           output.kind,
-        ) && (
-          <Box
-            component="pre"
-            sx={{ m: 0, whiteSpace: "pre-wrap", fontSize: 12 }}
-          >
-            {JSON.stringify(data, null, 2)}
-          </Box>
-        )}
+        ) && <RawDetails data={data} />}
       </AccordionDetails>
     </Accordion>
   );

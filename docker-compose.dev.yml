@@ -36,6 +36,9 @@ services:
     volumes:
       - ./futureagi:/app/backend
       - ./.harness-bundles:/app/backend/.harness-bundles:ro
+      # The backend imports the trace scanner while loading URL routes. Keep its
+      # NLTK corpus available for clean recreates, just like the hosted worker.
+      - ${NLTK_DATA_ROOT:-/Users/rishavhada/nltk_data}:/usr/local/share/nltk_data:ro
     environment:
       FAST_STARTUP: "true"
       ALK_HARNESS_SANDBOX_URL: http://alk-harness-sandbox:8788

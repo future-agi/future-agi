@@ -12,6 +12,7 @@ import pytest
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
 from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
 from simulate.services.hosted_harness_gateway import (
+    _ADJUSTMENTS_PATH,
     DaytonaHostedGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
@@ -337,6 +338,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/run/futureagi/entrypoint-command-id",
     }
     assert client.sandbox.process.sessions == ["alk-harness"]
+    assert "--adjustments /run/futureagi/adjustments.jsonl" in (
+        client.sandbox.process.session_request.command
+    )
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
     assert client.params.ttl_minutes == 120
@@ -356,6 +360,147 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ingest.example.com",
         "platform.example.com",
     }
+
+
+@pytest.mark.django_db
+def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
+    organization, settings, tmp_path
+):
+    payload = _payload()
+    payload["scenario_count"] = 2
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-gateway")
+    client = _Daytona()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    dockerfile = tmp_path / "Dockerfile.hosted"
+    dockerfile.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    gateway.dockerfile = str(dockerfile)
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+    attempt = HostedHarnessAttempt.no_workspace_objects.get(
+        job=job, attempt_number=job.current_attempt_number
+    )
+    assert attempt.snapshot_name == "direct-image-adjustments-v1"
+
+    adjusted = gateway.adjust(
+        job,
+        {
+            "instruction": "Create 1 more scenario covering discounts",
+            "client_request_id": "browser-1",
+        },
+    )
+
+    assert adjusted.scenario_count == 3
+    records = [
+        json.loads(line)
+        for line in client.sandbox.fs.uploads["/run/futureagi/adjustments.jsonl"]
+        .decode()
+        .splitlines()
+    ]
+    assert records[0]["target_stage"] == "scenarios"
+    assert records[0]["scenario_delta"] == 1
+    assert records[0]["status"] == "pending"
+    assert adjusted.payload["metadata"]["adjustments"] == records
+
+
+@pytest.mark.django_db
+def test_daytona_retry_replays_persisted_adjustments_before_authoring(
+    organization, settings
+):
+    payload = _payload()
+    payload["scenario_count"] = 2
+    payload["metadata"] = {
+        "adjustments": [
+            {
+                "adjustment_id": "adjustment-1",
+                "instruction": "Create one more discount scenario",
+                "target_stage": "scenarios",
+                "scenario_delta": 1,
+                "status": "applied",
+            }
+        ]
+    }
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="retry-adjustment-replay"
+    )
+    client = _Daytona()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    replayed = [
+        json.loads(line)
+        for line in client.sandbox.fs.uploads[_ADJUSTMENTS_PATH].decode().splitlines()
+    ]
+    assert replayed == payload["metadata"]["adjustments"]
+    assert client.sandbox.process.session_request is not None
+
+
+@pytest.mark.django_db
+def test_daytona_adjustment_accepts_natural_language_number(
+    organization, settings, tmp_path
+):
+    payload = _payload()
+    payload["scenario_count"] = 2
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="adjust-word-number"
+    )
+    client = _Daytona()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    dockerfile = tmp_path / "Dockerfile.hosted"
+    dockerfile.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    gateway.dockerfile = str(dockerfile)
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+
+    adjusted = gateway.adjust(
+        job,
+        {
+            "instruction": "Add one more scenario covering discounts",
+            "client_request_id": "browser-word-1",
+        },
+    )
+
+    assert adjusted.scenario_count == 3
+    assert adjusted.payload["metadata"]["adjustments"][0]["scenario_delta"] == 1
 
 
 @pytest.mark.django_db

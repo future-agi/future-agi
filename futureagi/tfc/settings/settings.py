@@ -94,6 +94,10 @@ CORS_ALLOW_HEADERS = (
         "x-workspace-slug",
         "x-project-id",
         "x-organization-id",
+        # Harness creates are idempotent. Browsers send an OPTIONS preflight
+        # before the POST because this is a non-simple header, so omitting it
+        # here prevents the create request from ever reaching Django.
+        "idempotency-key",
         "sentry-trace",
         "baggage",
         "traceparent",
