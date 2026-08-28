@@ -98,10 +98,11 @@ If `--no-verify` becomes habitual, the hook is wrong — open an issue instead.
 
 ## CI (GitHub Actions)
 
-Today, CI covers the frontend and the end-to-end suite; backend unit CI is on the roadmap. Workflows in [`.github/workflows/`](.github/workflows):
+CI covers the frontend, backend, and end-to-end suites. Workflows in [`.github/workflows/`](.github/workflows):
 
 | Workflow                           | Trigger                                                                          | Purpose                                                                                            |
 | ---------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `backend-ci.yml`                   | push/PR to `main`/`dev`                                                          | Sharded `pytest` (10-way split) against a docker-compose service stack                             |
 | `frontend-feature.yml`             | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification                                 |
 | `frontend-develop.yml`             | push to `develop`/`dev` + PRs into `main`/`develop`/`dev`                        | Quality gates, integration tests, build check, Lighthouse (PRs only)                               |
 | `frontend-main.yml`                | push to `main`                                                                   | Full suite with coverage + production build                                                        |
@@ -110,6 +111,8 @@ Today, CI covers the frontend and the end-to-end suite; backend unit CI is on th
 | `e2e-ci.yml`                       | PRs into and pushes on `dev`/`main`, merge queue                                 | Builds the changed images from PR code, boots the `futureagi-e2e` stack, runs the Playwright flows |
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
+
+Note: `backend-ci.yml` excludes `agentic_eval/` and `model_serving/` (they ship their own `pytest.ini` and aren't wired into the shared workflow yet).
 
 ---
 
@@ -165,7 +168,7 @@ pytest discovers them automatically. Use `make test-shell` to drop into the test
 
 ## What we're still missing
 
-- Backend CI (pytest in Actions, parallel to the frontend workflows)
+- `agentic_eval/` wired into `backend-ci.yml` (it currently has to be run manually — see [`agentic_eval/pytest.ini`](futureagi/agentic_eval/pytest.ini))
 - Broader E2E flow coverage — the harness and CI job ship today; [`e2e/FLOWS.md`](e2e/FLOWS.md) is the current list
 - Visual regression testing (Chromatic or Percy)
 - Accessibility testing (axe-core in CI)
