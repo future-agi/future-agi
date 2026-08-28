@@ -1,17 +1,18 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { cwd } from "node:process";
 import { describe, expect, it } from "vitest";
 
 const runtimeLimitsSource = readFileSync(
-  resolve(process.cwd(), "src/config/runtime_limits.js"),
+  resolve(cwd(), "src/config/runtime_limits.js"),
   "utf8",
 );
 const containerEntrypointSource = readFileSync(
-  resolve(process.cwd(), "docker-entrypoint.sh"),
+  resolve(cwd(), "docker-entrypoint.sh"),
   "utf8",
 );
 const exampleEnvironmentSource = readFileSync(
-  resolve(process.cwd(), ".env.example"),
+  resolve(cwd(), ".env.example"),
   "utf8",
 );
 
