@@ -528,7 +528,8 @@ def build_metrics_catalog(
 
     filter_by_project = bool(req_project_ids and project_ids)
 
-    if (
+    # Scope is voice-only when every filtered project is a simulator project.
+    simulator_only_scope = (
         filter_by_project
         and not Project.objects.filter(
             id__in=project_ids,
@@ -537,7 +538,14 @@ def build_metrics_catalog(
             source=ProjectSourceChoices.SIMULATOR.value,
         )
         .exists()
-    ):
+    )
+
+    if simulator_only_scope:
+        metrics = [
+            m
+            for m in metrics
+            if not (m.get("name") == "status" and m.get("source") == "traces")
+        ]
         metrics.append(
             {
                 "name": "agent_talk_percentage",

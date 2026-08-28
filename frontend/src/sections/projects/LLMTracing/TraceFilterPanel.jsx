@@ -95,12 +95,16 @@ const SPAN_ID_FIELD = {
 //   `tab` === "spans"  → Trace ID + Span ID
 //   otherwise          → no id fields (preserves behavior for non-LLMTracing
 //                        consumers such as sessions/users).
+// Voice (simulator) projects drop the span Status field — span status doesn't
+// reflect call state and conflicts with the call status attribute.
 // Exported for direct unit testing.
-export const getTraceFilterFields = (tab) => {
-  if (tab === "trace") return [TRACE_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
-  if (tab === "spans")
-    return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
-  return BASE_TRACE_FILTER_FIELDS;
+export const getTraceFilterFields = (tab, { isSimulator = false } = {}) => {
+  const baseFields = isSimulator
+    ? BASE_TRACE_FILTER_FIELDS.filter((f) => f.value !== "status")
+    : BASE_TRACE_FILTER_FIELDS;
+  if (tab === "trace") return [TRACE_ID_FIELD, ...baseFields];
+  if (tab === "spans") return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...baseFields];
+  return baseFields;
 };
 
 // Map a static trace field to a picker property. In spans view the root
@@ -607,6 +611,18 @@ export function buildTraceFilterProperties(
 
       // Exclude simulation metrics for non-simulator projects
       if (src === "simulation" && !isSimulator) return false;
+
+      // Voice projects: drop the trace span status (OK/ERROR/UNSET). Scoped to
+      // the system metric so a custom span attribute named "status" is kept.
+      // The simulation call status stays. Mirrors the backend catalog gating.
+      if (
+        isSimulator &&
+        name === "status" &&
+        src === "traces" &&
+        (cat === "system_metric" || cat === "systemMetric")
+      ) {
+        return false;
+      }
 
       // Exclude custom_column (dataset columns)
       if (cat === "custom_column" || cat === "customColumn") return false;
@@ -1938,7 +1954,7 @@ const TraceFilterPanel = ({
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
-    const staticProps = getTraceFilterFields(tab).map((f) =>
+    const staticProps = getTraceFilterFields(tab, { isSimulator }).map((f) =>
       toStaticFilterProperty(f, isSpansView),
     );
     const knownIds = new Set(staticProps.map((p) => p.id));
@@ -1963,6 +1979,7 @@ const TraceFilterPanel = ({
     propertyFilter,
     tab,
     isSpansView,
+    isSimulator,
   ]);
   const propertyById = useMemo(
     () => Object.fromEntries(properties.map((p) => [p.id, p])),

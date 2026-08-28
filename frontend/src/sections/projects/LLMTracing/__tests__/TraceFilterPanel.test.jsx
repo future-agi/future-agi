@@ -295,6 +295,20 @@ describe("getTraceFilterFields (TH-4571)", () => {
     expect(fromNull).toEqual(fromUndefined);
     expect(fromNull).toEqual(fromUnknown);
   });
+
+  it("drops the status field for voice (simulator) projects", () => {
+    ["trace", "spans", null].forEach((tab) => {
+      const fields = getTraceFilterFields(tab, { isSimulator: true });
+      expect(fields.some((f) => f.value === "status")).toBe(false);
+    });
+  });
+
+  it("keeps the status field for non-simulator projects", () => {
+    ["trace", "spans", null].forEach((tab) => {
+      const fields = getTraceFilterFields(tab, { isSimulator: false });
+      expect(fields.some((f) => f.value === "status")).toBe(true);
+    });
+  });
 });
 
 describe("toStaticFilterProperty (spans Span Name)", () => {
@@ -474,6 +488,68 @@ describe("annotator annotation filter (TH-4710)", () => {
         }),
       ]),
     );
+  });
+
+  it("drops trace status but keeps simulation status for voice projects", () => {
+    const metrics = [
+      {
+        name: "status",
+        display_name: "Status",
+        category: "system_metric",
+        source: "traces",
+        type: "string",
+      },
+      {
+        name: "status",
+        display_name: "Status",
+        category: "system_metric",
+        source: "simulation",
+        type: "string",
+      },
+    ];
+
+    const voice = buildTraceFilterProperties(metrics, {
+      isSimulator: true,
+      sourceScope: "traces",
+    });
+    // Trace span status gone; the simulation call status remains.
+    expect(voice.some((p) => p.id === "status")).toBe(true);
+    expect(voice.filter((p) => p.id === "status")).toHaveLength(1);
+
+    const observe = buildTraceFilterProperties(metrics, {
+      isSimulator: false,
+      sourceScope: "traces",
+    });
+    // Non-voice keeps the trace status (simulation metric excluded elsewhere).
+    expect(observe.some((p) => p.id === "status")).toBe(true);
+  });
+
+  it("keeps a custom span attribute named status for voice projects", () => {
+    const metrics = [
+      {
+        name: "status",
+        display_name: "Status",
+        category: "system_metric",
+        source: "traces",
+        type: "string",
+      },
+      {
+        name: "status",
+        display_name: "Status",
+        category: "custom_attribute",
+        source: "traces",
+        type: "string",
+      },
+    ];
+
+    const voice = buildTraceFilterProperties(metrics, {
+      isSimulator: true,
+      sourceScope: "traces",
+    });
+    // Only the system span status is dropped; the custom attribute survives.
+    const statuses = voice.filter((p) => p.id === "status");
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0].category).toBe("attribute");
   });
 
   it("adds a global Annotator property inside annotation filters", () => {

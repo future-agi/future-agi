@@ -748,6 +748,64 @@ class TestMetricsEndpoint:
         metric_names = [m["name"] for m in response.json()["result"]["metrics"]]
         assert "agent_talk_percentage" not in metric_names
 
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    def test_metrics_drops_trace_status_for_simulator_project(
+        self,
+        mock_get_span_attrs,
+        _mock_clickhouse_enabled,
+        auth_client,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project, ProjectSourceChoices
+
+        simulator_project = Project.objects.create(
+            name="Voice Project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.SIMULATOR.value,
+        )
+        mock_get_span_attrs.return_value = []
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={simulator_project.id}"
+        )
+
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        # Span status (OK/ERROR/UNSET) is confusing for voice — must be gone.
+        assert not any(
+            m["name"] == "status" and m["source"] == "traces" for m in metrics
+        )
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    def test_metrics_keeps_trace_status_for_non_simulator_project(
+        self,
+        mock_get_span_attrs,
+        _mock_clickhouse_enabled,
+        auth_client,
+        observe_project,
+    ):
+        # observe_project defaults to ProjectSourceChoices.PROTOTYPE.
+        mock_get_span_attrs.return_value = []
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
+        )
+
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        assert any(
+            m["name"] == "status" and m["source"] == "traces" for m in metrics
+        )
+
     @pytest.fixture
     def _annotation_label_factory(self, db, organization, workspace):
         from model_hub.models.choices import AnnotationTypeChoices
