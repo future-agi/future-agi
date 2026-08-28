@@ -167,6 +167,22 @@ export function getDefaultValues(nodeData) {
     };
   }
 
+  if (nodeData?.type === NODE_TYPES.HTTP_REQUEST) {
+    return {
+      ...baseValues,
+      method: mergedConfig?.method || "GET",
+      url: mergedConfig?.url || "",
+      headers: mergedConfig?.headers || {},
+      body: mergedConfig?.body ?? "",
+      authType: mergedConfig?.auth?.type || "none",
+      authToken: mergedConfig?.auth?.token || "",
+      authUsername: mergedConfig?.auth?.username || "",
+      authPassword: mergedConfig?.auth?.password || "",
+      timeout: mergedConfig?.timeout ?? 30,
+      retries: mergedConfig?.retries ?? 0,
+    };
+  }
+
   return baseValues;
 }
 

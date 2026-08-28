@@ -6,6 +6,7 @@ Runners self-register on module import.
 
 Current runners:
     - llm_prompt: LLM completion using LiteLLM
+    - http_request: HTTP calls to external APIs with SSRF protection
 
 Adding a new runner:
     1. Create a new file (e.g., http_request.py)
@@ -16,4 +17,5 @@ Adding a new runner:
 
 # Import runner modules to trigger self-registration.
 # Add new runners here as they are created.
+import agent_playground.services.engine.runners.http_request  # noqa: F401
 import agent_playground.services.engine.runners.llm_prompt  # noqa: F401

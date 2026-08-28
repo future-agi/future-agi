@@ -341,7 +341,17 @@ export const useAgentPlaygroundStore = create(
                 prompt_template_id: config?.prompt_template_id ?? null,
                 prompt_version_id: null,
               }
-            : {};
+            : type === NODE_TYPES.HTTP_REQUEST
+              ? {
+                  method: config?.method ?? "GET",
+                  url: config?.url ?? "",
+                  headers: config?.headers ?? {},
+                  body: config?.body ?? null,
+                  auth: config?.auth ?? { type: "none" },
+                  timeout: config?.timeout ?? 30,
+                  retries: config?.retries ?? 0,
+                }
+              : {};
 
         // Caller-provided config is transient — only for form population, not persisted
         const initialConfig =

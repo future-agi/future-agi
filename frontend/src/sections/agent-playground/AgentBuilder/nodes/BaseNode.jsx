@@ -28,6 +28,7 @@ const BaseNode = ({
   data,
   isConnectable,
   selected: _UI_SELECTED_NODE,
+  content,
 }) => {
   const { label, preview, ports } = data;
   const outputPort = ports?.find((p) => p.direction === PORT_DIRECTION.OUTPUT);
@@ -192,6 +193,10 @@ const BaseNode = ({
           )}
         </Stack>
 
+        {content && (
+          <Box sx={{ width: 200, maxWidth: 200, mt: 0.75 }}>{content}</Box>
+        )}
+
         {/* Single output handle (right side) */}
         <Handle
           type="source"
@@ -288,6 +293,7 @@ BaseNode.propTypes = {
   }).isRequired,
   isConnectable: PropTypes.bool,
   selected: PropTypes.bool,
+  content: PropTypes.node,
 };
 
 const MemoizedBaseNode = memo(BaseNode);

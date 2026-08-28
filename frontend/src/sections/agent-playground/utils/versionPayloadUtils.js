@@ -292,19 +292,17 @@ export function parseVersionResponse(apiData) {
               },
               ref_graph_version_id: refGraphVersionId,
             }
-          : {
-              node_template_id:
-                node.nodeTemplateId ?? node.node_template_id ?? null,
-              prompt_template_id:
-                promptTemplate?.promptTemplateId ??
-                promptTemplate?.prompt_template_id ??
-                null,
-              prompt_version_id:
-                promptTemplate?.promptVersionId ??
-                promptTemplate?.prompt_version_id ??
-                null,
-              config: {
-                ...formConfig,
+          : nodeType === NODE_TYPES.HTTP_REQUEST
+            ? {
+                node_template_id:
+                  node.nodeTemplateId ?? node.node_template_id ?? null,
+                node_template_name:
+                  node.nodeTemplateName ?? node.node_template_name ?? null,
+                config: node.config || {},
+              }
+            : {
+                node_template_id:
+                  node.nodeTemplateId ?? node.node_template_id ?? null,
                 prompt_template_id:
                   promptTemplate?.promptTemplateId ??
                   promptTemplate?.prompt_template_id ??
@@ -313,19 +311,29 @@ export function parseVersionResponse(apiData) {
                   promptTemplate?.promptVersionId ??
                   promptTemplate?.prompt_version_id ??
                   null,
-                payload: {
-                  ...formConfig?.payload,
-                  promptConfig: [
-                    {
-                      configuration: {
-                        ...(promptTemplate || {}),
-                        responseFormat: promptTemplate?.response_format,
+                config: {
+                  ...formConfig,
+                  prompt_template_id:
+                    promptTemplate?.promptTemplateId ??
+                    promptTemplate?.prompt_template_id ??
+                    null,
+                  prompt_version_id:
+                    promptTemplate?.promptVersionId ??
+                    promptTemplate?.prompt_version_id ??
+                    null,
+                  payload: {
+                    ...formConfig?.payload,
+                    promptConfig: [
+                      {
+                        configuration: {
+                          ...(promptTemplate || {}),
+                          responseFormat: promptTemplate?.response_format,
+                        },
                       },
-                    },
-                  ],
+                    ],
+                  },
                 },
-              },
-            }),
+              }),
       },
     };
   });
@@ -353,11 +361,16 @@ export function parseVersionResponse(apiData) {
  * Map API node type to XYFlow node type.
  */
 function mapApiTypeToNodeType(apiNode) {
-  if (apiNode.type === API_NODE_TYPES.ATOMIC) {
-    return NODE_TYPES.LLM_PROMPT;
-  }
   if (apiNode.type === API_NODE_TYPES.SUBGRAPH) {
     return NODE_TYPES.AGENT;
+  }
+  const templateName =
+    apiNode.nodeTemplateName ?? apiNode.node_template_name ?? null;
+  if (templateName === NODE_TYPES.HTTP_REQUEST) {
+    return NODE_TYPES.HTTP_REQUEST;
+  }
+  if (apiNode.type === API_NODE_TYPES.ATOMIC) {
+    return NODE_TYPES.LLM_PROMPT;
   }
   return apiNode.type || NODE_TYPES.LLM_PROMPT;
 }

@@ -181,6 +181,7 @@ def create_node(
     source_node_id = data.get("source_node_id")
     prompt_data = data.get("prompt_template")
     ports_data = data.get("ports", [])
+    node_config = data.get("config") or {}
 
     node_template = None
     ref_graph_version = None
@@ -202,13 +203,21 @@ def create_node(
         ref_graph_version=ref_graph_version,
         type=node_type,
         name=name,
-        config={},
+        config=node_config,
         position=position,
     )
     node.save(skip_validation=True)
 
+    # Handle HTTP request nodes (config-driven, dynamic input ports)
+    if node_template and node_template.name == "http_request":
+        _create_input_ports_from_http_config(node, node_config)
+        if ports_data:
+            _create_ports_from_fe_array(node, ports_data)
+        else:
+            _create_http_output_port(node)
+
     # Handle LLM prompt nodes (DYNAMIC input_mode)
-    if node_template and node_template.input_mode == PortMode.DYNAMIC:
+    elif node_template and node_template.input_mode == PortMode.DYNAMIC:
         # LLM-type node — always create PT/PTV/PTN
         effective_prompt = prompt_data or _default_prompt_data()
         pt, pv = _resolve_or_create_pt_ptv(
@@ -298,6 +307,8 @@ def update_node(
         node.name = data["name"]
     if "position" in data:
         node.position = data["position"]
+    if "config" in data:
+        node.config = data["config"] or {}
 
     # Handle ref_graph_version_id update (subgraph nodes)
     if "ref_graph_version_id" in data:
@@ -310,6 +321,10 @@ def update_node(
             node.ref_graph_version = None
 
     node.save(skip_validation=True)
+
+    # Reconcile http_request input ports when config changes
+    if "config" in data and node.node_template and node.node_template.name == "http_request":
+        _reconcile_http_ports(node, node.config)
 
     # Handle input_mappings update (subgraph nodes only)
     if "input_mappings" in data and node.type == NodeType.SUBGRAPH:
@@ -842,6 +857,119 @@ def _create_input_ports_from_prompt(node: Node, prompt_data: dict[str, Any]) -> 
             direction=PortDirection.INPUT,
             data_schema={"type": "string"},
         ).save(skip_validation=True)
+
+
+_HTTP_VARIABLE_PATTERN = re.compile(r"\{\{\s*(?P<placeholder>.*?)\s*\}\}")
+
+
+def _extract_http_variables(config: dict[str, Any]) -> list[str]:
+    """Extract unique {{variable}} names from http_request config (url, headers, body)."""
+    text_parts: list[str] = []
+
+    url = config.get("url")
+    if isinstance(url, str):
+        text_parts.append(url)
+
+    headers = config.get("headers") or {}
+    if isinstance(headers, dict):
+        for value in headers.values():
+            if isinstance(value, str):
+                text_parts.append(value)
+
+    auth = config.get("auth") or {}
+    if isinstance(auth, dict):
+        for key in ("token", "username", "password"):
+            value = auth.get(key)
+            if isinstance(value, str):
+                text_parts.append(value)
+
+    def _collect_body(value: Any) -> None:
+        if isinstance(value, str):
+            text_parts.append(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                _collect_body(v)
+        elif isinstance(value, list):
+            for item in value:
+                _collect_body(item)
+
+    _collect_body(config.get("body"))
+
+    seen: set[str] = set()
+    variables: list[str] = []
+    for text in text_parts:
+        for match in _HTTP_VARIABLE_PATTERN.finditer(text):
+            name = match.group("placeholder").strip()
+            if name and name not in seen:
+                seen.add(name)
+                variables.append(name)
+    return variables
+
+
+def _create_input_ports_from_http_config(node: Node, config: dict[str, Any]) -> None:
+    """Create input ports for an http_request node from {{variable}} placeholders."""
+    for var in _extract_http_variables(config):
+        Port(
+            node=node,
+            key="custom",
+            display_name=var,
+            direction=PortDirection.INPUT,
+            data_schema={"type": "string"},
+        ).save(skip_validation=True)
+
+
+def _create_http_output_port(node: Node) -> None:
+    """Create the default 'response' output port for an http_request node."""
+    Port(
+        node=node,
+        key="response",
+        display_name="response",
+        direction=PortDirection.OUTPUT,
+        data_schema={},
+    ).save(skip_validation=True)
+
+
+def _reconcile_http_ports(node: Node, config: dict[str, Any]) -> None:
+    """
+    Reconcile input ports against {{variables}} in http_request config.
+
+    Adds ports for new variables, soft-deletes ports (and their edges)
+    for removed variables.
+    """
+    now = timezone.now()
+    new_vars = _extract_http_variables(config)
+
+    existing_input_ports = list(
+        Port.no_workspace_objects.filter(node=node, direction=PortDirection.INPUT)
+    )
+    existing_names = {p.display_name: p for p in existing_input_ports}
+
+    new_vars_set = set(new_vars)
+    existing_vars_set = set(existing_names.keys())
+
+    to_add = new_vars_set - existing_vars_set
+    to_remove = existing_vars_set - new_vars_set
+
+    for var in to_add:
+        Port(
+            node=node,
+            key="custom",
+            display_name=var,
+            direction=PortDirection.INPUT,
+            data_schema={"type": "string"},
+        ).save(skip_validation=True)
+
+    for name in to_remove:
+        port = existing_names[name]
+        Edge.no_workspace_objects.filter(source_port=port).update(
+            deleted=True, deleted_at=now
+        )
+        Edge.no_workspace_objects.filter(target_port=port).update(
+            deleted=True, deleted_at=now
+        )
+        port.deleted = True
+        port.deleted_at = now
+        port.save(skip_validation=True)
 
 
 def _create_default_output_port_from_prompt(

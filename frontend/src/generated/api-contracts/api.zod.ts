@@ -3182,6 +3182,7 @@ export const agentPlaygroundGraphsVersionsNodesCreateBodyPositionDefault = {  };
 
 export const agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateResponseFormatDefault = `text`;
 export const agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateSavePromptVersionDefault = false;
+export const agentPlaygroundGraphsVersionsNodesCreateBodyConfigDefault = {  };
 export const agentPlaygroundGraphsVersionsNodesCreateBodyPortsItemKeyMax = 100;
 
 export const agentPlaygroundGraphsVersionsNodesCreateBodyPortsItemDisplayNameMax = 100;
@@ -3237,6 +3238,9 @@ export const AgentPlaygroundGraphsVersionsNodesCreateBody = zod.object({
   "template_format": zod.string().optional().describe('Template format: \'mustache\' or \'jinja\''),
   "save_prompt_version": zod.boolean().default(agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateSavePromptVersionDefault)
 }).optional(),
+  "config": zod.object({
+
+}).passthrough().default(agentPlaygroundGraphsVersionsNodesCreateBodyConfigDefault),
   "ports": zod.array(zod.object({
   "id": zod.string().uuid().describe('FE-generated UUID'),
   "key": zod.string().min(1).max(agentPlaygroundGraphsVersionsNodesCreateBodyPortsItemKeyMax),
@@ -3269,6 +3273,7 @@ export const AgentPlaygroundGraphsVersionsNodesReadParams = zod.object({
 
 
 
+
 export const AgentPlaygroundGraphsVersionsNodesReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "type": zod.enum(['subgraph', 'atomic']).optional().describe('\'subgraph\' for subgraph nodes, \'atomic\' for nodes using a NodeTemplate'),
@@ -3280,6 +3285,7 @@ export const AgentPlaygroundGraphsVersionsNodesReadResponse = zod.object({
 
 }).passthrough().optional().describe('UI coordinates {\"x\": 0, \"y\": 0}'),
   "node_template_id": zod.string().uuid().optional(),
+  "node_template_name": zod.string().min(1).optional(),
   "ref_graph_version_id": zod.string().uuid().optional(),
   "ref_graph_name": zod.string().min(1).optional(),
   "ref_graph_id": zod.string().uuid().optional(),
@@ -3372,6 +3378,9 @@ export const AgentPlaygroundGraphsVersionsNodesPartialUpdateBody = zod.object({
   "template_format": zod.string().optional().describe('Template format: \'mustache\' or \'jinja\''),
   "save_prompt_version": zod.boolean().default(agentPlaygroundGraphsVersionsNodesPartialUpdateBodyPromptTemplateSavePromptVersionDefault)
 }).optional(),
+  "config": zod.object({
+
+}).passthrough().optional(),
   "ref_graph_version_id": zod.string().uuid().optional(),
   "input_mappings": zod.array(zod.object({
   "key": zod.string().min(1).describe('Input port display_name'),
@@ -3446,6 +3455,9 @@ export const AgentPlaygroundGraphsVersionsNodesPartialUpdateResponse = zod.objec
   "template_format": zod.string().optional().describe('Template format: \'mustache\' or \'jinja\''),
   "save_prompt_version": zod.boolean().default(agentPlaygroundGraphsVersionsNodesPartialUpdateResponsePromptTemplateSavePromptVersionDefault)
 }).optional(),
+  "config": zod.object({
+
+}).passthrough().optional(),
   "ref_graph_version_id": zod.string().uuid().optional(),
   "input_mappings": zod.array(zod.object({
   "key": zod.string().min(1).describe('Input port display_name'),
@@ -3497,6 +3509,7 @@ export const AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsQueryParams =
 
 
 
+
 export const AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponse = zod.object({
   "count": zod.number(),
   "next": zod.string().url().optional(),
@@ -3512,6 +3525,7 @@ export const AgentPlaygroundGraphsVersionsNodesPossibleEdgeMappingsResponse = zo
 
 }).passthrough().optional().describe('UI coordinates {\"x\": 0, \"y\": 0}'),
   "node_template_id": zod.string().uuid().optional(),
+  "node_template_name": zod.string().min(1).optional(),
   "ref_graph_version_id": zod.string().uuid().optional(),
   "ref_graph_name": zod.string().min(1).optional(),
   "ref_graph_id": zod.string().uuid().optional(),

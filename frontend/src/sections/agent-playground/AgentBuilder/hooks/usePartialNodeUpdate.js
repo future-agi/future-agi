@@ -31,6 +31,17 @@ function buildAgentPatchPayload(updateData) {
 }
 
 /**
+ * Build PATCH payload for http_request nodes.
+ * Sends name and the raw node config (method, url, headers, body, auth, ...).
+ */
+function buildHttpRequestPatchPayload(updateData) {
+  const patch = {};
+  if (updateData.label) patch.name = updateData.label;
+  if (updateData.config) patch.config = updateData.config;
+  return patch;
+}
+
+/**
  * Wraps the partial update API.
  * Transforms store-shaped nodeUpdate into contract-shaped PATCH payload
  * using prompt_template_id/prompt_version_id from the store.
@@ -45,10 +56,14 @@ export default function usePartialNodeUpdate() {
       const config = node?.data?.config;
       const graphId = state.currentAgent?.id;
       const versionId = state.currentAgent?.version_id;
-      const apiPayload =
-        node?.type === NODE_TYPES.LLM_PROMPT
-          ? buildPatchPayload(updateData, config)
-          : buildAgentPatchPayload(updateData);
+      let apiPayload;
+      if (node?.type === NODE_TYPES.LLM_PROMPT) {
+        apiPayload = buildPatchPayload(updateData, config);
+      } else if (node?.type === NODE_TYPES.HTTP_REQUEST) {
+        apiPayload = buildHttpRequestPatchPayload(updateData);
+      } else {
+        apiPayload = buildAgentPatchPayload(updateData);
+      }
 
       return mutateAsync({ graphId, versionId, nodeId, data: apiPayload });
     },

@@ -108,6 +108,9 @@ export default function useAddNodeOptimistic() {
                   ],
             },
           }),
+          ...(payload.type === NODE_TYPES.HTTP_REQUEST && {
+            config: config || {},
+          }),
         },
       })
         .then((apiResult) => {
