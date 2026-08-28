@@ -374,7 +374,6 @@ const UsersGrid = React.memo(
               });
             }
             if (!cursorPagination.current.isCurrent(requestGeneration)) {
-              failServerSideGridRead(params);
               return;
             }
 
@@ -480,14 +479,12 @@ const UsersGrid = React.memo(
             });
           } catch (error) {
             if (isExpectedRequestCancellation(error)) {
-              params.fail();
               return;
             }
             if (
               requestGeneration !== null &&
               !cursorPagination.current.isCurrent(requestGeneration)
             ) {
-              params.fail();
               return;
             }
             if (isListCursorContinuationLimitError(error)) {

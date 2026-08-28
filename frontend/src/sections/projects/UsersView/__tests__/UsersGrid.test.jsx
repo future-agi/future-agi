@@ -552,7 +552,7 @@ describe("UsersGrid deterministic pagination", () => {
 
     await readPage(params);
 
-    expect(params.fail).toHaveBeenCalledTimes(1);
+    expect(params.fail).not.toHaveBeenCalled();
     expect(params.success).not.toHaveBeenCalled();
     expect(props.setSearchState).not.toHaveBeenCalledWith("error");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -606,7 +606,7 @@ describe("UsersGrid deterministic pagination", () => {
     await act(async () => staleRead);
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
-    expect(staleParams.fail).toHaveBeenCalledTimes(1);
+    expect(staleParams.fail).not.toHaveBeenCalled();
     expect(staleParams.success).not.toHaveBeenCalled();
   });
 });

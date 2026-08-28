@@ -471,7 +471,7 @@ describe("SessionGrid cursor continuation", () => {
     const params = makeParams();
     await getRows(params);
 
-    expect(params.fail).toHaveBeenCalledTimes(1);
+    expect(params.fail).not.toHaveBeenCalled();
     expect(params.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });
@@ -523,7 +523,7 @@ describe("SessionGrid cursor continuation", () => {
     await act(async () => staleRead);
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
-    expect(staleParams.fail).toHaveBeenCalledTimes(1);
+    expect(staleParams.fail).not.toHaveBeenCalled();
     expect(staleParams.success).not.toHaveBeenCalled();
     expect(enqueueSnackbarMock).not.toHaveBeenCalled();
   });

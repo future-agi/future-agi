@@ -315,7 +315,6 @@ const SessionGrid = React.forwardRef(
                   }),
               });
               if (!cursorPagination.current.isCurrent(requestGeneration)) {
-                params.fail();
                 return;
               }
               const results = exactPage.response;
@@ -472,14 +471,12 @@ const SessionGrid = React.forwardRef(
               }
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
-                params.fail();
                 return;
               }
               if (
                 requestGeneration !== null &&
                 !cursorPagination.current.isCurrent(requestGeneration)
               ) {
-                params.fail();
                 return;
               }
               if (isListCursorContinuationLimitError(error)) {

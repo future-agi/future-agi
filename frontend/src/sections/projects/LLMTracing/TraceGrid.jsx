@@ -475,7 +475,6 @@ const TraceGrid = React.forwardRef(
               }, 0);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
-                params.fail();
                 return;
               }
               if (isListCursorContinuationLimitError(error)) {

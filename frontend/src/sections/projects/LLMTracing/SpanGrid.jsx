@@ -640,7 +640,6 @@ const SpanGrid = React.forwardRef(
               setContinuationNotice(null);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
-                params.fail();
                 return;
               }
               if (isListCursorContinuationLimitError(error)) {
