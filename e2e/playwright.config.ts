@@ -29,5 +29,25 @@ export default defineConfig({
     trace: process.env.CI || process.env.E2E_TRACE ? 'retain-on-failure' : 'off',
     screenshot: 'only-on-failure',
     video: 'off',
+    launchOptions: {
+      args: [
+        // /dev/shm is 64MB in a container and Chromium puts its renderer heap
+        // there; without this it silently falls back to disk-backed shm and
+        // tabs crash under load.
+        '--disable-dev-shm-usage',
+        // No GPU on CI runners, and the fallback path allocates anyway.
+        '--disable-gpu',
+        // The pages under test are dashboards, not memory-hungry apps — this
+        // caps the renderer heap well below the default (which scales with
+        // host RAM and so reserves most on the machines least able to spare it).
+        '--js-flags=--max-old-space-size=512',
+        // Background fetches race a navigating page and cost memory for
+        // traffic no assertion reads.
+        '--disable-background-networking',
+        // BackForwardCache keeps whole discarded documents alive; Translate
+        // adds a network round trip on every page with text.
+        '--disable-features=Translate,BackForwardCache',
+      ],
+    },
   },
 });
