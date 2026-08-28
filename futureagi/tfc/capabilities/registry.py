@@ -33,14 +33,10 @@ class FeatureDefinition:
     # license state). Setting oss_locked=True additionally requires a valid
     # license off-cloud — reserved for managed compute and the error feed.
     oss_locked: bool = False
-    # The ee/ package that actually implements this feature, when one does.
-    # Entitlement and implementation are decided in different places: a
-    # non-oss_locked feature is allowed on every self-hosted deployment, but
-    # published OSS images ship without ee/, so the import falls through to
-    # `tfc.ee_stub._ee_stub` and every invocation raises 402. Left unnamed,
-    # that mismatch reaches the user as an enabled surface whose every run
-    # fails. Naming the module lets check() deny up front, so the UI locks the
-    # control instead of offering one that cannot work.
+    # The ee/ package implementing this feature, when one exists. Builds
+    # without ee/ fall through to `tfc.ee_stub._ee_stub`, which 402s on every
+    # invocation — naming the module lets check() deny up front so the UI locks
+    # the control instead of offering one that cannot work.
     implementation_module: str | None = None
     required_service: str | None = None
     metering_dimension: str | None = None
@@ -140,11 +136,13 @@ FEATURE_AGENTIC_EVAL = FeatureDefinition(
     oss_baseline=False,
     requires_license=True,
     execution_location=ExecutionLocation.LOCAL,
-    # Runs free off-cloud wherever the evaluator is present, which is why this
-    # is not oss_locked — but the evaluator is `ee.evals.llm.agent_evaluator`
-    # (agentic_eval/core_evals/fi_evals/__init__.py imports AgentEvaluator from
-    # it, falling back to the 402 stub on ImportError). Without this, a build
-    # lacking ee/ reports the Agents tab enabled and then fails every run.
+    # The evaluator is EE code, so running it needs a license naming
+    # `agentic_eval` — without this it resolved allowed on any self-hosted
+    # stack, pure OSS included.
+    oss_locked=True,
+    # A license can still name a feature this build does not ship: flavor comes
+    # from `has_ee("ee.usage")` alone, so an image without the evaluator reads
+    # as SELF_HOSTED_EE and would pass the license check.
     implementation_module="ee.evals.llm.agent_evaluator",
 )
 
@@ -310,8 +308,8 @@ PAID_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.requires_license
 )
 
-# Paid features that stay license-gated even off-cloud (managed compute +
-# the error feed). Everything else in PAID_FEATURES is free on self-hosted.
+# Paid features that stay license-gated even off-cloud. Everything else in
+# PAID_FEATURES is free on self-hosted.
 OSS_LOCKED_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.oss_locked
 )
