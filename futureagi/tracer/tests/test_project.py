@@ -5,6 +5,7 @@ Tests for /tracer/project/ endpoints.
 """
 
 import json
+import re
 import uuid
 from datetime import UTC, timedelta
 
@@ -15,7 +16,7 @@ from rest_framework import status
 from accounts.models.user import OrgApiKey
 from model_hub.models.ai_model import AIModel
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project
+from tracer.models.project import PROJECT_TYPES, Project
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 
@@ -23,6 +24,40 @@ AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
     status.HTTP_403_FORBIDDEN,
 )
+
+PYTHON_LANGUAGE = "Python"
+TYPESCRIPT_LANGUAGE = "TypeScript"
+SDK_CODE_PROJECT_TYPES = tuple(value for value, _label in PROJECT_TYPES)
+
+# RegisterOptions accepted by register() in @traceai/fi-core 1.0.0 (otel.d.ts).
+FI_CORE_REGISTER_OPTIONS = frozenset(
+    {
+        "projectName",
+        "projectType",
+        "projectVersionName",
+        "evalTags",
+        "sessionName",
+        "metadata",
+        "batch",
+        "setGlobalTracerProvider",
+        "headers",
+        "verbose",
+        "endpoint",
+        "idGenerator",
+        "transport",
+    }
+)
+
+EXPERIMENT_TYPESCRIPT_REGISTER_OPTIONS = frozenset(
+    {"projectType", "projectName", "projectVersionName"}
+)
+OBSERVE_TYPESCRIPT_REGISTER_OPTIONS = frozenset({"projectType", "projectName"})
+PYTHON_REGISTER_KWARGS = ("project_type=", "project_name=")
+
+REGISTER_OPTIONS_BLOCK_PATTERN = re.compile(
+    r"register\(\s*\{(.*?)\n\s*\}\s*\)", re.DOTALL
+)
+REGISTER_OPTION_KEY_PATTERN = re.compile(r"^\s*([A-Za-z_$][\w$]*)\s*:", re.MULTILINE)
 
 
 def get_result(response):
@@ -55,6 +90,13 @@ def _traffic_sum(graph_payload):
 
 def get_result_from_graph(payload):
     return payload.get("result", payload)
+
+
+def extract_register_option_keys(typescript_snippet):
+    """Extract the option keys passed to register({...}) in a TypeScript snippet."""
+    options_block = REGISTER_OPTIONS_BLOCK_PATTERN.search(typescript_snippet)
+    assert options_block is not None, "snippet does not call register() with options"
+    return set(REGISTER_OPTION_KEY_PATTERN.findall(options_block.group(1)))
 
 
 @pytest.mark.integration
@@ -713,6 +755,50 @@ class TestProjectSDKCodeAPI:
             "/tracer/project/project_sdk_code/", {"project_type": "invalid"}
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_get_sdk_code_experiment_typescript_register_options(self, auth_client):
+        """Experiment TypeScript snippet passes exactly the camelCase register options."""
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "experiment"}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        snippet = get_result(response)["project_add_code"][TYPESCRIPT_LANGUAGE]
+        assert (
+            extract_register_option_keys(snippet)
+            == EXPERIMENT_TYPESCRIPT_REGISTER_OPTIONS
+        )
+
+    def test_get_sdk_code_observe_typescript_register_options(self, auth_client):
+        """Observe TypeScript snippet passes exactly the camelCase register options."""
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        snippet = get_result(response)["project_add_code"][TYPESCRIPT_LANGUAGE]
+        assert (
+            extract_register_option_keys(snippet) == OBSERVE_TYPESCRIPT_REGISTER_OPTIONS
+        )
+
+    def test_get_sdk_code_typescript_options_accepted_by_sdk(self, auth_client):
+        """TypeScript snippets only pass options the SDK's register() accepts."""
+        for project_type in SDK_CODE_PROJECT_TYPES:
+            response = auth_client.get(
+                "/tracer/project/project_sdk_code/", {"project_type": project_type}
+            )
+            assert response.status_code == status.HTTP_200_OK
+            snippet = get_result(response)["project_add_code"][TYPESCRIPT_LANGUAGE]
+            assert extract_register_option_keys(snippet) <= FI_CORE_REGISTER_OPTIONS
+
+    def test_get_sdk_code_python_keeps_snake_case_kwargs(self, auth_client):
+        """Python snippets keep the snake_case kwargs the Python SDK requires."""
+        for project_type in SDK_CODE_PROJECT_TYPES:
+            response = auth_client.get(
+                "/tracer/project/project_sdk_code/", {"project_type": project_type}
+            )
+            assert response.status_code == status.HTTP_200_OK
+            snippet = get_result(response)["project_add_code"][PYTHON_LANGUAGE]
+            for kwarg in PYTHON_REGISTER_KWARGS:
+                assert kwarg in snippet
 
 
 @pytest.mark.integration
