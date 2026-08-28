@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent, act } from "src/utils/test-utils";
 
 import CustomizePanel from "../CustomizePanel";
-import { resolveEnabledNames } from "../connectorTools";
+import { isOnlyEnabledTool, resolveEnabledNames } from "../connectorTools";
 import { falconAIQueryKeys } from "../../hooks/useFalconAPI";
 
 const mocks = vi.hoisted(() => ({
@@ -125,6 +125,46 @@ describe("resolveEnabledNames", () => {
   it("yields nothing for a connector with no tools at all", () => {
     expect(resolveEnabledNames(LIST_ROW)).toEqual([]);
   });
+
+  it("reads string-shaped tools, which the settings page also renders", () => {
+    expect(
+      resolveEnabledNames({
+        discovered_tools: ["ask_question", "read_wiki_contents"],
+        enabled_tool_names: [],
+      }),
+    ).toEqual(["ask_question", "read_wiki_contents"]);
+  });
+});
+
+describe("isOnlyEnabledTool", () => {
+  it("marks the single remaining enabled tool", () => {
+    const connector = { ...DETAIL, enabled_tool_names: ["ask_question"] };
+    expect(isOnlyEnabledTool(connector, "ask_question")).toBe(true);
+    expect(isOnlyEnabledTool(connector, "read_wiki_contents")).toBe(false);
+  });
+
+  it("marks nothing while more than one tool is enabled", () => {
+    const connector = {
+      ...DETAIL,
+      enabled_tool_names: ["ask_question", "read_wiki_contents"],
+    };
+    expect(isOnlyEnabledTool(connector, "ask_question")).toBe(false);
+  });
+
+  it("resolves the sentinel first, so all-enabled marks nothing", () => {
+    expect(
+      isOnlyEnabledTool({ ...DETAIL, enabled_tool_names: [] }, "ask_question"),
+    ).toBe(false);
+  });
+
+  it("marks the tool when a connector has exactly one", () => {
+    // The sentinel resolves to that single tool, so it is already the last.
+    const connector = {
+      discovered_tools: [{ name: "ask_question" }],
+      enabled_tool_names: [],
+    };
+    expect(isOnlyEnabledTool(connector, "ask_question")).toBe(true);
+  });
 });
 
 describe("Customize panel — connector tools", () => {
@@ -209,7 +249,7 @@ describe("Customize panel — connector tools", () => {
     await openConnector();
     await screen.findByText("ask_question");
 
-    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
 
     await waitFor(() => expect(mocks.updateConnectorTools).toHaveBeenCalled());
     const [connectorId, names] = mocks.updateConnectorTools.mock.calls[0];
@@ -235,7 +275,7 @@ describe("Customize panel — connector tools", () => {
     await openConnector(queryClient);
     await screen.findByText("ask_question");
 
-    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
     await waitFor(() => expect(mocks.updateConnectorTools).toHaveBeenCalled());
 
     const cached = queryClient.getQueryData(
@@ -258,12 +298,262 @@ describe("Customize panel — connector tools", () => {
     await openConnector();
     await screen.findByText("ask_question");
 
-    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /Keep at least one tool enabled/i,
+      /At least one tool must stay allowed/i,
     );
     expect(mocks.updateConnectorTools).not.toHaveBeenCalled();
+  });
+
+  it("shows the write in flight rather than a toggle that does nothing", async () => {
+    // The icon is driven by the server's answer, so a slow PATCH leaves the
+    // row looking untouched — indistinguishable from a dead control.
+    const deferred = createDeferred();
+    mocks.updateConnectorTools.mockReturnValue(deferred.promise);
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+
+    expect(await screen.findByLabelText("Saving")).toBeInTheDocument();
+
+    // And a second click cannot queue a write against the stale snapshot.
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+    expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      deferred.resolve({});
+    });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Saving")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("coalesces clicks made while a write is out instead of losing them", async () => {
+    // The bug: each click built a full list from the record on screen, which
+    // only advances when its own request lands. Two in flight meant two lists
+    // computed from the same snapshot, and the last to arrive won — reverting
+    // the other. Reproduced on dev over 3G with three overlapping PATCHes.
+    const first = createDeferred();
+    const second = createDeferred();
+    mocks.updateConnectorTools
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    // Deny ask_question, then read_wiki_contents before the first lands. The
+    // second click targets index 0 again because the first row already reads
+    // as Denied — the optimistic half of the fix.
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+
+    // Only one request is ever out.
+    expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      first.resolve({});
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(2),
+    );
+    // The follow-up carries the newest set, not the one the click computed.
+    expect(mocks.updateConnectorTools.mock.calls[1][1]).toEqual([
+      "read_wiki_structure",
+    ]);
+
+    await act(async () => {
+      second.resolve({});
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Saving")).not.toBeInTheDocument(),
+    );
+    // Both denials survived; pre-fix the first one came back.
+    expect(screen.getAllByLabelText("Allowed")).toHaveLength(1);
+  });
+
+  it("keeps both denials when two clicks land before a re-render", async () => {
+    // Clicks faster than React commits: the second handler still closes over
+    // the pre-click record, so reading permissions off that record would undo
+    // the first denial. The desired set is the only thing that is current.
+    const first = createDeferred();
+    mocks.updateConnectorTools.mockReturnValue(first.promise);
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    const allowed = screen.getAllByLabelText("Allowed");
+    act(() => {
+      fireEvent.click(allowed[0]);
+      fireEvent.click(allowed[1]);
+    });
+
+    expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(1);
+
+    mocks.updateConnectorTools.mockResolvedValue({});
+    await act(async () => {
+      first.resolve({});
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(2),
+    );
+    expect(mocks.updateConnectorTools.mock.calls[1][1]).toEqual([
+      "read_wiki_structure",
+    ]);
+  });
+
+  it("keeps a connector's queued write when another connector is toggled", async () => {
+    // The writer outlives the selection, so its queue is keyed by connector.
+    // A single slot would let GitHub's toggle discard DeepWiki's queued set
+    // after it had already been shown as applied.
+    mocks.fetchConnectors.mockResolvedValue({
+      results: [LIST_ROW, LIST_ROW_B],
+    });
+    mocks.getConnector.mockImplementation((id) =>
+      Promise.resolve(id === "conn-2" ? DETAIL_B : DETAIL),
+    );
+
+    const first = createDeferred();
+    mocks.updateConnectorTools.mockReturnValueOnce(first.promise);
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    // Two denials on DeepWiki: the first goes out, the second queues.
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+    expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(1);
+
+    // Switch to GitHub and deny one of its tools while that queue is unsent.
+    fireEvent.click(await screen.findByText("GitHub"));
+    await screen.findByText("list_prs");
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+
+    await act(async () => {
+      first.resolve({});
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(3),
+    );
+
+    const forDeepWiki = mocks.updateConnectorTools.mock.calls.filter(
+      ([id]) => id === "conn-1",
+    );
+    const forGitHub = mocks.updateConnectorTools.mock.calls.filter(
+      ([id]) => id === "conn-2",
+    );
+    // DeepWiki's queued denial survived rather than being dropped.
+    expect(forDeepWiki).toHaveLength(2);
+    expect(forDeepWiki[1][1]).toEqual(["read_wiki_structure"]);
+    expect(forGitHub).toHaveLength(1);
+  });
+
+  it("rolls back to the last set the server accepted when a write fails", async () => {
+    const first = createDeferred();
+    let fail;
+    mocks.updateConnectorTools
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          fail = reject;
+        }),
+      );
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+
+    await act(async () => {
+      first.resolve({});
+    });
+    await waitFor(() =>
+      expect(mocks.updateConnectorTools).toHaveBeenCalledTimes(2),
+    );
+
+    await act(async () => {
+      fail({ response: { data: { detail: "Nope." } } });
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nope.");
+    // The first denial was accepted, the second was not: two allowed remain.
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("Allowed")).toHaveLength(2),
+    );
+  });
+
+  it("clears the in-flight state when the write fails", async () => {
+    let fail;
+    mocks.updateConnectorTools.mockReturnValue(
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+    );
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
+    await screen.findByLabelText("Saving");
+
+    await act(async () => {
+      fail({ response: { data: { detail: "Nope." } } });
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nope.");
+    // A stuck spinner would leave the row permanently unclickable.
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Saving")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("warns on the last enabled toggle before it is clicked", async () => {
+    // The guard alone is reactive — it explains after the refused click. The
+    // tooltip states the constraint on the control itself, beforehand.
+    mocks.getConnector.mockResolvedValue({
+      ...DETAIL,
+      enabled_tool_names: ["ask_question"],
+    });
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.mouseOver(screen.getAllByLabelText("Allowed")[0]);
+
+    expect(
+      await screen.findByText(/at least one must stay on/i),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves the other toggles unannotated", async () => {
+    mocks.getConnector.mockResolvedValue({
+      ...DETAIL,
+      enabled_tool_names: ["ask_question", "read_wiki_contents"],
+    });
+
+    await openConnector();
+    await screen.findByText("ask_question");
+
+    fireEvent.mouseOver(screen.getAllByLabelText("Allowed")[0]);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/at least one must stay on/i),
+      ).not.toBeInTheDocument(),
+    );
+    // The plain hover hint stays on the toggles the guard does not refuse.
+    expect(screen.getAllByLabelText("Allowed")[0]).toHaveAttribute(
+      "title",
+      "Allowed",
+    );
   });
 
   it("still allows denying a tool when others remain enabled", async () => {
@@ -275,7 +565,7 @@ describe("Customize panel — connector tools", () => {
     await openConnector();
     await screen.findByText("ask_question");
 
-    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
 
     await waitFor(() =>
       expect(mocks.updateConnectorTools).toHaveBeenCalledWith("conn-1", [
@@ -292,7 +582,7 @@ describe("Customize panel — connector tools", () => {
     await openConnector();
     await screen.findByText("ask_question");
 
-    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Connector is not verified.",
@@ -415,7 +705,7 @@ describe("Customize panel — connector tools", () => {
     await openConnector(queryClient);
     await screen.findByText("ask_question");
 
-    fireEvent.click(screen.getAllByTitle("Allowed")[0]);
+    fireEvent.click(screen.getAllByLabelText("Allowed")[0]);
     await waitFor(() => expect(mocks.updateConnectorTools).toHaveBeenCalled());
 
     expect(

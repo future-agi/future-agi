@@ -1,107 +1,81 @@
-import { useCallback, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import {
+  LAST_ENABLED_TOOL_MESSAGE,
   resolveEnabledNames,
-  toolActionErrorMessage,
 } from "../components/connectorTools";
-import { falconAIQueryKeys, updateConnectorTools } from "./useFalconAPI";
+import { useToolPermissionWrites } from "./useToolPermissionWrites";
 
 /**
- * Owns allow/deny for a connector's tools.
+ * Owns allow/deny for a connector's tools, on both surfaces that offer it.
  *
- * Writes are keyed by tool name and always derived from `selectedItem`, the
- * only record holding `discovered_tools`/`enabled_tool_names`; a list row would
- * resolve to an empty set and clear every permission.
+ * Writes are keyed by tool name and derived from the connector *detail*
+ * record, the only one carrying `discovered_tools`/`enabled_tool_names`; a list
+ * row would resolve to an empty set and clear every permission.
+ *
+ * Ordering, optimistic display and rollback live in useToolPermissionWrites.
  *
  * @param {object} params
- * @param {object|null} params.selectedItem   connector detail currently shown
- * @param {Function} params.setSelectedItem   state setter for that record
- * @param {Function} params.setConnectors     state setter for the list rows
+ * @param {object|null} params.connector  connector detail currently shown
+ * @param {Function} params.onApply       (connectorId, names) => void, for any
+ *                                        copy of the record the caller holds
+ *                                        outside the react-query cache
+ * @param {Function} [params.onDrained]   called once the writes settle
  */
-export function useConnectorToolPermissions({
-  selectedItem,
-  setSelectedItem,
-  setConnectors,
-}) {
-  const [toolError, setToolError] = useState(null);
-  const queryClient = useQueryClient();
+export function useConnectorToolPermissions({ connector, onApply, onDrained }) {
+  const { toolError, setToolError, pendingFor, queueWrite, desiredNames } =
+    useToolPermissionWrites({ onApply, onDrained });
 
-  const applyEnabledToolNames = useCallback(
-    async (connectorId, nextNames) => {
-      try {
-        await updateConnectorTools(connectorId, nextNames);
-        setToolError(null);
-        queryClient.setQueryData(
-          falconAIQueryKeys.connector(connectorId),
-          (prev) => (prev ? { ...prev, enabled_tool_names: nextNames } : prev),
-        );
-        setSelectedItem((prev) =>
-          prev?.id === connectorId
-            ? { ...prev, enabled_tool_names: nextNames }
-            : prev,
-        );
-        // tool_count is the only tool-derived field the list carries.
-        setConnectors((prev) =>
-          prev.map((c) =>
-            c.id === connectorId ? { ...c, tool_count: nextNames.length } : c,
-          ),
-        );
-      } catch (error) {
-        setToolError(
-          toolActionErrorMessage(error, "Failed to update tool permissions."),
-        );
-      }
-    },
-    [setSelectedItem, setConnectors, queryClient],
-  );
+  // Only this connector's unsaved names; the writer tracks every connector it
+  // has queued work for, which outlives any one selection.
+  const pendingNames = pendingFor(connector?.id);
 
   const handleToolToggle = useCallback(
-    async (connectorId, tool) => {
+    (connectorId, toolName) => {
       // Permissions are addressed by name; a nameless tool cannot be targeted.
-      if (!tool?.name) return;
+      if (!toolName) return;
+      if (connector?.id !== connectorId) return;
 
-      const conn = selectedItem?.id === connectorId ? selectedItem : null;
-      if (!conn) return;
+      const baseline = resolveEnabledNames(connector);
+      // What the user wants, which may already be ahead of the server.
+      const enabled = desiredNames(connectorId, baseline);
+      const next = enabled.includes(toolName)
+        ? enabled.filter((n) => n !== toolName)
+        : [...enabled, toolName];
 
-      const enabled = resolveEnabledNames(conn);
-      const next = enabled.includes(tool.name)
-        ? enabled.filter((n) => n !== tool.name)
-        : [...enabled, tool.name];
-
-      // An empty list is the "all tools enabled" sentinel on both sides
-      // (mcp_tools.py:207), so denying the last remaining tool would grant
-      // every tool instead of none — and it persists. Refuse the write until
-      // the schema can express "none enabled" (TH-7673).
+      // Refuse the write that would empty the list; the tooltip on that
+      // toggle says the same thing before the click. See connectorTools.js.
       if (next.length === 0) {
-        setToolError(
-          "Keep at least one tool enabled. An empty selection is stored as " +
-            '"all tools allowed" — use Disconnect to revoke the connector.',
-        );
+        setToolError(LAST_ENABLED_TOOL_MESSAGE);
         return;
       }
 
-      await applyEnabledToolNames(connectorId, next);
+      queueWrite(connectorId, next, [toolName], baseline);
     },
-    [selectedItem, applyEnabledToolNames],
+    [connector, desiredNames, queueWrite, setToolError],
   );
 
-  // One request for the whole group — firing the single toggle per tool would
-  // race, each call computing its next set from the same stale snapshot.
+  // One request for the whole group rather than one per tool.
   const handleToolsAllow = useCallback(
-    async (connectorId, tools) => {
-      const conn = selectedItem?.id === connectorId ? selectedItem : null;
-      if (!conn) return;
+    (connectorId, toolNames) => {
+      if (connector?.id !== connectorId) return;
 
-      const enabled = resolveEnabledNames(conn);
-      const names = tools.map((t) => t.name).filter(Boolean);
+      const baseline = resolveEnabledNames(connector);
+      const enabled = desiredNames(connectorId, baseline);
+      const names = toolNames.filter(Boolean);
       const next = [...new Set([...enabled, ...names])];
       if (next.length === enabled.length) return;
 
-      await applyEnabledToolNames(connectorId, next);
+      queueWrite(connectorId, next, names, baseline);
     },
-    [selectedItem, applyEnabledToolNames],
+    [connector, desiredNames, queueWrite],
   );
 
-  return { toolError, setToolError, handleToolToggle, handleToolsAllow };
+  return {
+    toolError,
+    setToolError,
+    pendingNames,
+    handleToolToggle,
+    handleToolsAllow,
+  };
 }

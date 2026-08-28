@@ -20,6 +20,7 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   listSkills,
   fetchConnectors,
@@ -31,7 +32,12 @@ import useFalconStore from "../store/useFalconStore";
 import ToolsSkeleton from "./ToolsSkeleton";
 import ConnectorDetailError from "./ConnectorDetailError";
 import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
-import { resolveEnabledNames, toolActionErrorMessage } from "./connectorTools";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  resolveEnabledNames,
+  toolActionErrorMessage,
+} from "./connectorTools";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1320,6 +1326,7 @@ function ConnectorDetailPanel({
   onToolToggle,
   onToolsAllow,
   toolError,
+  pendingNames,
   loading,
   detailError,
   onRetry,
@@ -1892,7 +1899,12 @@ function ConnectorDetailPanel({
                     borderRadius: "6px",
                     cursor: "pointer",
                   }}
-                  onClick={() => onToolsAllow(connector.id, interactiveTools)}
+                  onClick={() =>
+                    onToolsAllow(
+                      connector.id,
+                      interactiveTools.map((t) => t.name),
+                    )
+                  }
                 />
               </Box>
               <Box
@@ -1907,7 +1919,9 @@ function ConnectorDetailPanel({
                     key={tool.name || idx}
                     tool={tool}
                     enabled={isToolEnabled(tool)}
-                    onToggle={() => onToolToggle(connector.id, tool)}
+                    onlyEnabled={isOnlyEnabledTool(connector, tool.name)}
+                    pending={pendingNames.includes(tool.name)}
+                    onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === interactiveTools.length - 1}
                     isDark={isDark}
                     theme={theme}
@@ -1960,7 +1974,12 @@ function ConnectorDetailPanel({
                     borderRadius: "6px",
                     cursor: "pointer",
                   }}
-                  onClick={() => onToolsAllow(connector.id, readOnlyTools)}
+                  onClick={() =>
+                    onToolsAllow(
+                      connector.id,
+                      readOnlyTools.map((t) => t.name),
+                    )
+                  }
                 />
               </Box>
               <Box
@@ -1975,7 +1994,9 @@ function ConnectorDetailPanel({
                     key={tool.name || idx}
                     tool={tool}
                     enabled={isToolEnabled(tool)}
-                    onToggle={() => onToolToggle(connector.id, tool)}
+                    onlyEnabled={isOnlyEnabledTool(connector, tool.name)}
+                    pending={pendingNames.includes(tool.name)}
+                    onToggle={() => onToolToggle(connector.id, tool.name)}
                     isLast={idx === readOnlyTools.length - 1}
                     isDark={isDark}
                     theme={theme}
@@ -2045,6 +2066,7 @@ ConnectorDetailPanel.propTypes = {
   onToolToggle: PropTypes.func,
   onToolsAllow: PropTypes.func,
   toolError: PropTypes.string,
+  pendingNames: PropTypes.arrayOf(PropTypes.string),
   loading: PropTypes.bool,
   detailError: PropTypes.string,
   onRetry: PropTypes.func,
@@ -2054,7 +2076,16 @@ ConnectorDetailPanel.propTypes = {
 };
 
 // Tool row component for clean per-item rendering
-function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
+function ToolRow({
+  tool,
+  enabled,
+  onlyEnabled,
+  pending,
+  onToggle,
+  isLast,
+  isDark,
+  theme,
+}) {
   return (
     <Box
       sx={{
@@ -2090,21 +2121,37 @@ function ToolRow({ tool, enabled, onToggle, isLast, isDark, theme }) {
         )}
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-        <IconButton
+        {/* The guard refuses this click; say so before it, not after. */}
+        <CustomTooltip
+          show={onlyEnabled}
+          arrow
           size="small"
-          onClick={onToggle}
-          title={enabled ? "Allowed" : "Denied"}
-          sx={{
-            width: 26,
-            height: 26,
-            color: enabled ? "success.main" : "text.disabled",
-          }}
+          placement="left"
+          title={LAST_ENABLED_TOOL_HINT}
         >
-          <Iconify
-            icon={enabled ? "mdi:check-circle" : "mdi:close-circle-outline"}
-            width={18}
-          />
-        </IconButton>
+          <IconButton
+            size="small"
+            onClick={onToggle}
+            // The accessible name stays put; the native title is suppressed
+            // under the tooltip so the two don't stack on hover.
+            aria-label={enabled ? "Allowed" : "Denied"}
+            title={onlyEnabled ? undefined : enabled ? "Allowed" : "Denied"}
+            sx={{
+              width: 26,
+              height: 26,
+              color: enabled ? "success.main" : "text.disabled",
+            }}
+          >
+            {pending ? (
+              <CircularProgress size={16} role="status" aria-label="Saving" />
+            ) : (
+              <Iconify
+                icon={enabled ? "mdi:check-circle" : "mdi:close-circle-outline"}
+                width={18}
+              />
+            )}
+          </IconButton>
+        </CustomTooltip>
       </Box>
     </Box>
   );
@@ -2118,6 +2165,8 @@ ToolRow.propTypes = {
     enabled: PropTypes.bool,
   }).isRequired,
   enabled: PropTypes.bool,
+  onlyEnabled: PropTypes.bool,
+  pending: PropTypes.bool,
   onToggle: PropTypes.func.isRequired,
   isLast: PropTypes.bool,
   isDark: PropTypes.bool,
@@ -2137,12 +2186,33 @@ export default function CustomizePanel() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [connectorDetailLoading, setConnectorDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(null);
-  const { toolError, setToolError, handleToolToggle, handleToolsAllow } =
-    useConnectorToolPermissions({
-      selectedItem,
-      setSelectedItem,
-      setConnectors,
-    });
+  const applyToolNames = useCallback(
+    (connectorId, names) => {
+      setSelectedItem((prev) =>
+        prev?.id === connectorId
+          ? { ...prev, enabled_tool_names: names }
+          : prev,
+      );
+      // tool_count is the only tool-derived field the list carries.
+      setConnectors((prev) =>
+        prev.map((c) =>
+          c.id === connectorId ? { ...c, tool_count: names.length } : c,
+        ),
+      );
+    },
+    [setSelectedItem, setConnectors],
+  );
+
+  const {
+    toolError,
+    setToolError,
+    pendingNames,
+    handleToolToggle,
+    handleToolsAllow,
+  } = useConnectorToolPermissions({
+    connector: selectedItem,
+    onApply: applyToolNames,
+  });
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [loadingConnectors, setLoadingConnectors] = useState(false);
   const [isEditingSkill, setIsEditingSkill] = useState(false);
@@ -2470,6 +2540,7 @@ export default function CustomizePanel() {
             onToolToggle={handleToolToggle}
             onToolsAllow={handleToolsAllow}
             toolError={toolError}
+            pendingNames={pendingNames}
             loading={connectorDetailLoading}
             detailError={detailError}
             onRetry={() => handleSelectItem(selectedItem)}

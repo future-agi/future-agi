@@ -12,14 +12,21 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Switch from "@mui/material/Switch";
+import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
-import { toolActionErrorMessage } from "src/sections/falcon-ai/components/connectorTools";
+import {
+  LAST_ENABLED_TOOL_HINT,
+  isOnlyEnabledTool,
+  toolActionErrorMessage,
+} from "src/sections/falcon-ai/components/connectorTools";
+import { useConnectorToolPermissions } from "src/sections/falcon-ai/hooks/useConnectorToolPermissions";
 import {
   fetchConnectors,
   useConnector,
@@ -29,7 +36,6 @@ import {
   testConnector,
   discoverConnectorTools,
   authenticateConnector,
-  updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
 import { buildConnectorSavePayload } from "./utils";
 
@@ -434,6 +440,18 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const [discovering, setDiscovering] = useState(false);
   const [reauthing, setReauthing] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  // Ordering, the last-tool guard, optimistic display and rollback are shared
+  // with the Customize pane. The switch reads through the react-query cache
+  // this writes to, so no local copy of the record is needed here.
+  const {
+    toolError,
+    pendingNames,
+    handleToolToggle: toggleTool,
+  } = useConnectorToolPermissions({
+    connector,
+    onApply: () => {},
+    onDrained: onRefresh,
+  });
 
   const tools = connector.discovered_tools || [];
   const enabledTools = connector.enabled_tool_names || [];
@@ -543,23 +561,7 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
     }
   };
 
-  const handleToolToggle = async (toolName) => {
-    let updated;
-    if (isToolEnabled(toolName)) {
-      updated = enabledTools.filter((t) => t !== toolName);
-    } else {
-      updated = [...enabledTools, toolName];
-    }
-    try {
-      await updateConnectorTools(connector.id, updated);
-      await onRefresh();
-    } catch (error) {
-      setFeedback({
-        severity: "error",
-        message: toolActionErrorMessage(error, "Failed to update tools."),
-      });
-    }
-  };
+  const handleToolToggle = (toolName) => toggleTool(connector.id, toolName);
 
   return (
     <Box
@@ -690,6 +692,12 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
       {feedback && (
         <Alert severity={feedback.severity} sx={{ mb: 2, fontSize: 12 }}>
           {feedback.message}
+        </Alert>
+      )}
+
+      {toolError && (
+        <Alert severity="warning" sx={{ mb: 2, fontSize: 12 }}>
+          {toolError}
         </Alert>
       )}
 
@@ -830,11 +838,29 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
                     </Typography>
                   )}
                 </Box>
-                <Switch
-                  size="small"
-                  checked={enabled}
-                  onChange={() => handleToolToggle(name)}
-                />
+                {/* The guard refuses this click; say so before it. */}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  {pendingNames.includes(name) && (
+                    <CircularProgress
+                      size={14}
+                      role="status"
+                      aria-label="Saving"
+                    />
+                  )}
+                  <CustomTooltip
+                    show={isOnlyEnabledTool(connector, name)}
+                    arrow
+                    size="small"
+                    placement="left"
+                    title={LAST_ENABLED_TOOL_HINT}
+                  >
+                    <Switch
+                      size="small"
+                      checked={enabled}
+                      onChange={() => handleToolToggle(name)}
+                    />
+                  </CustomTooltip>
+                </Box>
               </Box>
             );
           })}
