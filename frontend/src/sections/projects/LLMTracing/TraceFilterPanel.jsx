@@ -42,6 +42,7 @@ import { SpanTypes } from "src/utils/constant";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAIFilter } from "src/hooks/use-ai-filter";
+import { FILTER_INPUT_TYPES } from "src/utils/constants";
 import { QueryInput } from "src/components/filter-panel";
 import {
   getPickerOptionExactMatches,
@@ -333,9 +334,17 @@ const getOperators = (fieldType) => {
 // Wrapper that special-cases ID-only fields. Use from FilterRow + apply
 // validation; keep `getOperators` as the pure type → ops mapping (Query
 // tab + AI filter schema rely on the type-only behavior).
-const getOperatorsForFilter = (filter) => {
+const getOperatorsForFilter = (filter, property) => {
   if (filter?.field && ID_ONLY_FIELDS.has(filter.field)) return ID_ONLY_OPS;
-  return getOperators(filter?.fieldType);
+  const ops = getOperators(filter?.fieldType);
+  // A property may narrow its own operators — e.g. span type, where the API
+  // takes a value list and has nowhere to put an operator, so anything but
+  // "is one of" would be a no-op or an inversion.
+  if (!Array.isArray(property?.operators)) return ops;
+  // A property whose declared operators share nothing with its type would
+  // narrow the row down to an empty dropdown, so fall back to the type's own.
+  const narrowed = ops.filter((op) => property.operators.includes(op.value));
+  return narrowed.length ? narrowed : ops;
 };
 
 const getDefaultOperatorForFilter = (filter, ops) => {
@@ -440,6 +449,8 @@ export const hasIncompleteNumericRow = (rows) =>
   });
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
+const USER_SELECTABLE_TYPES = new Set(["text", "number", "boolean"]);
+
 const SINGLE_VALUE_OPS = new Set([
   "equals",
   "not_equals",
@@ -979,8 +990,7 @@ function ValuePicker({
   // page can only be found by the backend. Other field types keep
   // client-side filtering of the fetched page.
   const usesBackendSearch =
-    !hasStaticChoices &&
-    (isIdOnlyField || metricType === "custom_attribute");
+    !hasStaticChoices && (isIdOnlyField || metricType === "custom_attribute");
 
   // Primary: dashboard API values
   const {
@@ -1409,7 +1419,7 @@ function FilterRow({
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
-  const allOps = getOperatorsForFilter(filter);
+  const allOps = getOperatorsForFilter(filter, selectedProp);
   // Optional per-flow allowlist; currentOpDef resolves against the full set.
   const ops = operatorFilter ? allOps.filter(operatorFilter) : allOps;
   const safeOperator = normalizeFilterRowOperator(filter).operator;
@@ -1436,6 +1446,18 @@ function FilterRow({
 
   const handlePropertySelect = useCallback(
     (prop) => {
+      // When the row owns its type, swapping the property must not reset it —
+      // the type is the user's choice, not a fact about the field.
+      if (prop.typeSelectable && USER_SELECTABLE_TYPES.has(filter.fieldType)) {
+        onChange(index, {
+          ...filter,
+          field: prop.id,
+          fieldName: prop.name,
+          fieldCategory: prop.category,
+          apiColType: prop.apiColType,
+        });
+        return;
+      }
       // Preserve custom annotation types (categorical, thumbs, text) —
       // normalizeFieldType would collapse them to "string" losing
       // operator/input specificity.
@@ -1466,13 +1488,13 @@ function FilterRow({
         value: defaultValue,
       });
     },
-    [index, onChange, defaultOperatorForType],
+    [index, filter, onChange, defaultOperatorForType],
   );
 
   const handleOperatorChange = useCallback(
     (e) => {
       const newOp = e.target.value;
-      const opList = getOperatorsForFilter(filter);
+      const opList = getOperatorsForFilter(filter, selectedProp);
       const newDef = opList.find((o) => o.value === newOp);
       const oldDef = opList.find((o) => o.value === safeOperator);
       let newVal = filter.value;
@@ -1498,7 +1520,20 @@ function FilterRow({
       }
       onChange(index, { ...filter, operator: newOp, value: newVal });
     },
-    [index, filter, safeOperator, isNumber, isDate, onChange],
+    [index, filter, selectedProp, safeOperator, isNumber, isDate, onChange],
+  );
+
+  const handleTypeChange = useCallback(
+    (e) => {
+      const fieldType = e.target.value;
+      onChange(index, {
+        ...filter,
+        fieldType,
+        operator: DEFAULT_OP_FOR_TYPE[fieldType] || "equals",
+        value: fieldType === "boolean" ? "true" : "",
+      });
+    },
+    [index, filter, onChange],
   );
 
   const renderValueInput = () => {
@@ -1796,6 +1831,26 @@ function FilterRow({
         categories={categories}
         onSelect={handlePropertySelect}
       />
+
+      {selectedProp?.typeSelectable && (
+        <Select
+          size="small"
+          value={filter.fieldType}
+          onChange={handleTypeChange}
+          sx={{
+            flex: "0 1 104px",
+            minWidth: 84,
+            fontSize: 12,
+            height: 28,
+          }}
+        >
+          {FILTER_INPUT_TYPES.map((t) => (
+            <MenuItem key={t.value} value={t.value} sx={{ fontSize: 12 }}>
+              {t.label}
+            </MenuItem>
+          ))}
+        </Select>
+      )}
 
       <Select
         size="small"

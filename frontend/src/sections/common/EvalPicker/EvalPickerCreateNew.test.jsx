@@ -112,8 +112,17 @@ vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
   useCompositeChildrenUnionKeys: () => [],
 }));
 
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
+    useFeatureLocked: () => ({ locked: false, isLoading: false }),
+    useCapabilities: () => ({ data: undefined, isLoading: false }),
+  };
+});
 vi.mock("src/hooks/useDeploymentMode", () => ({
-  useDeploymentMode: () => ({ isOSS: false }),
+  useDeploymentMode: () => ({ isOSS: false, isCloud: true }),
 }));
 
 vi.mock("notistack", async (importOriginal) => {

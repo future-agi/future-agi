@@ -5,8 +5,8 @@ on:
     branches:
       - dev
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-dev-cdn.yaml'
+      - "frontend/**"
+      - ".github/workflows/frontend-dev-cdn.yaml"
   workflow_dispatch:
     inputs:
       branch:
@@ -16,6 +16,7 @@ on:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || vars.DEV_CDN_AUTO_DEPLOY != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:

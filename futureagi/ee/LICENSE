@@ -1,0 +1,14 @@
+                    FutureAGI Enterprise License
+
+Copyright (c) 2024-present FutureAGI, Inc.
+
+The code in this directory and its subdirectories (the "Enterprise Code")
+is licensed under the FutureAGI Enterprise License Agreement. Unless you
+have a valid Enterprise license agreement with FutureAGI, Inc., you may
+not use, copy, modify, or distribute this code.
+
+The Enterprise Code is distributed as a private Docker image. It is NOT
+covered by the Apache 2.0 license that governs the open-source core
+(futureagi/future-agi).
+
+For licensing inquiries: enterprise@futureagi.com

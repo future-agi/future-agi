@@ -4,7 +4,7 @@ import Fab from "@mui/material/Fab";
 import SvgIcon from "@mui/material/SvgIcon";
 import CustomTooltip from "src/components/tooltip";
 import useFalconStore from "../store/useFalconStore";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
 function FalconIcon(props) {
   return (
@@ -62,18 +62,18 @@ function FalconIcon(props) {
 export default function FalconAIFab() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
+  const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
 
-
   const openFalconAI = useCallback(() => {
-    if (isOSS) {
+    if (!falconAllowed) {
+      // Full page shows the capability upsell for unlicensed deployments.
       navigate("/dashboard/falcon-ai");
       return;
     }
     toggleSidebar();
-  }, [isOSS, navigate, toggleSidebar]);
+  }, [falconAllowed, navigate, toggleSidebar]);
 
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {

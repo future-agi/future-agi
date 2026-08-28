@@ -30,6 +30,7 @@ import PartialInputWarningDetails, {
 } from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { parsePythonReprIfNeeded } from "src/sections/develop-detail/DataTab/common";
+import { DATE_OPTION_TO_PERIOD } from "src/sections/evals/Helpers/evalUsageColumns";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -52,23 +53,6 @@ const StatPill = ({ label, value, color }) => (
   </Box>
 );
 
-// ── Map date picker option to API period param ──
-// Tasks may run over months, so we extend the eval-usage map with the
-// "6M" and "12M" picker options (added to DateTimeRangePicker for the
-// task flow). Without these entries the lookup falls through to 30d
-// and the picker silently does nothing on those clicks.
-const DATE_OPTION_TO_PERIOD = {
-  "30 mins": "30m",
-  "6 hrs": "6h",
-  Today: "1d",
-  Yesterday: "1d",
-  "7D": "7d",
-  "30D": "30d",
-  "3M": "90d",
-  "6M": "180d",
-  "12M": "365d",
-  Custom: "30d",
-};
 
 // ── Score chip ──
 const ScoreCell = ({ value }) => {

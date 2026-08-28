@@ -6,6 +6,7 @@ import {
   useWorkspacesList,
 } from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
+import { HELP_LINK } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -176,16 +177,16 @@ export function useNavData() {
             path: paths.dashboard.annotations.queues,
             icon: ICONS.annotate,
           },
-          // {
-          //   title: "Alerts",
-          //   path: paths.dashboard.alerts,
-          //   icon: ICONS.alerts,
-          //   eventTrigger: () => {
-          //     trackEvent(Events.navigationAlertTabClicked, {
-          //       [PropertyName.click]: true,
-          //     });
-          //   },
-          // },
+          {
+            title: "Alerts",
+            path: paths.dashboard.alerts,
+            icon: ICONS.alerts,
+            eventTrigger: () => {
+              trackEvent(Events.navigationAlertTabClicked, {
+                [PropertyName.click]: true,
+              });
+            },
+          },
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
@@ -280,26 +281,28 @@ export function useNavData() {
   return data;
 }
 
+const DOCS_LINK = "https://docs.futureagi.com";
+const OSS_HELP_LINK = "https://discord.com/invite/n2tCUKBkAw";
+
 export function useNavUpgradeData() {
   const { user } = useAuthContext();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const getStartedCompleted = user?.getStartedCompleted;
   const data = useMemo(() => {
+    // OSS images ship without VITE_HELP_LINK, so point Help at the community
+    // Discord unless the operator configured a support channel of their own.
+    const helpLink =
+      isOSS && !deploymentModeLoading ? HELP_LINK || OSS_HELP_LINK : HELP_LINK;
     const items = [
       {
         title: "Docs",
-        path: "https://docs.futureagi.com",
+        path: DOCS_LINK,
         icon: ICONS.docs,
         eventTrigger: () => {
           trackEvent(Events.docLinkClicked, {
             [PropertyName.source]: "side_navigation",
           });
         },
-      },
-
-      {
-        title: "Help",
-        path: import.meta.env.VITE_HELP_LINK,
-        icon: ICONS.help,
       },
     ];
 
@@ -310,8 +313,17 @@ export function useNavUpgradeData() {
         icon: ICONS.getStarted,
       });
     }
+
+    // Without a path the item renders as a link to the current route, so drop it.
+    if (helpLink) {
+      items.push({
+        title: "Help",
+        path: helpLink,
+        icon: ICONS.help,
+      });
+    }
     return [{ subheader: "RESOURCES", items }];
-  }, [getStartedCompleted]);
+  }, [getStartedCompleted, isOSS, deploymentModeLoading]);
 
   return data;
 }
@@ -340,7 +352,7 @@ const SettingsIcons = {
 
 export function useNavSettingsData() {
   const { user } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const { isCloud } = useDeploymentMode();
   const { currentWorkspaceRole } = useWorkspace();
 
   const { data: workspaces = [] } = useWorkspacesList({
@@ -428,21 +440,21 @@ export function useNavSettingsData() {
 
     // Section 3: Organization (based on role permissions for each item)
     const orgItems = [];
-    if (!isOSS && canAccess(RoutesName.usageSummary)) {
+    if (isCloud && canAccess(RoutesName.usageSummary)) {
       orgItems.push({
         title: "Usage Summary",
         path: "/dashboard/settings/usage-summary",
         icon: SettingsIcons.Summary,
       });
     }
-    if (!isOSS && canAccess(RoutesName.planAndPricing)) {
+    if (isCloud && canAccess(RoutesName.planAndPricing)) {
       orgItems.push({
         title: "Plans & Pricing",
         path: "/dashboard/settings/pricing",
         icon: SettingsIcons.Pricing,
       });
     }
-    if (!isOSS && canAccess(RoutesName.billing)) {
+    if (isCloud && canAccess(RoutesName.billing)) {
       orgItems.push({
         title: "Billing",
         path: "/dashboard/settings/billing",
@@ -472,14 +484,13 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Security,
       });
     }
-    // EE Licenses - hidden (feature not available yet)
-    // if (effectiveRole === ROLES.OWNER) {
-    //   orgItems.push({
-    //     title: "EE Licenses",
-    //     path: "/dashboard/settings/ee-licenses",
-    //     icon: SettingsIcons.Keys,
-    //   });
-    // }
+    if (!isCloud && isOrgAdminPlus) {
+      orgItems.push({
+        title: "License",
+        path: "/dashboard/settings/ee-licenses",
+        icon: SettingsIcons.Keys,
+      });
+    }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
       orgItems.push({
         title: "Workspaces",
@@ -514,7 +525,7 @@ export function useNavSettingsData() {
     user,
     wsEnabled,
     workspaces,
-    isOSS,
+    isCloud,
   ]);
 
   return sections;

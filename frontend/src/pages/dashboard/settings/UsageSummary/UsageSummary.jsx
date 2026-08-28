@@ -5,13 +5,13 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import UsageSummaryV2 from "src/sections/settings/UsageSummaryV2/UsageSummaryV2";
 
 export default function UsageSummary() {
-  const { isOSS, isLoading } = useDeploymentMode();
+  const { isCloud, isLoading } = useDeploymentMode();
 
   if (isLoading) {
     return null;
   }
 
-  if (isOSS) {
+  if (!isCloud) {
     return <Navigate to="/dashboard/settings/profile-settings" replace />;
   }
 

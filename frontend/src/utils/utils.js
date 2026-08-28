@@ -1052,8 +1052,8 @@ export function interpolateColorTokenBasedOnScore(
     };
   } else if (factor < 80) {
     return {
-      bgcolor: palette("light").yellow[50],
-      color: palette("light").yellow[800],
+      bgcolor: "var(--eval-score-yellow-bg)",
+      color: "var(--eval-score-yellow-text)",
     };
   } else if (factor < 99) {
     return {

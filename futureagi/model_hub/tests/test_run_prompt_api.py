@@ -1927,7 +1927,9 @@ class TestRunPromptDatabaseState:
         original_model = run_prompter.model
 
         new_config = {
-            "model": "gpt-3.5-turbo",
+            # Must be a model available in the current catalog: edit now
+            # rejects unavailable models (deprecated-model guard).
+            "model": "gpt-4o-mini",
             "messages": [
                 {
                     "role": "user",
@@ -1961,7 +1963,7 @@ class TestRunPromptDatabaseState:
         # Verify RunPrompter updates
         run_prompter.refresh_from_db()
         assert run_prompter.name == "Updated Name"
-        assert run_prompter.model == "gpt-3.5-turbo"
+        assert run_prompter.model == "gpt-4o-mini"
         assert run_prompter.temperature == 0.3
         assert run_prompter.max_tokens == 300
         assert run_prompter.output_format == "object"

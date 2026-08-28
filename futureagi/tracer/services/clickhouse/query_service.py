@@ -24,6 +24,10 @@ from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
 logger = structlog.get_logger(__name__)
 
+# Attribute discovery reads a bounded window so it can stay exhaustive; the
+# partition key is `toDate(start_time)`, so this prunes to whole partitions.
+ATTRIBUTE_DISCOVERY_WINDOW_DAYS = 7
+
 
 class QueryType(StrEnum):
     """Supported query types with per-type routing."""
@@ -127,17 +131,47 @@ class AnalyticsQueryService:
         include_counts: bool = False,
         order_by_count_desc: bool = False,
     ) -> list[dict]:
-        """Get distinct span attribute keys with types for one or more projects."""
+        """Get distinct span attribute keys with types for one or more projects.
+
+        ``count`` is scoped to the discovery window, so a key surfaced only by
+        the unbounded path's legacy sample lane reports 0.
+        """
         if not project_ids:
             return []
 
-        recent_filter = ""
         params: dict[str, Any] = {
             "project_ids": tuple(project_ids),
+            "window_days": (
+                ATTRIBUTE_DISCOVERY_WINDOW_DAYS
+                if recent_days is None
+                else int(recent_days)
+            ),
         }
-        if recent_days is not None:
-            params["recent_days"] = int(recent_days)
-            recent_filter = "AND start_time >= now() - toIntervalDay(%(recent_days)s)"
+        window_filter = "AND start_time >= now() - toIntervalDay(%(window_days)s)"
+
+        def lane(column: str, type_name: str) -> str:
+            # Exhaustive over the window: ARRAY JOIN on `<map>.keys` reads only
+            # that subcolumn, so no key can fall outside an arbitrary row sample.
+            sql = f"""
+                SELECT key, '{type_name}' AS type, count() AS cnt
+                FROM spans ARRAY JOIN {column}.keys AS key
+                WHERE project_id IN %(project_ids)s
+                  AND is_deleted = 0
+                  {window_filter}
+                GROUP BY key"""
+            if recent_days is None:
+                # Visibility-only lane: window plus sample is a superset of the
+                # old sample, so the picker only gains keys. cnt 0 avoids double-count.
+                sql += f"""
+                UNION ALL
+                SELECT key, '{type_name}' AS type, 0 AS cnt FROM (
+                    SELECT {column}.keys AS ks FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                    LIMIT 10000
+                ) ARRAY JOIN ks AS key
+                GROUP BY key"""
+            return sql
 
         outer_select = "SELECT key, argMax(type, cnt) AS type"
         if include_counts:
@@ -146,35 +180,16 @@ class AnalyticsQueryService:
             "ORDER BY count DESC, key" if order_by_count_desc else "ORDER BY key"
         )
 
-        query = f"""
-            {outer_select} FROM (
-                SELECT key, 'string' AS type, count() AS cnt FROM (
-                    SELECT attrs_string.keys AS ks FROM spans
-                    WHERE project_id IN %(project_ids)s
-                      AND is_deleted = 0
-                      {recent_filter}
-                    LIMIT 10000
-                ) ARRAY JOIN ks AS key
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'number' AS type, count() AS cnt FROM (
-                    SELECT attrs_number.keys AS ks FROM spans
-                    WHERE project_id IN %(project_ids)s
-                      AND is_deleted = 0
-                      {recent_filter}
-                    LIMIT 10000
-                ) ARRAY JOIN ks AS key
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'boolean' AS type, count() AS cnt FROM (
-                    SELECT attrs_bool.keys AS ks FROM spans
-                    WHERE project_id IN %(project_ids)s
-                      AND is_deleted = 0
-                      {recent_filter}
-                    LIMIT 10000
-                ) ARRAY JOIN ks AS key
-                GROUP BY key
+        lanes = " UNION ALL ".join(
+            lane(column, type_name)
+            for column, type_name in (
+                ("attrs_string", "string"),
+                ("attrs_number", "number"),
+                ("attrs_bool", "boolean"),
             )
+        )
+        query = f"""
+            {outer_select} FROM ({lanes})
             GROUP BY key
             {outer_order}
             LIMIT {int(outer_limit)}
@@ -195,15 +210,6 @@ class AnalyticsQueryService:
         populated at ingest time by fi-collector, so they are the canonical
         attribute inventory — no CDC fallback needed post-CH25 close-out.
         """
-        # This is a discovery query (populate a filter dropdown), not an
-        # accounting one, so an approximate sample is semantically fine.
-        # Two bounds keep it bounded even on very large projects:
-        #   * 7-day window on `start_time` (the partition key is
-        #     `toDate(start_time)`) so CH can skip partitions and granules.
-        #   * `LIMIT 10000` inside each per-map subquery before the
-        #     ARRAY JOIN — without this, projects with millions of spans
-        #     and wide `attrs_*` maps hit Code: 307 (max_bytes_to_read)
-        #     because every row's Map gets exploded.
         return self.get_span_attribute_keys_ch_for_projects([project_id])
 
     @staticmethod

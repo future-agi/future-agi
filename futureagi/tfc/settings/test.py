@@ -47,6 +47,15 @@ DATABASES = {
     }
 }
 
+# Prod settings register `default_direct` (the PgBouncer-bypass connection)
+# only when PG_DIRECT_HOST is set, but code such as backfill_eval_usage_version
+# defaults to that alias unconditionally. Mirror it onto the test database so
+# those paths run under pytest; Django routes mirror queries to `default`.
+DATABASES["default_direct"] = {
+    **DATABASES["default"],
+    "TEST": {"MIRROR": "default"},
+}
+
 CLICKHOUSE = {
     "CH_HOST": os.environ.get("CH_HOST", "localhost"),
     "CH_PORT": os.environ.get("CH_PORT", "19000"),
@@ -76,7 +85,7 @@ CLICKHOUSE_V2 = {
 }
 
 CH25_EVAL_LOGGER_TABLE = os.environ.get(
-    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger_v2"
+    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger"
 )
 
 # Test cache configuration

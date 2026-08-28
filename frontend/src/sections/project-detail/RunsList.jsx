@@ -303,7 +303,6 @@ const RunsList = React.forwardRef(
           filterData={openQuickFilter}
           onClose={() => setOpenQuickFilter(null)}
           setFilters={setFilters}
-          setFilterOpen={setFilterOpen}
         />
       </>
     );

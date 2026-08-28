@@ -1567,7 +1567,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexWrap: "wrap",
           flexShrink: 0,
@@ -1579,7 +1579,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           label="Dataset"
           value={datasetId}
           onChange={handleDatasetChange}
-          sx={{ minWidth: 220, flex: "1 1 260px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
           required
           SelectProps={{
             MenuProps: {
@@ -2150,7 +2150,7 @@ function TraceSelector({
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -2193,7 +2193,7 @@ function TraceSelector({
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -2203,7 +2203,7 @@ function TraceSelector({
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2485,7 +2485,6 @@ function TraceSelector({
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setFilterOpen}
       />
     </Box>
   );
@@ -2807,7 +2806,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -2850,7 +2849,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -2860,7 +2859,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -3073,7 +3072,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setFilterOpen}
       />
     </Box>
   );
@@ -3382,7 +3380,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -3425,7 +3423,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -3435,7 +3433,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -4441,7 +4439,7 @@ function SimulationSelector({ onSetSelection }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -4453,7 +4451,7 @@ function SimulationSelector({ onSetSelection }) {
           label="Test"
           value={testId}
           onChange={handleTestChange}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
           required
           InputLabelProps={{ shrink: true }}
           InputProps={{
@@ -4485,7 +4483,7 @@ function SimulationSelector({ onSetSelection }) {
             </MenuItem>
           )}
           {tests.map((t) => (
-            <MenuItem key={t.id} value={t.id} sx={{ width: "100%" }}>
+            <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 540 }}>
               <CustomTooltip
                 size="small"
                 arrow
@@ -4522,7 +4520,7 @@ function SimulationSelector({ onSetSelection }) {
             label="Execution run"
             value={executionRunId}
             onChange={handleExecutionRunChange}
-            sx={{ minWidth: 220, flex: "1 1 320px" }}
+            sx={{ minWidth: 540, flex: "0 1 280px" }}
             required
             InputLabelProps={{ shrink: true }}
             InputProps={{
@@ -4561,7 +4559,7 @@ function SimulationSelector({ onSetSelection }) {
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
-                <MenuItem key={run.id} value={run.id} sx={{ width: "100%" }}>
+                <MenuItem key={run.id} value={run.id} sx={{ maxWidth: 540 }}>
                   <CustomTooltip
                     size="small"
                     arrow

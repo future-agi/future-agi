@@ -2,6 +2,7 @@ import React from "react";
 import SvgColor from "src/components/svg-color";
 import { z } from "zod";
 import CallLogsCellRenderer from "./CallLogs/CallLogsCellRenderer";
+import withVoiceQuickFilter from "./CallLogs/withVoiceQuickFilter";
 import VoiceCostCell from "./CallLogs/VoiceCostCell";
 import VoiceLatencyCell from "./CallLogs/VoiceLatencyCell";
 import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
@@ -12,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
-import { AGENT_TYPES, isLiveKitProvider } from "./constants";
+import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
 
@@ -44,7 +45,13 @@ export const stepFields = [
     "observabilityEnabled",
     "model",
   ],
-  ["description", "knowledgeBase", "inbound", "commitMessage"],
+  [
+    "description",
+    "knowledgeBase",
+    "inbound",
+    "targetSpeaksFirst",
+    "commitMessage",
+  ],
 ];
 
 export const emptyAgentSteps = [
@@ -84,14 +91,11 @@ export const createAgentDefinitionSchema = (options) => {
 
       // Configuration
       provider: z.string().optional(),
-      assistantId: keysRequired
-        ? z.string().min(1, "Assistant ID is required")
-        : z.string().optional(),
+      // Required-ness lives in the superRefine below, which can see the provider.
+      assistantId: z.string().optional(),
       // apiEndpoint: z.string().optional(),
       authenticationMethod: z.string().optional(),
-      apiKey: keysRequired
-        ? z.string().min(1, "API key is required")
-        : z.string().optional(),
+      apiKey: z.string().optional(),
       observabilityEnabled: z.boolean().default(false),
       username: z.string().optional(),
       password: z.string().optional(),
@@ -110,7 +114,13 @@ export const createAgentDefinitionSchema = (options) => {
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
+      // Form-only: chooses how the test call reaches the agent. Never sent to
+      // the backend, which derives the mode from contact_number.
+      voiceTransport: z
+        .enum([VOICE_TRANSPORT.WEBRTC, VOICE_TRANSPORT.TELEPHONY])
+        .default(VOICE_TRANSPORT.WEBRTC),
       inbound: z.boolean(),
+      targetSpeaksFirst: z.boolean().optional().default(false),
       commitMessage: z.string().min(1, "Commit message is required"),
       model: z.string().optional(),
       modelDetails: z.any().optional().nullable(),
@@ -133,49 +143,50 @@ export const createAgentDefinitionSchema = (options) => {
         .nullable(),
     })
     .superRefine(async (data, ctx) => {
+      // LiveKit authenticates with livekit_api_key/secret and has no Assistant
+      // ID, so it is exempt from the provider-key requirement.
+      if (keysRequired && !isLiveKitProvider(data.provider)) {
+        if (!data.assistantId) {
+          ctx.addIssue({
+            path: ["assistantId"],
+            message: "Assistant ID is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        if (!data.apiKey) {
+          ctx.addIssue({
+            path: ["apiKey"],
+            message: "API key is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+      }
+
+      // The transport toggle decides whether a phone number is collected at
+      // all. In webrtc mode the number is cleared on submit, so anything left
+      // in the field is ignored rather than validated.
       if (
         data.agentType === AGENT_TYPES.VOICE &&
-        !isLiveKitProvider(data.provider)
+        !isLiveKitProvider(data.provider) &&
+        data.voiceTransport === VOICE_TRANSPORT.TELEPHONY
       ) {
-        // Phone number is optional when API key + assistant ID are provided (web bridge)
-        // const hasWebBridgeCreds =
-        //   data.apiKey?.trim() && data.assistantId?.trim();
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
-        // if (!hasWebBridgeCreds) {
         if (!hasCountryCode) {
           ctx.addIssue({
             path: ["countryCode"],
-            message: "Country code is required",
+            message: "Country code is required for a phone simulation",
             code: z.ZodIssueCode.custom,
           });
         }
         if (!hasContactNumber) {
           ctx.addIssue({
             path: ["contactNumber"],
-            message: "Contact number is required",
+            message: "Contact number is required for a phone simulation",
             code: z.ZodIssueCode.custom,
           });
         }
-        // } else {
-        // Both are optional, but if one is provided the other is required
-        if (hasContactNumber && !hasCountryCode) {
-          ctx.addIssue({
-            path: ["countryCode"],
-            message: "Country code is required when contact number is provided",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (hasCountryCode && !hasContactNumber) {
-          ctx.addIssue({
-            path: ["contactNumber"],
-            message: "Contact number is required when country code is provided",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        // }
         if (hasContactNumber) {
-          // Validate contact number format only if it's provided
           const trimmedNumber = data.contactNumber.trim();
           if (!/^\d+$/.test(trimmedNumber)) {
             ctx.addIssue({
@@ -353,6 +364,7 @@ export const defaultAgentDefinitionValues = {
   countryCode: "",
   contactNumber: "",
   inbound: true,
+  targetSpeaksFirst: false,
   commitMessage: "",
   observabilityEnabled: false,
   token: "",
@@ -364,7 +376,7 @@ export const defaultAgentDefinitionValues = {
   livekitApiSecret: "",
   livekitAgentName: "",
   livekitConfigJson: "",
-  livekitMaxConcurrency: 2,
+  livekitMaxConcurrency: 5,
   _livekitCredentialsValid: false,
 };
 
@@ -419,6 +431,51 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       };
     }
 
+    // CHOICES `**` ids never resolve to an eval config, so the backend
+    // returns a matches-nothing subquery (query_builders/filters.py:1423).
+    const normalizedOutput = String(item.output_type || "")
+      .toUpperCase()
+      .replace(/[/ ]/g, "_");
+    const isFilterableEval =
+      !isReason && ["SCORE", "PASS_FAIL"].includes(normalizedOutput);
+    const EvalCell = (params) => {
+      const evalData = params?.data?.eval_outputs?.[dataKey] || {};
+      if (isReason) {
+        const reason = evalData?.reason;
+        return (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              height: "100%",
+              width: "100%",
+              padding: "4px 8px",
+              color: "text.primary",
+            }}
+          >
+            {reason || "-"}
+          </Box>
+        );
+      }
+      // PASS_FAIL carries a numeric pass rate — route it through the score
+      // (percentage) renderer so it shows "X%" instead of the pill path,
+      // which string-matches "fail" and would render 0% as a false "Pass".
+      const rawType = evalData?.output_type;
+      const isPassFail =
+        String(rawType || "")
+          .toLowerCase()
+          .replace(/[/ ]/g, "_") === "pass_fail";
+      return (
+        <EvalCellRenderer
+          value={{
+            ...evalData,
+            type: isPassFail ? "percentage" : rawType,
+            value: evalData.output,
+          }}
+        />
+      );
+    };
+
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
@@ -428,43 +485,25 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       headerComponent: CallLogsHeaderCellRenderer,
       headerComponentParams: { displayName },
       valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
-      cellRenderer: (params) => {
-        const evalData = params?.data?.eval_outputs?.[dataKey] || {};
-        if (isReason) {
-          const reason = evalData?.reason;
-          return (
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                height: "100%",
-                width: "100%",
-                padding: "4px 8px",
-                color: "text.primary",
-              }}
-            >
-              {reason || "-"}
-            </Box>
-          );
-        }
-        // PASS_FAIL carries a numeric pass rate — route it through the score
-        // (percentage) renderer so it shows "X%" instead of the pill path,
-        // which string-matches "fail" and would render 0% as a false "Pass".
-        const rawType = evalData?.output_type;
-        const isPassFail =
-          String(rawType || "")
-            .toLowerCase()
-            .replace(/[/ ]/g, "_") === "pass_fail";
-        return (
-          <EvalCellRenderer
-            value={{
-              ...evalData,
-              type: isPassFail ? "percentage" : rawType,
-              value: evalData.output,
-            }}
-          />
-        );
-      },
+      ...(isFilterableEval && {
+        context: {
+          sourceColumn: {
+            id: evalId,
+            name: displayName,
+            groupBy: "Evaluation Metrics",
+            outputType: item.output_type,
+          },
+        },
+      }),
+      cellRenderer: isFilterableEval
+        ? withVoiceQuickFilter(EvalCell, (params) => {
+            const output = params?.data?.eval_outputs?.[dataKey]?.output;
+            if (normalizedOutput !== "PASS_FAIL") return output;
+            // Only 0/100 maps to a token; an averaged rate has none.
+            const rate = Number(output);
+            return rate === 0 || rate === 100 ? output : null;
+          })
+        : EvalCell,
     };
   });
 };
@@ -609,6 +648,75 @@ const generateAnnotationColumnsFromConfig = (
       ];
     }),
   );
+};
+
+// Quick-filterable voice columns, keyed by grid field; `id` is the backend
+// filter id. Anything absent either has no backend filter or its displayed
+// value doesn't match what the filter compares against.
+const VOICE_QUICK_FILTER_COLUMNS = {
+  duration_seconds: {
+    id: "duration",
+    name: "Duration",
+    groupBy: "System Metrics",
+  },
+  avg_agent_latency_ms: {
+    id: "avg_agent_latency_ms",
+    name: "Agent latency",
+    groupBy: "System Metrics",
+  },
+  turn_count: {
+    id: "turn_count",
+    name: "Turn count",
+    groupBy: "System Metrics",
+  },
+  agent_talk_percentage: {
+    id: "agent_talk_percentage",
+    name: "% agent talk",
+    groupBy: "System Metrics",
+  },
+  user_interruption_count: {
+    id: "user_interruption_count",
+    name: "User interruptions",
+    groupBy: "System Metrics",
+  },
+  ai_interruption_count: {
+    id: "ai_interruption_count",
+    name: "Agent interruption",
+    groupBy: "System Metrics",
+  },
+  user_wpm: { id: "user_wpm", name: "User WPM", groupBy: "System Metrics" },
+  bot_wpm: { id: "bot_wpm", name: "Agent WPM", groupBy: "System Metrics" },
+  // No `groupBy` on purpose: this one is text, and the `System Metrics` branch
+  // in applyQuickFilters assumes numeric — it would emit
+  // `filter_value: ["customer-ended-call", ""]` into the number popover.
+  ended_reason: { id: "ended_reason", name: "Ended reason" },
+};
+
+// VoiceLatencyCell displays `avg_agent_latency_ms || turnLatencyAverage`, but
+// this column only filters the former — `turnLatencyAverage` is a separate
+// backend column (aliased `response_time`). Suppress the affordance when the
+// number on screen came from the fallback, so a click can never filter a value
+// the row never displayed. Returning null hides the button.
+export const getAgentLatencyFilterValue = (params) => {
+  const value = Number(params?.data?.avg_agent_latency_ms);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const VOICE_QUICK_FILTER_VALUE_GETTERS = {
+  avg_agent_latency_ms: getAgentLatencyFilterValue,
+};
+
+const withQuickFilterIfSupported = (column) => {
+  const sourceColumn = VOICE_QUICK_FILTER_COLUMNS[column.field];
+  if (!sourceColumn || !column.cellRenderer) return column;
+  return {
+    ...column,
+    context: { ...column.context, sourceColumn },
+    cellRenderer: withVoiceQuickFilter(
+      column.cellRenderer,
+      VOICE_QUICK_FILTER_VALUE_GETTERS[column.field],
+    ),
+  };
 };
 
 // Generate AG Grid columns from evalOutputs
@@ -800,7 +908,11 @@ export const getCallLogsColumnDefs = (
     }));
   }
 
-  return [...baseColumns, ...evalColumns, ...annotationColumns];
+  return [
+    ...baseColumns.map(withQuickFilterIfSupported),
+    ...evalColumns,
+    ...annotationColumns,
+  ];
 };
 
 export const useAgentsList = () => {

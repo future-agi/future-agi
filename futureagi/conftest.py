@@ -21,6 +21,30 @@ from tfc.logging.config import configure_structlog
 
 EE_AVAILABLE = has_ee("ee")
 
+_EE_CLOUD_DIR = _project_root / "ee" / "cloud"
+
+
+def pytest_ignore_collect(collection_path, config):
+    """Keep cloud-only suites out of non-cloud test runs.
+
+    ee/cloud tests exercise Django apps (ee.cloud.control_plane, cloud
+    billing/temporal) that only cloud-mode settings install. Collecting
+    them under tfc.settings.test fails at import time ("Model class ...
+    isn't in an application in INSTALLED_APPS"), so ignore the tree unless
+    the control-plane app is installed.
+    """
+    try:
+        Path(collection_path).relative_to(_EE_CLOUD_DIR)
+    except ValueError:
+        return None
+    try:
+        from django.apps import apps
+
+        return not apps.is_installed("ee.cloud.control_plane")
+    except Exception:
+        # Apps registry not ready — the cloud suites can't import either.
+        return True
+
 
 def _install_ee_usage_stubs_if_missing() -> None:
     """Stub ``ee.usage.*`` patch targets in OSS builds; ``__spec__`` stays None so ``has_ee``/``is_oss`` don't flip — callers must catch ``ValueError`` alongside ``ModuleNotFoundError`` when using ``find_spec``."""

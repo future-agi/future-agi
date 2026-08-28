@@ -169,6 +169,51 @@
       "expires": "2026-09-20",
       "mode": "run",
       "strict": false
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_stamps_version_id_on_logs_without_it",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_unwraps_double_encoded_config",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_creates_v1_for_versionless_template",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_single_pass_stamps_multiple_templates",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_unwraps_and_stamps_in_single_pass",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
     }
   ]
 }
