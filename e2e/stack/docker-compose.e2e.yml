@@ -2,7 +2,10 @@
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
-    mem_limit: 3g
+    # 2g, not 3g: with the cache caps mounted below, measured steady state is
+    # ~1.15 GiB. A limit genuinely shrinks CH — max_server_memory_usage is
+    # derived from the cgroup and its caches reclaim against it.
+    mem_limit: 2g
     volumes:
       # Compose resolves paths in an override file against the project
       # directory (the first -f file's dir = repo root), not this file's dir.
@@ -10,6 +13,15 @@ services:
       - ./e2e/stack/clickhouse-memory.xml:/etc/clickhouse-server/config.d/zz-e2e-memory.xml:ro
   backend:
     restart: "no"
+    # Ceilings on everything, so no single service can drift unbounded into the
+    # VM and starve the rest — the failure mode that turned a 4.8m suite into a
+    # 52m one and OOM-killed the host's editor.
+    #
+    # The asymmetry is deliberate: on Postgres/ClickHouse a limit genuinely
+    # shrinks the footprint (page cache and CH's own caches reclaim against the
+    # cgroup), but on the Python services a limit only OOM-kills rather than
+    # compacts — so those stay generous enough to never hit it in a green run.
+    mem_limit: 1200m
     environment: &falcon-agent-env
       # Agent evals bypass LiteLLM and the org's BYOK model config: `_run_agent`
       # builds a FalconLLMClient, and off-cloud (no `falcon_ai` entitlement) it
@@ -30,18 +42,38 @@ services:
       # gateway — so the OSS and EE lanes converge on one deterministic
       # upstream instead of EE dying on ACTIVATION_FAILED.
       FUTURE_AGI_LICENSE_URL: http://mock-llm:8080
-      # AuthMonitoringMiddleware (accounts/authentication.py) short-circuits on
-      # is_oss(), so this only bites in EE — where it counts EVERY request to
-      # login/token/signup, not just failed ones, against one per-IP bucket.
-      # provisionActor spends two per actor, so the stock 10/hour blocks the
-      # whole suite after five tests and then 403s for a full hour. Set here
-      # rather than in root .env because compose reads that file with
-      # required:false and CI runners do not have it.
-      MAX_LOGIN_ATTEMPTS_PER_HOUR: "100000"
-      IP_BLOCK_DURATION_SECONDS: "1"
+      # Every provisioned tenant otherwise phones home to
+      # FUTURE_AGI_TELEMETRY_URL (default https://api.futureagi.com), which
+      # posts "New OSS user registered" with the throwaway e2e address into a
+      # real Slack channel — one per worker, per run, from CI and from every
+      # local run. The suite fabricates users by design, so none of it is a
+      # real signup and all of it is noise in someone else's inbox.
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
   worker:
     restart: "no"
-    environment: *falcon-agent-env
+    mem_limit: 2g
+    environment:
+      <<: *falcon-agent-env
+      # 500 in-flight activities is a production number. The suite runs a
+      # handful of evals at a time and every activity slot costs a
+      # torch-loaded thread, so the default reserves memory nothing uses.
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: "5"
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: "5"
+  postgres:
+    # ~0.97 GiB of this cgroup is reclaimable page cache, so the limit shrinks
+    # the footprint rather than risking a kill.
+    mem_limit: 768m
+  temporal:
+    mem_limit: 640m
+  rabbitmq:
+    mem_limit: 512m
+    environment:
+      # Idle CPU here is Erlang scheduler busy-wait, not work.
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "+sbwt none +sbwtdcpu none +sbwtdio none"
+  minio:
+    mem_limit: 256m
+  peerdb-minio:
+    mem_limit: 256m
   fi-collector:
     # Root compose reuses FUTURE_AGI_VERSION for this image; the e2e stack
     # decouples it so CI can retag the backend without inventing a
