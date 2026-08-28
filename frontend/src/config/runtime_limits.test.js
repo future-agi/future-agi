@@ -15,6 +15,8 @@ import {
   INTERACTIVE_TABLE_PAGE_SIZE,
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
+  OBSERVE_LIST_DEFAULT_PAGE_SIZE,
+  OBSERVE_LIST_PAGE_SIZE_OPTIONS,
   OBSERVE_PROJECT_PAGE_SIZE,
   PROPERTY_CATALOG_CACHE_TIME_MS,
   PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
@@ -171,6 +173,13 @@ describe("runtime limit relationships", () => {
     expect(OBSERVE_GRID_MAX_CONCURRENT_REQUESTS).toBe(1);
     expect(OBSERVE_GRID_MAX_BLOCKS_IN_CACHE).toBeGreaterThanOrEqual(2);
     expect(OBSERVE_GRID_MAX_BLOCKS_IN_CACHE).toBeLessThanOrEqual(10);
+    expect(OBSERVE_LIST_DEFAULT_PAGE_SIZE).toBe(25);
+    expect(OBSERVE_LIST_PAGE_SIZE_OPTIONS).toContain(
+      OBSERVE_LIST_DEFAULT_PAGE_SIZE,
+    );
+    expect(Math.max(...OBSERVE_LIST_PAGE_SIZE_OPTIONS)).toBeLessThanOrEqual(
+      INTERACTIVE_MAX_PAGE_SIZE,
+    );
   });
 
   it("keeps the exact-job observation wall above one transport attempt", () => {

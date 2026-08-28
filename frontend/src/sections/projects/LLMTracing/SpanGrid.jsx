@@ -74,8 +74,9 @@ import {
 import { boundObserveListRow } from "./observeListPayload";
 import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import CursorGridPagination from "./CursorGridPagination";
+import useCursorGridPagination from "./useCursorGridPagination";
 
-const ROWS_LIMIT = 25;
 const loadSpanObservePage = (params, signal) =>
   axios
     .get(endpoints.project.getSpansForObserveProject(), { params, signal })
@@ -253,6 +254,16 @@ const SpanGrid = React.forwardRef(
     const [gridLoading, setGridLoading] = useState(enabled);
     const firstPageRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
+    const {
+      page,
+      pageCount,
+      pageSize,
+      changePageSize,
+      goToPage,
+      onPaginationChanged,
+      publishPage,
+      resetPagination,
+    } = useCursorGridPagination(gridRef);
 
     // Use ref to track latest columns for comparison without triggering dataSource recreation
     const columnsRef = useRef(columns);
@@ -268,13 +279,14 @@ const SpanGrid = React.forwardRef(
       (purge = true) => {
         inFlightPageLoads.current.clear();
         cursorPagination.current.reset();
+        resetPagination();
         preserveRowsDuringNextRefreshRef.current = !purge;
         if (purge) setGridLoading(enabled);
         withLiveGridApi(gridRef?.current?.api, (api) =>
           api.refreshServerSide({ purge }),
         );
       },
-      [enabled, gridRef],
+      [enabled, gridRef, resetPagination],
     );
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
@@ -303,7 +315,17 @@ const SpanGrid = React.forwardRef(
         compareType,
       ],
     );
-    const filterRequestKey = selectionQueryKey;
+    const filterRequestKey = useMemo(
+      () => JSON.stringify({ selectionQueryKey, pageSize }),
+      [pageSize, selectionQueryKey],
+    );
+    const previousFilterRequestKeyRef = useRef(filterRequestKey);
+    useEffect(() => {
+      if (previousFilterRequestKeyRef.current !== filterRequestKey) {
+        resetPagination();
+      }
+      previousFilterRequestKeyRef.current = filterRequestKey;
+    }, [filterRequestKey, resetPagination]);
     const clearSelection = useCallback(() => {
       const api = gridRef?.current?.api;
       withLiveGridApi(api, (liveApi) => {
@@ -490,8 +512,8 @@ const SpanGrid = React.forwardRef(
               const { request } = params;
               requestGeneration = cursorPagination.current.generation();
 
-              const pageSize = request.endRow - request.startRow;
-              pageNumber = Math.floor(request.startRow / pageSize);
+              const requestPageSize = request.endRow - request.startRow;
+              pageNumber = Math.floor(request.startRow / requestPageSize);
               if (pageNumber === 0) {
                 firstPageRequestId = ++firstPageRequestRef.current;
                 const preserveExistingRows =
@@ -508,7 +530,7 @@ const SpanGrid = React.forwardRef(
                   // Omit project_id when null — backend treats absent
                   // project_id as org-scoped (used by user-detail page).
                   ...(observeId ? { project_id: observeId } : {}),
-                  page_size: ROWS_LIMIT,
+                  page_size: requestPageSize,
                   filters: JSON.stringify(
                     toBackendFilters([
                       ...filters,
@@ -526,7 +548,7 @@ const SpanGrid = React.forwardRef(
                   loadExactListPage({
                     pagination: cursorPagination.current,
                     pageNumber,
-                    targetRowCount: ROWS_LIMIT,
+                    targetRowCount: requestPageSize,
                     loadResponse: (signal) =>
                       loadSpanObservePage(buildParams(pageNumber), signal),
                     rowsFromResponse: (response) =>
@@ -638,13 +660,16 @@ const SpanGrid = React.forwardRef(
                 totalState.totalRowCountIsLowerBound;
               useSpanGridStore.setState(totalState);
 
-              // Infinite-scroll: don't expose total upfront → scrollbar grows as you scroll
               const isLastPage = exactPage.isLastPage;
-              const lastRow = isLastPage ? request.startRow + rows.length : -1;
+              const discoveredRowCount = publishPage({
+                request,
+                rows,
+                isLastPage,
+              });
 
               params.success({
                 rowData: rows,
-                rowCount: lastRow,
+                rowCount: discoveredRowCount,
               });
               setContinuationNotice(null);
             } catch (error) {
@@ -702,6 +727,7 @@ const SpanGrid = React.forwardRef(
         // invalidates the cursor generation and leaves the grid loading after
         // the completed page has already published its rows/empty result.
         filterRequestKey,
+        publishPage,
         setLoading,
       ],
     );
@@ -838,6 +864,7 @@ const SpanGrid = React.forwardRef(
           onContinue={continueCursorSearch}
         />
         <AgGridReact
+          key={`span-grid-${pageSize}`}
           style={{ flex: 1, minHeight: 0 }}
           className={`${cellHeight && cellHeight !== "Short" ? "cell-wrap " : ""}clean-data-table${continuationNotice ? " ag-grid-cursor-paused" : ""}`}
           // rowSelection={{ mode: "multiRow" }}
@@ -860,8 +887,12 @@ const SpanGrid = React.forwardRef(
           defaultColDef={defaultColDef}
           context={gridContext}
           rowSelection={{ mode: "multiRow", enableClickSelection: false }}
-          pagination={false}
-          cacheBlockSize={ROWS_LIMIT}
+          pagination={true}
+          paginationPageSize={pageSize}
+          paginationPageSizeSelector={false}
+          suppressPaginationPanel={true}
+          onPaginationChanged={onPaginationChanged}
+          cacheBlockSize={pageSize}
           maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
           maxConcurrentDatasourceRequests={OBSERVE_GRID_MAX_CONCURRENT_REQUESTS}
           rowBuffer={5}
@@ -916,6 +947,14 @@ const SpanGrid = React.forwardRef(
           statusBar={statusBar}
           blockLoadDebounceMillis={300}
           getRowId={(d) => getSpanPhysicalRowId(d?.data)}
+        />
+        <CursorGridPagination
+          disabled={!enabled || gridLoading || Boolean(continuationNotice)}
+          page={page}
+          pageCount={pageCount}
+          pageSize={pageSize}
+          onPageChange={goToPage}
+          onPageSizeChange={changePageSize}
         />
         <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
         <NumberQuickFilterPopover

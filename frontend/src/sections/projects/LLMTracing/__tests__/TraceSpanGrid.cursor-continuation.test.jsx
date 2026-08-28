@@ -180,6 +180,9 @@ const makeParams = (startRow = 0, endRow = startRow + 25) => ({
     deselectAll: vi.fn(),
     forEachNode: vi.fn(),
     hideOverlay: vi.fn(),
+    paginationGetCurrentPage: vi.fn(() => 0),
+    paginationGoToFirstPage: vi.fn(),
+    paginationGoToPage: vi.fn(),
     refreshServerSide: vi.fn(),
     retryServerSideLoads: vi.fn(),
     showNoRowsOverlay: vi.fn(),
@@ -248,6 +251,114 @@ const renderGridSubject = ({ kind, ref, props, filters }) =>
   ) : (
     <SpanGrid ref={ref} {...props} filters={filters} compareType="primary" />
   );
+
+describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
+  beforeEach(() => {
+    getMock.mockReset();
+    gridState.api = null;
+    gridState.props = null;
+    resetMetricIds.mockReset();
+  });
+
+  it("loads 25 rows by default and advances only from page controls", async () => {
+    const rows = Array.from({ length: 25 }, (_, index) =>
+      kind === "trace"
+        ? { trace_id: `trace-${index}`, project_id: "project-1" }
+        : {
+            span_id: `span-${index}`,
+            trace_id: `trace-${index}`,
+            project_id: "project-1",
+            start_time: `2026-08-08T00:00:${String(index).padStart(2, "0")}Z`,
+          },
+    );
+    getMock.mockResolvedValueOnce(
+      listResponse({
+        rows,
+        hasMore: true,
+        nextCursor: "page-2",
+        totalRows: 26,
+        lowerBound: true,
+      }),
+    );
+    const finalRows = rows.slice(0, 3).map((row, index) => ({
+      ...row,
+      ...(kind === "trace"
+        ? { trace_id: `trace-final-${index}` }
+        : { span_id: `span-final-${index}` }),
+    }));
+    getMock.mockResolvedValueOnce(listResponse({ rows: finalRows }));
+
+    renderGrid(kind);
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    expect(gridState.props.pagination).toBe(true);
+    expect(gridState.props.paginationPageSize).toBe(25);
+    expect(gridState.props.cacheBlockSize).toBe(25);
+    expect(gridState.props.suppressPaginationPanel).toBe(true);
+    expect(screen.getByLabelText("Results per page")).toHaveTextContent("25");
+
+    const params = makeParams();
+    gridState.api = params.api;
+    await getRows(params);
+
+    expect(getMock).toHaveBeenCalledTimes(1);
+    expect(getMock.mock.calls[0][1].params.page_size).toBe(25);
+    expect(params.success).toHaveBeenCalledWith({
+      rowData: rows,
+      rowCount: 26,
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Go to page 2" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
+    expect(params.api.paginationGoToPage).toHaveBeenCalledWith(1);
+    // The page button itself does not prefetch; AG Grid requests page two only
+    // after performing the explicit pagination transition.
+    expect(getMock).toHaveBeenCalledTimes(1);
+
+    const finalPageParams = makeParams(25, 50);
+    await getRows(finalPageParams);
+
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(finalPageParams.success).toHaveBeenCalledWith({
+      rowData: finalRows,
+      rowCount: 28,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "page 2" })).toHaveAttribute(
+        "aria-current",
+        "true",
+      ),
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Go to previous page" }),
+    );
+    expect(finalPageParams.api.paginationGoToPage).toHaveBeenCalledWith(0);
+    expect(getMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers a bounded page-size selector and resets to 50 rows", async () => {
+    getMock.mockResolvedValueOnce(listResponse({ rows: [] }));
+    renderGrid(kind);
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+    await getRows(makeParams());
+
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "50" }));
+
+    await waitFor(() => {
+      expect(gridState.props.paginationPageSize).toBe(50);
+      expect(gridState.props.cacheBlockSize).toBe(50);
+    });
+    // The selector remounts the grid at page one; the mocked grid does not
+    // auto-request, so no request beyond the settled 25-row page is made here.
+    expect(getMock).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe.each([
   { kind: "trace", storeSetState: traceGridSetState },

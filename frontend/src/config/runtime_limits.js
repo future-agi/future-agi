@@ -162,6 +162,23 @@ export const INTERACTIVE_MAX_PAGE_SIZE = readBoundedRuntimeInteger(
   { minimum: 1, maximum: 500 },
 );
 
+// Observe trace/span lists use explicit cursor-backed page navigation. Keep
+// the default small enough for an interactive render while allowing operators
+// to tune it up to the shared interactive ceiling without rebuilding the app.
+export const OBSERVE_LIST_DEFAULT_PAGE_SIZE = readBoundedRuntimeInteger(
+  "VITE_OBSERVE_LIST_DEFAULT_PAGE_SIZE",
+  Math.min(25, INTERACTIVE_MAX_PAGE_SIZE),
+  { minimum: 1, maximum: INTERACTIVE_MAX_PAGE_SIZE },
+);
+
+export const OBSERVE_LIST_PAGE_SIZE_OPTIONS = Array.from(
+  new Set(
+    [10, 25, 50, OBSERVE_LIST_DEFAULT_PAGE_SIZE].filter(
+      (size) => size <= INTERACTIVE_MAX_PAGE_SIZE,
+    ),
+  ),
+).sort((left, right) => left - right);
+
 export const PROPERTY_CATALOG_PAGE_SIZE = readBoundedRuntimeInteger(
   "VITE_PROPERTY_CATALOG_PAGE_SIZE",
   Math.min(50, INTERACTIVE_MAX_PAGE_SIZE),
