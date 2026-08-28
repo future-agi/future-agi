@@ -2,6 +2,7 @@ import { RESPONSE_CODES } from "./constants";
 
 const DEFAULT_RATE_LIMIT_MESSAGE = "Rate limit reached.";
 const DEFAULT_RETRY_GUIDANCE = "Please try again in a few minutes.";
+const TECHNICAL_FIELD_ERROR_PATTERN = /(?:^|\s)[\w.-]+\s*:\s*unknown field\b/i;
 
 const hasTerminalPunctuation = (message) => /[.!?]$/.test(message);
 
@@ -59,7 +60,7 @@ export function getRequestErrorMessage(
   fallback = "Something went wrong",
   options = {},
 ) {
-  const { retryAction } = options;
+  const { retryAction, sanitizeTechnicalFieldErrors = false } = options;
   const responseData = error?.response?.data || {};
   const statusCode =
     error?.response?.status ||
@@ -76,9 +77,15 @@ export function getRequestErrorMessage(
     error?.message,
   );
 
+  const message =
+    sanitizeTechnicalFieldErrors &&
+    TECHNICAL_FIELD_ERROR_PATTERN.test(extractedMessage)
+      ? fallback
+      : extractedMessage || fallback;
+
   if (statusCode === RESPONSE_CODES.LIMIT_REACHED) {
-    return withRetryGuidance(extractedMessage || fallback, retryAction);
+    return withRetryGuidance(message, retryAction);
   }
 
-  return extractedMessage || fallback;
+  return message;
 }

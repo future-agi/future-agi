@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getSyntheticDefaultValues } from "./common";
+import {
+  buildSyntheticColumnPayload,
+  getSyntheticDefaultValues,
+} from "./common";
 
 describe("getSyntheticDefaultValues", () => {
   it("normalizes canonical snake_case synthetic config responses", () => {
@@ -58,6 +61,32 @@ describe("getSyntheticDefaultValues", () => {
       kb_id: "kb-camel",
       rowNumber: 10,
       columns: [{ name: "legacy", data_type: "Text", property: [] }],
+    });
+  });
+});
+
+describe("buildSyntheticColumnPayload", () => {
+  it("omits server metadata while preserving the API column shape", () => {
+    expect(
+      buildSyntheticColumnPayload(
+        {
+          id: "server-column-id",
+          name: "answer",
+          dataType: "Text",
+          description: "Original description",
+          property: [
+            { type: "min_length", value: 4 },
+            { type: "required", value: true },
+          ],
+          status: "running",
+        },
+        "Rendered description",
+      ),
+    ).toEqual({
+      name: "answer",
+      data_type: "Text",
+      description: "Rendered description",
+      property: { min_length: 4, required: true },
     });
   });
 });
