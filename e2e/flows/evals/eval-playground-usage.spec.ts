@@ -81,13 +81,22 @@ test('EVAL-E2E-011: filter usage logs by date range and drill into a single log'
       await expect(page.getByText(`${verdict} saw world`)).toBeVisible({ timeout: 5_000 });
     }).toPass({ timeout: 90_000 });
 
-    await page.getByText(`${verdict} saw world`).first().click();
-    // "Status" is a detail-panel-only field (not one of the table's default
-    // columns), so it unambiguously confirms the side panel opened with this
-    // run's detail rather than just re-showing the table cell.
-    // Exact: the stats strip above renders "Success:" as its own label, which
-    // a substring match also picks up alongside the detail panel's status chip.
-    await expect(page.getByText('success', { exact: true })).toBeVisible({ timeout: 10_000 });
+    // The loop above exits on the "Today" click, which starts a refetch — so
+    // the row Playwright just resolved is swapped out from under the click as
+    // the grid re-renders ("element was detached from the DOM"). Retrying the
+    // click AND its outcome together is what makes this stable: each attempt
+    // re-resolves the locator against the current DOM instead of holding a
+    // handle to a row that no longer exists. Preset buttons are deliberately
+    // NOT re-clicked here — once the detail panel is open it covers them.
+    await expect(async () => {
+      await page.getByText(`${verdict} saw world`).first().click({ timeout: 5_000 });
+      // "Status" is a detail-panel-only field (not one of the table's default
+      // columns), so it unambiguously confirms the side panel opened with this
+      // run's detail rather than just re-showing the table cell.
+      // Exact: the stats strip above renders "Success:" as its own label, which
+      // a substring match also picks up alongside the detail panel's status chip.
+      await expect(page.getByText('success', { exact: true })).toBeVisible({ timeout: 5_000 });
+    }).toPass({ timeout: 30_000 });
     // Prev/next counter in the panel header confirms there is exactly one
     // matching row and it is the one currently open.
     await expect(page.getByText('1 / 1')).toBeVisible();
