@@ -421,7 +421,20 @@ class DaytonaHarnessProvider:
                     status_code=409,
                 )
 
+            metadata = (job.payload or {}).get("metadata") or {}
+            if job.run_test_id and not metadata.get("authoring_object_key"):
+                raise HostedHarnessError(
+                    "rerun_authoring_snapshot_missing",
+                    "This run predates deterministic scenario reuse. Start one new "
+                    "end-to-end run; subsequent reruns will reuse its saved contract "
+                    "and scenarios.",
+                    status_code=409,
+                )
+
             payload = copy.deepcopy(job.payload)
+            # The indexed column is authoritative. This also repairs jobs created before chat
+            # adjustments atomically updated the dispatch document's duplicated count.
+            payload["scenario_count"] = job.scenario_count
             secret_refs = dict((payload.get("agent") or {}).get("secret_refs") or {})
             for alias, value in environment_values.items():
                 key = f"harness-{alias.lower()}-{uuid4().hex}"

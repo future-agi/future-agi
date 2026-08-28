@@ -493,6 +493,24 @@ def _store_event(
     if rejection is None and event["type"] == "stage_changed":
         attempt.job.current_stage = event["payload"]["to"]
         attempt.job.save(update_fields=["current_stage", "updated_at"])
+    if rejection is None and event["type"] == "scenario_started":
+        # Registrations and their CallExecution rows are allocated before the guest starts.
+        # Project the guest's lifecycle event into the existing platform row so the simulation
+        # UI shows an active call instead of leaving it PENDING until the terminal receipt.  The
+        # receipt remains authoritative for the provider's exact started_at/ended_at timestamps.
+        registration = (
+            HostedHarnessScenario.no_workspace_objects.select_related("call_execution")
+            .filter(
+                job=attempt.job,
+                scenario_key=event["payload"]["scenario_key"],
+            )
+            .first()
+        )
+        if registration and registration.call_execution_id:
+            CallExecution.objects.filter(
+                id=registration.call_execution_id,
+                status=CallExecution.CallStatus.PENDING,
+            ).update(status=CallExecution.CallStatus.ONGOING)
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
         attempt.terminal_stage = payload["stage"]
@@ -645,6 +663,7 @@ def _apply_receipt_to_call(
     call.simulation_call_type = resolved_modality
     if call_data:
         call.started_at = call_data["started_at"]
+        call.ended_at = call_data["ended_at"]
         call.completed_at = call_data["ended_at"]
         call.duration_seconds = round(call_data["duration_ms"] / 1000)
     elif body["status"] == "skipped":
@@ -669,6 +688,7 @@ def _apply_receipt_to_call(
         "status",
         "simulation_call_type",
         "started_at",
+        "ended_at",
         "completed_at",
         "duration_seconds",
         "call_metadata",

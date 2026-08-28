@@ -9,12 +9,13 @@ from django.test import override_settings
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
+from simulate.models import RunTest
 from simulate.services.harness_provider import (
     DaytonaHarnessProvider,
     SandboxHarnessProvider,
     get_harness_provider,
 )
-from simulate.services.hosted_harness import create_hosted_job
+from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
 
 
 def _v1_payload(**overrides):
@@ -254,8 +255,14 @@ def test_daytona_saved_rerun_reuses_job_and_starts_fresh_attempt_cycle(user, wor
     job.current_attempt_number = 3
     job.completed_count = 10
     job.terminal_at = job.created_at
+    job.scenario_count = 2
+    payload = dict(job.payload)
+    payload["scenario_count"] = 1
+    job.payload = payload
     job.save(
         update_fields=[
+            "payload",
+            "scenario_count",
             "state",
             "current_stage",
             "current_attempt_number",
@@ -281,11 +288,49 @@ def test_daytona_saved_rerun_reuses_job_and_starts_fresh_attempt_cycle(user, wor
     assert job.completed_count == 0
     assert job.terminal_at is None
     assert job.payload["metadata"]["attempt_cycle_start"] == 4
+    assert job.payload["scenario_count"] == 2
     livekit_ref = job.payload["agent"]["secret_refs"]["LIVEKIT_URL"]
     assert livekit_ref["manager"] == "platform-vault"
     assert "customer.example.test" not in json.dumps(job.payload)
     assert result["job"]["job_id"] == str(job.id)
     start.assert_called_once()
+
+
+@pytest.mark.django_db
+@override_settings(
+    HARNESS_PROVIDER="daytona",
+    HARNESS_PUBLIC_BASE_URL="https://harness.example.test",
+)
+def test_daytona_saved_rerun_rejects_legacy_run_without_authoring_snapshot(
+    user, workspace
+):
+    job, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="daytona-legacy-rerun",
+        workspace=workspace,
+    )
+    job.run_test = RunTest.objects.create(
+        name="Legacy hosted run",
+        organization=user.organization,
+        workspace=workspace,
+    )
+    job.state = job.State.COMPLETED
+    job.current_stage = "completed"
+    job.save(update_fields=["run_test", "state", "current_stage", "updated_at"])
+
+    with pytest.raises(HostedHarnessError) as exc_info:
+        DaytonaHarnessProvider().rerun_saved(
+            str(job.id),
+            organization=user.organization,
+            workspace=workspace,
+            environment_values={},
+        )
+
+    assert exc_info.value.code == "rerun_authoring_snapshot_missing"
+    assert exc_info.value.status_code == 409
+    job.refresh_from_db()
+    assert job.state == job.State.COMPLETED
 
 
 @pytest.mark.django_db

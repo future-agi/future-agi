@@ -1204,11 +1204,18 @@ class DaytonaHostedGateway:
             adjustments.append(record)
             metadata["adjustments"] = adjustments
             payload["metadata"] = metadata
-            locked.payload = payload
             update_fields = ["payload", "updated_at"]
             if delta:
                 locked.scenario_count += delta
+                # ``scenario_count`` is duplicated in the durable dispatch document and the
+                # indexed job column. Keep them atomic. The live guest updates its own job.json
+                # after applying a chat adjustment, which masked this drift on attempt one; a
+                # saved rerun rebuilt job.json from the stale payload, sealed only one scenario,
+                # then failed platform preallocation because the job column correctly expected
+                # two.
+                payload["scenario_count"] = locked.scenario_count
                 update_fields.append("scenario_count")
+            locked.payload = payload
             locked.save(update_fields=update_fields)
 
             body = "".join(
@@ -1250,6 +1257,43 @@ class DaytonaHostedGateway:
         )
         scenarios = _json("/work/authoring/scenarios.json")
         bundle = _json("/work/bundle/manifest.json")
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+
+        # Unified hosted execution authors the contract/world/scenarios in the same
+        # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
+        # has accepted them.  A saved rerun can then rebuild the environment while
+        # using the exact same sealed scenario suite instead of asking the model to
+        # author a different suite for an already-registered RunTest.
+        metadata = (job.payload or {}).get("metadata") or {}
+        if (
+            isinstance(bundle, dict)
+            and isinstance(scenarios, list)
+            and len(scenarios) == job.scenario_count
+            and not metadata.get("authoring_object_key")
+        ):
+            try:
+                packed = sandbox.process.exec(
+                    "cd /work/authoring && set --; "
+                    "for path in schema.sql store.json world.sqlite collections.json "
+                    "contract.json environment.json scenarios.json simulator_prompt.md "
+                    "scenarios handlers; do "
+                    '[ -e "$path" ] && set -- "$@" "$path"; '
+                    "done; "
+                    '[ -f contract.json ] && [ -d scenarios ] && [ "$#" -gt 0 ] && '
+                    'tar -czf /tmp/authoring-rerun.tar.gz "$@"',
+                    timeout=180,
+                )
+                if packed.exit_code:
+                    raise RuntimeError(str(packed.result or "authoring pack failed"))
+                body = sandbox.fs.download_file("/tmp/authoring-rerun.tar.gz")
+                store_authoring_archive(job, body, advance_lifecycle=False)
+                job.refresh_from_db()
+            except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
+                logger.exception(
+                    "could not freeze unified authoring snapshot job=%s attempt=%s",
+                    job.id,
+                    attempt.id,
+                )
         outputs = authoring_stage_outputs(
             contract,
             environment,
@@ -1263,7 +1307,6 @@ class DaytonaHostedGateway:
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
             stage = "validating_environment"
-        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         DaytonaHostedGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
@@ -1957,7 +2000,9 @@ def authoring_stage_outputs_from_archive(
     )
 
 
-def store_authoring_archive(job: HostedHarnessJob, body: bytes) -> str:
+def store_authoring_archive(
+    job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
+) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
     object_key = f"harness-authoring/{job.organization_id}/{job.id}.tar.gz"
     client = get_storage_client()
@@ -1975,20 +2020,15 @@ def store_authoring_archive(job: HostedHarnessJob, body: bytes) -> str:
     metadata["authoring_mode"] = "fresh"
     payload["metadata"] = metadata
     job.payload = payload
-    job.stage_outputs = authoring_stage_outputs_from_archive(
-        body, scenario_limit=job.scenario_count
-    )
-    job.current_stage = "validating_scenarios"
-    job.state = HostedHarnessJob.State.ADMITTED
-    job.save(
-        update_fields=[
-            "payload",
-            "stage_outputs",
-            "current_stage",
-            "state",
-            "updated_at",
-        ]
-    )
+    update_fields = ["payload", "updated_at"]
+    if advance_lifecycle:
+        job.stage_outputs = authoring_stage_outputs_from_archive(
+            body, scenario_limit=job.scenario_count
+        )
+        job.current_stage = "validating_scenarios"
+        job.state = HostedHarnessJob.State.ADMITTED
+        update_fields.extend(["stage_outputs", "current_stage", "state"])
+    job.save(update_fields=update_fields)
     return object_key
 
 

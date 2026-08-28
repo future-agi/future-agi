@@ -17,6 +17,7 @@ from simulate.services.hosted_harness import (
     register_attempt,
 )
 from simulate.services.hosted_harness_ingestion import (
+    _apply_receipt_to_call,
     _call_lifecycle_status,
     _normalized_artifact_content_type,
     _read_hosted_tool_trace,
@@ -99,6 +100,36 @@ def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
     assert _call_lifecycle_status(
         {"status": "errored", "call": None}
     ) == CallExecution.CallStatus.FAILED
+
+
+def test_receipt_projects_actual_call_end_time_and_duration():
+    registration = MagicMock()
+    call = registration.call_execution
+    call.call_metadata = {}
+    body = {
+        "status": "errored",
+        "call": {
+            "started_at": "2026-08-27T10:00:00Z",
+            "ended_at": "2026-08-27T10:01:22Z",
+            "duration_ms": 82_000,
+            "recording_artifacts": [],
+        },
+        "sub_goals": [],
+        "evaluations": [],
+    }
+
+    with patch(
+        "simulate.services.hosted_harness_ingestion."
+        "HostedHarnessArtifact.no_workspace_objects"
+    ) as artifacts:
+        artifacts.filter.return_value.order_by.return_value.last.return_value = None
+        _apply_receipt_to_call(registration, body)
+
+    assert call.started_at == "2026-08-27T10:00:00Z"
+    assert call.ended_at == "2026-08-27T10:01:22Z"
+    assert call.completed_at == "2026-08-27T10:01:22Z"
+    assert call.duration_seconds == 82
+    call.save.assert_called_once()
 
 
 def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
@@ -551,6 +582,77 @@ def test_event_channel_auth_digest_watermark_and_rejection(organization):
     assert response.status_code == 200
     assert response.json()["acked_through_sequence"] == 2
     assert response.json()["rejected"][0]["code"] == "event_type_unknown"
+
+
+@pytest.mark.django_db
+def test_scenario_started_event_marks_preallocated_call_ongoing(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="scenario-started-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Lifecycle projection",
+            "modality": "voice",
+            "personas": [
+                {
+                    "scenario_key": "lifecycle-case",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    provisioned = provision.json()["result"]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["lifecycle-case"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    call = CallExecution.objects.get(
+        hosted_registration__job=job,
+        hosted_registration__scenario_key="lifecycle-case",
+    )
+    assert call.status == CallExecution.CallStatus.PENDING
+
+    payload = {
+        "scenario_key": "lifecycle-case",
+        "world_index": 0,
+        "scenario_attempt": 1,
+    }
+    event = {
+        "event_id": "scenario-started-1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "sequence": 1,
+        "emitted_at": "2026-08-28T10:14:03.412Z",
+        "stage": "running",
+        "type": "scenario_started",
+        "payload": payload,
+        "digest": canonical_digest(payload),
+    }
+    response = client.post(
+        f"{BASE}/{capability.attempt.id}/events/",
+        {"schema_version": "futureagi.harness-event.v1", "events": [event]},
+        format="json",
+        **_headers(capability),
+    )
+
+    assert response.status_code == 200
+    call.refresh_from_db()
+    assert call.status == CallExecution.CallStatus.ONGOING
 
 
 @pytest.mark.django_db

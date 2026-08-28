@@ -146,6 +146,36 @@ def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
         pack_authoring_archive(tmp_path)
 
 
+@pytest.mark.django_db
+def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="freeze-unified-authoring"
+    )
+    attempt = SimpleNamespace(id="attempt-1", job_id=job.id)
+    files = {
+        "/work/authoring/contract.json": b'{"modality":"voice"}',
+        "/work/authoring/environment-bundle/environment-plan.json": b'{"runtime":{}}',
+        "/work/authoring/scenarios.json": b'[{"scenario_key":"one"}]',
+        "/work/bundle/manifest.json": b'{"schema_version":"v2"}',
+        "/tmp/authoring-rerun.tar.gz": b"frozen-authoring",
+    }
+    sandbox = SimpleNamespace(
+        fs=SimpleNamespace(download_file=lambda path: files[path]),
+        process=SimpleNamespace(
+            exec=lambda command, **kwargs: SimpleNamespace(exit_code=0, result="")
+        ),
+    )
+
+    with patch(
+        "simulate.services.hosted_harness_gateway.store_authoring_archive"
+    ) as store:
+        DaytonaHostedGateway._sync_authoring_progress(attempt, sandbox)
+
+    store.assert_called_once_with(
+        job, b"frozen-authoring", advance_lifecycle=False
+    )
+
+
 def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):
     root = tmp_path / "authoring"
     scenario = root / "scenarios" / "one"
@@ -413,6 +443,7 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
     assert records[0]["scenario_delta"] == 1
     assert records[0]["status"] == "pending"
     assert adjusted.payload["metadata"]["adjustments"] == records
+    assert adjusted.payload["scenario_count"] == 3
 
 
 @pytest.mark.django_db
@@ -500,6 +531,7 @@ def test_daytona_adjustment_accepts_natural_language_number(
     )
 
     assert adjusted.scenario_count == 3
+    assert adjusted.payload["scenario_count"] == 3
     assert adjusted.payload["metadata"]["adjustments"][0]["scenario_delta"] == 1
 
 
