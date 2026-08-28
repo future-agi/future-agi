@@ -71,6 +71,7 @@ urlpatterns = [
     # ===========================================
     path("admin/", admin.site.urls),
     path("accounts/", include("accounts.urls")),
+    path("sources/", include("sources.urls")),
     path("model-hub/", include("model_hub.urls")),
     path("simulate/", include("simulate.urls")),
     path("agent-playground/", include("agent_playground.urls")),

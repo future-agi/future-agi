@@ -90,7 +90,7 @@ jobs:
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
       EE_BASE_REF: ${{ github.base_ref || 'dev' }}
-      IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+      IS_INTERNAL_RUN: ${{ github.repository == 'future-agi/future-agi' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
     steps:
       - uses: actions/checkout@v4
 

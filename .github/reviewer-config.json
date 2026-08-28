@@ -125,6 +125,17 @@
         "frontend/src/sections/user/**",
         "frontend/src/sections/address/**"
       ]
+    },
+    "sources": {
+      "display_name": "Sources & OCR",
+      "ownership": "Digitized Document Sources & Transkribus Parser",
+      "lead": "atharva-bhange",
+      "members": ["atharva-bhange", "sarthakFuture", "Tanmaycode1"],
+      "paths": [
+        "futureagi/sources/**",
+        "frontend/src/sections/sources/**",
+        "frontend/src/pages/dashboard/sources/**"
+      ]
     }
   },
   "users": {

@@ -1607,7 +1607,7 @@ class TestInitiatePasswordResetSSO:
 
 
 
-OSS_SIGNUP_PASSWORD = "Futureagi@45xyz"
+OSS_SIGNUP_PASSWORD = "Futureagi@45xyz"  # pragma: allowlist secret
 
 
 def _oss(enabled=True):
