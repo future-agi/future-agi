@@ -88,9 +88,8 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
-  getAutoYAxisBounds,
-  getSeriesExtent,
-  parseBound,
+  getVisibleIndices,
+  resolveAxisBounds,
   makeSeriesKey,
   resolveSavedSelection,
   toAxisConfigPayload,
@@ -2238,6 +2237,12 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
+  // See WidgetChart.jsx: series_axis is keyed by the unfiltered index.
+  const chartSeriesIndices = useMemo(
+    () => getVisibleIndices(previewSeries, visibleSeries),
+    [previewSeries, visibleSeries],
+  );
+
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
     [chartSeries, axisConfig],
@@ -2553,22 +2558,10 @@ export default function WidgetEditorView() {
           axisConfig.rightY.visible &&
           Object.values(axisConfig.seriesAxis).some((s) => s === "right");
         if (!hasRightAxis) {
-          const auto = getAutoYAxisBounds(chartSeries, {
+          // Shared with WidgetChart.jsx so the preview matches the saved widget.
+          const { min, max } = resolveAxisBounds(chartSeries, axisConfig.leftY, {
             stacked: isStacked,
-            logarithmic: axisConfig.leftY.scale === "logarithmic",
-            tickAmount: 5,
           });
-          // Bounds resolve per side, and "Out of Bounds: Visible" widens a
-          // typed bound that would cut data off — see WidgetChart.jsx. Kept in
-          // step with it so the preview matches the saved widget.
-          const extent = getSeriesExtent(chartSeries, { stacked: isStacked });
-          const widen = axisConfig.leftY.outOfBounds !== "hidden" && extent;
-          const clipsBelow = widen && parseBound(axisConfig.leftY.min) > extent.min;
-          const clipsAbove = widen && parseBound(axisConfig.leftY.max) < extent.max;
-          const userMin = clipsBelow ? null : parseBound(axisConfig.leftY.min);
-          const userMax = clipsAbove ? null : parseBound(axisConfig.leftY.max);
-          const min = userMin ?? auto?.min;
-          const max = userMax ?? auto?.max;
           return {
             show: axisConfig.leftY.visible,
             tickAmount: 5,
@@ -2593,28 +2586,40 @@ export default function WidgetEditorView() {
           };
         }
         // Dual axis
+        // One shared {min,max} per side — see WidgetChart.jsx.
+        const sideOf = (i) =>
+          axisConfig.seriesAxis[chartSeriesIndices[i]] === "right"
+            ? "right"
+            : "left";
+        const seriesOn = (side) =>
+          chartSeries.filter((__, i) => sideOf(i) === side);
+        const boundsFor = {
+          left: resolveAxisBounds(seriesOn("left"), axisConfig.leftY, {
+            stacked: isStacked,
+            fit: true,
+          }),
+          right: resolveAxisBounds(seriesOn("right"), axisConfig.rightY, {
+            stacked: isStacked,
+            fit: true,
+          }),
+        };
         return chartSeries.map((_, i) => {
-          const origIdx = visibleSeries === null ? i : [...visibleSeries][i];
-          const side = axisConfig.seriesAxis[origIdx] || "left";
+          const side = sideOf(i);
           const cfg = side === "right" ? axisConfig.rightY : axisConfig.leftY;
+          const { min, max } = boundsFor[side];
           return {
             show:
               i === 0 ||
               (side === "right" &&
                 !chartSeries
                   .slice(0, i)
-                  .some(
-                    (__, j) =>
-                      (axisConfig.seriesAxis[
-                        visibleSeries === null ? j : [...visibleSeries][j]
-                      ] || "left") === "right",
-                  )),
+                  .some((__, j) => sideOf(j) === "right")),
             opposite: side === "right",
             tickAmount: 5,
             forceNiceScale: cfg.outOfBounds !== "hidden",
             logarithmic: cfg.scale === "logarithmic",
-            ...(cfg.min !== "" && { min: Number(cfg.min) }),
-            ...(cfg.max !== "" && { max: Number(cfg.max) }),
+            ...(min != null && { min }),
+            ...(max != null && { max }),
             ...(cfg.label && {
               title: {
                 text: cfg.label,
@@ -2738,13 +2743,13 @@ export default function WidgetEditorView() {
     isStacked,
     isHorizontal,
     chartSeries,
+    chartSeriesIndices,
     chartColors,
     theme,
     axisConfig,
     autoDecimals,
     isDark,
     leftAxisFormatConfig,
-    visibleSeries,
   ]);
 
   // Horizontal bar: aggregate each series into one bar

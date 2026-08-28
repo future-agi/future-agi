@@ -15,9 +15,8 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
-  getAutoYAxisBounds,
-  getSeriesExtent,
-  parseBound,
+  getVisibleIndices,
+  resolveAxisBounds,
   groupPieSeries,
   makeSeriesKey,
   resolveSavedSelection,
@@ -249,6 +248,13 @@ export default function WidgetChart({ widget, globalDateRange }) {
     if (visibleSeries === null) return series;
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
+
+  // chartSeries[i] came from series[chartSeriesIndices[i]]. series_axis is keyed
+  // by that original index, so the dual-axis branch must map through this.
+  const chartSeriesIndices = useMemo(
+    () => getVisibleIndices(series, visibleSeries),
+    [series, visibleSeries],
+  );
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
@@ -984,27 +990,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
         rightCfg.visible && Object.values(sa).some((s) => s === "right");
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";
-        const auto = getAutoYAxisBounds(chartSeries, {
+        const { min, max } = resolveAxisBounds(chartSeries, leftCfg, {
           stacked: isStacked,
-          logarithmic: leftCfg.scale === "logarithmic",
-          tickAmount: 5,
         });
-        // Bounds resolve per side (TH-7680): a typed bound is used as given,
-        // a side left empty is auto-scaled to the data.
-        //
-        // "Out of Bounds: Visible" means exactly what it says: a typed bound
-        // that would cut data off the chart is widened so every point stays
-        // visible. "Hidden" keeps the bound as a hard cap and clips. With no
-        // typed bounds nothing can be out of bounds, so the toggle has nothing
-        // to act on and auto-scaling applies either way.
-        const extent = getSeriesExtent(chartSeries, { stacked: isStacked });
-        const widen = !hideOOB && extent;
-        const clipsBelow = widen && parseBound(leftCfg.min) > extent.min;
-        const clipsAbove = widen && parseBound(leftCfg.max) < extent.max;
-        const userMin = clipsBelow ? null : parseBound(leftCfg.min);
-        const userMax = clipsAbove ? null : parseBound(leftCfg.max);
-        const min = userMin ?? auto?.min;
-        const max = userMax ?? auto?.max;
         return {
           show: leftCfg.visible !== false,
           tickAmount: 5,
@@ -1027,24 +1015,39 @@ export default function WidgetChart({ widget, globalDateRange }) {
           },
         };
       }
+      // Bounds are resolved once per side and written to every entry on that
+      // side. ApexCharts binds yaxis[i] to series[i] and scales each entry on
+      // its own, so without this a small series sharing an axis is stretched
+      // to fill the plot and cannot be read off the axis beside it.
+      const sideOf = (i) => (sa[chartSeriesIndices[i]] === "right" ? "right" : "left");
+      const seriesOn = (side) => chartSeries.filter((__, i) => sideOf(i) === side);
+      const boundsFor = {
+        left: resolveAxisBounds(seriesOn("left"), leftCfg, {
+          stacked: isStacked,
+          fit: true,
+        }),
+        right: resolveAxisBounds(seriesOn("right"), rightCfg, {
+          stacked: isStacked,
+          fit: true,
+        }),
+      };
       return chartSeries.map((_, i) => {
-        const side = sa[i] || "left";
+        const side = sideOf(i);
         const cfg = side === "right" ? rightCfg : leftCfg;
+        const { min, max } = boundsFor[side];
         return {
           show:
             i === 0 ||
             (side === "right" &&
               !chartSeries
                 .slice(0, i)
-                .some((__, j) => (sa[j] || "left") === "right")),
+                .some((__, j) => sideOf(j) === "right")),
           opposite: side === "right",
           tickAmount: 5,
           forceNiceScale: cfg.outOfBounds !== "hidden",
           logarithmic: cfg.scale === "logarithmic",
-          ...(cfg.min !== undefined &&
-            cfg.min !== "" && { min: Number(cfg.min) }),
-          ...(cfg.max !== undefined &&
-            cfg.max !== "" && { max: Number(cfg.max) }),
+          ...(min != null && { min }),
+          ...(max != null && { max }),
           ...(cfg.label && {
             title: {
               text: cfg.label,

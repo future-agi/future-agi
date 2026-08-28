@@ -242,6 +242,71 @@ export const seriesHasDataPoints = (series = []) =>
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a
 // message instead of an empty canvas.
+/**
+ * Bounds that fit the data, never null unless there is genuinely nothing to
+ * scale. Prefers the zero-anchored result; where that is declined (a narrow
+ * band well above zero) it fits the band instead, snapping the floor onto the
+ * step grid so tick labels stay round.
+ *
+ * Dual-axis needs this: every entry on a side must carry the same explicit
+ * bounds or ApexCharts scales each series on its own, which draws a small
+ * series as though it filled the plot.
+ */
+export const getFittedYAxisBounds = (
+  series = [],
+  { stacked = false, logarithmic = false, tickAmount = 5 } = {},
+) => {
+  if (logarithmic) return null;
+  const zeroAnchored = getAutoYAxisBounds(series, {
+    stacked,
+    logarithmic,
+    tickAmount,
+  });
+  if (zeroAnchored) return zeroAnchored;
+
+  const extent = getSeriesExtent(series, { stacked });
+  if (!extent || extent.min < 0) return null;
+  const span = extent.max - extent.min;
+  if (span <= 0) return null;
+
+  const step = niceCeil(span / tickAmount);
+  const min = normalize(Math.floor(extent.min / step) * step);
+  return { min, max: normalize(min + step * tickAmount) };
+};
+
+/**
+ * Final {min, max} for one axis, given the series plotted against it.
+ *
+ * A typed Threshold Bound is used as given; a side left empty is auto-scaled.
+ * With "Out of Bounds: Visible" a typed bound that would push data off the
+ * chart is widened so every point stays visible; "Hidden" keeps it as a hard
+ * cap and clips. Either value may come back undefined, meaning "say nothing
+ * and let ApexCharts decide".
+ *
+ * Pass only the series belonging to this axis. On a dual-axis chart every
+ * entry for a side must be given the same result, or ApexCharts scales each
+ * series independently and a small series is stretched to fill the plot.
+ */
+export const resolveAxisBounds = (
+  series = [],
+  cfg = {},
+  { stacked = false, tickAmount = 5, fit = false } = {},
+) => {
+  const compute = fit ? getFittedYAxisBounds : getAutoYAxisBounds;
+  const auto = compute(series, {
+    stacked,
+    logarithmic: cfg.scale === "logarithmic",
+    tickAmount,
+  });
+  const extent = getSeriesExtent(series, { stacked });
+  const widen = cfg.outOfBounds !== "hidden" && extent;
+  const typedMin = parseBound(cfg.min);
+  const typedMax = parseBound(cfg.max);
+  const userMin = widen && typedMin > extent.min ? null : typedMin;
+  const userMax = widen && typedMax < extent.max ? null : typedMax;
+  return { min: userMin ?? auto?.min, max: userMax ?? auto?.max };
+};
+
 export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
   const rightCfg = axisConfig?.rightY || {};
   const seriesAxis = axisConfig?.seriesAxis || {};
@@ -405,6 +470,22 @@ export const formatValueWithConfig = (
 // name. Survives metric renames and series reordering, unlike the display label.
 export const makeSeriesKey = (metric, bucketName) =>
   `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
+
+/**
+ * Original indices of the currently visible series, in ascending order — the
+ * same order `series.filter((_, i) => visibleSeries.has(i))` produces.
+ *
+ * `axis_config.series_axis` is keyed by the index in the UNFILTERED series
+ * list, so anything reading it from the filtered chart series must map back
+ * through this. Reading it with the filtered index silently reassigns axes as
+ * soon as a series is hidden, and spreading the Set (`[...visibleSeries][i]`)
+ * is wrong too: it iterates in insertion order, which for a top-N selection is
+ * rank order, not index order.
+ */
+export const getVisibleIndices = (series = [], visibleSeries = null) => {
+  const all = series.map((_, i) => i);
+  return visibleSeries === null ? all : all.filter((i) => visibleSeries.has(i));
+};
 
 // Resolve a saved key list to the current series' indices. null => all visible.
 export const resolveVisibleSeries = (savedKeys, series) => {

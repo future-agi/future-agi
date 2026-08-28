@@ -22,6 +22,65 @@
 - POST /accounts/token/ returns 200 with a token pair
 - the UI login persists a new active AuthToken row in PG for the user
 
+## dashboards
+
+### DASH-E2E-001 — widget y-axis fits its data unless a bound is typed
+
+**Goal:** A user reading a dashboard widget gets a y-axis sized to the data, and can override it by typing a Threshold Bound  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:379`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces whose per-minute latency peaks are 7043 ms and 219 ms
+2. create a dashboard holding one latency widget with no typed bounds
+3. open the dashboard and read the rendered y-axis
+4. save a Threshold Bound maximum of 10000 on the widget and re-read the axis
+5. save a non-numeric maximum and re-read the axis
+
+**Backend state verified:**
+
+- the widget query returns exactly the seeded per-bucket peaks (7043, 219) for latency/max
+- chart_config.axis_config.left_y round-trips each typed maximum through the widget detail endpoint
+
+### DASH-E2E-002 — Out of Bounds decides whether a typed bound clips the data
+
+**Goal:** A user who typed a Threshold Bound tighter than their data chooses whether the chart widens to keep every point visible or clips at the bound  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:460`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces whose per-minute latency peaks are 7043 ms and 219 ms
+2. create a dashboard holding one latency widget whose maximum is 5000 and Out of Bounds is Visible
+3. open the dashboard and read the axis and the plotted points
+4. save the same maximum with Out of Bounds set to Hidden and re-read
+5. clear the maximum, save a minimum of 1000, and re-read
+
+**Backend state verified:**
+
+- the widget query returns exactly the seeded per-bucket peaks (7043, 219) for latency/max
+- chart_config.axis_config.left_y round-trips out_of_bounds and the typed min/max for each setting
+
+### DASH-E2E-003 — a dual-axis widget keeps one scale per side and keeps it when a series is hidden
+
+**Goal:** A user plotting a large and a small metric together assigns one of them to the right axis, reads both off their own scale, and keeps that layout after hiding a series  
+**Spec:** `flows/dashboards/widget-y-axis.spec.ts:541`  
+**Tags:** —
+
+**User steps:**
+
+1. seed traces giving a 7043 ms latency peak alongside per-minute counts of 9 and 2
+2. create a dashboard holding one widget over latency, span count and trace count
+3. assign the trace-count series to the right axis
+4. open the dashboard and read both axes and where every series is plotted
+5. save a visible-series list that hides the latency series, and re-read both axes
+
+**Backend state verified:**
+
+- the widget query returns all three metrics in the configured order with the seeded values
+- chart_config.axis_config.series_axis and chart_config.visible_series round-trip through the widget detail endpoint
+
 ## evals
 
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM

@@ -7,6 +7,8 @@ import {
   isAdditiveAggregation,
   getYAxisRangeWarning,
   getAutoYAxisBounds,
+  getVisibleIndices,
+  resolveAxisBounds,
   parseBound,
   makeSeriesKey,
   resolveSavedSelection,
@@ -619,5 +621,65 @@ describe("getAutoYAxisBounds", () => {
     expect(
       getAutoYAxisBounds([{ data: pts(0, 100) }], { ...opts, logarithmic: true }),
     ).toBeNull();
+  });
+});
+
+describe("getVisibleIndices", () => {
+  const series = [{ key: "a" }, { key: "b" }, { key: "c" }];
+
+  it("returns every index when nothing is filtered", () => {
+    expect(getVisibleIndices(series, null)).toEqual([0, 1, 2]);
+  });
+
+  it("returns the original indices of the visible series", () => {
+    expect(getVisibleIndices(series, new Set([0, 2]))).toEqual([0, 2]);
+  });
+
+  // A top-N selection builds the Set in rank order, so spreading it gives
+  // [2, 0] and misaligns with the ascending filter that builds chartSeries.
+  it("is ascending even when the Set was built out of order", () => {
+    const rankOrdered = new Set([2, 0]);
+    expect([...rankOrdered]).toEqual([2, 0]);
+    expect(getVisibleIndices(series, rankOrdered)).toEqual([0, 2]);
+  });
+});
+
+describe("resolveAxisBounds", () => {
+  const pts2 = (...ys) => ys.map((y, i) => ({ x: i, y }));
+  const series = [{ data: pts2(219, 7043, 1500) }];
+
+  it("auto-scales when nothing is typed", () => {
+    expect(resolveAxisBounds(series, {})).toEqual({ min: 0, max: 7500 });
+  });
+
+  it("uses a typed bound that does not clip", () => {
+    expect(resolveAxisBounds(series, { max: "50000" }).max).toBe(50000);
+  });
+
+  it("widens a clipping bound when out of bounds is visible", () => {
+    expect(resolveAxisBounds(series, { max: "5000" }).max).toBe(7500);
+  });
+
+  it("keeps a clipping bound as a hard cap when hidden", () => {
+    expect(
+      resolveAxisBounds(series, { max: "5000", outOfBounds: "hidden" }).max,
+    ).toBe(5000);
+  });
+
+  // The dual-axis case: a small series gets bounds of its own, not the other
+  // axis's, so it is not stretched to fill the plot.
+  // Dual axis passes fit:true, because a side must always get explicit bounds
+  // or ApexCharts scales its series independently.
+  it("scales to only the series it is given", () => {
+    const small = [{ data: pts2(190, 250, 210) }];
+    const { min, max } = resolveAxisBounds(small, {}, { fit: true });
+    expect(max).toBeLessThan(1000);
+    expect(max).toBeGreaterThanOrEqual(250);
+    expect(min).toBeLessThanOrEqual(190);
+  });
+
+  it("declines a narrow band without fit, leaving single-axis behaviour alone", () => {
+    const small = [{ data: pts2(190, 250, 210) }];
+    expect(resolveAxisBounds(small, {}).max).toBeUndefined();
   });
 });
