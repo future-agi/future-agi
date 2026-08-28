@@ -2287,15 +2287,23 @@ class TestExecutionDetailView(APIView):
                 test_execution.save(update_fields=["execution_metadata"])
 
             evaluated_eval_ids = set()
+            harness_eval_outputs = {}
             for eo in CallExecution.objects.filter(
                 test_execution=test_execution
             ).values_list("eval_outputs", flat=True):
                 if isinstance(eo, dict):
                     evaluated_eval_ids.update(eo.keys())
+                    for eval_id, eval_output in eo.items():
+                        if (
+                            isinstance(eval_output, dict)
+                            and eval_output.get("source") == "harness"
+                        ):
+                            harness_eval_outputs.setdefault(str(eval_id), eval_output)
             column_order, eval_columns_changed = reconcile_eval_column_order(
                 column_order=column_order,
                 eval_configs=eval_configs,
                 evaluated_eval_ids=evaluated_eval_ids,
+                harness_eval_outputs=harness_eval_outputs,
             )
             if eval_columns_changed:
                 test_execution.execution_metadata["column_order"] = column_order
@@ -2343,6 +2351,24 @@ class TestExecutionDetailView(APIView):
                     # Update test_execution's column_order with the missing columns
                     test_execution.execution_metadata["column_order"] = column_order
                     test_execution.save(update_fields=["execution_metadata"])
+
+            # CSAT is the user-facing meaning of overall_score for simulation
+            # calls.  Older executions persisted this column as hidden and
+            # labelled "Overall Score", which made completed hosted CSAT look
+            # absent even though the value was present on every call.
+            csat_column_changed = False
+            for col in column_order:
+                if not isinstance(col, dict) or col.get("id") != "overall_score":
+                    continue
+                if col.get("column_name") != "CSAT":
+                    col["column_name"] = "CSAT"
+                    csat_column_changed = True
+                if col.get("visible") is not True:
+                    col["visible"] = True
+                    csat_column_changed = True
+            if csat_column_changed:
+                test_execution.execution_metadata["column_order"] = column_order
+                test_execution.save(update_fields=["execution_metadata"])
 
             # Ensure voice executions always expose per-call system metric columns.
             if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
@@ -2601,6 +2627,7 @@ class TestExecutionDetailView(APIView):
                 for col in column_order
                 if col.get("type") != "evaluation"
                 or str(col.get("id")) in eval_configs_map
+                or str(col.get("id")) in harness_eval_outputs
             ]
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status

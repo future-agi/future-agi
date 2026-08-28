@@ -169,6 +169,7 @@ class ALKSimulateIngestionViewSet(ViewSet):
         try:
             run_test, scenarios, agent_definition = provision_alk_sim_run_test(
                 organization,
+                workspace=getattr(request, "workspace", None),
                 name=payload["name"],
                 personas=payload.get("personas"),
                 scenario_ids=payload.get("scenario_ids"),

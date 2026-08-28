@@ -506,6 +506,26 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if shortcut.get("assistant"):
             recordings["assistant"] = shortcut["assistant"]
 
+        # Hosted harness artifacts are re-hosted by the platform rather than
+        # nested in provider_call_data.  Surface all available tracks through
+        # the same recording shape consumed by the existing drawer.
+        call_metadata = (
+            obj.call_metadata
+            if hasattr(obj, "call_metadata") and isinstance(obj.call_metadata, dict)
+            else {}
+        )
+        hosted = call_metadata.get("hosted_harness_artifacts") or {}
+        hosted_track_kinds = {
+            "combined": "recording_combined",
+            "stereo": "recording_stereo",
+            "customer": "recording_customer",
+            "assistant": "recording_assistant",
+        }
+        for track, artifact_kind in hosted_track_kinds.items():
+            artifact = hosted.get(artifact_kind)
+            if track not in recordings and isinstance(artifact, dict) and artifact.get("url"):
+                recordings[track] = artifact["url"]
+
         # Fall back to the VoiceServiceManager resolution when no URLs are present.
         if not recordings:
             if VoiceServiceManager is None:

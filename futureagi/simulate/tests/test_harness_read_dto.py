@@ -8,10 +8,13 @@ Covers:
   - scenario cardinality enforcement
   - secret_ref validation at admission
 """
+
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import tarfile
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,21 +27,23 @@ from rest_framework.test import APIClient
 from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessJob,
-    HostedHarnessReceipt,
-    HostedHarnessScenario,
     HostedHarnessStageOutput,
 )
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    _resolve_scenario_modality,
     create_hosted_job,
     provision_scenarios,
     record_cleanup,
     register_attempt,
 )
 from simulate.services.hosted_harness_gateway import (
+    _SCENARIO_DIRECTORY_COUNT_COMMAND,
     _bundle_archive_for,
+    _hosted_scenario_repair_script,
     _validate_egress_domains,
+    authoring_stage_outputs_from_archive,
 )
 
 
@@ -94,9 +99,7 @@ def _v1_payload(**overrides):
 
 @pytest.mark.django_db
 def test_serialize_job_returns_full_dto_shape(organization):
-    job, _ = create_hosted_job(
-        organization, _v1_payload(), idempotency_key="dto-shape"
-    )
+    job, _ = create_hosted_job(organization, _v1_payload(), idempotency_key="dto-shape")
     result = serialize_job(job)
     # Top-level keys
     assert set(result.keys()) == {
@@ -106,6 +109,7 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "stage_outputs",
         "scenarios",
         "receipts",
+        "platform",
     }
     # Job sub-keys
     assert "job_id" in result["job"]
@@ -124,6 +128,11 @@ def test_serialize_job_returns_full_dto_shape(organization):
     assert result["scenarios"] == []
     assert result["receipts"] == []
     assert result["events"] == []
+    assert result["platform"] == {
+        "run_test_id": None,
+        "test_execution_id": None,
+        "url": None,
+    }
 
 
 @pytest.mark.django_db
@@ -153,6 +162,98 @@ def test_serialize_job_includes_run_ids(organization):
     assert result["job"]["run_test_id"] is None
     assert result["job"]["test_execution_id"] is None
     assert result["job"]["run_id"] is not None
+
+
+def test_authoring_archive_exposes_full_documents_without_secret_values():
+    body = io.BytesIO()
+    documents = {
+        "contract.json": {
+            "one_liner": "Books rides",
+            "modality": "voice",
+            "tools": [{"name": "book_ride", "description": "Create a booking"}],
+        },
+        "environment.json": {
+            "services": ["agent", "tools-api"],
+            "commands": {"agent": "python -m agent"},
+            "LIVEKIT_API_SECRET": "must-not-leak",
+            "secret_purposes": ["target_provider"],
+        },
+        "scenarios.json": [
+            {
+                "name": "airport",
+                "instruction": "Book an airport ride",
+                "use_case": "booking",
+                "api_key": "must-not-leak",
+            }
+        ],
+    }
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        for name, document in documents.items():
+            data = json.dumps(document).encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    assert [item["kind"] for item in outputs] == [
+        "contract",
+        "environment",
+        "scenarios",
+    ]
+    assert outputs[0]["data"]["tools"][0]["description"] == "Create a booking"
+    assert outputs[1]["data"]["commands"]["agent"] == "python -m agent"
+    assert outputs[1]["data"]["LIVEKIT_API_SECRET"] == "[redacted]"
+    assert outputs[1]["data"]["secret_purposes"] == ["target_provider"]
+    assert outputs[2]["data"][0]["api_key"] == "[redacted]"
+
+
+def test_authoring_archive_reads_per_scenario_files_and_respects_run_count():
+    body = io.BytesIO()
+    documents = {
+        "contract.json": {"modality": "voice", "tools": []},
+        "scenarios/zeta/scenario.json": {
+            "name": "Zeta",
+            "instruction": "Second alphabetically",
+        },
+        "scenarios/alpha/scenario.json": {
+            "name": "Alpha",
+            "instruction": "First alphabetically",
+        },
+    }
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        for name, document in documents.items():
+            data = json.dumps(document).encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue(), scenario_limit=1)
+
+    assert [item["kind"] for item in outputs] == ["contract", "scenarios"]
+    assert outputs[1]["summary"] == "1 grounded scenarios"
+    assert outputs[1]["data"] == [
+        {
+            "name": "Alpha",
+            "instruction": "First alphabetically",
+            "scenario_key": "alpha",
+        }
+    ]
+
+
+def test_hosted_scenario_repair_script_requests_exact_missing_count_safely():
+    script = _hosted_scenario_repair_script(
+        name="hotel'); raise RuntimeError('unsafe",
+        expected=3,
+        actual=2,
+    )
+
+    compile(script, "repair-scenarios.py", "exec")
+    assert "Add exactly 1 distinct validated scenario" in script
+    assert "count=3" in script
+    assert "name=\"hotel'); raise RuntimeError('unsafe\"" in script
+    assert "-type d" in _SCENARIO_DIRECTORY_COUNT_COMMAND
+    assert "ls " not in _SCENARIO_DIRECTORY_COUNT_COMMAND
 
 
 # ── Terminal failure overlay ────────────────────────────────────────────
@@ -257,10 +358,9 @@ def test_create_rejects_21_egress_domains(user):
         f"d{i}.example.com" for i in range(21)
     ]
 
-    with patch(
-        "simulate.services.hosted_harness.create_hosted_job"
-    ), patch(
-        "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+    with (
+        patch("simulate.services.hosted_harness.create_hosted_job"),
+        patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"),
     ):
         response = client.post(
             "/simulate/api/harness-jobs/",
@@ -344,9 +444,7 @@ def test_bundle_missing_returns_none(organization):
 
 @pytest.mark.django_db
 def test_bundle_verified_returns_archive_and_manifest(organization):
-    job, _ = create_hosted_job(
-        organization, _v1_payload(), idempotency_key="bundle-ok"
-    )
+    job, _ = create_hosted_job(organization, _v1_payload(), idempotency_key="bundle-ok")
     with tempfile.TemporaryDirectory() as tmpdir:
         bundle_dir = Path(tmpdir) / "future-agi__ride-voice-agent"
         bundle_dir.mkdir()
@@ -377,6 +475,17 @@ def test_bundle_verified_returns_archive_and_manifest(organization):
 # ── Scenario cardinality ───────────────────────────────────────────────
 
 
+def test_scenario_modality_uses_authored_contract_for_legacy_guest_payload():
+    job = SimpleNamespace(
+        stage_outputs=[
+            {"kind": "contract", "data": {"modality": "voice"}},
+        ]
+    )
+
+    assert _resolve_scenario_modality(job, {"operation": "provision"}) == "voice"
+    assert _resolve_scenario_modality(job, {"modality": "text"}) == "text"
+
+
 @pytest.mark.django_db
 def test_provision_rejects_wrong_count(organization):
     job, _ = create_hosted_job(
@@ -384,13 +493,16 @@ def test_provision_rejects_wrong_count(organization):
     )
     cap = register_attempt(job.id, endpoint_base_url="https://p.example.com")
     with pytest.raises(HostedHarnessError) as exc:
-        provision_scenarios(cap.attempt, {
-            "operation": "provision",
-            "name": "test",
-            "personas": [
-                {"scenario_key": "a", "name": "A"},
-            ],
-        })
+        provision_scenarios(
+            cap.attempt,
+            {
+                "operation": "provision",
+                "name": "test",
+                "personas": [
+                    {"scenario_key": "a", "name": "A"},
+                ],
+            },
+        )
     assert exc.value.code == "scenario_count_mismatch"
 
 
@@ -401,14 +513,17 @@ def test_provision_rejects_duplicate_keys(organization):
     )
     cap = register_attempt(job.id, endpoint_base_url="https://p.example.com")
     with pytest.raises(HostedHarnessError) as exc:
-        provision_scenarios(cap.attempt, {
-            "operation": "provision",
-            "name": "test",
-            "personas": [
-                {"scenario_key": "a", "name": "A"},
-                {"scenario_key": "a", "name": "B"},
-            ],
-        })
+        provision_scenarios(
+            cap.attempt,
+            {
+                "operation": "provision",
+                "name": "test",
+                "personas": [
+                    {"scenario_key": "a", "name": "A"},
+                    {"scenario_key": "a", "name": "B"},
+                ],
+            },
+        )
     assert exc.value.code == "scenario_key_duplicate"
 
 
@@ -431,17 +546,28 @@ def test_create_rejects_non_platform_vault_secret_ref(user):
     }
 
     # Valid platform-vault ref should not hit the secret_manager_unsupported error
-    with patch(
-        "simulate.services.hosted_harness.create_hosted_job",
-        return_value=(SimpleNamespace(
-            id="11111111-1111-1111-1111-111111111111",
-            payload={"retry": {"max_infrastructure_attempts": 1, "initial_backoff_seconds": 1, "max_backoff_seconds": 15}},
-        ), True),
-    ), patch(
-        "simulate.temporal.client.start_hosted_harness_gateway_workflow"
-    ), patch(
-        "simulate.services.harness_provider.serialize_job",
-        return_value={"job": {}, "status": {}},
+    with (
+        patch(
+            "simulate.services.hosted_harness.create_hosted_job",
+            return_value=(
+                SimpleNamespace(
+                    id="11111111-1111-1111-1111-111111111111",
+                    payload={
+                        "retry": {
+                            "max_infrastructure_attempts": 1,
+                            "initial_backoff_seconds": 1,
+                            "max_backoff_seconds": 15,
+                        }
+                    },
+                ),
+                True,
+            ),
+        ),
+        patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"),
+        patch(
+            "simulate.services.harness_provider.serialize_job",
+            return_value={"job": {}, "status": {}},
+        ),
     ):
         response = client.post(
             "/simulate/api/harness-jobs/",

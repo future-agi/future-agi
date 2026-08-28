@@ -47,6 +47,42 @@ def _organization(request):
     )
 
 
+def _workspace(request):
+    workspace = getattr(request, "workspace", None)
+    if workspace is not None:
+        return workspace
+
+    # Session-authenticated UI requests do not always pass through the API-key
+    # authentication hook that materializes ``request.workspace``. Resolve the
+    # explicit workspace header here as a safe fallback, while preserving the
+    # same organization and membership checks as the authentication layer.
+    workspace_id = request.headers.get("X-Workspace-Id")
+    if not workspace_id:
+        return None
+
+    from rest_framework.exceptions import PermissionDenied
+
+    from accounts.models.workspace import Workspace
+
+    organization = _organization(request)
+    workspace = (
+        Workspace.no_workspace_objects.select_related("organization")
+        .filter(id=workspace_id, organization=organization, is_active=True)
+        .first()
+    )
+    if workspace is None or not request.user.can_access_workspace(workspace):
+        raise PermissionDenied("Access denied to this workspace")
+    return workspace
+
+
+def _scope_jobs(queryset, request):
+    """Apply the exact tenant scope captured by the submitting request."""
+    workspace = _workspace(request)
+    if workspace is None:
+        return queryset.filter(workspace__isnull=True)
+    return queryset.filter(workspace=workspace)
+
+
 def _validate_secret_refs_daytona(secret_refs: dict) -> None:
     """Reject secret_refs the Daytona resolver cannot materialize.
 
@@ -110,22 +146,35 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "scenario_key": reg.scenario_key,
             "scenario_id": str(reg.scenario_id),
             "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
-            "instruction": (
-                getattr(reg.scenario, "prompt", None) or ""
-            ) if reg.scenario else None,
-            "use_case": (
-                getattr(reg.scenario, "use_case", None) or ""
-            ) if reg.scenario else None,
-            "call_execution_id": str(reg.call_execution_id) if reg.call_execution_id else None,
+            "instruction": (getattr(reg.scenario, "prompt", None) or "")
+            if reg.scenario
+            else None,
+            "use_case": (getattr(reg.scenario, "use_case", None) or "")
+            if reg.scenario
+            else None,
+            "call_execution_id": str(reg.call_execution_id)
+            if reg.call_execution_id
+            else None,
             "status": _scenario_status(reg),
         }
         for reg in scenario_regs
     ]
     # Receipts — bounded.
-    receipt_qs = HostedHarnessReceipt.no_workspace_objects.filter(
-        job=job
-    ).order_by("created_at")[: job.scenario_count]
+    receipt_qs = HostedHarnessReceipt.no_workspace_objects.filter(job=job).order_by(
+        "created_at"
+    )[: job.scenario_count]
     receipts = [r.body for r in receipt_qs]
+    platform = {
+        "run_test_id": str(job.run_test_id) if job.run_test_id else None,
+        "test_execution_id": str(job.test_execution_id)
+        if job.test_execution_id
+        else None,
+        "url": (
+            f"/dashboard/simulate/test/{job.run_test_id}/{job.test_execution_id}/call-details"
+            if job.run_test_id and job.test_execution_id
+            else None
+        ),
+    }
     return {
         "job": {
             "job_id": str(job.id),
@@ -133,7 +182,9 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "source": job.payload["source"],
             "metadata": job.payload.get("metadata", {}),
             "run_test_id": str(job.run_test_id) if job.run_test_id else None,
-            "test_execution_id": str(job.test_execution_id) if job.test_execution_id else None,
+            "test_execution_id": str(job.test_execution_id)
+            if job.test_execution_id
+            else None,
         },
         "status": {
             "state": job.state,
@@ -150,6 +201,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         "stage_outputs": stage_outputs,
         "scenarios": scenarios,
         "receipts": receipts,
+        "platform": platform,
     }
 
 
@@ -157,9 +209,13 @@ def _scenario_status(reg: HostedHarnessScenario) -> str | None:
     """Derive a human-readable status for a scenario registration."""
     if not reg.call_execution_id:
         return "registered"
-    receipt = HostedHarnessReceipt.no_workspace_objects.filter(
-        job_id=reg.job_id, scenario_id=reg.id
-    ).values_list("status", flat=True).first()
+    receipt = (
+        HostedHarnessReceipt.no_workspace_objects.filter(
+            job_id=reg.job_id, scenario_id=reg.id
+        )
+        .values_list("status", flat=True)
+        .first()
+    )
     return receipt or "running"
 
 
@@ -193,7 +249,9 @@ class DaytonaHarnessProvider:
             _validate_egress_domains(
                 request.validated_data["security"]["allowed_egress_domains"]
             )
-            _validate_secret_refs_daytona(request.validated_data["agent"]["secret_refs"])
+            _validate_secret_refs_daytona(
+                request.validated_data["agent"]["secret_refs"]
+            )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         try:
@@ -201,6 +259,7 @@ class DaytonaHarnessProvider:
                 organization,
                 request.validated_data,
                 idempotency_key=idempotency_key,
+                workspace=_workspace(request),
             )
             base_url = getattr(
                 settings, "HARNESS_PUBLIC_BASE_URL", ""
@@ -224,8 +283,9 @@ class DaytonaHarnessProvider:
 
     def list(self, request) -> Response:
         organization = _organization(request)
-        jobs = HostedHarnessJob.no_workspace_objects.filter(
-            organization=organization
+        jobs = _scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            request,
         ).order_by("-created_at")[:100]
         return Response([serialize_job(job) for job in jobs])
 
@@ -336,8 +396,11 @@ class DaytonaHarnessProvider:
 
     def _job(self, request, pk):
         organization = _organization(request)
-        return HostedHarnessJob.no_workspace_objects.filter(
-            id=pk, organization=organization
+        return _scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(
+                id=pk, organization=organization
+            ),
+            request,
         ).first()
 
 

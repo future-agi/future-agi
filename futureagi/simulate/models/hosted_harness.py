@@ -5,6 +5,7 @@ import uuid
 from django.db import models
 
 from accounts.models import Organization
+from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
 
 
@@ -25,6 +26,13 @@ class HostedHarnessJob(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="hosted_harness_jobs"
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="hosted_harness_jobs",
+        null=True,
+        blank=True,
     )
     run_id = models.UUIDField(unique=True)
     idempotency_key = models.CharField(max_length=255)
@@ -82,6 +90,10 @@ class HostedHarnessJob(BaseModel):
         ]
         indexes = [
             models.Index(fields=["organization", "state"], name="idx_hjob_org_state"),
+            models.Index(
+                fields=["organization", "workspace", "state"],
+                name="idx_hjob_org_ws_state",
+            ),
             models.Index(
                 fields=["state", "deadline_at"], name="idx_hjob_state_deadline"
             ),

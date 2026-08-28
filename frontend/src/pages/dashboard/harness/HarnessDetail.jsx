@@ -26,6 +26,7 @@ import CustomTooltip from "src/components/tooltip";
 import StageOutput from "./StageOutput";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
+import { compactActivityEvents } from "./activityEvents";
 import {
   adjustHarnessJob,
   cancelHarnessJob,
@@ -199,13 +200,13 @@ export default function HarnessDetail() {
   const doneCount = completedStageCount(status, current?.events);
   const collapsible = doneCount > 0;
   const visibleStages =
-    !collapsible || stagesOpen
-      ? stages
-      : stages.slice(doneCount);
+    !collapsible || stagesOpen ? stages : stages.slice(doneCount);
   const elapsedLabel = shortDuration(
     runElapsed(current?.events, clock, isTerminal),
   );
-  const stageLabel = shortDuration(stageElapsed(status, current?.events, clock));
+  const stageLabel = shortDuration(
+    stageElapsed(status, current?.events, clock),
+  );
 
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
@@ -270,7 +271,7 @@ export default function HarnessDetail() {
   // the moment each happened.
   const timeline = useMemo(() => {
     const seen = new Set();
-    const events = (current?.events || [])
+    const events = compactActivityEvents(current?.events || [])
       .filter((event) => {
         const key = event.event_id || JSON.stringify(event);
         if (seen.has(key)) return false;
@@ -280,7 +281,7 @@ export default function HarnessDetail() {
       .map((event) => ({
         kind: "event",
         id: event.event_id,
-        at: event.wall_time,
+        at: event.emitted_at || event.wall_time,
         event,
       }));
     const changes = (current?.adjustments || []).map((item) => ({
@@ -536,7 +537,9 @@ export default function HarnessDetail() {
                   sx={{ p: 0.25 }}
                 >
                   <Iconify
-                    icon={copiedId ? "solar:check-read-linear" : "solar:copy-linear"}
+                    icon={
+                      copiedId ? "solar:check-read-linear" : "solar:copy-linear"
+                    }
                     width={14}
                     color={copiedId ? "accent.pass" : "text.secondary"}
                   />
@@ -564,7 +567,11 @@ export default function HarnessDetail() {
             {/* While a run is live the elapsed time above and "updated Ns ago" tick from the
                 same moment and read as the same number. Only once it is terminal do they mean
                 different things: how long it took, and when it finished. */}
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.25 }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ display: "block", mt: 0.25 }}
+            >
               {isTerminal ? `${updatedLabel} · ` : ""}attempt{" "}
               {status?.attempt || 1}
             </Typography>
@@ -580,7 +587,11 @@ export default function HarnessDetail() {
                 aria-expanded={stagesOpen}
                 endIcon={
                   <Iconify
-                    icon={stagesOpen ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"}
+                    icon={
+                      stagesOpen
+                        ? "solar:alt-arrow-up-linear"
+                        : "solar:alt-arrow-down-linear"
+                    }
                     width={18}
                   />
                 }
@@ -597,17 +608,18 @@ export default function HarnessDetail() {
                   "& .MuiButton-endIcon": { ml: "auto" },
                 }}
               >
-                <Iconify icon="solar:check-circle-bold" color="accent.pass" width={18} />
+                <Iconify
+                  icon="solar:check-circle-bold"
+                  color="accent.pass"
+                  width={18}
+                />
                 <Typography variant="body2" color="text.secondary">
                   {doneCount} {doneCount === 1 ? "stage" : "stages"} complete
                 </Typography>
               </Button>
             )}
 
-            <Stack
-              spacing={1.1}
-              sx={{ pl: collapsible ? "11px" : 0 }}
-            >
+            <Stack spacing={1.1} sx={{ pl: collapsible ? "11px" : 0 }}>
               {visibleStages.map((stage) => {
                 const index = stages.indexOf(stage);
                 const state = stageState(status, index, current?.events);
@@ -648,7 +660,11 @@ export default function HarnessDetail() {
                       icon={glyph.icon}
                       color={glyph.color}
                       width={18}
-                      sx={{ opacity: muted ? 0.6 : 1, mt: "1px", flexShrink: 0 }}
+                      sx={{
+                        opacity: muted ? 0.6 : 1,
+                        mt: "1px",
+                        flexShrink: 0,
+                      }}
                     />
                     <Box sx={{ minWidth: 0 }}>
                       <Typography
@@ -717,7 +733,9 @@ export default function HarnessDetail() {
                   // Unselected labels sit on text.subtitle rather than text.secondary. In
                   // light mode that is black[600] against black[800] — noticeably softer —
                   // while in dark mode both resolve to the same value, so nothing moves.
-                  "& .MuiTab-root:not(.Mui-selected)": { color: "text.subtitle" },
+                  "& .MuiTab-root:not(.Mui-selected)": {
+                    color: "text.subtitle",
+                  },
                   // The pass green is #16A34A in light and #4ADE80 in dark, so the same
                   // opacity reads heavy on white and washed out on black. Hold the ticks
                   // back in dark, and let them keep their weight in light.
@@ -796,135 +814,162 @@ export default function HarnessDetail() {
                   )}
                 </Stack>
               ) : (
-              <Stack spacing={1.5}>
-                {selectedOutputs.map((output) => (
-                  <StageOutput key={output.id} output={output} />
-                ))}
-                {current.credentials && (
-                  <Paper
-                    variant="outlined"
-                    sx={{ p: 1.5, bgcolor: "background.default" }}
-                  >
-                    <Typography variant="subtitle2">
-                      Runtime preflight
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {current.credentials.scanned_files} source files inspected
-                      ·{" "}
-                      {(current.credentials.detected_connectors || []).join(
-                        ", ",
-                      ) || "generic connector"}{" "}
-                      · {current.credentials.requirements?.length || 0}{" "}
-                      configuration requirements
-                    </Typography>
-                  </Paper>
-                )}
-                {timeline.map((entry) =>
-                  entry.kind === "adjustment" ? (
-                    // A correction you asked for, in the run's own voice: indented and
-                    // accented so it is legible as yours without leaving the timeline.
+                <Stack spacing={1.5}>
+                  {selectedOutputs.map((output) => (
+                    <StageOutput key={output.id} output={output} />
+                  ))}
+                  {current.credentials && (
                     <Paper
-                      key={entry.id}
                       variant="outlined"
-                      sx={{
-                        p: 1.5,
-                        ml: 3,
-                        bgcolor: "background.default",
-                        borderColor: "accent.info",
-                      }}
+                      sx={{ p: 1.5, bgcolor: "background.default" }}
                     >
-                      <Stack direction="row" justifyContent="space-between">
-                        <Typography variant="caption" color="accent.info">
-                          You asked for a change
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          title={entry.at || ""}
-                        >
-                          {eventTime(entry.at)}
-                        </Typography>
-                      </Stack>
-                      <Typography variant="body2">
-                        {entry.item.instruction}
+                      <Typography variant="subtitle2">
+                        Runtime preflight
                       </Typography>
-                      <Stack
-                        direction="row"
-                        spacing={0.75}
-                        alignItems="center"
+                      <Typography variant="body2" color="text.secondary">
+                        {current.credentials.scanned_files} source files
+                        inspected ·{" "}
+                        {(current.credentials.detected_connectors || []).join(
+                          ", ",
+                        ) || "generic connector"}{" "}
+                        · {current.credentials.requirements?.length || 0}{" "}
+                        configuration requirements
+                      </Typography>
+                    </Paper>
+                  )}
+                  {timeline.map((entry) =>
+                    entry.kind === "adjustment" ? (
+                      // A correction you asked for, in the run's own voice: indented and
+                      // accented so it is legible as yours without leaving the timeline.
+                      <Paper
+                        key={entry.id}
+                        variant="outlined"
+                        sx={{
+                          p: 1.5,
+                          ml: 3,
+                          bgcolor: "background.default",
+                          borderColor: "accent.info",
+                        }}
                       >
-                        {/* A change that has not landed by the time the run stops never
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography variant="caption" color="accent.info">
+                            You asked for a change
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            title={entry.at || ""}
+                          >
+                            {eventTime(entry.at)}
+                          </Typography>
+                        </Stack>
+                        <Typography variant="body2">
+                          {entry.item.instruction}
+                        </Typography>
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          alignItems="center"
+                        >
+                          {/* A change that has not landed by the time the run stops never
                             will. ALK leaves it at "pending" forever, so a spinner and a
                             "will land at" would promise work that cannot happen. */}
-                        {entry.item.status !== "applied" && !isTerminal && (
-                          <CircularProgress size={10} />
-                        )}
+                          {entry.item.status !== "applied" && !isTerminal && (
+                            <CircularProgress size={10} />
+                          )}
+                          <Typography
+                            variant="caption"
+                            color={
+                              entry.item.status !== "applied" && isTerminal
+                                ? "text.disabled"
+                                : "text.secondary"
+                            }
+                          >
+                            {adjustmentStatus(entry.item, status?.stage)}
+                          </Typography>
+                        </Stack>
+                      </Paper>
+                    ) : (
+                      <Paper
+                        key={entry.id}
+                        variant="outlined"
+                        sx={{ p: 1.5, bgcolor: "background.default" }}
+                      >
+                        <Stack direction="row" justifyContent="space-between">
+                          <Typography variant="caption" color="accent.brand">
+                            {readable(
+                              entry.event.payload?.stage || entry.event.type,
+                            )}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            title={entry.at || ""}
+                          >
+                            {eventTime(entry.at)}
+                          </Typography>
+                        </Stack>
+                        <Typography variant="body2">
+                          {eventMessage(entry.event)}
+                        </Typography>
+                      </Paper>
+                    ),
+                  )}
+                  {status?.failure && (
+                    <Alert severity="error" variant="outlined">
+                      <Typography variant="subtitle2">
+                        {readable(status.failure.domain)} ·{" "}
+                        {status.failure.code}
+                      </Typography>
+                      {status.failure.message}
+                      {status.failure.action && (
+                        <Typography variant="body2" sx={{ mt: 0.75 }}>
+                          Next step: {status.failure.action}
+                        </Typography>
+                      )}
+                      {(status.failure.details?.packaging_type ||
+                        status.failure.details?.failed_adapter) && (
                         <Typography
                           variant="caption"
-                          color={
-                            entry.item.status !== "applied" && isTerminal
-                              ? "text.disabled"
-                              : "text.secondary"
-                          }
+                          component="div"
+                          sx={{ mt: 0.75 }}
                         >
-                          {adjustmentStatus(entry.item, status?.stage)}
+                          {status.failure.details.packaging_type
+                            ? `Packaging: ${readable(status.failure.details.packaging_type)}`
+                            : ""}
+                          {status.failure.details.packaging_type &&
+                          status.failure.details.failed_adapter
+                            ? " · "
+                            : ""}
+                          {status.failure.details.failed_adapter
+                            ? `Adapter: ${readable(status.failure.details.failed_adapter)}`
+                            : ""}
                         </Typography>
-                      </Stack>
-                    </Paper>
-                  ) : (
-                  <Paper
-                    key={entry.id}
-                    variant="outlined"
-                    sx={{ p: 1.5, bgcolor: "background.default" }}
-                  >
-                    <Stack direction="row" justifyContent="space-between">
-                      <Typography variant="caption" color="accent.brand">
-                        {readable(entry.event.payload?.stage || entry.event.type)}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        title={entry.event.wall_time || ""}
-                      >
-                        {eventTime(entry.event.wall_time)}
+                      )}
+                    </Alert>
+                  )}
+                  {status?.detail && (
+                    <Alert
+                      severity={status.stage === "failed" ? "error" : "info"}
+                      variant="outlined"
+                    >
+                      {status.detail}
+                    </Alert>
+                  )}
+                  {isTerminal && !timeline.length && (
+                    <Typography variant="body2" color="text.secondary">
+                      This run recorded no activity.
+                    </Typography>
+                  )}
+                  {!terminalStages.has(status?.stage) && (
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <CircularProgress size={16} />
+                      <Typography variant="body2" color="text.secondary">
+                        ALK is working autonomously…
                       </Typography>
                     </Stack>
-                    <Typography variant="body2">
-                      {eventMessage(entry.event)}
-                    </Typography>
-                  </Paper>
-                  ),
-                )}
-                {status?.failure && (
-                  <Alert severity="error" variant="outlined">
-                    <Typography variant="subtitle2">
-                      {readable(status.failure.domain)} · {status.failure.code}
-                    </Typography>
-                    {status.failure.message}
-                  </Alert>
-                )}
-                {status?.detail && (
-                  <Alert
-                    severity={status.stage === "failed" ? "error" : "info"}
-                    variant="outlined"
-                  >
-                    {status.detail}
-                  </Alert>
-                )}
-                {isTerminal && !timeline.length && (
-                  <Typography variant="body2" color="text.secondary">
-                    This run recorded no activity.
-                  </Typography>
-                )}
-                {!terminalStages.has(status?.stage) && (
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <CircularProgress size={16} />
-                    <Typography variant="body2" color="text.secondary">
-                      ALK is working autonomously…
-                    </Typography>
-                  </Stack>
-                )}
-              </Stack>
+                  )}
+                </Stack>
               )}
             </Box>
 

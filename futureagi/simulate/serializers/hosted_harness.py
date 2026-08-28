@@ -47,6 +47,7 @@ class HarnessMetricEvaluationSerializer(serializers.Serializer):
         min_value=0.0, max_value=1.0, validators=[_reject_non_finite]
     )
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    grading_error = serializers.BooleanField(required=False)
 
 
 class HarnessCheckpointEvaluationSerializer(serializers.Serializer):
@@ -54,6 +55,7 @@ class HarnessCheckpointEvaluationSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("checkpoint",))
     passed = serializers.BooleanField()
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    grading_error = serializers.BooleanField(required=False)
 
 
 class HarnessCallSerializer(serializers.Serializer):
@@ -201,15 +203,11 @@ class HarnessScenarioBeginSerializer(serializers.Serializer):
 class HarnessScenarioOperationSerializer(serializers.Serializer):
     operation = serializers.ChoiceField(choices=("provision", "begin"))
     name = serializers.CharField(required=False, max_length=255)
-    modality = serializers.ChoiceField(
-        choices=("text", "voice"), required=False
-    )
+    modality = serializers.ChoiceField(choices=("text", "voice"), required=False)
     description = serializers.CharField(required=False, allow_blank=True)
     personas = HarnessProvisionPersonaSerializer(many=True, required=False)
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
-    agent_name = serializers.CharField(
-        required=False, allow_blank=True, max_length=255
-    )
+    agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
     run_test_id = serializers.UUIDField(required=False)
     scenario_keys = serializers.ListField(
         child=serializers.CharField(max_length=255), required=False

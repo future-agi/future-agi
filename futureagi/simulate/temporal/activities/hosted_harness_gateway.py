@@ -1,11 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
-import json
-import tarfile
-from pathlib import Path
-
 from django.utils import timezone
 from temporalio import activity
 
@@ -17,95 +12,6 @@ from simulate.temporal.types.hosted_harness_gateway import (
     HostedHarnessLaunchOutput,
     HostedHarnessPollOutput,
 )
-
-
-def _extract_source_archive(body: bytes, destination: Path) -> Path:
-    destination = destination.resolve()
-    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
-        for member in archive.getmembers():
-            if member.issym() or member.islnk():
-                raise RuntimeError("source archive contains a link")
-            target = (destination / member.name).resolve()
-            if not target.is_relative_to(destination):
-                raise RuntimeError("source archive contains an unsafe path")
-        archive.extractall(destination)
-    source = destination / "source"
-    if not source.is_dir():
-        raise RuntimeError("source archive has no source root")
-    return source
-
-
-def _read_json(path: Path):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def _authoring_stage_outputs(root: Path) -> list[dict]:
-    """Return bounded, secret-safe ALK authoring snapshots for the live UI."""
-    outputs: list[dict] = []
-    contract = _read_json(root / "contract.json")
-    if isinstance(contract, dict):
-        tools = [
-            {"name": str(tool.get("name") or "")}
-            for tool in contract.get("tools", [])
-            if isinstance(tool, dict) and tool.get("name")
-        ]
-        outputs.append(
-            {
-                "id": "contract",
-                "kind": "contract",
-                "title": "Agent contract",
-                "summary": f"{len(tools)} tools · {contract.get('modality') or 'unknown'} modality",
-                "data": {
-                    "one_liner": str(contract.get("one_liner") or ""),
-                    "modality": str(contract.get("modality") or "unknown"),
-                    "runtime": contract.get("runtime") or {},
-                    "tools": tools,
-                    "hard_constraints": [
-                        str(item) for item in contract.get("hard_constraints", [])
-                    ],
-                },
-            }
-        )
-    environment = _read_json(root / "environment.json")
-    if isinstance(environment, dict):
-        services = [str(item) for item in environment.get("services", [])]
-        outputs.append(
-            {
-                "id": "environment",
-                "kind": "environment",
-                "title": "Execution environment",
-                "summary": f"{len(services)} services ready",
-                "data": {
-                    "services": services,
-                    "project": str(environment.get("project") or ""),
-                    "managed": bool(environment.get("managed")),
-                },
-            }
-        )
-    scenarios = _read_json(root / "scenarios.json")
-    if isinstance(scenarios, list):
-        data = [
-            {
-                "name": str(item.get("name") or "scenario"),
-                "instruction": str(item.get("instruction") or ""),
-                "use_case": str(item.get("use_case") or ""),
-            }
-            for item in scenarios
-            if isinstance(item, dict)
-        ]
-        outputs.append(
-            {
-                "id": "scenarios",
-                "kind": "scenarios",
-                "title": "Generated scenarios",
-                "summary": f"{len(data)} grounded scenarios",
-                "data": data,
-            }
-        )
-    return outputs
 
 
 @activity.defn(name="author_hosted_harness_job")
@@ -164,6 +70,11 @@ async def author_hosted_harness_job(
             ]
         )
 
+    def _touch_authoring_heartbeat() -> None:
+        HostedHarnessJob.no_workspace_objects.filter(id=input.job_id).update(
+            updated_at=timezone.now()
+        )
+
     try:
         cached = await _run_db(_prepare)
         if cached:
@@ -176,6 +87,7 @@ async def author_hosted_harness_job(
                 await asyncio.wait_for(asyncio.shield(task), timeout=20)
             except TimeoutError:
                 activity.heartbeat("ALK authoring in sandbox is active")
+                await _run_db(_touch_authoring_heartbeat)
         await task
         return HostedHarnessAuthoringOutput(ready=True, state="admitted")
     except Exception as exc:

@@ -2195,6 +2195,32 @@ class TestAlkVoiceCsatScoring:
         assert "returned no result" in call.call_metadata["csat_error"]
         assert not (call.conversation_metrics_data or {}).get("csat_score")
 
+    def test_text_call_falls_back_to_call_transcript(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        call.simulation_call_type = CallExecution.SimulationCallType.TEXT
+        call.recording_url = None
+        call.save(update_fields=["simulation_call_type", "recording_url"])
+        CallTranscript.objects.create(
+            call_execution=call,
+            speaker_role=CallTranscript.SpeakerRole.USER,
+            content="Thanks, that resolved my issue.",
+            start_time_ms=0,
+            end_time_ms=1000,
+        )
+
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=9.0) as scorer,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_called_once_with("Customer: Thanks, that resolved my issue.")
+        call.refresh_from_db()
+        assert call.conversation_metrics_data["csat_score"] == 9.0
+        assert call.overall_score == 9.0
+
 
 def test_alk_sim_task_module_registered_for_worker():
     """The CSAT activity must be import-registered at worker startup, else

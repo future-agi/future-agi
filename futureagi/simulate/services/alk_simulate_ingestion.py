@@ -244,7 +244,12 @@ def _extension_from_filename(filename: str | None) -> str:
 
 
 def _provision_agent_definition(
-    organization, agent_definition_id, agent_name, description, modality="text"
+    organization,
+    agent_definition_id,
+    agent_name,
+    description,
+    modality="text",
+    workspace=None,
 ):
     """Resolve a modality-correct agent definition for an external ALK run.
 
@@ -260,7 +265,10 @@ def _provision_agent_definition(
     if agent_definition_id:
         try:
             agent_definition = AgentDefinition.objects.get(
-                id=agent_definition_id, organization=organization, deleted=False
+                id=agent_definition_id,
+                organization=organization,
+                workspace=workspace,
+                deleted=False,
             )
         except AgentDefinition.DoesNotExist as exc:
             raise ALKSimulateIngestionError(
@@ -277,12 +285,14 @@ def _provision_agent_definition(
         inbound=True,
         description=description or f"SDK-provisioned {modality} agent (ALK ingestion).",
         organization=organization,
+        workspace=workspace,
     )
 
 
 def provision_alk_sim_run_test(
     organization,
     *,
+    workspace=None,
     name: str,
     personas: list[dict] | None = None,
     scenario_ids: list | None = None,
@@ -314,7 +324,10 @@ def provision_alk_sim_run_test(
         if scenario_ids:
             scenarios = list(
                 Scenarios.objects.filter(
-                    id__in=scenario_ids, organization=organization, deleted=False
+                    id__in=scenario_ids,
+                    organization=organization,
+                    workspace=workspace,
+                    deleted=False,
                 ).select_related("agent_definition", "simulator_agent")
             )
             found = {str(s.id) for s in scenarios}
@@ -329,6 +342,7 @@ def provision_alk_sim_run_test(
                 agent_name,
                 description,
                 modality,
+                workspace,
             )
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
@@ -341,6 +355,7 @@ def provision_alk_sim_run_test(
                     name=f"{name} · simulator",
                     prompt=generate_simulator_agent_prompt(agent_version=None),
                     organization=organization,
+                    workspace=workspace,
                 )
             run_test = RunTest.objects.create(
                 name=name,
@@ -348,6 +363,7 @@ def provision_alk_sim_run_test(
                 agent_definition=agent_definition,
                 simulator_agent=simulator_agent,
                 organization=organization,
+                workspace=workspace,
             )
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
@@ -358,6 +374,7 @@ def provision_alk_sim_run_test(
             agent_name,
             description,
             modality,
+            workspace,
         )
 
         scenarios: list[Scenarios] = []
@@ -376,7 +393,7 @@ def provision_alk_sim_run_test(
             # {{persona}}/{{situation}} placeholders resolve — without it the
             # placeholders ship to the model unsubstituted.
             dataset = _build_persona_scenario_dataset(
-                organization, scenario_name, persona
+                organization, scenario_name, persona, workspace=workspace
             )
             scenarios.append(
                 Scenarios.objects.create(
@@ -387,6 +404,7 @@ def provision_alk_sim_run_test(
                     source_type=Scenarios.SourceTypes.AGENT_DEFINITION,
                     agent_definition=agent_definition,
                     organization=organization,
+                    workspace=workspace,
                     dataset=dataset,
                     status=StatusType.COMPLETED.value,
                     metadata={"origin": "alk_sdk_ingestion", "persona": persona},
@@ -398,13 +416,16 @@ def provision_alk_sim_run_test(
             description=description,
             agent_definition=agent_definition,
             organization=organization,
+            workspace=workspace,
         )
         run_test.scenarios.set(scenarios)
 
     return run_test, scenarios, agent_definition
 
 
-def _build_persona_scenario_dataset(organization, scenario_name: str, persona: dict):
+def _build_persona_scenario_dataset(
+    organization, scenario_name: str, persona: dict, *, workspace=None
+):
     """Materialize one SDK persona as a 1-row scenario dataset.
 
     Mirrors the native dataset-scenario grid (persona / situation / outcome
@@ -439,6 +460,7 @@ def _build_persona_scenario_dataset(organization, scenario_name: str, persona: d
         name=f"{scenario_name} · personas"[:2000],
         source=DatasetSourceChoices.SCENARIO.value,
         organization=organization,
+        workspace=workspace,
     )
     column_specs = (
         ("persona", DataTypeChoices.PERSONA.value),
@@ -532,7 +554,7 @@ def create_alk_sim_test_execution(
             "run_test has no scenarios; attach at least one before starting an ALK execution"
         )
 
-    return TestExecution.objects.create(
+    test_execution = TestExecution.objects.create(
         run_test=run_test,
         status=TestExecution.ExecutionStatus.PENDING,
         started_at=timezone.now(),
@@ -546,6 +568,20 @@ def create_alk_sim_test_execution(
             {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
         ),
     )
+    # A repository rerun creates a new execution while the user may still be
+    # viewing the previous one. Publish its identity immediately rather than
+    # waiting for the first call result.
+    try:
+        notify_simulation_update(
+            organization_id=str(run_test.organization_id),
+            run_test_id=str(run_test.id),
+            test_execution_id=str(test_execution.id),
+        )
+    except Exception:
+        logger.exception(
+            "alk_sim_start_notify_failed", test_execution_id=str(test_execution.id)
+        )
+    return test_execution
 
 
 def create_alk_sim_call_execution_batch(
@@ -1462,9 +1498,7 @@ def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
             "status": "completed",
             "source": "harness",
             "kind": kind,
-            "platform_template": str(
-                evaluation.get("platform_template") or ""
-            )[:2000],
+            "platform_template": str(evaluation.get("platform_template") or "")[:2000],
         }
     call_execution.eval_outputs = outputs
 

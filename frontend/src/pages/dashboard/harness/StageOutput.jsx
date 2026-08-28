@@ -95,6 +95,12 @@ export default function StageOutput({ output }) {
                 • {String(constraint)}
               </Typography>
             ))}
+            <Box
+              component="pre"
+              sx={{ m: 0, whiteSpace: "pre-wrap", fontSize: 12, color: "text.secondary" }}
+            >
+              {JSON.stringify(data, null, 2)}
+            </Box>
           </Stack>
         )}
 
@@ -121,6 +127,12 @@ export default function StageOutput({ output }) {
                 {name} → {String(value)}
               </Typography>
             ))}
+            <Box
+              component="pre"
+              sx={{ m: 0, whiteSpace: "pre-wrap", fontSize: 12, color: "text.secondary" }}
+            >
+              {JSON.stringify(data, null, 2)}
+            </Box>
           </Stack>
         )}
 

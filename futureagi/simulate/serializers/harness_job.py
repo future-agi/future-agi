@@ -328,6 +328,12 @@ class HarnessScenarioSerializer(serializers.Serializer):
     status = serializers.CharField(allow_null=True, required=False)
 
 
+class HarnessPlatformSerializer(serializers.Serializer):
+    run_test_id = serializers.UUIDField(allow_null=True)
+    test_execution_id = serializers.UUIDField(allow_null=True)
+    url = serializers.CharField(allow_null=True)
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
     job = HarnessJobInfoSerializer()
@@ -336,3 +342,4 @@ class HarnessJobReadSerializer(serializers.Serializer):
     stage_outputs = HarnessStageOutputSerializer(many=True)
     scenarios = HarnessScenarioSerializer(many=True)
     receipts = serializers.ListField(child=serializers.JSONField())
+    platform = HarnessPlatformSerializer()

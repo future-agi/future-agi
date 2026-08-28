@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Full DTO fixture matching the public read contract:
- * {job, status, events, stage_outputs, scenarios, receipts}
+ * {job, status, events, stage_outputs, scenarios, receipts, platform}
  */
 export const FULL_DTO_FIXTURE = {
   job: {
@@ -21,6 +21,11 @@ export const FULL_DTO_FIXTURE = {
     },
     run_test_id: "rt-444",
     test_execution_id: "te-555",
+  },
+  platform: {
+    run_test_id: "rt-444",
+    test_execution_id: "te-555",
+    url: "/dashboard/simulate/test/rt-444/te-555/call-details",
   },
   status: {
     state: "completed",
@@ -198,7 +203,15 @@ describe("DTO fixture completeness", () => {
   it("has all top-level DTO keys", () => {
     const keys = Object.keys(FULL_DTO_FIXTURE).sort();
     expect(keys).toEqual(
-      ["events", "job", "receipts", "scenarios", "stage_outputs", "status"].sort(),
+      [
+        "events",
+        "job",
+        "platform",
+        "receipts",
+        "scenarios",
+        "stage_outputs",
+        "status",
+      ].sort(),
     );
   });
 

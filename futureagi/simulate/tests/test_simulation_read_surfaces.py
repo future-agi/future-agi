@@ -241,6 +241,34 @@ def test_get_eval_outputs_keeps_external_harness_results_without_config(
 
 
 @pytest.mark.django_db
+def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation_tree):
+    call_execution = simulation_tree["call_execution"]
+    agent_definition = call_execution.test_execution.run_test.agent_definition
+    agent_definition.agent_type = AgentDefinition.AgentTypeChoices.VOICE
+    agent_definition.save(update_fields=["agent_type"])
+    call_execution.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call_execution.call_metadata = {
+        "hosted_harness_artifacts": {
+            "recording_combined": {"url": "https://media.example/combined.wav"},
+            "recording_stereo": {"url": "https://media.example/stereo.wav"},
+            "recording_customer": {"url": "https://media.example/customer.wav"},
+            "recording_assistant": {"url": "https://media.example/assistant.wav"},
+        }
+    }
+
+    recordings = CallExecutionDetailSerializer(
+        context={"detail_mode": True}
+    ).get_recordings(call_execution)
+
+    assert recordings == {
+        "combined": "https://media.example/combined.wav",
+        "stereo": "https://media.example/stereo.wav",
+        "customer": "https://media.example/customer.wav",
+        "assistant": "https://media.example/assistant.wav",
+    }
+
+
+@pytest.mark.django_db
 def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     call_execution = simulation_tree["call_execution"]

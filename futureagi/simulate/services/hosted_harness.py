@@ -86,6 +86,7 @@ def create_hosted_job(
     payload: dict[str, Any],
     *,
     idempotency_key: str,
+    workspace=None,
 ) -> tuple[HostedHarnessJob, bool]:
     request_digest = canonical_digest(payload)
     with transaction.atomic():
@@ -98,6 +99,12 @@ def create_hosted_job(
             .first()
         )
         if existing is not None:
+            if existing.workspace_id != getattr(workspace, "id", None):
+                raise HostedHarnessError(
+                    "idempotency_conflict",
+                    "the idempotency key was already used in a different workspace",
+                    status_code=409,
+                )
             if existing.request_digest != request_digest:
                 raise HostedHarnessError(
                     "idempotency_conflict",
@@ -124,6 +131,7 @@ def create_hosted_job(
         duration = normalized["runtime"]["max_duration_seconds"]
         job = HostedHarnessJob.no_workspace_objects.create(
             organization=organization,
+            workspace=workspace,
             run_id=run_id,
             idempotency_key=idempotency_key,
             request_digest=request_digest,
@@ -280,14 +288,22 @@ def provision_scenarios(
         for persona in payload["personas"]
     ]
     try:
+        # Older hosted guests did not include ``modality`` in the scenario
+        # provision request.  The authoring contract is already persisted on
+        # the job before scenario registration, so use it as the authoritative
+        # fallback instead of silently defaulting every hosted run to text.
+        # Misclassifying a LiveKit run here makes completed voice calls render
+        # through the chat schema and effectively disappear from call-details.
+        modality = _resolve_scenario_modality(job, payload)
         run_test, scenarios, _ = provision_alk_sim_run_test(
             job.organization,
+            workspace=job.workspace,
             name=payload["name"],
             personas=personas,
             agent_definition_id=payload.get("agent_definition_id"),
             agent_name=payload.get("agent_name"),
             description=payload.get("description", ""),
-            modality=payload.get("modality", "text"),
+            modality=modality,
         )
     except ALKSimulateIngestionError as exc:
         raise HostedHarnessError("scenario_provision_failed", str(exc)) from exc
@@ -319,6 +335,25 @@ def provision_scenarios(
             for persona, scenario in zip(payload["personas"], scenarios, strict=True)
         ]
     return _provision_response(locked, registrations)
+
+
+def _resolve_scenario_modality(
+    job: HostedHarnessJob, payload: dict[str, Any]
+) -> str:
+    """Resolve text/voice without requiring a lock-step guest rollout."""
+    explicit = str(payload.get("modality") or "").lower()
+    if explicit in {"text", "voice"}:
+        return explicit
+    for output in job.stage_outputs or []:
+        if not isinstance(output, dict) or output.get("kind") != "contract":
+            continue
+        data = output.get("data")
+        if not isinstance(data, dict):
+            continue
+        authored = str(data.get("modality") or "").lower()
+        if authored in {"text", "voice"}:
+            return authored
+    return "text"
 
 
 def begin_scenarios(
@@ -493,15 +528,29 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
     if not job.test_execution_id:
         return
     receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=job)
-    completed = receipts.filter(status="passed").count()
-    failed = receipts.filter(status__in=("failed", "errored")).count()
+    # Harness receipt outcomes answer "did the scenario satisfy its checks?";
+    # TestExecution counters answer "did the call transport complete?".  Keep
+    # those dimensions separate so a completed, playable call with a failed
+    # behavioural/evidence verdict is not reported as a failed call.
+    scenario_completed = receipts.filter(status="passed").count()
+    scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
+    calls = CallExecution.no_workspace_objects.filter(
+        test_execution_id=job.test_execution_id
+    )
+    calls_completed = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
+    calls_failed = calls.filter(
+        status__in=(
+            CallExecution.CallStatus.FAILED,
+            CallExecution.CallStatus.CANCELLED,
+        )
+    ).count()
     TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-        completed_calls=completed,
-        failed_calls=failed,
+        completed_calls=calls_completed,
+        failed_calls=calls_failed,
     )
     HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-        completed_count=completed,
-        failed_count=failed,
+        completed_count=scenario_completed,
+        failed_count=scenario_failed,
     )
 
 

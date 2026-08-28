@@ -145,7 +145,13 @@ def _build_transcript_text(call: CallExecution) -> str | None:
             ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
         )
         transcript = _build_chat_transcript(messages)
-        return transcript if transcript and transcript.strip() else None
+        if transcript and transcript.strip():
+            return transcript
+
+        # Hosted chat results created before native ChatMessage materialization
+        # was added are still valid: their transcript is stored in the shared
+        # CallTranscript table. Fall through to that representation instead of
+        # declaring the completed call to have no CSAT evidence.
 
     from simulate.models.test_execution import CallTranscript
 

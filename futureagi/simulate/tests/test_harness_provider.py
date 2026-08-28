@@ -49,7 +49,11 @@ def test_sandbox_flatten_maps_github_source():
                 "commit_sha": "a" * 40,
                 "visibility": "public",
             },
-            "agent": {"connector": "livekit", "config": {"room": "r1"}, "secret_refs": {}},
+            "agent": {
+                "connector": "livekit",
+                "config": {"room": "r1"},
+                "secret_refs": {},
+            },
             "scenario_count": 7,
             "seed": 42,
             "metadata": {"k": "v"},
@@ -125,7 +129,11 @@ def test_sandbox_source_upload_is_forwarded(user):
     ) as upload:
         response = client.post(
             "/simulate/api/harness-jobs/sources/",
-            {"files": files, "paths": ["agent.py", "requirements.txt"], "name": "agent"},
+            {
+                "files": files,
+                "paths": ["agent.py", "requirements.txt"],
+                "name": "agent",
+            },
             format="multipart",
         )
 
@@ -136,7 +144,7 @@ def test_sandbox_source_upload_is_forwarded(user):
 
 @pytest.mark.django_db
 @override_settings(HARNESS_PROVIDER="daytona")
-def test_daytona_create_starts_gateway_workflow(user):
+def test_daytona_create_starts_gateway_workflow(user, workspace):
     client = APIClient()
     client.force_authenticate(user=user)
 
@@ -151,24 +159,30 @@ def test_daytona_create_starts_gateway_workflow(user):
         }
 
     serialized = {"job": {"job_id": str(_Job.id)}, "status": {"state": "queued"}}
-    with patch(
-        "simulate.services.hosted_harness.create_hosted_job",
-        return_value=(_Job(), True),
-    ) as create, patch(
-        "simulate.temporal.client.start_hosted_harness_gateway_workflow"
-    ) as start, patch(
-        "simulate.services.harness_provider.serialize_job", return_value=serialized
+    with (
+        patch(
+            "simulate.services.hosted_harness.create_hosted_job",
+            return_value=(_Job(), True),
+        ) as create,
+        patch(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+        ) as start,
+        patch(
+            "simulate.services.harness_provider.serialize_job", return_value=serialized
+        ),
     ):
         response = client.post(
             "/simulate/api/harness-jobs/",
             _v1_payload(),
             format="json",
             HTTP_IDEMPOTENCY_KEY="key-1",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
         )
 
     assert response.status_code == 202
     assert response.json() == serialized
     assert create.call_args.kwargs["idempotency_key"] == "key-1"
+    assert create.call_args.kwargs["workspace"] == workspace
     assert start.call_args.args[0] == str(_Job.id)
 
 

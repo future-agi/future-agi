@@ -8,7 +8,7 @@ import pytest
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessJob, HostedHarnessReceipt
+from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceipt
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
@@ -17,12 +17,25 @@ from simulate.services.hosted_harness import (
     register_attempt,
 )
 from simulate.services.hosted_harness_ingestion import (
+    _call_lifecycle_status,
+    _normalized_artifact_content_type,
     _read_hosted_tool_trace,
+    _receipt_evaluation_coverage,
     _receipt_evaluations,
     ingest_result_receipt,
 )
 
 BASE = "/simulate/api/harness/attempts"
+
+
+def test_recording_content_type_uses_wave_signature_over_bad_sender_default():
+    header = b"RIFF" + (36).to_bytes(4, "little") + b"WAVE"
+    assert (
+        _normalized_artifact_content_type(
+            kind="recording_combined", supplied="video/mp4", header=header
+        )
+        == "audio/wav"
+    )
 
 
 def test_receipt_evaluations_preserve_deterministic_and_judged_checks():
@@ -59,6 +72,33 @@ def test_receipt_evaluations_preserve_deterministic_and_judged_checks():
         },
         {"name": "cs_policy", "passed": True, "kind": "eval"},
     ]
+
+
+def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
+    assert _receipt_evaluation_coverage(
+        {
+            "sub_goals": [
+                {"name": "booked", "held": False, "judged": False},
+                {"name": "friendly", "held": None, "judged": True},
+            ],
+            "evaluations": [],
+        }
+    ) == {"expected": 2, "executed": 1, "failed": 1, "complete": False}
+
+
+def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
+    assert _call_lifecycle_status(
+        {
+            "status": "errored",
+            "call": {
+                "started_at": "2026-08-27T10:00:00Z",
+                "ended_at": "2026-08-27T10:05:00Z",
+            },
+        }
+    ) == CallExecution.CallStatus.COMPLETED
+    assert _call_lifecycle_status(
+        {"status": "errored", "call": None}
+    ) == CallExecution.CallStatus.FAILED
 
 
 def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
@@ -191,6 +231,124 @@ def test_job_creation_is_tenant_idempotent(organization):
 
 
 @pytest.mark.django_db
+def test_job_idempotency_cannot_cross_workspaces(organization, workspace):
+    create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="workspace-stable-key",
+        workspace=workspace,
+    )
+
+    with pytest.raises(HostedHarnessError, match="different workspace"):
+        create_hosted_job(
+            organization,
+            _payload(),
+            idempotency_key="workspace-stable-key",
+            workspace=None,
+        )
+
+
+@pytest.mark.django_db
+def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
+    organization, workspace
+):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="workspace-outcome-key",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    headers = _headers(capability)
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Workspace outcome",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "discount-request",
+                    "name": "Customer",
+                    "situation": "Requests a discount",
+                    "outcome": "Agent follows policy",
+                }
+            ],
+        },
+        format="json",
+        **headers,
+    )
+    assert provision.status_code == 200, provision.content
+    provisioned = provision.json()["result"]
+    begin = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["discount-request"],
+        },
+        format="json",
+        **headers,
+    )
+    assert begin.status_code == 200, begin.content
+    scenario = provisioned["scenarios"][0]
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "discount-request",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": 0,
+        "status": "failed",
+        "sub_goals": [
+            {
+                "name": "discount_policy_followed",
+                "held": False,
+                "reason": "The agent offered an unsupported discount",
+                "judged": False,
+            }
+        ],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    result = client.post(
+        f"{BASE}/{capability.attempt.id}/results/",
+        receipt,
+        format="json",
+        **headers,
+    )
+    assert result.status_code == 200, result.content
+
+    job.refresh_from_db()
+    assert job.run_test.workspace == workspace
+    assert job.completed_count == 0
+    assert job.failed_count == 1
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.completed_calls == 1
+    assert job.test_execution.failed_calls == 0
+    registration = job.scenario_registrations.select_related(
+        "scenario", "call_execution"
+    ).get()
+    assert registration.scenario.workspace == workspace
+    assert registration.scenario.dataset.workspace == workspace
+    assert registration.call_execution.status == CallExecution.CallStatus.COMPLETED
+    assert (
+        registration.call_execution.call_metadata["harness_outcome_status"] == "failed"
+    )
+    assert registration.call_execution.call_metadata["harness_eval_coverage"] == {
+        "expected": 1,
+        "executed": 1,
+        "failed": 0,
+        "complete": True,
+    }
+
+
+@pytest.mark.django_db
 def test_registering_attempt_supersedes_old_capability(organization):
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="attempt-key")
     first = register_attempt(job.id, endpoint_base_url="https://platform.example")
@@ -278,6 +436,74 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     assert replacement.attempt_id == second.attempt.id
     assert replacement.attempt_number == 2
     assert HostedHarnessReceipt.no_workspace_objects.filter(job=job).count() == 1
+
+
+@pytest.mark.django_db
+def test_idempotent_receipt_repairs_late_voice_modality(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="late-modality-repair-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Late voice modality",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "late-voice",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["late-voice"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "late-voice",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "skipped",
+        "sub_goals": [],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+    _, created = ingest_result_receipt(capability.attempt, receipt)
+    assert created is True
+
+    job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+    _, created = ingest_result_receipt(capability.attempt, receipt)
+
+    assert created is False
+    call = CallExecution.objects.get(
+        hosted_registration__job=job,
+        hosted_registration__scenario_key="late-voice",
+    )
+    assert call.simulation_call_type == CallExecution.SimulationCallType.VOICE
 
 
 @pytest.mark.django_db

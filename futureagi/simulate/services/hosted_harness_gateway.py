@@ -64,6 +64,40 @@ HOSTED_RUNTIME_CATALOG = {
 }
 _ENTRYPOINT_SESSION = "alk-harness"
 _ENTRYPOINT_COMMAND_ID_FILE = "/run/futureagi/entrypoint-command-id"
+_SCENARIO_DIRECTORY_COUNT_COMMAND = (
+    "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
+)
+
+
+def _hosted_scenario_repair_script(*, name: str, expected: int, actual: int) -> str:
+    """Build the non-interactive scenario-only repair run used by pinned guests.
+
+    Keeping this in the gateway lets the control plane repair an older hosted snapshot without
+    weakening Bundle V2's exact-cardinality gate or requiring a privileged in-sandbox updater.
+    Values are encoded as JSON literals rather than interpolated as executable source.
+    """
+    delta = expected - actual
+    if delta > 0:
+        instruction = (
+            f"Exactly {expected} scenarios are required, but {actual} are saved. "
+            f"Add exactly {delta} distinct validated scenario(s), preserve the existing "
+            "scenarios, and call save_scenarios."
+        )
+    else:
+        instruction = (
+            f"Exactly {expected} scenarios are required, but {actual} are saved. "
+            f"Remove exactly {-delta} excess scenario(s), preserve the strongest coverage, "
+            "and call save_scenarios."
+        )
+    return (
+        "import argparse, asyncio\n"
+        "from fi.alk.harness.cli import _scenarios\n"
+        "args = argparse.Namespace("
+        f"name={json.dumps(name)}, out='/work/authoring', count={expected}, "
+        "interactive=False, "
+        f"guidance=[{json.dumps(instruction)}])\n"
+        "raise SystemExit(asyncio.run(_scenarios(args)))\n"
+    )
 
 
 class GitHubAppTokenProvider:
@@ -631,7 +665,10 @@ class DaytonaHostedGateway:
                     retryable=True,
                 )
             # The authoring model session drops intermittently; a fresh output dir plus a
-            # retry clears it. Early drops fail fast, so retries stay cheap.
+            # retry clears it. Early drops fail fast, so retries stay cheap. A zero exit code is
+            # not enough: the scenario stage can checkpoint a valid partial suite (for example
+            # 2/3). Repair that suite in place before it becomes the frozen archive consumed by
+            # Bundle V2.
             attempts = max(
                 1, int(getattr(settings, "ALK_HOSTED_AUTHORING_ATTEMPTS", 3))
             )
@@ -646,15 +683,61 @@ class DaytonaHostedGateway:
                     timeout=run_timeout,
                 )
                 check = sandbox.process.exec(
-                    "ls /work/authoring/scenarios 2>/dev/null | wc -l", timeout=30
+                    _SCENARIO_DIRECTORY_COUNT_COMMAND,
+                    timeout=30,
                 )
                 try:
                     produced = int(str(check.result or "0").strip() or "0")
                 except ValueError:
                     produced = 0
-                if run.exit_code == 0 and produced >= 1:
+                if run.exit_code == 0 and produced == job.scenario_count:
                     break
-                detail = str(run.result or detail)[-1000:]
+                if run.exit_code == 0 and produced > 0:
+                    for repair_attempt in range(1, 3):
+                        script = _hosted_scenario_repair_script(
+                            name=str(
+                                job.metadata.get("agent_name")
+                                or job.payload.get("name")
+                                or "agent"
+                            ),
+                            expected=job.scenario_count,
+                            actual=produced,
+                        )
+                        sandbox.fs.upload_file(
+                            script.encode("utf-8"), "/tmp/repair-scenarios.py"
+                        )
+                        repair = sandbox.process.exec(
+                            "python /tmp/repair-scenarios.py",
+                            env=authoring_env,
+                            timeout=run_timeout,
+                        )
+                        check = sandbox.process.exec(
+                            _SCENARIO_DIRECTORY_COUNT_COMMAND,
+                            timeout=30,
+                        )
+                        try:
+                            produced = int(str(check.result or "0").strip() or "0")
+                        except ValueError:
+                            produced = 0
+                        logger.info(
+                            "hosted authoring scenario repair job=%s attempt=%s "
+                            "expected=%s produced=%s exit=%s",
+                            job.id,
+                            repair_attempt,
+                            job.scenario_count,
+                            produced,
+                            repair.exit_code,
+                        )
+                        if repair.exit_code == 0 and produced == job.scenario_count:
+                            break
+                    if produced == job.scenario_count:
+                        break
+                    detail = (
+                        "scenario_count_mismatch: requested "
+                        f"{job.scenario_count}, produced {produced} after repair"
+                    )
+                else:
+                    detail = str(run.result or detail)[-1000:]
             else:
                 raise HostedHarnessError(
                     "authoring_failed", detail, status_code=422, retryable=False
@@ -662,7 +745,8 @@ class DaytonaHostedGateway:
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "$(ls -d world.sqlite schema.sql store.json collections.json "
-                "contract.json simulator_prompt.md scenarios handlers 2>/dev/null)",
+                "contract.json environment.json scenarios.json simulator_prompt.md "
+                "scenarios handlers 2>/dev/null)",
                 timeout=180,
             )
             if packed.exit_code:
@@ -958,64 +1042,14 @@ class DaytonaHostedGateway:
         contract = _json("/work/authoring/contract.json")
         environment = _json("/work/authoring/environment.json")
         scenarios = _json("/work/authoring/scenarios.json")
-        outputs: list[dict[str, Any]] = []
+        bundle = _json("/work/bundle/manifest.json")
+        outputs = authoring_stage_outputs(contract, environment, scenarios, bundle)
         stage = "understanding_agent"
         if isinstance(contract, dict):
-            tools = [
-                {"name": str(item.get("name") or "")}
-                for item in contract.get("tools", [])
-                if isinstance(item, dict) and item.get("name")
-            ]
-            outputs.append(
-                {
-                    "id": "contract",
-                    "kind": "contract",
-                    "title": "Agent contract",
-                    "summary": f"{len(tools)} tools · {contract.get('modality') or 'unknown'} modality",
-                    "data": {
-                        "one_liner": str(contract.get("one_liner") or ""),
-                        "modality": str(contract.get("modality") or "unknown"),
-                        "runtime": contract.get("runtime") or {},
-                        "tools": tools,
-                    },
-                }
-            )
             stage = "generating_environment"
         if isinstance(environment, dict):
-            services = [str(item) for item in environment.get("services", [])]
-            outputs.append(
-                {
-                    "id": "environment",
-                    "kind": "environment",
-                    "title": "Execution environment",
-                    "summary": f"{len(services)} services described",
-                    "data": {
-                        "services": services,
-                        "project": str(environment.get("project") or ""),
-                        "managed": bool(environment.get("managed")),
-                    },
-                }
-            )
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            scenario_data = [
-                {
-                    "name": str(item.get("name") or "scenario"),
-                    "instruction": str(item.get("instruction") or ""),
-                    "use_case": str(item.get("use_case") or ""),
-                }
-                for item in scenarios
-                if isinstance(item, dict)
-            ]
-            outputs.append(
-                {
-                    "id": "scenarios",
-                    "kind": "scenarios",
-                    "title": "Generated scenarios",
-                    "summary": f"{len(scenario_data)} grounded scenarios",
-                    "data": scenario_data,
-                }
-            )
             stage = "validating_environment"
         if not outputs:
             return
@@ -1029,7 +1063,20 @@ class DaytonaHostedGateway:
             "generating_scenarios",
         }:
             job.current_stage = stage
-        job.stage_outputs = outputs
+        # Authoring archives use per-scenario files rather than a top-level
+        # scenarios.json.  ``store_authoring_archive`` has already materialized
+        # that snapshot, so a later heartbeat must enrich the visible stages
+        # instead of deleting stages whose source file is not present here.
+        merged = {
+            item.get("kind"): item
+            for item in (job.stage_outputs or [])
+            if isinstance(item, dict) and item.get("kind")
+        }
+        merged.update({item["kind"]: item for item in outputs})
+        order = {"contract": 0, "environment": 1, "scenarios": 2}
+        job.stage_outputs = sorted(
+            merged.values(), key=lambda item: order.get(item.get("kind"), 99)
+        )
         job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
@@ -1525,6 +1572,144 @@ def prepare_dispatch_payload(
     return dispatched
 
 
+def _secret_safe(value: Any, *, key: str = "") -> Any:
+    """Return an authoring document safe to persist and display.
+
+    Authoring outputs should normally contain references rather than secret values. This is a
+    second boundary check so a malformed/generated environment cannot leak a credential into the
+    job JSON or API response.
+    """
+    normalized = key.lower()
+    safe_secret_metadata = {
+        "secret_purposes",
+        "secret_refs",
+        "required_secrets",
+        "required_credentials",
+    }
+    secret_markers = (
+        "api_key",
+        "api_secret",
+        "password",
+        "private_key",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "credential_json",
+        "secret_value",
+    )
+    if normalized not in safe_secret_metadata and (
+        normalized == "secrets"
+        or normalized.endswith("_secret")
+        or any(marker in normalized for marker in secret_markers)
+    ):
+        return "[redacted]"
+    if isinstance(value, dict):
+        return {
+            str(item_key): _secret_safe(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_secret_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def authoring_stage_outputs(
+    contract: Any, environment: Any, scenarios: Any, bundle: Any = None
+) -> list[dict[str, Any]]:
+    """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
+    outputs: list[dict[str, Any]] = []
+    if isinstance(contract, dict):
+        tools = contract.get("tools") or []
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "kind": "contract",
+                "title": "Agent contract",
+                "summary": f"{len(tools)} tools · {contract.get('modality') or 'unknown'} modality",
+                "data": _secret_safe(contract),
+            }
+        )
+    if isinstance(environment, dict) or isinstance(bundle, dict):
+        environment_data = dict(environment or {})
+        if isinstance(bundle, dict):
+            environment_data["bundle_manifest"] = bundle
+        services = environment_data.get("services") or []
+        processes = (bundle or {}).get("processes") if isinstance(bundle, dict) else []
+        described = len(services) or len(processes or [])
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000002",
+                "kind": "environment",
+                "title": "Execution environment",
+                "summary": f"{described} runtime components described",
+                "data": _secret_safe(environment_data),
+            }
+        )
+    if isinstance(scenarios, list):
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000003",
+                "kind": "scenarios",
+                "title": "Generated scenarios",
+                "summary": f"{len(scenarios)} grounded scenarios",
+                "data": _secret_safe(scenarios),
+            }
+        )
+    return outputs
+
+
+def authoring_stage_outputs_from_archive(
+    body: bytes, *, scenario_limit: int | None = None
+) -> list[dict[str, Any]]:
+    """Read only the bounded JSON snapshots from a sealed authoring archive."""
+    documents: dict[str, Any] = {}
+    scenario_documents: list[dict[str, Any]] = []
+    wanted = {"contract.json", "environment.json", "scenarios.json"}
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            path = Path(member.name)
+            name = path.name
+            is_scenario = (
+                name == "scenario.json"
+                and len(path.parts) >= 3
+                and path.parts[-3] == "scenarios"
+            )
+            if (
+                (name not in wanted and not is_scenario)
+                or not member.isfile()
+                or member.size > 8 * 1024 * 1024
+            ):
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                continue
+            try:
+                value = json.loads(source.read().decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if is_scenario and isinstance(value, dict):
+                value = dict(value)
+                value.setdefault("scenario_key", path.parts[-2])
+                scenario_documents.append(value)
+            else:
+                documents[name] = value
+    scenarios = documents.get("scenarios.json")
+    if not isinstance(scenarios, list) and scenario_documents:
+        scenarios = sorted(
+            scenario_documents,
+            key=lambda scenario: str(scenario.get("scenario_key") or ""),
+        )
+    if isinstance(scenarios, list) and scenario_limit is not None:
+        scenarios = scenarios[: max(0, scenario_limit)]
+    return authoring_stage_outputs(
+        documents.get("contract.json"),
+        documents.get("environment.json"),
+        scenarios,
+    )
+
+
 def store_authoring_archive(job: HostedHarnessJob, body: bytes) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
     object_key = f"harness-authoring/{job.organization_id}/{job.id}.tar.gz"
@@ -1543,9 +1728,20 @@ def store_authoring_archive(job: HostedHarnessJob, body: bytes) -> str:
     metadata["authoring_mode"] = "fresh"
     payload["metadata"] = metadata
     job.payload = payload
+    job.stage_outputs = authoring_stage_outputs_from_archive(
+        body, scenario_limit=job.scenario_count
+    )
     job.current_stage = "validating_scenarios"
     job.state = HostedHarnessJob.State.ADMITTED
-    job.save(update_fields=["payload", "current_stage", "state", "updated_at"])
+    job.save(
+        update_fields=[
+            "payload",
+            "stage_outputs",
+            "current_stage",
+            "state",
+            "updated_at",
+        ]
+    )
     return object_key
 
 

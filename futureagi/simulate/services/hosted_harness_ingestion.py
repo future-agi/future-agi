@@ -22,6 +22,7 @@ from simulate.models import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    _resolve_scenario_modality,
     canonical_digest,
     canonical_json_bytes,
     update_execution_counts,
@@ -61,6 +62,34 @@ _ALLOWED_ARTIFACTS = {
     "full": _ARTIFACT_KINDS,
 }
 _GAP_TIMEOUT = timedelta(seconds=60)
+
+
+_RECORDING_ARTIFACT_KINDS = {
+    "recording_combined",
+    "recording_stereo",
+    "recording_customer",
+    "recording_assistant",
+}
+
+
+def _normalized_artifact_content_type(
+    *, kind: str, supplied: str, header: bytes
+) -> str:
+    """Correct provably-wrong recording MIME types before object storage.
+
+    The hosted channel historically defaulted every recording to MP4 while
+    LiveKit call artifacts were RIFF/WAVE.  Object storage preserves the
+    supplied MIME type, so browsers later refused to decode the recording.
+    Only normalize recognizable media signatures; otherwise retain the
+    sender-provided value for forward compatibility.
+    """
+    if kind not in _RECORDING_ARTIFACT_KINDS:
+        return supplied
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WAVE":
+        return "audio/wav"
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        return "video/mp4"
+    return supplied
 
 
 def ingest_event_batch(
@@ -144,6 +173,13 @@ def ingest_result_receipt(
         )
         if existing:
             if existing.digest == supplied_digest:
+                # Receipt delivery is idempotent, but the platform projection may
+                # have been created before a late authoring output (notably the
+                # contract modality) was synchronized.  Re-applying the same
+                # sealed receipt is safe and repairs that derived state without
+                # requiring another customer call.
+                _apply_receipt_to_call(registration, body)
+                update_execution_counts(attempt.job)
                 return existing, False
             if existing.attempt_number >= attempt.attempt_number:
                 raise HostedHarnessError(
@@ -267,6 +303,10 @@ def ingest_artifact(
             "artifact bytes did not match URL digest",
             status_code=422,
         )
+    temporary.seek(0)
+    content_type = _normalized_artifact_content_type(
+        kind=kind, supplied=content_type, header=temporary.read(12)
+    )
     temporary.seek(0)
     object_key = f"alk-harness/{attempt.job.organization_id}/{attempt.job_id}/{digest}"
     get_storage_client().put_object(
@@ -595,13 +635,14 @@ def _apply_receipt_to_call(
             "scenario has no pre-allocated execution",
             status_code=409,
         )
-    call.status = {
-        "passed": CallExecution.CallStatus.COMPLETED,
-        "failed": CallExecution.CallStatus.FAILED,
-        "errored": CallExecution.CallStatus.FAILED,
-        "skipped": CallExecution.CallStatus.CANCELLED,
-    }[body["status"]]
+    call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
+    resolved_modality = _resolve_scenario_modality(registration.job, body)
+    if call_data and call_data.get("recording_artifacts"):
+        # A persisted audio recording is definitive evidence of a voice call,
+        # even if scenario provisioning raced ahead of contract synchronization.
+        resolved_modality = CallExecution.SimulationCallType.VOICE
+    call.simulation_call_type = resolved_modality
     if call_data:
         call.started_at = call_data["started_at"]
         call.completed_at = call_data["ended_at"]
@@ -611,8 +652,22 @@ def _apply_receipt_to_call(
     metadata = dict(call.call_metadata or {})
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
+    metadata["harness_outcome_status"] = body["status"]
+    coverage = _receipt_evaluation_coverage(body)
+    metadata["harness_eval_coverage"] = coverage
+    if coverage["complete"]:
+        metadata["harness_grading_status"] = "completed"
+        metadata.pop("harness_grading_error", None)
+    else:
+        metadata["harness_grading_status"] = "failed"
+        metadata["harness_grading_error"] = (
+            "Required evaluation coverage was incomplete "
+            f"({coverage['executed']}/{coverage['expected']} executed). "
+            "This is a grading failure, not an agent failure."
+        )
     update_fields = [
         "status",
+        "simulation_call_type",
         "started_at",
         "completed_at",
         "duration_seconds",
@@ -648,6 +703,7 @@ def _apply_receipt_to_call(
             artifact.kind: {
                 "sha256": artifact.sha256,
                 "object_key": artifact.object_key,
+                "content_type": artifact.content_type,
                 "url": get_object_url(UPLOAD_BUCKET_NAME, artifact.object_key),
             }
             for artifact in artifacts
@@ -702,6 +758,25 @@ def _apply_receipt_to_call(
         )
 
 
+def _call_lifecycle_status(body: dict[str, Any]) -> str:
+    """Keep call transport lifecycle separate from harness/eval outcome.
+
+    A scenario can be ``failed`` or ``errored`` after a real call completed
+    (for example, missing tool evidence).  When the sealed receipt contains a
+    completed call interval, the call row must remain playable/completed and
+    the outcome stays in ``harness_outcome_status`` and failure metadata.
+    """
+    outcome = body["status"]
+    if outcome == "skipped":
+        return CallExecution.CallStatus.CANCELLED
+    call = body.get("call")
+    if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
+        return CallExecution.CallStatus.COMPLETED
+    if outcome in {"passed", "failed"}:
+        return CallExecution.CallStatus.COMPLETED
+    return CallExecution.CallStatus.FAILED
+
+
 def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert hosted receipt checks to the platform's existing eval-output shape."""
     results: list[dict[str, Any]] = []
@@ -720,6 +795,24 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(evaluation, dict):
             results.append(dict(evaluation))
     return results
+
+
+def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
+    """Describe whether every declared hosted judgement produced a verdict."""
+    sub_goals = [item for item in body.get("sub_goals") or [] if isinstance(item, dict)]
+    evaluations = [
+        item for item in body.get("evaluations") or [] if isinstance(item, dict)
+    ]
+    expected = len(sub_goals) + len(evaluations)
+    executed = sum(item.get("held") is not None for item in sub_goals) + sum(
+        not bool(item.get("grading_error")) for item in evaluations
+    )
+    return {
+        "expected": expected,
+        "executed": executed,
+        "failed": max(0, expected - executed),
+        "complete": executed == expected,
+    }
 
 
 def _read_hosted_tool_trace(artifact: HostedHarnessArtifact) -> list[dict[str, Any]]:
