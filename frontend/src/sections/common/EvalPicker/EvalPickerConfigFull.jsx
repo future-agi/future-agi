@@ -1923,6 +1923,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onReadyChange={handleSourceReadyChange}
                     hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
+                    lockProject
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerActive}
