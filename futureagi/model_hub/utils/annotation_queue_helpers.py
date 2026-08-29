@@ -2117,19 +2117,23 @@ def _comparable_label_types(output_type):
     values can be meaningfully compared against a judge output of the given
     ``output_type_normalized``.
 
-    Without this mapping, e.g. a ``pass_fail`` judge against a Star (1–5) or
-    Numeric label would never match and silently report 0% agreement.  We
-    restrict comparisons to label types that share the judge's value space:
+    Without this mapping, e.g. a ``pass_fail`` judge against a Numeric label
+    would never match and silently report 0% agreement.  We restrict
+    comparisons to label types that share the judge's value space:
       * ``pass_fail``  → categorical labels whose values are pass/fail-ish
-      * ``percentage`` → numeric / star labels (compared as rounded floats)
+      * ``percentage`` → numeric labels (judge's 0–1 fraction vs the label's
+        0–1 value; Star (1–5) has no compatible space and is excluded)
       * ``deterministic`` → categorical labels (free-form string equality)
     """
     if output_type == "pass_fail":
         # Only categorical labels carry pass/fail-style string values.
         return {"categorical"}
     if output_type == "percentage":
-        # Numeric and star labels store numeric values comparable as floats.
-        return {"numeric", "star"}
+        # Only numeric labels store a 0–1 fraction matching the judge's
+        # output_float (stored 0–1, NOT 0–100). A Star (1–5) label has no
+        # compatible value space — comparing "5.0" against the judge's "0.88"
+        # would silently report 0% agreement, so it is excluded here.
+        return {"numeric"}
     # deterministic → string equality; only categorical labels are strings.
     return {"categorical"}
 
