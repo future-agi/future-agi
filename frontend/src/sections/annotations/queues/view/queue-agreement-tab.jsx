@@ -26,7 +26,7 @@ function formatPct(val) {
   return `${(val * 100).toFixed(1)}%`;
 }
 
-export default function QueueAgreementTab({ queueId }) {
+export default function QueueAgreementTab({ queueId, queue }) {
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
 
   if (isLoading) {
@@ -237,10 +237,17 @@ export default function QueueAgreementTab({ queueId }) {
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
             Judge vs Human Agreement
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Link an evaluator to this queue to compare judge scores against
-            human labels.
-          </Typography>
+          {queue && queue.custom_eval_config && queue.status !== "completed" ? (
+            <Typography variant="body2" color="text.secondary">
+              Mark the queue as completed to compare judge scores against human
+              labels.
+            </Typography>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Link an evaluator to this queue to compare judge scores against
+              human labels.
+            </Typography>
+          )}
         </Box>
       )}
     </Box>
@@ -249,4 +256,8 @@ export default function QueueAgreementTab({ queueId }) {
 
 QueueAgreementTab.propTypes = {
   queueId: PropTypes.string.isRequired,
+  queue: PropTypes.shape({
+    custom_eval_config: PropTypes.string,
+    status: PropTypes.string,
+  }),
 };

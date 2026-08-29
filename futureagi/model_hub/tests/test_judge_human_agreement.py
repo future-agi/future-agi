@@ -210,6 +210,17 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
     def test_returns_none_when_no_evaluator_linked(self):
         queue = MagicMock()
         queue.custom_eval_config_id = None
+        queue.status = "completed"
+        assert _calculate_judge_human_agreement(queue) is None
+
+    def test_returns_none_when_queue_not_completed(self):
+        """A linked evaluator on a non-COMPLETED queue must not produce a
+        judge-vs-human stat — agreement is only meaningful once annotation is
+        finished. The test sets status to ``active`` to exercise the gate."""
+        queue = MagicMock()
+        queue.custom_eval_config_id = "eval-config-1"
+        queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
+        queue.status = "active"
         assert _calculate_judge_human_agreement(queue) is None
 
     @patch("tracer.models.observation_span.EvalLogger.objects")
@@ -218,6 +229,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         self, mock_score_objects, mock_eval_objects
     ):
         queue = MagicMock()
+        queue.status = "completed"
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
         queue.custom_eval_config.name = "Safety Eval"
@@ -238,6 +250,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         and "" cases (both are falsy in the ``name or template.name or id``
         chain)."""
         queue = MagicMock()
+        queue.status = "completed"
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
         queue.custom_eval_config.name = None
@@ -265,6 +278,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         kwargs and fails the assertion. The actual filtering/ordering is
         covered by the integration tests against a real DB."""
         queue = MagicMock()
+        queue.status = "completed"
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
         queue.custom_eval_config.name = "Safety Eval"
@@ -308,6 +322,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         """Two items, two labels. Judge agrees on label-1, disagrees on
         label-2. Overall = 2/4 = 0.5."""
         queue = MagicMock()
+        queue.status = "completed"
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
         queue.custom_eval_config.name = "Safety Eval"
@@ -385,6 +400,7 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         """When span evals exist but no human scores overlap, return empty
         labels and null overall agreement."""
         queue = MagicMock()
+        queue.status = "completed"
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "percentage"
         queue.custom_eval_config.name = "Score Eval"
@@ -424,6 +440,7 @@ class TestPercentageEndToEnd(unittest.TestCase):
         self, mock_score_objects, mock_eval_objects
     ):
         queue = MagicMock()
+        queue.status = "completed"
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "percentage"
         queue.custom_eval_config.name = "Score Eval"

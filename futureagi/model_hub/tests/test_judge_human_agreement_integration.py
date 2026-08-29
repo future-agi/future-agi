@@ -12,6 +12,7 @@ from accounts.models.user import User
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from model_hub.models.choices import (
+    AnnotationQueueStatusChoices,
     AnnotationTypeChoices,
     QueueItemSourceType,
 )
@@ -111,13 +112,21 @@ def _make_user(organization, **kwargs):
     return User.objects.create_user(**defaults)
 
 
-def _make_queue(organization, workspace, project, custom_eval_config=None, **kwargs):
+def _make_queue(
+    organization,
+    workspace,
+    project,
+    custom_eval_config=None,
+    status=AnnotationQueueStatusChoices.COMPLETED.value,
+    **kwargs,
+):
     return AnnotationQueue.objects.create(
         name="integration-queue",
         organization=organization,
         workspace=workspace,
         project=project,
         custom_eval_config=custom_eval_config,
+        status=status,
         **kwargs,
     )
 
@@ -736,3 +745,36 @@ class TestJudgeHumanAgreementIntegration:
         # overall only counts comparable labels
         assert result["overall_agreement"] is None
         assert result["total_comparisons"] == 0
+
+    def test_non_completed_queue_returns_none(self, organization, workspace):
+        """A queue with a linked evaluator but status != COMPLETED (e.g. an
+        active queue still being annotated) must NOT calculate judge-vs-human
+        agreement — the metric is only meaningful once annotation is finished.
+        """
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        # Default helper status is COMPLETED; override to ACTIVE.
+        queue = _make_queue(
+            organization,
+            workspace,
+            project,
+            custom_eval_config=cfg,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+        )
+        item = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        _make_eval_row(span, trace, cfg, output_bool=True)
+        Score.objects.create(
+            queue_item=item,
+            label=label,
+            organization=organization,
+            value={"selected": ["pass"]},
+        )
+
+        # Evaluator is linked and data overlaps, but the queue isn't completed
+        # → judge-vs-human is suppressed (returns None), not a 0% stat.
+        assert _calculate_judge_human_agreement(queue) is None

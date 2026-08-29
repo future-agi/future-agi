@@ -543,7 +543,7 @@ export default function QueueDetailView() {
       )}
       {currentTab === "agreement" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
-          <QueueAgreementTab queueId={queueId} />
+          <QueueAgreementTab queueId={queueId} queue={queue} />
         </Box>
       )}
       {currentTab === "rules" && (
@@ -756,10 +756,7 @@ export default function QueueDetailView() {
                 const assignedUsers = item?.assigned_users || [];
                 const assignedToOther =
                   queue?.auto_assign === false &&
-          
-                  !assignedUsers?.some(
-                    (a) => String(a.id) === currentUserId,
-                  );
+                  !assignedUsers?.some((a) => String(a.id) === currentUserId);
                 if (assignedToOther && !canViewSubmissions && !isManager) {
                   enqueueSnackbar(
                     "You cannot annotate items that are not assigned to you",

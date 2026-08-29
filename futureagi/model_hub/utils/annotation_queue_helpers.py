@@ -9,6 +9,7 @@ from django.db.models.functions import Cast
 
 from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
 from model_hub.models.choices import (
+    AnnotationQueueStatusChoices,
     AnnotatorRole,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
@@ -1892,9 +1893,13 @@ def _calculate_judge_human_agreement(queue):
     human annotators across the queue's trace and observation-span sourced
     items.
 
-    Returns ``None`` when no evaluator is linked or no overlapping data
-    exists so the caller can distinguish "not configured" from "0 %
-    agreement".
+    Returns ``None`` when no evaluator is linked, the queue isn't completed,
+    or no overlapping data exists so the caller can distinguish "not
+    configured" / "not ready" from "0 % agreement".
+
+    Judge-vs-human agreement is only meaningful once annotation work is
+    finished, so non-``COMPLETED`` queues (draft / active / paused) return
+    ``None`` — the human-human stats are unaffected.
 
     .. note::
 
@@ -1904,6 +1909,12 @@ def _calculate_judge_human_agreement(queue):
         extra queries per invocation.
     """
     if queue.custom_eval_config_id is None:
+        return None
+
+    # Only completed queues have stable, interpretable agreement metrics.
+    # Active/paused/draft queues are still being (re)annotated, so their
+    # numbers would churn — skip judge-vs-human until the queue is completed.
+    if queue.status != AnnotationQueueStatusChoices.COMPLETED.value:
         return None
 
     from collections import defaultdict
