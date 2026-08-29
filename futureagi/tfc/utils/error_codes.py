@@ -702,6 +702,9 @@ err_dict = {
     "NO_COLUMNS_SELECTED": [
         "Select at least one column to index from the dataset."
     ],
+    "DATASET_AND_FILES_PROVIDED": [
+        "Provide either a dataset or files to build the knowledge base from, not both."
+    ],
     "NO_EVALUATION_COLUMNS_FOUND": ["No evaluation columns present in given datasets."],
     "MAX_KB_SIZE_EXCEEDED": ["Maximum knowledge base size exceeded."],
     "KB_CREATION_LIMIT_REACHED": [

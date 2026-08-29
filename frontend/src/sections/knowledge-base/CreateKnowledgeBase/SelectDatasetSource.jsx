@@ -1,10 +1,11 @@
 import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
-import React from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import FormSearchSelectFieldState from "src/components/FromSearchSelectField/FormSearchSelectFieldState";
 import { useDatasetsList } from "src/sections/develop/hooks/useDatasetsList";
+import { useDebounce } from "src/hooks/use-debounce";
 import HelperText from "src/sections/develop-detail/Common/HelperText";
 
 // Alternative source to file uploads: build the KB from an existing
@@ -16,8 +17,11 @@ const SelectDatasetSource = ({
   setColumnIds,
   disabled,
 }) => {
+  const [datasetSearch, setDatasetSearch] = useState("");
+  const debouncedDatasetSearch = useDebounce(datasetSearch, 300);
   const { data: datasetsData, isLoading: datasetsLoading } = useDatasetsList({
     pageSize: 100,
+    search: debouncedDatasetSearch,
   });
 
   const { data: columns, isLoading: columnsLoading } = useQuery({
@@ -43,6 +47,7 @@ const SelectDatasetSource = ({
             setDatasetId(e.target.value);
             setColumnIds([]);
           }}
+          onSearchChange={setDatasetSearch}
           options={(datasetsData?.items ?? []).map((dataset) => ({
             label: dataset.name,
             value: dataset.id,

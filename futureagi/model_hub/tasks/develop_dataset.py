@@ -803,29 +803,36 @@ def ingest_dataset_rows_to_kb(dataset_id, column_ids, kb_id, org):
         indexed_count = 0
         error_count = 0
 
-        for row in rows:
-            if is_kb_deleted_or_cancelled(kb_id):
-                logger.info(
-                    f"KB {kb_id} was deleted/cancelled during dataset ingestion, stopping"
+        # One worker pool shared across every row, instead of process_content
+        # spinning up its own each call — the difference between one pool and
+        # one per row at real dataset sizes.
+        with ThreadPoolExecutor(max_workers=20) as shared_executor:
+            for row in rows:
+                if is_kb_deleted_or_cancelled(kb_id):
+                    logger.info(
+                        f"KB {kb_id} was deleted/cancelled during dataset ingestion, stopping"
+                    )
+                    return None
+
+                row_cells = cells_by_row.get(row.id, {})
+                row_text = "\n\n".join(
+                    row_cells[col_id] for col_id in column_ids if col_id in row_cells
                 )
-                return None
+                if not row_text.strip():
+                    continue
 
-            row_cells = cells_by_row.get(row.id, {})
-            row_text = "\n\n".join(
-                row_cells[col_id] for col_id in column_ids if col_id in row_cells
-            )
-            if not row_text.strip():
-                continue
-
-            try:
-                # ponytail: one process_content() call per row (spins up its own
-                # worker pool each time) - fine at typical dataset sizes; batch
-                # rows together if large-dataset ingestion becomes common.
-                indexer.process_content(row_text, str(row.id), str(kb_id), str(org))
-                indexed_count += 1
-            except Exception as e:
-                logger.error(f"Error indexing row {row.id} into KB {kb_id}: {e}")
-                error_count += 1
+                try:
+                    indexer.process_content(
+                        row_text,
+                        str(row.id),
+                        str(kb_id),
+                        str(org),
+                        executor=shared_executor,
+                    )
+                    indexed_count += 1
+                except Exception as e:
+                    logger.error(f"Error indexing row {row.id} into KB {kb_id}: {e}")
+                    error_count += 1
 
         if is_kb_deleted_or_cancelled(kb_id):
             logger.info(f"KB {kb_id} was deleted/cancelled, skipping status update")

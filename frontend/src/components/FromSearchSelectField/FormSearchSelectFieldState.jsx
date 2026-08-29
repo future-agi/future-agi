@@ -29,6 +29,10 @@ const FormSearchSelectFieldState = React.forwardRef(
       onScrollEnd,
       isFetchingNextPage,
       selectAll,
+      // Optional: told what the user typed, for a caller driving a
+      // server-side search (client-side filtering below still applies to
+      // whatever `options` that search resolves to).
+      onSearchChange,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -63,12 +67,14 @@ const FormSearchSelectFieldState = React.forwardRef(
     const onClose = () => {
       setOpenDropdown(false);
       setSearchedValue("");
+      onSearchChange?.("");
     };
 
     const handleOpen = useCallback(() => {
       if (rest?.disabled) return;
       setOpenDropdown(true);
       setSearchedValue("");
+      onSearchChange?.("");
 
       const boxRect = containerRef.current.getBoundingClientRect();
       const spaceBelow = window.innerHeight - boxRect.bottom;
@@ -79,7 +85,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       } else {
         setPosition("bottom");
       }
-    }, [rest?.disabled]);
+    }, [rest?.disabled, onSearchChange]);
 
     const handleOnFocus = useCallback(() => {
       setFocus(true);
@@ -96,15 +102,20 @@ const FormSearchSelectFieldState = React.forwardRef(
       (e) => {
         e.stopPropagation();
         setSearchedValue("");
+        onSearchChange?.("");
         handleOpen();
         inputRef.current?.focus();
       },
-      [handleOpen],
+      [handleOpen, onSearchChange],
     );
 
-    const handleOnChange = useCallback((e) => {
-      setSearchedValue(e.target.value);
-    }, []);
+    const handleOnChange = useCallback(
+      (e) => {
+        setSearchedValue(e.target.value);
+        onSearchChange?.(e.target.value);
+      },
+      [onSearchChange],
+    );
 
     const handleDropdownIconClick = useCallback(
       (e) => {
@@ -330,4 +341,5 @@ FormSearchSelectFieldState.propTypes = {
   isFetchingNextPage: PropTypes.bool,
   selectAll: PropTypes.bool,
   shrink: PropTypes.bool,
+  onSearchChange: PropTypes.func,
 };
