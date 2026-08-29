@@ -192,6 +192,7 @@ export default function HarnessDetail() {
   });
 
   const status = current?.status;
+  const cancellationRequested = Boolean(status?.cancel_requested_at);
   const progress = jobProgress(status);
   const isTerminal = terminalStages.has(status?.stage);
 
@@ -469,17 +470,19 @@ export default function HarnessDetail() {
                   color="inherit"
                   variant="outlined"
                   size="small"
-                  disabled={canceling}
+                  disabled={canceling || cancellationRequested}
                   onClick={() => setConfirmingCancel(true)}
                   startIcon={
-                    canceling ? (
+                    canceling || cancellationRequested ? (
                       <CircularProgress size={14} color="inherit" />
                     ) : (
                       <Iconify icon="solar:close-circle-linear" width={18} />
                     )
                   }
                 >
-                  {canceling ? "Canceling…" : "Cancel run"}
+                  {canceling || cancellationRequested
+                    ? "Canceling…"
+                    : "Cancel run"}
                 </Button>
               )}
             </Stack>
@@ -492,6 +495,11 @@ export default function HarnessDetail() {
               sx={{ mt: 1.5 }}
             >
               Could not cancel this run. {cancelError}
+            </Alert>
+          )}
+          {cancellationRequested && !isTerminal && (
+            <Alert severity="info" variant="outlined" sx={{ mt: 1.5 }}>
+              Cancellation requested. The sandbox is stopping and cleaning up.
             </Alert>
           )}
         </Box>

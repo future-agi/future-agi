@@ -40,7 +40,13 @@ const completed = (stage, wall) => ({
   wall_time: wall,
 });
 
-const job = ({ stage, events = [], failure = null }) => ({
+const job = ({
+  stage,
+  state = "running",
+  events = [],
+  failure = null,
+  cancelRequestedAt = null,
+}) => ({
   job: {
     job_id: "job-1",
     run_id: "harness-job-1",
@@ -48,8 +54,10 @@ const job = ({ stage, events = [], failure = null }) => ({
     metadata: { agent_name: "ride-voice-e2e-4" },
   },
   status: {
+    state,
     stage,
     failure,
+    cancel_requested_at: cancelRequestedAt,
     completed_scenarios: 0,
     total_scenarios: 1,
     attempt: 1,
@@ -143,5 +151,23 @@ describe("HarnessDetail run checklist", () => {
 
     expect(await screen.findByText("Understanding agent")).toBeInTheDocument();
     expect(screen.getByText("2 stages complete")).toBeInTheDocument();
+  });
+
+  it("keeps cancellation feedback visible while remote cleanup runs", async () => {
+    getHarnessJob.mockResolvedValue(
+      job({
+        state: "cleaning_up",
+        stage: "cleaning_up",
+        cancelRequestedAt: "2026-08-29T06:10:26Z",
+      }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("Canceling…")).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Cancellation requested. The sandbox is stopping and cleaning up.",
+      ),
+    ).toBeInTheDocument();
   });
 });

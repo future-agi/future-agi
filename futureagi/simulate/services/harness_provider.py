@@ -205,6 +205,11 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "failed_scenarios": job.failed_count,
             "total_scenarios": job.scenario_count,
             "deadline_at": job.deadline_at.isoformat(),
+            "cancel_requested_at": (
+                job.cancel_requested_at.isoformat()
+                if job.cancel_requested_at
+                else None
+            ),
             "failure": job.failure,
         },
         "events": events,

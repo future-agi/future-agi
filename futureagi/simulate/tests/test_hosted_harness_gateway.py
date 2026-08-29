@@ -10,7 +10,11 @@ from unittest.mock import patch
 import pytest
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
-from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    create_hosted_job,
+    request_cancellation,
+)
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
     DaytonaHostedGateway,
@@ -605,6 +609,23 @@ def test_cancel_writes_reason_signals_guest_and_holds_before_delete(
     assert any(
         "pkill -TERM" in command for command in client.sandbox.process.exec_calls
     )
+    attempt = HostedHarnessAttempt.no_workspace_objects.get(job=job)
+    assert attempt.terminal_stage == "canceled"
+    assert attempt.terminal_reason == "user_canceled"
+    assert attempt.terminal_failure is None
+
+
+@pytest.mark.django_db
+def test_cancel_immediately_projects_cleaning_up_stage(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="cancel-visible-stage"
+    )
+
+    canceled = request_cancellation(job, "user_canceled")
+
+    assert canceled.state == HostedHarnessJob.State.CLEANING_UP
+    assert canceled.current_stage == HostedHarnessJob.State.CLEANING_UP
+    assert canceled.cancel_requested_at is not None
 
 
 @pytest.mark.django_db

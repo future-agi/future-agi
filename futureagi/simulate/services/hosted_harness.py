@@ -239,11 +239,16 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
         locked.state = HostedHarnessJob.State.CLEANING_UP
+        # State and stage are both part of the public read model. Leaving the
+        # previous authoring stage here makes a successful cancel request look
+        # like it did nothing until remote sandbox cleanup finishes.
+        locked.current_stage = HostedHarnessJob.State.CLEANING_UP
         locked.save(
             update_fields=[
                 "cancel_requested_at",
                 "cancel_reason",
                 "state",
+                "current_stage",
                 "updated_at",
             ]
         )

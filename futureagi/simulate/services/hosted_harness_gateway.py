@@ -1402,6 +1402,21 @@ class DaytonaHostedGateway:
             if observation["exit_code"] is not None:
                 break
             time.sleep(2)
+        # Cleanup derives the final job state from the attempt's terminal
+        # stage. The already-absent branch sets this above; the normal branch
+        # must do the same or an intentional cancellation is misreported as a
+        # platform failure after the sandbox is deleted.
+        attempt.terminal_stage = "canceled"
+        attempt.terminal_reason = reason
+        attempt.terminal_failure = None
+        attempt.save(
+            update_fields=[
+                "terminal_stage",
+                "terminal_reason",
+                "terminal_failure",
+                "updated_at",
+            ]
+        )
         self._delete_and_record(attempt)
         return HostedHarnessJob.no_workspace_objects.get(id=job.id)
 
