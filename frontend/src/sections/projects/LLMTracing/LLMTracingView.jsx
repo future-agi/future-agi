@@ -141,7 +141,10 @@ import {
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { Helmet } from "react-helmet-async";
-import { getFilterExtraProperties } from "src/utils/prototypeObserveUtils";
+import {
+  getFilterExtraProperties,
+  getSystemMetricFilterDefinition,
+} from "src/utils/prototypeObserveUtils";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { useParams, useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
@@ -1496,10 +1499,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       .filter(Boolean);
     return entries.length > 0 ? Object.fromEntries(entries) : null;
   }, [annotatorFilterOptions]);
-  const toolbarFilterFields = useMemo(
-    () => (projectFilterField ? [projectFilterField] : undefined),
-    [projectFilterField],
-  );
+  const toolbarFilterFields = useMemo(() => {
+    const fields = projectFilterField ? [projectFilterField] : [];
+    // The panel's property catalogue has no voice system metrics, so a chip
+    // would have nothing to bind to and render an unselected row.
+    if (projectSource === PROJECT_SOURCE.SIMULATOR) {
+      const dependents = getSystemMetricFilterDefinition()[0]?.dependents || [];
+      fields.push(
+        ...dependents.map((d) => ({
+          id: d.propertyId,
+          name: d.propertyName,
+          type: d.filterType?.type === "number" ? "number" : "string",
+        })),
+      );
+    }
+    return fields.length ? fields : undefined;
+  }, [projectFilterField, projectSource]);
   // Map a filter's raw value back to the human label for chip display.
   const filterChipLabelMap = useMemo(() => {
     const map = {};
@@ -4790,6 +4805,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 id={observeId}
                 enabled={projectSource === PROJECT_SOURCE.SIMULATOR}
                 cellHeight={cellHeight}
+                setExtraFilters={setExtraFilters}
                 columnVisibility={columns["primary-trace"]}
                 onColumnsChange={(next) =>
                   setColumns((prev) => ({ ...prev, "primary-trace": next }))
@@ -4832,6 +4848,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   projectSource === PROJECT_SOURCE.SIMULATOR &&
                   selectedGraph === "compare"
                 }
+                setExtraFilters={setCompareExtraFilters}
                 cellHeight={cellHeight}
                 columnVisibility={columns["compare-trace"]}
                 onColumnsChange={(next) =>

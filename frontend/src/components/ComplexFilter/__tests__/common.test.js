@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getComplexFilterValidation } from "../common";
+import { avoidDuplicateFilterSet, getComplexFilterValidation } from "../common";
 import { AdvanceNumberFilterOperators } from "src/utils/constants";
 import {
   FILTER_COLUMN_TYPES,
@@ -103,5 +103,75 @@ describe("ComplexFilter contract wiring", () => {
 
       expect(parsed.success, colType).toBe(true);
     }
+  });
+});
+
+// Review comment on PR #2064: the reduce replaces on *every* match, so with two
+// panel rows on one column a quick-filter click pushes the incoming filter once
+// per match. The chips then duplicate, and removing one by index leaves the
+// filter applied.
+describe("avoidDuplicateFilterSet", () => {
+  const row = (column_id, filter_value, id) => ({
+    id,
+    column_id,
+    filter_config: {
+      filter_type: "text",
+      filter_op: "equals",
+      filter_value,
+    },
+  });
+
+  it("collapses several rows on one column to a single filter", () => {
+    const prev = [
+      row("provider", "anthropic", "a"),
+      row("provider", "openai", "b"),
+    ];
+    const incoming = row("provider", "google", "c");
+
+    const result = avoidDuplicateFilterSet(prev, incoming);
+
+    expect(result).toEqual([incoming]);
+  });
+
+  it("keeps the replacement in the first match's position", () => {
+    const prev = [
+      row("model", "gpt-4", "m"),
+      row("provider", "anthropic", "a"),
+      row("status", "OK", "s"),
+      row("provider", "openai", "b"),
+    ];
+    const incoming = row("provider", "google", "c");
+
+    expect(avoidDuplicateFilterSet(prev, incoming)).toEqual([
+      prev[0],
+      incoming,
+      prev[2],
+    ]);
+  });
+
+  it("replaces a single existing row on that column", () => {
+    const prev = [row("provider", "anthropic", "a")];
+    const incoming = row("provider", "google", "c");
+    expect(avoidDuplicateFilterSet(prev, incoming)).toEqual([incoming]);
+  });
+
+  it("appends when no row uses that column", () => {
+    const prev = [row("model", "gpt-4", "m")];
+    const incoming = row("provider", "google", "c");
+    expect(avoidDuplicateFilterSet(prev, incoming)).toEqual([
+      prev[0],
+      incoming,
+    ]);
+  });
+
+  it("drops empty draft rows, as before", () => {
+    // isEmptyFilter deep-equals this exact shape.
+    const empty = {
+      id: "e",
+      column_id: "",
+      filter_config: { filter_type: "", filter_op: "", filter_value: "" },
+    };
+    const incoming = row("provider", "google", "c");
+    expect(avoidDuplicateFilterSet([empty], incoming)).toEqual([incoming]);
   });
 });
