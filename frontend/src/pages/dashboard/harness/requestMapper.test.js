@@ -38,11 +38,11 @@ describe("parseGitHubInput", () => {
   it("parses a GitHub URL with nested branch path", () => {
     expect(
       parseGitHubInput(
-        "https://github.com/owner/repo/tree/feature/voice-agent",
+        "https://github.com/future-agi/ride-voice-agent/tree/codex/harden-voice-harness-flows",
       ),
     ).toEqual({
-      repository: "owner/repo",
-      ref: "feature/voice-agent",
+      repository: "future-agi/ride-voice-agent",
+      ref: "codex/harden-voice-harness-flows",
     });
   });
 

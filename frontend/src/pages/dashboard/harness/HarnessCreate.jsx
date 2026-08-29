@@ -44,6 +44,7 @@ import {
 } from "./credentialValues";
 import { errorMessage, readable, stages } from "./harnessShared";
 import { prepareSourceFolder } from "./sourceUpload";
+import { parseGitHubInput } from "./requestMapper";
 
 // Uploaded agent folders are often only a few KiB, and a fixed MiB unit rounds
 // every one of those to "0.0 MiB". Scale the unit to the actual size instead.
@@ -195,9 +196,11 @@ export default function HarnessCreate() {
         kind: "archive",
         archive_artifact_id: uploadedSource?.source_id,
       };
+    const parsed = parseGitHubInput(githubRepository);
     return {
       kind: "github",
-      repository: githubRepository.trim(),
+      repository: parsed?.repository || githubRepository.trim(),
+      ...(parsed?.ref ? { ref: parsed.ref } : {}),
       visibility: githubVisibility,
       installation_id:
         githubVisibility === "private"
@@ -554,7 +557,7 @@ export default function HarnessCreate() {
   const hasSource =
     sourceMode === "upload"
       ? Boolean(uploadedSource?.source_id)
-      : Boolean(githubRepository.trim()) &&
+      : Boolean(parseGitHubInput(githubRepository)) &&
         (githubVisibility === "public" || Boolean(githubInstallationId.trim()));
 
   return (
@@ -770,6 +773,22 @@ export default function HarnessCreate() {
                           setGithubRepository(event.target.value);
                           setPreflightDirty(Boolean(preflight));
                         }}
+                        error={
+                          Boolean(githubRepository.trim()) &&
+                          !parseGitHubInput(githubRepository)
+                        }
+                        helperText={(() => {
+                          if (!githubRepository.trim()) {
+                            return "Paste a GitHub URL or enter owner/repository.";
+                          }
+                          const parsed = parseGitHubInput(githubRepository);
+                          if (!parsed) {
+                            return "Enter owner/repository or a github.com repository URL.";
+                          }
+                          return parsed.ref
+                            ? `Using ${parsed.repository} at branch ${parsed.ref}`
+                            : `Using ${parsed.repository} at its default branch`;
+                        })()}
                       />
                       <Box
                         sx={{
