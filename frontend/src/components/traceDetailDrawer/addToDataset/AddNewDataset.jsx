@@ -17,6 +17,7 @@ import { LoadingButton } from "@mui/lab";
 import { useNavigate, useParams } from "react-router";
 import { LLM_TABS } from "../../../sections/projects/LLMTracing/common";
 import { coreSpanFields } from "../common";
+import { getAddToDatasetStatus } from "./status";
 
 const AddNewDataset = ({
   handleclose,
@@ -111,13 +112,18 @@ const AddNewDataset = ({
         axios.post(endpoints.project.addNewDataset, payload),
 
       onSuccess: (res) => {
+        const result = res?.data?.result;
+        const { message, variant } = getAddToDatasetStatus(
+          result,
+          "Datapoints added to newly created dataset",
+        );
         enqueueSnackbar(
           <>
-            Datapoints added to newly created dataset
+            {message}
             <span
               onClick={() =>
                 navigate(
-                  `/dashboard/develop/${res?.data?.result?.dataset_id ?? res?.data?.result?.datasetId}?tab=data`,
+                  `/dashboard/develop/${result?.dataset_id ?? result?.datasetId}?tab=data`,
                   { state: { from: location.pathname } },
                 )
               }
@@ -132,7 +138,7 @@ const AddNewDataset = ({
               View Dataset
             </span>
           </>,
-          { variant: "success" },
+          { variant },
         );
         handleclose();
         if (onSuccess) {
