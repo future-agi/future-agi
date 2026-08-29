@@ -53,6 +53,17 @@ const readableSize = (bytes = 0) => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 };
 
+// `run()` always performs a fresh preflight before it creates the job.  Keep
+// the button available without a prior manual check so users cannot get stuck
+// behind an undocumented "Check again" prerequisite.
+export const canStartEndToEndRun = ({
+  hasSource,
+  submitting,
+  checking,
+  uploadingSecretFile,
+}) =>
+  hasSource && !submitting && !checking && !uploadingSecretFile;
+
 function Section({ title, description, children }) {
   return (
     <Paper variant="outlined" sx={{ p: 2 }}>
@@ -829,7 +840,7 @@ export default function HarnessCreate() {
                   </Button>
                   <Typography variant="caption" color="text.secondary">
                     {hasSource
-                      ? "Check the agent's requirements before entering values."
+                      ? "Optional: inspect the agent's requirements before running. Readiness is also checked automatically when you start."
                       : "Select an agent source to check its requirements."}
                   </Typography>
                 </Stack>
@@ -1098,10 +1109,12 @@ export default function HarnessCreate() {
                 <Button
                   variant="contained"
                   disabled={
-                    submitting ||
-                    !hasSource ||
-                    !preflight ||
-                    !requirementsConfigured
+                    !canStartEndToEndRun({
+                      hasSource,
+                      submitting,
+                      checking,
+                      uploadingSecretFile,
+                    })
                   }
                   onClick={run}
                   startIcon={
@@ -1112,8 +1125,15 @@ export default function HarnessCreate() {
                     )
                   }
                 >
-                  Run end to end
+                  {submitting ? "Checking readiness…" : "Run end to end"}
                 </Button>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ alignSelf: "center" }}
+                >
+                  Readiness is checked automatically.
+                </Typography>
               </Stack>
             </Stack>
 
