@@ -63,4 +63,32 @@ describe("AddProviderDialog — API format follows the selected provider", () =>
     await user.click(await screen.findByRole("option", { name: "OpenAI" }));
     expect(apiFormatSelect()).toHaveTextContent("openai");
   });
+
+  it("switches api_format to google when Google is selected from the OpenAI default", async () => {
+    const user = userEvent.setup();
+    render(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />);
+
+    await user.click(providerSelect());
+    await user.click(
+      await screen.findByRole("option", { name: "Google (Gemini)" }),
+    );
+
+    expect(apiFormatSelect()).toHaveTextContent("google");
+  });
+
+  it("keeps the current format when switching to Custom if Custom still supports it", async () => {
+    const user = userEvent.setup();
+    render(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />);
+
+    await user.click(providerSelect());
+    await user.click(await screen.findByRole("option", { name: "Anthropic" }));
+    expect(apiFormatSelect()).toHaveTextContent("anthropic");
+
+    await user.click(providerSelect());
+    await user.click(
+      await screen.findByRole("option", { name: "Custom / Self-hosted" }),
+    );
+
+    expect(apiFormatSelect()).toHaveTextContent("anthropic");
+  });
 });

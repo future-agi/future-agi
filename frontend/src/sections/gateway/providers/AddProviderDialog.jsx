@@ -271,9 +271,18 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       } else {
         setBaseUrl(preset.baseUrl);
       }
-      // Named presets pick their upstream adapter deterministically — the
-      // previous provider's format must never carry over (see issue #2281).
-      setApiFormat(preset.apiFormat);
+      if (newName === "custom") {
+        // Custom is the one multi-format preset — keep whatever format the
+        // user already had if custom still supports it, instead of
+        // snapping back to openai. Named presets below stay deterministic.
+        setApiFormat((prev) =>
+          preset.supportedFormats?.includes(prev) ? prev : preset.apiFormat,
+        );
+      } else {
+        // Named presets pick their upstream adapter deterministically — the
+        // previous provider's format must never carry over (see issue #2281).
+        setApiFormat(preset.apiFormat);
+      }
     }
     // Clear models since provider changed
     setModels([]);
