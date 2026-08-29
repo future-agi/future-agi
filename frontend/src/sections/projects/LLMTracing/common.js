@@ -218,6 +218,9 @@ export const applyQuickFilters =
         value,
         filter: {
           column_id: col.id,
+          // The popover renders "Where <display_name> is"; without it the
+          // heading reads "Where value is".
+          display_name: col.name,
           filter_config: {
             filter_type: "number",
             filter_op: "equals",
@@ -225,6 +228,30 @@ export const applyQuickFilters =
           },
           _meta: {
             parentProperty: col.id,
+          },
+          id: getRandomId(),
+        },
+      });
+      return;
+    }
+
+    if (col.groupBy === "System Metrics") {
+      openQuickFilter({
+        filterAnchor,
+        value,
+        filter: {
+          column_id: col.id,
+          // FilterChips looks labels up at the top level; these are nested.
+          display_name: col.name,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
+            col_type: "SYSTEM_METRIC",
+          },
+          _meta: {
+            parentProperty: "System Metrics",
+            "System Metrics": col.id,
           },
           id: getRandomId(),
         },
@@ -274,6 +301,32 @@ export const applyQuickFilters =
       }
     } else if (
       col?.groupBy === "Evaluation Metrics" &&
+      col?.sourceField !== "reason" &&
+      String(col?.outputType || "")
+        .toUpperCase()
+        .replace(/[/ ]/g, "_") === "PASS_FAIL"
+    ) {
+      // Pass/Fail is filtered by token, not score. Casing matches the value
+      // picker's choices; the backend lowercases before matching.
+      // Number("") and Number(null) are 0, which would apply a wrong "Failed".
+      if (value === "" || value === null || value === undefined) return;
+      const rate = Number(value);
+      if (rate !== 0 && rate !== 100) return;
+      filter = {
+        column_id: col.id,
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: rate === 100 ? "Passed" : "Failed",
+        },
+        _meta: {
+          parentProperty: "Evaluation Metrics",
+          "Evaluation Metrics": col.id,
+        },
+        id: getRandomId(),
+      };
+    } else if (
+      col?.groupBy === "Evaluation Metrics" &&
       col?.sourceField !== "reason"
     ) {
       openQuickFilter({
@@ -281,10 +334,13 @@ export const applyQuickFilters =
         value,
         filter: {
           column_id: col.id,
+          // Eval ids are UUIDs, so the chip has no label without this.
+          display_name: col.name,
           filter_config: {
             filter_type: "number",
             filter_op: "equals",
             filter_value: [value, ""],
+            col_type: "EVAL_METRIC",
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -296,6 +352,10 @@ export const applyQuickFilters =
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
         column_id: col.id,
+        // Annotation ids are UUIDs, so both the chip and the number popover
+        // have nothing to show without this. On the base filter rather than the
+        // NUMERIC branch so every label type gets it.
+        display_name: col.name,
         _meta: {
           parentProperty: "Annotation Metrics",
           "Annotation Metrics": col.id,
@@ -357,6 +417,7 @@ export const applyQuickFilters =
                 filter_type: "number",
                 filter_op: "equals",
                 filter_value: [value, ""],
+                col_type: "ANNOTATION",
               },
             },
           });
@@ -369,9 +430,19 @@ export const applyQuickFilters =
       // Quick filters skip the toolbar normalization, so attach the col_type
       // the backend needs — without it the list 400s on a NORMAL col_type.
       let field = filter.column_id;
-      let fieldName;
+      // Eval and annotation ids are both UUIDs, so the chip has no readable
+      // label without this.
+      let fieldName =
+        col?.groupBy === "Evaluation Metrics" ||
+        col?.groupBy === "Annotation Metrics"
+          ? col?.name
+          : undefined;
       const apiColType =
-        col?.groupBy === "Annotation Metrics" ? "ANNOTATION" : "SYSTEM_METRIC";
+        col?.groupBy === "Annotation Metrics"
+          ? "ANNOTATION"
+          : col?.groupBy === "Evaluation Metrics"
+            ? "EVAL_METRIC"
+            : "SYSTEM_METRIC";
       let operator = filter.filter_config?.filter_op;
       let value = filter.filter_config?.filter_value;
 
@@ -392,15 +463,10 @@ export const applyQuickFilters =
         operator,
         value,
       });
-      setFilters((prev) => {
-        const exists = (prev || []).some(
-          (f) =>
-            f.column_id === extraFilter.column_id &&
-            f.filter_config?.filter_value ===
-              extraFilter.filter_config.filter_value,
-        );
-        return exists ? prev : [...(prev || []), extraFilter];
-      });
+      // Replace by column_id, matching the popover path's avoidDuplicateFilterSet.
+      // Appending instead would AND two values for one column — the grid empties
+      // and the chips give no clue which of the two to remove.
+      setFilters((prev) => avoidDuplicateFilterSet(prev || [], extraFilter));
     }
   };
 
