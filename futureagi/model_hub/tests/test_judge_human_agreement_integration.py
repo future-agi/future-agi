@@ -194,7 +194,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -221,7 +221,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="fail",
+            value={"selected": ["fail"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -247,19 +247,19 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value="fail",
+            value={"selected": ["fail"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -283,13 +283,13 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value="fail",
+            value={"selected": ["fail"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -319,7 +319,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -357,7 +357,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -377,16 +377,20 @@ class TestJudgeHumanAgreementIntegration:
         cfg = _make_custom_eval_config(project, template)
         queue = _make_queue(organization, workspace, project, custom_eval_config=cfg)
         item = _make_queue_item(queue, span, organization)
-        label = _make_label(organization, workspace)
+        # numeric label is comparable with a percentage judge output.
+        label = _make_label(
+            organization, workspace, type=AnnotationTypeChoices.NUMERIC.value
+        )
 
         _make_eval_row(span, trace, cfg, output_float=0.876)
 
-        # Human gives the same rounded value as a string.
+        # Human stores a numeric dict {"value": 0.876}; it must unwrap and
+        # round to "0.88" to match the judge.
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value="0.88",
+            value={"value": 0.876},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -413,7 +417,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="toxic",
+            value={"selected": ["toxic"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -444,7 +448,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -482,7 +486,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -515,7 +519,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         # The function does 3 queries: EvalLogger Subquery, EvalLogger values,
@@ -548,13 +552,13 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item_a,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
         Score.objects.create(
             queue_item=item_b,
             label=label,
             organization=organization,
-            value="fail",
+            value={"selected": ["fail"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -580,7 +584,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -606,21 +610,21 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
             annotator_id="a1",
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
             annotator_id="a2",
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
-            value="fail",
+            value={"selected": ["fail"]},
             annotator_id="a3",
         )
 
@@ -662,7 +666,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value="pass",
+            value={"selected": ["pass"]},
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -690,7 +694,7 @@ class TestJudgeHumanAgreementIntegration:
             queue_item=item,
             label=label,
             organization=organization,
-            value=5,
+            value={"rating": 5},
         )
 
         result = _calculate_judge_human_agreement(queue)

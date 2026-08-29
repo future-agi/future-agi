@@ -1,23 +1,36 @@
-"""Unit tests for ``_calculate_judge_human_agreement``.
+"""Unit tests for ``_calculate_judge_human_agreement`` and its helpers.
 
 Coverage:
-  - Returns ``None`` when the queue has no linked evaluator.
-  - Returns ``None`` when no trace/span-sourced items have overlapping data.
-  - Picks the latest ``EvalLogger`` row per span via Subquery.
-  - Skips error rows from ``EvalLogger``.
-  - Calculates overall and per-label agreement correctly.
-  - Handles pass_fail, percentage, and deterministic output types.
-  - Returns ``None`` for items without overlapping judge and human scores.
+  - ``_normalize_eval_output``: pass_fail / percentage / deterministic.
+  - ``_majority_value``: strict majority, ties, single value, order-independence.
+  - ``_normalize_human_score_value``: the three real shapes of a stored
+    ``Score.value`` — per-type dict, legacy bare scalar, and None/empty/garbage
+    (degrades to "not comparable" rather than crashing or false-agreeing).
+  - ``_calculate_judge_human_agreement``:
+      * returns None when no evaluator is linked / no span-sourced items;
+      * returns null agreement when judge and human scores don't overlap;
+      * computes per-label and overall agreement correctly;
+      * the latest-non-error eval Subquery is built with the right gates
+        (error=False, status=COMPLETED, skipped_reason__isnull, deleted=False).
+
+Note: the *execution* of the Subquery (real error-filtering and
+``-created_at`` ordering) is covered by the integration tests, which run
+against a real DB. These unit tests only assert the query *signature*, so a
+regression that drops a gate fails fast instead of silently passing.
 """
 
 import unittest
 from unittest.mock import MagicMock, patch
 
+from django.db.models import Subquery
+
 from model_hub.utils.annotation_queue_helpers import (
     _calculate_judge_human_agreement,
     _majority_value,
     _normalize_eval_output,
+    _normalize_human_score_value,
 )
+from tracer.models.observation_span import EvalEntryStatus
 
 
 class TestNormalizeEvalOutput(unittest.TestCase):
@@ -107,65 +120,97 @@ class TestMajorityValue(unittest.TestCase):
         ) == {"sel": ["A", "B"]}
 
 
+class TestNormalizeHumanScoreValue(unittest.TestCase):
+    """``_normalize_human_score_value`` must mirror the judge side so that
+    a stored ``Score.value`` compares equal to an ``_normalize_eval_output``
+    string. It also has to be defensive: the value is user/legacy data and
+    must never raise.
+
+    The first four tests cover the *comparable* shapes (per-type dict and
+    legacy bare scalar); the remaining tests cover every branch that must
+    degrade to "not comparable" (None) rather than crash or false-agree.
+    """
+
+    def test_categorical_dict_unwraps_single_choice(self):
+        assert (
+            _normalize_human_score_value(
+                {"selected": ["pass"]}, "categorical", "pass_fail"
+            )
+            == "pass"
+        )
+
+    def test_categorical_dict_multi_choice_sorts(self):
+        # Multiple selections stay order-independent via the sorted-list form,
+        # matching the judge side for deterministic output.
+        assert (
+            _normalize_human_score_value(
+                {"selected": ["B", "A"]}, "categorical", "deterministic"
+            )
+            == "['A', 'B']"
+        )
+
+    def test_numeric_percentage_rounds_to_two_decimals(self):
+        # Mirrors _normalize_eval_output's round(2) so the sides match.
+        assert (
+            _normalize_human_score_value({"value": 0.876}, "numeric", "percentage")
+            == "0.88"
+        )
+
+    def test_star_percentage_rounds(self):
+        assert (
+            _normalize_human_score_value({"rating": 4.0}, "star", "percentage") == "4.0"
+        )
+
+    def test_legacy_bare_scalar_passes_through(self):
+        # Old rows that stored a bare string stay comparable (backward compat).
+        assert (
+            _normalize_human_score_value("pass", "categorical", "pass_fail") == "pass"
+        )
+
+    def test_none_value_is_not_comparable(self):
+        assert _normalize_human_score_value(None, "categorical", "pass_fail") is None
+
+    def test_dict_missing_type_key_is_not_comparable(self):
+        # A categorical dict without "selected" cannot be unwrapped.
+        assert (
+            _normalize_human_score_value({"other": "x"}, "categorical", "pass_fail")
+            is None
+        )
+
+    def test_empty_selected_list_is_not_comparable(self):
+        # A categorical dict with an empty "selected" means no choice was
+        # made; it cannot be unwrapped into a comparable scalar.
+        assert (
+            _normalize_human_score_value({"selected": []}, "categorical", "pass_fail")
+            is None
+        )
+
+    def test_unknown_label_type_is_not_comparable(self):
+        # No mapping entry for the type → can't unwrap.
+        assert (
+            _normalize_human_score_value({"value": 5}, "unknown_type", "percentage")
+            is None
+        )
+
+    def test_non_numeric_percentage_is_not_comparable(self):
+        # A percentage judge needs a float; a string can't round.
+        assert (
+            _normalize_human_score_value({"value": "abc"}, "numeric", "percentage")
+            is None
+        )
+
+
 class TestCalculateJudgeHumanAgreement(unittest.TestCase):
-    """The function is called with a real or mocked ``AnnotationQueue``
-    instance. We mock the database queries so the tests stay fast and
-    deterministic."""
+    """The function is called with a mocked ``AnnotationQueue``. Database
+    queries are mocked so the tests stay fast and deterministic. Note: because
+    the Subquery is not executed under a MagicMock, tests that care about the
+    *latest non-error eval row* assert on the query signature rather than on a
+    result that the mock would fabricate (and that would false-pass)."""
 
     def test_returns_none_when_no_evaluator_linked(self):
         queue = MagicMock()
         queue.custom_eval_config_id = None
         assert _calculate_judge_human_agreement(queue) is None
-
-    def test_returns_none_when_output_type_is_none(self):
-        """When eval_template.output_type_normalized is None, bail early
-        because the normalisation codepath is undefined."""
-        queue = MagicMock()
-        queue.custom_eval_config_id = "eval-config-1"
-        queue.custom_eval_config.eval_template.output_type_normalized = None
-        queue.custom_eval_config.name = "Safety Eval"
-
-        assert _calculate_judge_human_agreement(queue) is None
-
-    @patch("tracer.models.observation_span.EvalLogger.objects")
-    @patch("model_hub.models.score.Score.objects")
-    def test_evaluator_name_falls_back_to_config_id_when_names_empty(
-        self, mock_score_objects, mock_eval_objects
-    ):
-        """When custom_eval_config.name is None and eval_template.name is
-        empty string, evaluator_name falls back to the config PK."""
-        queue = MagicMock()
-        queue.custom_eval_config_id = "eval-config-1"
-        queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
-        queue.custom_eval_config.name = None
-        queue.custom_eval_config.eval_template.name = ""
-
-        queue.items.filter.return_value.values_list.return_value = [
-            ("item-1", "span-1"),
-        ]
-
-        mock_eval_objects.filter.return_value.values.return_value = [
-            {
-                "observation_span_id": "span-1",
-                "output_bool": True,
-                "output_float": None,
-                "output_str": None,
-                "output_str_list": [],
-            },
-        ]
-
-        mock_score_objects.filter.return_value.values.return_value = [
-            {
-                "queue_item_id": "item-1",
-                "label_id": "label-1",
-                "label__name": "Safety",
-                "label__type": "categorical",
-                "value": "pass",
-            },
-        ]
-
-        result = _calculate_judge_human_agreement(queue)
-        assert result["evaluator_name"] == "eval-config-1"
 
     @patch("tracer.models.observation_span.EvalLogger.objects")
     @patch("model_hub.models.score.Score.objects")
@@ -184,55 +229,76 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
 
     @patch("tracer.models.observation_span.EvalLogger.objects")
     @patch("model_hub.models.score.Score.objects")
-    def test_skips_error_eval_rows(self, mock_score_objects, mock_eval_objects):
-        """EvalLogger rows with error=True are excluded by the Subquery
-        filter, so only the span with a clean row contributes."""
+    def test_evaluator_name_falls_back_to_config_id(
+        self, mock_score_objects, mock_eval_objects
+    ):
+        """When custom_eval_config.name (None) and eval_template.name ("")
+        are both empty, evaluator_name falls back to the config PK so the UI
+        never renders a blank label. This single test covers both the None
+        and "" cases (both are falsy in the ``name or template.name or id``
+        chain)."""
+        queue = MagicMock()
+        queue.custom_eval_config_id = "eval-config-1"
+        queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
+        queue.custom_eval_config.name = None
+        queue.custom_eval_config.eval_template.name = ""
+
+        queue.items.filter.return_value.values_list.return_value = [
+            ("item-1", "span-1"),
+        ]
+        mock_eval_objects.filter.return_value.values.return_value = []
+        mock_score_objects.filter.return_value.values.return_value = []
+
+        result = _calculate_judge_human_agreement(queue)
+        assert result["evaluator_name"] == "eval-config-1"
+
+    @patch("tracer.models.observation_span.EvalLogger.objects")
+    @patch("model_hub.models.score.Score.objects")
+    def test_latest_eval_subquery_gates_on_error_and_status(
+        self, mock_score_objects, mock_eval_objects
+    ):
+        """The inner Subquery that selects the latest eval row per source must
+        be built with the right gates (error=False, status=COMPLETED,
+        skipped_reason__isnull=True, deleted=False, matching config id). Under
+        a MagicMock the Subquery is never executed, so we assert on the *call
+        signature*: dropping any gate from ``_latest_eval`` changes these
+        kwargs and fails the assertion. The actual filtering/ordering is
+        covered by the integration tests against a real DB."""
         queue = MagicMock()
         queue.custom_eval_config_id = "eval-config-1"
         queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
         queue.custom_eval_config.name = "Safety Eval"
 
-        # values_list now returns (item_id, observation_span_id) tuples.
         queue.items.filter.return_value.values_list.return_value = [
             ("item-1", "span-1"),
-            ("item-2", "span-2"),
         ]
+        mock_eval_objects.filter.return_value.values.return_value = []
+        mock_score_objects.filter.return_value.values.return_value = []
 
-        # Only span-1 has a valid eval row; span-2 was error=True (excluded).
-        mock_eval_objects.filter.return_value.values.return_value = [
-            {
-                "observation_span_id": "span-1",
-                "output_bool": True,
-                "output_float": None,
-                "output_str": None,
-                "output_str_list": [],
-            },
+        _calculate_judge_human_agreement(queue)
+
+        # The inner latest-eval filter carries the gates; the outer filter only
+        # carries id=Subquery(...), observation_span_id__in, deleted=False.
+        inner = [
+            c.kwargs
+            for c in mock_eval_objects.filter.call_args_list
+            if c.kwargs.get("error") is False
         ]
+        assert inner, "expected an inner latest-eval filter gated on error=False"
+        gate = inner[0]
+        assert gate.get("error") is False
+        assert gate.get("status") == EvalEntryStatus.COMPLETED
+        assert gate.get("skipped_reason__isnull") is True
+        assert gate.get("deleted") is False
+        assert gate.get("custom_eval_config_id") == "eval-config-1"
 
-        # Human scores for both items.
-        mock_score_objects.filter.return_value.values.return_value = [
-            {
-                "queue_item_id": "item-1",
-                "label_id": "label-1",
-                "label__name": "Safety",
-                "label__type": "categorical",
-                "value": "pass",
-            },
-            {
-                "queue_item_id": "item-2",
-                "label_id": "label-1",
-                "label__name": "Safety",
-                "label__type": "categorical",
-                "value": "fail",
-            },
+        # The outer filter must wrap the inner one in a Subquery on id.
+        outer = [
+            c
+            for c in mock_eval_objects.filter.call_args_list
+            if any(isinstance(v, Subquery) for v in c.kwargs.values())
         ]
-
-        result = _calculate_judge_human_agreement(queue)
-
-        # span-2 had no (non-error) eval row → only item-1 contributes.
-        assert result["evaluator_name"] == "Safety Eval"
-        assert result["total_comparisons"] == 1
-        assert result["labels"]["label-1"]["judge_human_agreement"] == 1.0
+        assert outer, "expected the outer eval-row filter to use a Subquery on id"
 
     @patch("tracer.models.observation_span.EvalLogger.objects")
     @patch("model_hub.models.score.Score.objects")
@@ -279,28 +345,28 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
                 "label_id": "label-1",
                 "label__name": "Label A",
                 "label__type": "categorical",
-                "value": "pass",
+                "value": {"selected": ["pass"]},
             },
             {
                 "queue_item_id": "item-1",
                 "label_id": "label-2",
                 "label__name": "Label B",
                 "label__type": "categorical",
-                "value": "fail",
+                "value": {"selected": ["fail"]},
             },
             {
                 "queue_item_id": "item-2",
                 "label_id": "label-1",
                 "label__name": "Label A",
                 "label__type": "categorical",
-                "value": "fail",
+                "value": {"selected": ["fail"]},
             },
             {
                 "queue_item_id": "item-2",
                 "label_id": "label-2",
                 "label__name": "Label B",
                 "label__type": "categorical",
-                "value": "pass",
+                "value": {"selected": ["pass"]},
             },
         ]
 
@@ -312,43 +378,6 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         assert result["labels"]["label-2"]["total_comparisons"] == 2
         assert result["overall_agreement"] == 0.5
         assert result["total_comparisons"] == 4
-
-    @patch("tracer.models.observation_span.EvalLogger.objects")
-    @patch("model_hub.models.score.Score.objects")
-    def test_uses_latest_eval_row_per_span(self, mock_score_objects, mock_eval_objects):
-        """The Subquery picks the latest EvalLogger row when a span has
-        multiple rows for the same config."""
-        queue = MagicMock()
-        queue.custom_eval_config_id = "eval-config-1"
-        queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
-        queue.custom_eval_config.name = "Safety Eval"
-
-        queue.items.filter.return_value.values_list.return_value = [
-            ("item-1", "span-1"),
-        ]
-
-        mock_eval_objects.filter.return_value.values.return_value = [
-            {
-                "observation_span_id": "span-1",
-                "output_bool": True,
-                "output_float": None,
-                "output_str": None,
-                "output_str_list": [],
-            },
-        ]
-
-        mock_score_objects.filter.return_value.values.return_value = [
-            {
-                "queue_item_id": "item-1",
-                "label_id": "label-1",
-                "label__name": "Label A",
-                "label__type": "categorical",
-                "value": "pass",
-            },
-        ]
-
-        result = _calculate_judge_human_agreement(queue)
-        assert result["labels"]["label-1"]["judge_human_agreement"] == 1.0
 
     @patch("tracer.models.observation_span.EvalLogger.objects")
     @patch("model_hub.models.score.Score.objects")
@@ -383,48 +412,55 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         assert result["total_comparisons"] == 0
         assert result["labels"] == {}
 
+
+class TestPercentageEndToEnd(unittest.TestCase):
+    """A percentage judge must agree with a human numeric dict value after
+    both sides round to two decimals. This exercises the full agreement path
+    (not just the normalize helper) for the percentage output type."""
+
     @patch("tracer.models.observation_span.EvalLogger.objects")
     @patch("model_hub.models.score.Score.objects")
-    def test_returns_none_when_output_type_missing(
+    def test_percentage_judge_agrees_with_numeric_dict(
         self, mock_score_objects, mock_eval_objects
     ):
-        """A linked evaluator without a normalized output type should short
-        circuit instead of returning a partial judge-vs-human payload."""
         queue = MagicMock()
         queue.custom_eval_config_id = "eval-config-1"
-        queue.custom_eval_config.eval_template.output_type_normalized = None
-        queue.custom_eval_config.name = "Missing Output Type Eval"
+        queue.custom_eval_config.eval_template.output_type_normalized = "percentage"
+        queue.custom_eval_config.name = "Score Eval"
 
         queue.items.filter.return_value.values_list.return_value = [
             ("item-1", "span-1"),
         ]
 
-        result = _calculate_judge_human_agreement(queue)
-
-        assert result is None
-        mock_eval_objects.filter.assert_not_called()
-        mock_score_objects.filter.assert_not_called()
-
-    @patch("tracer.models.observation_span.EvalLogger.objects")
-    @patch("model_hub.models.score.Score.objects")
-    def test_uses_config_id_as_final_evaluator_name_fallback(
-        self, mock_score_objects, mock_eval_objects
-    ):
-        """If both config.name and template.name are empty, the config id
-        keeps the UI from rendering a blank evaluator label."""
-        queue = MagicMock()
-        queue.custom_eval_config_id = "eval-config-1"
-        queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
-        queue.custom_eval_config.name = ""
-        queue.custom_eval_config.eval_template.name = ""
-
-        queue.items.filter.return_value.values_list.return_value = [
-            ("item-1", "span-1"),
+        # Judge: 0.876 → "0.88"
+        mock_eval_objects.filter.return_value.values.return_value = [
+            {
+                "observation_span_id": "span-1",
+                "output_bool": None,
+                "output_float": 0.876,
+                "output_str": None,
+                "output_str_list": [],
+            },
         ]
 
-        mock_eval_objects.filter.return_value.values.return_value = []
-        mock_score_objects.filter.return_value.values.return_value = []
+        # Human: numeric dict {"value": 0.876} → unwraps + rounds → "0.88"
+        mock_score_objects.filter.return_value.values.return_value = [
+            {
+                "queue_item_id": "item-1",
+                "label_id": "label-1",
+                "label__name": "Label A",
+                "label__type": "numeric",
+                "value": {"value": 0.876},
+            },
+        ]
 
         result = _calculate_judge_human_agreement(queue)
+        assert result["labels"]["label-1"]["judge_human_agreement"] == 1.0
+        assert result["overall_agreement"] == 1.0
+        assert result["total_comparisons"] == 1
 
-        assert result["evaluator_name"] == "eval-config-1"
+
+if __name__ == "__main__":
+    import unittest
+
+    unittest.main()

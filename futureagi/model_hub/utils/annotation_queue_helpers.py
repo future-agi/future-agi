@@ -523,7 +523,8 @@ def _source_passes_tenant_gate(
     (:func:`resolve_source_object`) and bulk (:func:`_resolve_pg_sources_bulk`)
     resolvers so both apply the identical rule. FAIL CLOSED: a missing/mismatched org,
     or a workspace that doesn't match (allowing a null source workspace only under a
-    default workspace), denies. ``None`` org/workspace skips that check (unscoped call)."""
+    default workspace), denies. ``None`` org/workspace skips that check (unscoped call).
+    """
     if organization is not None:
         obj_org = _get_source_organization(obj)
         if obj_org is None or obj_org != organization:
@@ -925,7 +926,8 @@ class CollectorSourceCache:
         drop off-project items and render them ``deleted`` — hence per-item project.
         Items whose ``project_id`` is NULL (pre-denormalization rows) fall into one
         unscoped group: correct, just unpruned. A page spans few distinct projects, so
-        this is a handful of scoped reads, not one per item. Empty id-sets short-circuit."""
+        this is a handful of scoped reads, not one per item. Empty id-sets short-circuit.
+        """
         # project_id (str, or None for pre-denorm rows) -> per-kind soft-id sets
         by_project: dict[object, dict] = {}
         for item in items or []:
@@ -1047,7 +1049,8 @@ def resolve_source_objects_bulk(
     the N+1. The tenant is gated against that project **once** here (fail closed); a
     scoped read then only returns that project's rows, so no per-row project check is
     needed. When *project_id* is absent (or not the caller's), the CH kinds fall back to
-    the per-item resolver (bounded — a point read per id). PG kinds resolve regardless."""
+    the per-item resolver (bounded — a point read per id). PG kinds resolve regardless.
+    """
     from collections import defaultdict
 
     ids_by_type: dict[str, list[str]] = defaultdict(list)
@@ -2071,7 +2074,15 @@ def _calculate_judge_human_agreement(queue):
             if human_majority is None:
                 continue
             total += 1
-            if _normalize_value(eval_val) == _normalize_value(human_majority):
+            human_value = _normalize_human_score_value(
+                human_majority, info["type"], output_type
+            )
+            if human_value is None:
+                # A value that can't be unwrapped is not comparable; don't
+                # count it as a (dis)agreement.
+                total -= 1
+                continue
+            if _normalize_value(eval_val) == human_value:
                 agree += 1
 
         all_agree += agree
@@ -2138,6 +2149,70 @@ def _normalize_value(v):
     if isinstance(v, list):
         return str(sorted(v))
     return str(v)
+
+
+def _normalize_human_score_value(raw_value, label_type, output_type):
+    """Normalize a stored ``Score.value`` into the same comparable string space
+    as a judge output from ``_normalize_eval_output``.
+
+    ``Score.value`` is not guaranteed to be well-formed: production writes it as
+    a per-type dict (``{"selected": [...]}`` / ``{"value": 5.0}`` /
+    ``{"rating": 3.0}``), but legacy rows and some clients store a bare scalar,
+    and stale data may be ``None`` / empty. Any malformed input must degrade to
+    "not comparable" rather than crash the whole queue agreement calc or, worse,
+    falsely agree.
+
+    Returns a normalized string, or ``None`` when the value cannot be compared.
+
+    The unwrap step reuses :data:`ANNOTATION_LABEL_VALUE_KEYS` — the same mapping
+    the rest of the codebase uses — so this stays in lockstep with how scores are
+    read elsewhere (e.g. ``canonical_score_value``).
+    """
+    try:
+        # Nothing to compare against.
+        if raw_value is None:
+            return None
+
+        # Unwrap the per-type dict into its scalar payload.
+        if isinstance(raw_value, dict):
+            key = ANNOTATION_LABEL_VALUE_KEYS.get(label_type)
+            if not key:
+                return None
+            scalar = raw_value.get(key)
+        else:
+            # Non-dict rows (legacy / bare scalar) pass through unchanged.
+            scalar = raw_value
+
+        if scalar is None:
+            return None
+
+        # Categorical ``selected`` is a list; an empty list means no choice
+        # was made (not comparable), a single choice collapses to its element,
+        # otherwise keep the sorted-list form for stable comparison.
+        if isinstance(scalar, list):
+            if len(scalar) == 0:
+                return None
+            if len(scalar) == 1:
+                scalar = scalar[0]
+            else:
+                return str(sorted(scalar))
+
+        # Align with the judge side: a percentage output rounds to 2 decimals,
+        # so the human value must be rounded identically before comparison.
+        if output_type == "percentage":
+            try:
+                scalar = round(float(scalar), 2)
+            except (TypeError, ValueError):
+                return None
+
+        return _normalize_value(scalar)
+    except Exception:  # noqa: BLE001 — one bad score must not break the queue
+        logger.warning(
+            "human_score_normalize_failed",
+            label_type=label_type,
+            output_type=output_type,
+        )
+        return None
 
 
 def _cohens_kappa(item_label_map, label_id):
