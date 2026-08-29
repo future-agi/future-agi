@@ -8,6 +8,7 @@ correct results end-to-end.
 import pytest
 from django.utils import timezone
 
+from accounts.models.user import User
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from model_hub.models.choices import (
@@ -94,6 +95,20 @@ def _make_custom_eval_config(project, eval_template, **kwargs):
         eval_template=eval_template,
         **defaults,
     )
+
+
+def _make_user(organization, **kwargs):
+    import uuid as _uuid
+
+    defaults = {
+        "email": f"annotator-{_uuid.uuid4().hex[:8]}@futureagi.com",
+        "password": "testpassword123",
+        "name": "Integration Annotator",
+        "organization": organization,
+        "organization_role": "member",
+    }
+    defaults.update(kwargs)
+    return User.objects.create_user(**defaults)
 
 
 def _make_queue(organization, workspace, project, custom_eval_config=None, **kwargs):
@@ -530,24 +545,32 @@ class TestJudgeHumanAgreementIntegration:
         assert result["overall_agreement"] == 1.0
 
     def test_multiple_items_same_span(self, organization, workspace):
-        """Two queue items that reference the same span each compare
-        independently against the single judge output for that span."""
+        """Two queue items, each anchored to its own span, are compared
+        independently against the judge output for that span.
+
+        NOTE: a queue forbids two items sharing one (queue, observation_span)
+        pair (``unique_queue_observation_span``), so the items use two distinct
+        spans — but the agreement math is identical: each item has exactly one
+        judge/human comparison.
+        """
         project = _make_project(organization, workspace)
         trace = _make_trace(project)
-        span = _make_span(project, trace)
+        span_a = _make_span(project, trace)
+        span_b = _make_span(project, trace)
         template = _make_eval_template(organization, workspace)
         cfg = _make_custom_eval_config(project, template)
         queue = _make_queue(organization, workspace, project, custom_eval_config=cfg)
 
-        # Two items share the same span.
-        item_a = _make_queue_item(queue, span, organization)
-        item_b = _make_queue_item(queue, span, organization)
+        # One item per span.
+        item_a = _make_queue_item(queue, span_a, organization)
+        item_b = _make_queue_item(queue, span_b, organization)
         label = _make_label(organization, workspace)
 
-        # Judge says "pass" (once, for the single span).
-        _make_eval_row(span, trace, cfg, output_bool=True)
+        # Judge: "pass" on both spans (single evaluator on the queue).
+        _make_eval_row(span_a, trace, cfg, output_bool=True)
+        _make_eval_row(span_b, trace, cfg, output_bool=True)
 
-        # Human annotator agrees on item_a ("pass"), disagrees on item_b ("fail").
+        # Human agrees on item_a ("pass"), disagrees on item_b ("fail").
         Score.objects.create(
             queue_item=item_a,
             label=label,
@@ -605,27 +628,31 @@ class TestJudgeHumanAgreementIntegration:
 
         _make_eval_row(span, trace, cfg, output_bool=True)
 
-        # Three annotators.
+        # Three distinct annotators; the per-(source,label,annotator,queue_item)
+        # uniqueness lets them coexist on the same item+label.
+        a1 = _make_user(organization, name="Annotator A")
+        a2 = _make_user(organization, name="Annotator B")
+        a3 = _make_user(organization, name="Annotator C")
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
+            annotator=a1,
             value={"selected": ["pass"]},
-            annotator_id="a1",
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
+            annotator=a2,
             value={"selected": ["pass"]},
-            annotator_id="a2",
         )
         Score.objects.create(
             queue_item=item,
             label=label,
             organization=organization,
+            annotator=a3,
             value={"selected": ["fail"]},
-            annotator_id="a3",
         )
 
         result = _calculate_judge_human_agreement(queue)
@@ -653,10 +680,13 @@ class TestJudgeHumanAgreementIntegration:
         )
         label = _make_label(organization, workspace)
 
-        # EvalLogger anchored to the trace (target_type='trace').
+        # EvalLogger anchored to the trace (target_type='trace'). A trace's
+        # eval is anchored to its root span, so both FKs must be set.  The
+        # helper builds a span on *trace*, so reuse it as the anchor.
+        span = _make_span(project, trace)
         EvalLogger.objects.create(
             target_type=EvalTargetType.TRACE,
-            observation_span=None,
+            observation_span=span,
             trace=trace,
             custom_eval_config=cfg,
             output_bool=True,
