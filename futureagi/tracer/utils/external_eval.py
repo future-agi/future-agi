@@ -136,7 +136,7 @@ def _execute_composite_on_external_platform(config: ExternalEvalConfig):
             f"Composite {parent.id} has no children — cannot run externally."
         )
 
-    _log_and_deduct_cost_for_external_eval(config, futureagi_eval=False)
+    _log_and_deduct_cost_for_external_eval(config, is_futureagi_eval=False)
 
     outcome = execute_composite_children_sync(
         parent=parent,
