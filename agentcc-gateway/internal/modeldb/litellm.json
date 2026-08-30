@@ -49427,5 +49427,39 @@
         "supported_output_modalities": [
             "video"
         ]
+    },
+
+    "smallest_ai/lightning_v3.1": {
+        "litellm_provider": "smallest_ai",
+        "mode": "audio_speech",
+        "supported_endpoints": [
+            "/v1/audio/speech"
+        ],
+        "source": "https://docs.smallest.ai/"
+    },
+    "smallest_ai/lightning_v3.1_pro": {
+        "litellm_provider": "smallest_ai",
+        "mode": "audio_speech",
+        "supported_endpoints": [
+            "/v1/audio/speech"
+        ],
+        "source": "https://docs.smallest.ai/"
+    },
+    "smallest_ai/pulse": {
+        "litellm_provider": "smallest_ai",
+        "mode": "audio_transcription",
+        "supported_endpoints": [
+            "/v1/audio/transcriptions"
+        ],
+        "source": "https://docs.smallest.ai/"
+    },
+    "smallest_ai/pulse-pro": {
+        "litellm_provider": "smallest_ai",
+        "mode": "audio_transcription",
+        "supported_endpoints": [
+            "/v1/audio/transcriptions"
+        ],
+        "source": "https://docs.smallest.ai/"
     }
+
 }

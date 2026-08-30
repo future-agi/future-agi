@@ -175,6 +175,16 @@ providers:
   #   models:
   #     - gpt-4o
 
+  # Smallest AI — speech-only provider (Waves TTS + Pulse STT), no chat API:
+  # smallest_ai:
+  #   api_key: "${SMALLEST_AI_API_KEY}"
+  #   type: "smallest_ai"             # auto-sets base_url + api_format: "smallestai"
+  #   models:
+  #     - lightning_v3.1
+  #     - lightning_v3.1_pro
+  #     - pulse
+  #     - pulse-pro
+
   # groq:
   #   api_key: "${GROQ_API_KEY}"
   #   type: "groq"                   # auto-sets base_url + api_format
