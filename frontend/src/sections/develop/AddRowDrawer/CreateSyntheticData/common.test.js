@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSyntheticColumnPayload,
+  buildSyntheticDatasetPayload,
   getSyntheticDefaultValues,
 } from "./common";
 
@@ -87,6 +88,34 @@ describe("buildSyntheticColumnPayload", () => {
       data_type: "Text",
       description: "Rendered description",
       property: { min_length: 4, required: true },
+    });
+  });
+
+  it("sanitizes columns in an existing dataset payload", () => {
+    expect(
+      buildSyntheticDatasetPayload({
+        dataset: { name: "existing dataset" },
+        columns: [
+          {
+            id: "server-column-id",
+            name: "answer",
+            data_type: "Text",
+            description: "Answer",
+            property: { required: true },
+            status: "running",
+          },
+        ],
+      }),
+    ).toEqual({
+      dataset: { name: "existing dataset" },
+      columns: [
+        {
+          name: "answer",
+          data_type: "Text",
+          description: "Answer",
+          property: { required: true },
+        },
+      ],
     });
   });
 });
