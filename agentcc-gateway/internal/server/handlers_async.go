@@ -138,15 +138,10 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel if still running.
-	if job.Status == async.StatusQueued || job.Status == async.StatusProcessing {
-		now := time.Now()
-		job.Status = async.StatusCancelled
-		job.CompletedAt = &now
-		if job.CancelFn != nil {
-			job.CancelFn()
-		}
-	}
+	// Cancel if still running. Get() returns a snapshot whose CancelFn is
+	// deliberately stripped and whose mutations never touch the stored job,
+	// so cancel the REAL stored job under the write lock via Cancel() (#2335).
+	h.asyncStore.Cancel(jobID)
 
 	// Delete from store.
 	h.asyncStore.Delete(jobID)

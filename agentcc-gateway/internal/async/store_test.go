@@ -118,3 +118,43 @@ func TestStore_Count(t *testing.T) {
 		t.Errorf("Count = %d, want 2", s.Count())
 	}
 }
+
+func TestStore_Cancel(t *testing.T) {
+	s := NewStore()
+
+	cancelled := false
+	s.Put(&Job{
+		ID:        "job-1",
+		Status:    StatusProcessing,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
+		CancelFn: func() {
+			cancelled = true
+		},
+	})
+
+	if !s.Cancel("job-1") {
+		t.Fatal("expected Cancel to return true for existing job")
+	}
+	if !cancelled {
+		t.Error("expected CancelFn to be invoked on the live job")
+	}
+
+	job := s.Get("job-1")
+	if job == nil {
+		t.Fatal("expected job to still exist after Cancel")
+	}
+	if job.Status != StatusCancelled {
+		t.Errorf("Status = %q, want %q", job.Status, StatusCancelled)
+	}
+	if job.CompletedAt == nil {
+		t.Error("expected CompletedAt to be set")
+	}
+	if job.CancelFn != nil {
+		t.Error("expected snapshot to keep CancelFn nil")
+	}
+
+	if s.Cancel("missing") {
+		t.Error("expected Cancel to return false for unknown job")
+	}
+}

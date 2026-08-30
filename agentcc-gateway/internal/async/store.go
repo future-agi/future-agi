@@ -140,6 +140,26 @@ func (s *Store) Update(id string, fn func(job *Job)) bool {
 	return true
 }
 
+// Cancel cancels a live job under the write lock, invoking its real CancelFn.
+// Returns false if the job was not found.
+func (s *Store) Cancel(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job := s.jobs[id]
+	if job == nil {
+		return false
+	}
+	if job.Status == StatusQueued || job.Status == StatusProcessing {
+		now := time.Now()
+		job.Status = StatusCancelled
+		job.CompletedAt = &now
+		if job.CancelFn != nil {
+			job.CancelFn()
+		}
+	}
+	return true
+}
+
 // Delete removes a job.
 func (s *Store) Delete(id string) bool {
 	s.mu.Lock()
