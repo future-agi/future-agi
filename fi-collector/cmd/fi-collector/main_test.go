@@ -114,9 +114,7 @@ func TestLoadPriceTable_SkippedEntriesWarns(t *testing.T) {
 	}
 }
 
-// testWriter builds a chwriter.Writer that never connects anywhere (New
-// only assembles the struct); the dead-letter file lands in a temp dir so
-// the test does not touch /var/lib.
+// testWriter builds a chwriter.Writer that never connects; dead-letter file in a temp dir.
 func testWriter(t *testing.T) *chwriter.Writer {
 	t.Helper()
 	w, err := chwriter.New(chwriter.Config{
@@ -129,9 +127,7 @@ func testWriter(t *testing.T) *chwriter.Writer {
 	return w
 }
 
-// TestLoadConfig_AdminAddr proves the documented admin.addr key is parsed
-// into rootConfig instead of being silently discarded by yaml.Unmarshal
-// (issue #2135).
+// TestLoadConfig_AdminAddr proves admin.addr is parsed, not discarded (issue #2135).
 func TestLoadConfig_AdminAddr(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "collector.yaml")
 	body := "admin:\n  addr: \":19464\"\n"
@@ -146,9 +142,7 @@ func TestLoadConfig_AdminAddr(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_AdminAddr proves FI_ADMIN_ADDR (already referenced
-// by the docker-compose files) overrides admin.addr instead of being
-// silently ignored (issue #2135).
+// TestApplyEnvOverrides_AdminAddr proves FI_ADMIN_ADDR overrides admin.addr (issue #2135).
 func TestApplyEnvOverrides_AdminAddr(t *testing.T) {
 	t.Setenv("FI_ADMIN_ADDR", ":19464")
 	cfg := rootConfig{Admin: adminConfig{Addr: ":9464"}}
@@ -158,9 +152,7 @@ func TestApplyEnvOverrides_AdminAddr(t *testing.T) {
 	}
 }
 
-// TestResolveAdminAddr proves the fallback default is the loopback-only
-// 127.0.0.1:9464 (internal-only admin surface must not bind 0.0.0.0 by
-// default) and that a configured addr wins.
+// TestResolveAdminAddr proves the loopback default and that a configured addr wins.
 func TestResolveAdminAddr(t *testing.T) {
 	if got := resolveAdminAddr(rootConfig{}); got != defaultAdminAddr {
 		t.Fatalf("want default %q, got %q", defaultAdminAddr, got)
@@ -170,10 +162,7 @@ func TestResolveAdminAddr(t *testing.T) {
 	}
 }
 
-// TestAdminMux_ServesHealthzAndMetrics proves the admin mux serves both
-// documented endpoints: /healthz (200 + ok) and /metrics (200 + Prometheus
-// text exposition with writer stats) — the latter was a 404 before
-// issue #2135.
+// TestAdminMux_ServesHealthzAndMetrics proves the admin mux serves both documented endpoints.
 func TestAdminMux_ServesHealthzAndMetrics(t *testing.T) {
 	w := testWriter(t)
 	log := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
@@ -225,8 +214,7 @@ func TestAdminMux_ServesHealthzAndMetrics(t *testing.T) {
 	}
 }
 
-// TestAdminMux_UnknownPathNotFound proves the admin mux does not silently
-// serve undocumented paths.
+// TestAdminMux_UnknownPathNotFound proves undocumented paths stay 404.
 func TestAdminMux_UnknownPathNotFound(t *testing.T) {
 	w := testWriter(t)
 	log := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))

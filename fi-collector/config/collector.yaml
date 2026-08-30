@@ -51,9 +51,5 @@ auth:
   redis_addr: ""
 
 admin:
-  # Internal-only admin listener: /healthz (container health checks) and
-  # /metrics (Prometheus text exposition of writer + Go runtime stats).
-  # Loopback-only by default — the admin surface is for the local host /
-  # container, not for external scraping. Override via FI_ADMIN_ADDR (the
-  # docker-compose files set it to ":9464" to expose the port mapping).
+  # Internal-only admin listener, loopback by default; override via FI_ADMIN_ADDR.
   addr: "127.0.0.1:9464" # /healthz and /metrics

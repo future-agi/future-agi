@@ -53,15 +53,10 @@ type rootConfig struct {
 	Admin  adminConfig     `yaml:"admin"`
 }
 
-// defaultAdminAddr is the internal-only admin listener. Loopback by
-// default: /healthz and /metrics are for the local host / container health
-// checks, not for external scraping, so the default must not bind on
-// 0.0.0.0. Deployments that need it on the wire set admin.addr (or
-// FI_ADMIN_ADDR) explicitly.
+// defaultAdminAddr is the internal-only admin listener (loopback default).
 const defaultAdminAddr = "127.0.0.1:9464"
 
-// resolveAdminAddr returns the configured admin listener address, falling
-// back to defaultAdminAddr when admin.addr is unset.
+// resolveAdminAddr returns the configured admin address or the loopback default.
 func resolveAdminAddr(cfg rootConfig) string {
 	if cfg.Admin.Addr != "" {
 		return cfg.Admin.Addr
@@ -129,9 +124,7 @@ func main() {
 	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
-	// Admin HTTP server — internal only: /healthz (container health checks)
-	// and /metrics (Prometheus text exposition). Honors admin.addr from the
-	// YAML config (fallback defaultAdminAddr).
+	// Admin HTTP server — internal only, honors admin.addr.
 	go runAdmin(resolveAdminAddr(cfg), writer, log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -239,9 +232,7 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 		c.Writer.DeadLetterFile = v
 	}
 	if v := os.Getenv("FI_ADMIN_ADDR"); v != "" {
-		// Already referenced by docker-compose.yml and
-		// docker-compose.standalone.yml; wire it up so it is not silently
-		// ignored like admin.addr used to be.
+		// Already referenced by the docker-compose files; wire it up.
 		c.Admin.Addr = v
 	}
 	// Auth overrides (auth is active when PG_WRITE is set)
@@ -256,10 +247,7 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	}
 }
 
-// newAdminMux builds the admin HTTP mux: /healthz (container health
-// checks) and /metrics (Prometheus text exposition of writer + Go runtime
-// stats). Extracted from runAdmin so tests can exercise the handlers
-// without binding a socket.
+// newAdminMux builds the admin HTTP mux (/healthz, /metrics); extracted for tests.
 func newAdminMux(w *chwriter.Writer, log *slog.Logger) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
@@ -279,11 +267,7 @@ func newAdminMux(w *chwriter.Writer, log *slog.Logger) *http.ServeMux {
 	return mux
 }
 
-// writeMetrics renders a minimal Prometheus text exposition (format 0.0.4)
-// of the writer's lifetime stats plus basic Go runtime gauges. The
-// fi-collector deliberately stays stdlib-only (no prometheus client
-// dependency), so this is the honest, dependency-free surface the config
-// comment promises at /metrics.
+// writeMetrics renders a stdlib-only Prometheus text exposition (format 0.0.4).
 func writeMetrics(rw http.ResponseWriter, w *chwriter.Writer) {
 	rw.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	s := w.Snapshot()
@@ -306,8 +290,7 @@ func writeMetrics(rw http.ResponseWriter, w *chwriter.Writer) {
 	fmt.Fprintf(rw, "# HELP go_memstats_heap_objects Number of allocated objects.\n# TYPE go_memstats_heap_objects gauge\ngo_memstats_heap_objects %d\n", ms.HeapObjects)
 }
 
-// runAdmin serves /healthz and /metrics for container health checks and
-// local scraping.
+// runAdmin serves the admin listener (health checks + local scraping).
 func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
 	srv := &http.Server{Addr: addr, Handler: newAdminMux(w, log), ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
