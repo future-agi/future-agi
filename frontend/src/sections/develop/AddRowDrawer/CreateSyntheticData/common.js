@@ -53,3 +53,10 @@ export const buildSyntheticColumnPayload = (column, description) => ({
   description: description ?? column?.description ?? "",
   property: normalizeSyntheticColumnProperty(column?.property),
 });
+
+export const buildSyntheticDatasetPayload = (data = {}) => ({
+  ...data,
+  ...(Array.isArray(data.columns) && {
+    columns: data.columns.map((column) => buildSyntheticColumnPayload(column)),
+  }),
+});
