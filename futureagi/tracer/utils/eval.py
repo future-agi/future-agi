@@ -1925,8 +1925,8 @@ def _create_error_eval_logger(
 def evaluate_observation_span(
     observation_span_id=None,
     custom_eval_config_id=None,
-    feedback_id=None,
     eval_task_id=None,
+    feedback_id=None,
 ):
     if not observation_span_id or not custom_eval_config_id:
         raise ValueError(
