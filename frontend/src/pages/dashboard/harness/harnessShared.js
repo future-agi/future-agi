@@ -508,3 +508,28 @@ export const errorMessage = (error) => {
     return error.message;
   return "Something went wrong";
 };
+
+// Parallelism degrade reason copy (C4 §6, normative). Keyed on the CLOSED
+// five-member enum — one shared vocabulary constant, never string literals
+// scattered in components. `port_not_consumable` is NOT here: it is a terminal
+// job failure surfaced via the failure banner, not a degrade notice (D28).
+export const PARALLELISM_DEGRADE_COPY = {
+  fixed_port:
+    "The agent declares a fixed network port, so scenarios ran one at a time.",
+  conformance_gate_failed:
+    "The environment failed its parallel-readiness check, so scenarios ran one at a time.",
+  resource_limited:
+    "The sandbox had fewer resources than requested — running {effective} scenario(s) at a time.",
+  literal_local_endpoint:
+    "An environment value points at a fixed local address, so scenarios ran one at a time.",
+  world_start_failed:
+    "Some parallel copies of the environment failed to start — continuing with {effective}.",
+};
+
+// Human copy for one degrade reason. Unknown reasons (a future v3 the FE may lag)
+// fall back to a neutral line — never crash, never hide the event.
+export const degradeReasonCopy = (reason, effective) => {
+  const template = PARALLELISM_DEGRADE_COPY[reason];
+  if (!template) return `Parallelism was reduced to ${effective}.`;
+  return template.replace("{effective}", String(effective));
+};

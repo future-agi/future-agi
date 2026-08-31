@@ -25,6 +25,8 @@ import {
   stageState,
   stageStatus,
   stages,
+  PARALLELISM_DEGRADE_COPY,
+  degradeReasonCopy,
 } from "./harnessShared";
 
 describe("stageStatus", () => {
@@ -825,5 +827,39 @@ describe("scenarioOutcome — an errored scenario", () => {
     const outcome = scenarioOutcome("noor-books-uberx", 1, run);
     expect(outcome.turns).toBeNull();
     expect(callSummary(outcome)).toBe("");
+  });
+});
+
+describe("degradeReasonCopy (C4 §6 copy table)", () => {
+  const REASONS = [
+    "fixed_port",
+    "conformance_gate_failed",
+    "resource_limited",
+    "literal_local_endpoint",
+    "world_start_failed",
+  ];
+
+  it("has copy for every closed-enum member and not for terminal reasons", () => {
+    expect(Object.keys(PARALLELISM_DEGRADE_COPY).sort()).toEqual(
+      [...REASONS].sort(),
+    );
+    // port_not_consumable is a terminal job failure, never a degrade reason.
+    expect(PARALLELISM_DEGRADE_COPY.port_not_consumable).toBeUndefined();
+  });
+
+  it("renders each member and interpolates {effective}", () => {
+    REASONS.forEach((reason) => {
+      const copy = degradeReasonCopy(reason, 2);
+      expect(copy).toBeTruthy();
+      expect(copy).not.toContain("{effective}");
+    });
+    expect(degradeReasonCopy("resource_limited", 3)).toContain("3");
+    expect(degradeReasonCopy("world_start_failed", 2)).toContain("2");
+  });
+
+  it("falls back for an unknown (future v3) reason without crashing", () => {
+    expect(degradeReasonCopy("some_future_reason", 2)).toBe(
+      "Parallelism was reduced to 2.",
+    );
   });
 });

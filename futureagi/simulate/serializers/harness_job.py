@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import re
+
+from django.conf import settings
 from rest_framework import serializers
+
+
+# Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
+# The declared fixed port is unknowable platform-side (the bundle is authored
+# in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
+_LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
+
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -41,6 +51,13 @@ class HarnessSourceSerializer(serializers.Serializer):
     endpoint = serializers.URLField(required=False, allow_null=True)
     visibility = serializers.ChoiceField(
         choices=("public", "private"), default="public"
+    )
+    # Inline plaintext environment values (C4 §7 Channel 1). The most
+    # platform-visible literal-endpoint channel: scanned at submit for W>1
+    # requests (HarnessJobCreateSerializer.validate).
+    environment_values = serializers.DictField(
+        child=serializers.CharField(max_length=65_536, trim_whitespace=False),
+        required=False,
     )
 
     def validate(self, attrs):
@@ -300,7 +317,48 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                         }
                     }
                 )
+        self._apply_parallelism_belt(attrs, runtime)
         return attrs
+
+    def _apply_parallelism_belt(self, attrs, runtime):
+        """Create-time W>1 admission belt (C4 §5 / §7 Channel 1, Track E).
+
+        This is the EARLY, FRIENDLY surface — ``register_attempt`` is the
+        authoritative enforcement. It runs the SAME shared guard at submit so a
+        fresh create gets immediate feedback: a W>1 request the guard denies is
+        CLAMPED (recorded on ``metadata.parallelism_clamped``), never rejected,
+        and the requested ``runtime.parallelism`` is preserved so a later rerun
+        re-evaluates honestly. It additionally scans the inline plaintext
+        ``source.environment_values`` for loopback literals and WARNS (never
+        rejects) at W>1 — the primary platform literal-endpoint channel.
+        """
+        requested = runtime.get("parallelism") or 1
+        if requested <= 1:
+            return
+        # Lazy import keeps the serializer module import-cycle-free.
+        from simulate.services.hosted_harness import parallelism_w_gt_1_enabled
+
+        metadata = dict(attrs.get("metadata") or {})
+        digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+        if not parallelism_w_gt_1_enabled(digest):
+            metadata["parallelism_clamped"] = {"requested": requested}
+        environment_values = attrs["source"].get("environment_values") or {}
+        flagged = sorted(
+            alias
+            for alias, value in environment_values.items()
+            if isinstance(value, str) and _LOOPBACK_ENDPOINT_RE.search(value)
+        )
+        if flagged:
+            warnings = list(metadata.get("parallelism_warnings") or [])
+            warnings.append(
+                {
+                    "code": "literal_local_endpoint",
+                    "channel": "environment_values",
+                    "aliases": flagged,
+                }
+            )
+            metadata["parallelism_warnings"] = warnings
+        attrs["metadata"] = metadata
 
 
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")

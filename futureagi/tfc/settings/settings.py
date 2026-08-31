@@ -854,6 +854,25 @@ ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
 # This is intentionally a control-plane setting, never accepted from a customer job payload.
 ALK_DAYTONA_DOCKERFILE = os.getenv("ALK_DAYTONA_DOCKERFILE", "")
 
+# Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
+# W>1 is admitted only when this flag is truthy AND the registered guest snapshot
+# digest (ALK_DAYTONA_SNAPSHOT_DIGEST) is present in the allowlist below. Both
+# default to the fail-closed state (disabled / empty) so an unset digest never
+# admits W>1. Production keeps the flag OFF until the deployed snapshot carries
+# the world-unique preflight guard and C1 port model; dev/E2E sets it ON. In the
+# dockerfile-mode dev lane (ALK_DAYTONA_DOCKERFILE set) the guard is flag-only —
+# the digest half is skipped because that lane carries no meaningful digest.
+HARNESS_PARALLELISM_ENABLED = os.getenv(
+    "HARNESS_PARALLELISM_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Comma-separated allowlist of guest snapshot digests certified for W>1. Empty
+# (the default) fails closed: every W>1 request clamps to 1 in the snapshot lane.
+HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [
+    digest.strip()
+    for digest in os.getenv("HARNESS_PARALLEL_SNAPSHOT_DIGESTS", "").split(",")
+    if digest.strip()
+]
+
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")

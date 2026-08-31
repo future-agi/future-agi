@@ -46,6 +46,16 @@ _EVENT_TYPES = {
     "log",
     "terminal",
 }
+# Closed parallelism-degrade enum, exactly C4 §2's FIVE members (v1.3, FROZEN).
+# ``port_not_consumable`` is deliberately NOT here — it is a TERMINAL JOB FAILURE
+# (decision D28 / C1 v1.3 §4), surfaced via failure.code, never a degrade event.
+_DEGRADE_REASONS = {
+    "resource_limited",
+    "literal_local_endpoint",
+    "world_start_failed",
+    "fixed_port",
+    "conformance_gate_failed",
+}
 _TERMINAL_STAGES = {"completed", "failed", "canceled"}
 _ARTIFACT_KINDS = {
     "recording_combined",
@@ -531,6 +541,30 @@ def _store_event(
                 id=registration.call_execution_id,
                 status=CallExecution.CallStatus.PENDING,
             ).update(status=CallExecution.CallStatus.ONGOING)
+    if rejection is None and event["type"] == "parallelism_degraded":
+        # Attempt-level degrade projection (C4 §6, decision D26). We reach here
+        # only on the FIRST store of the event — the event_id dedup guard at the
+        # top of _store_event returns early for a redelivered duplicate — so a
+        # redelivery can never double-append a reason. Effective parallelism is
+        # min-monotone (an out-of-order duplicate carrying a HIGHER effective can
+        # never raise it) and the reason is appended only if absent.
+        payload = event["payload"]
+        effective = payload["effective"]
+        current = attempt.effective_parallelism
+        attempt.effective_parallelism = (
+            effective if current is None else min(current, effective)
+        )
+        reasons = list(attempt.degrade_reasons or [])
+        if payload["reason"] not in reasons:
+            reasons.append(payload["reason"])
+        attempt.degrade_reasons = reasons
+        attempt.save(
+            update_fields=[
+                "effective_parallelism",
+                "degrade_reasons",
+                "updated_at",
+            ]
+        )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
         attempt.terminal_stage = payload["stage"]
@@ -592,7 +626,7 @@ def _event_payload_error(event_type: str, stage: str, payload: object) -> str | 
     elif event_type == "parallelism_degraded":
         if set(payload) != {"requested", "effective", "reason"}:
             return "parallelism_degraded requires requested/effective/reason"
-        if payload["reason"] not in {"conformance_gate_failed", "fixed_port"}:
+        if payload["reason"] not in _DEGRADE_REASONS:
             return "invalid parallelism degradation reason"
         if not (
             isinstance(payload["requested"], int)

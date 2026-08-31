@@ -122,6 +122,9 @@ def test_serialize_job_returns_full_dto_shape(organization):
         "scenarios",
         "receipts",
         "platform",
+        "parallelism",
+        "adjustments",
+        "credentials",
     }
     # Job sub-keys
     assert "job_id" in result["job"]
@@ -130,6 +133,9 @@ def test_serialize_job_returns_full_dto_shape(organization):
     assert "test_execution_id" in result["job"]
     assert "source" in result["job"]
     assert "metadata" in result["job"]
+    assert "runtime" in result["job"]
+    # Parallelism projection (C4 §6): requested + attempt-level effective/reasons.
+    assert set(result["parallelism"]) == {"requested", "effective", "degrade_reasons"}
     # Status sub-keys
     assert "state" in result["status"]
     assert "stage" in result["status"]

@@ -197,10 +197,18 @@ export default function HarnessCreate() {
   const [providerTargetId, setProviderTargetId] = useState("");
   const [providerDynamicVariables, setProviderDynamicVariables] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
+  // Explicit parallelism control (C4 §6). Default 1; NEVER auto-derived from the
+  // scenario count. Locked at 1 when the environment does not yet enable W>1.
+  const [parallelism, setParallelism] = useState(1);
   const [preflight, setPreflight] = useState(null);
   // Shown beside the Preflight button: the general error banner sits at the foot of the
   // form, out of view when the button is what was clicked.
   const [preflightError, setPreflightError] = useState("");
+  // Control gating: disabled — not hidden — when preflight reports parallel
+  // execution is off for this environment; enabled until a preflight has run.
+  // Range is 1 .. min(8, cpu_units).
+  const parallelismEnabled = preflight?.parallelism_enabled !== false;
+  const maxParallelism = Math.min(8, 4);
   // A changed input does not invalidate what preflight already told us — it just means the
   // answer may be out of date. Hiding the panel loses the findings the user was reading.
   const [preflightDirty, setPreflightDirty] = useState(false);
@@ -340,7 +348,7 @@ export default function HarnessCreate() {
       isolation: "dedicated_vm",
       cpu_units: 4,
       memory_mb: 8192,
-      parallelism: 1,
+      parallelism: parallelismEnabled ? Number(parallelism) || 1 : 1,
       concurrency_weight: 1,
       max_duration_seconds: 3600,
       network_policy: "live",
@@ -1416,6 +1424,28 @@ export default function HarnessCreate() {
                     Each scenario is one generated conversation the agent is put
                     through, then graded. More scenarios means broader coverage
                     and a longer run.
+                  </Typography>
+                </Stack>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.5}
+                  alignItems={{ sm: "center" }}
+                  sx={{ mt: 1.5 }}
+                >
+                  <TextField
+                    size="small"
+                    label="Parallel worlds"
+                    type="number"
+                    value={parallelismEnabled ? parallelism : 1}
+                    onChange={(event) => setParallelism(event.target.value)}
+                    disabled={!parallelismEnabled}
+                    inputProps={{ min: 1, max: maxParallelism }}
+                    sx={{ width: 140, flexShrink: 0 }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {parallelismEnabled
+                      ? "How many copies of the environment run scenarios at once. Parallel worlds may reduce to fewer at runtime; the run detail shows the effective value."
+                      : "Parallel execution is not yet enabled for this environment, so runs use a single world."}
                   </Typography>
                 </Stack>
               </Section>

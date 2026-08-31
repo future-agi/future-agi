@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -82,6 +83,45 @@ def hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def parallelism_w_gt_1_enabled(snapshot_digest: str | None) -> bool:
+    """The ONE shared W>1 admission predicate (C4 §5, decisions D12/D23/D24).
+
+    W>1 is admitted only when the ``HARNESS_PARALLELISM_ENABLED`` flag is truthy
+    AND the registered guest snapshot digest is in
+    ``HARNESS_PARALLEL_SNAPSHOT_DIGESTS``. In the dockerfile-mode dev lane
+    (``ALK_DAYTONA_DOCKERFILE`` set) the digest half is skipped — that lane
+    carries no meaningful registered digest — so W>1 needs the FLAG only. In the
+    production snapshot lane an empty/unset digest FAILS CLOSED (never matches
+    the allowlist). This single predicate backs both the ``register_attempt``
+    authoritative gate and the create-time serializer / preflight advisory.
+    """
+    if not getattr(settings, "HARNESS_PARALLELISM_ENABLED", False):
+        return False
+    if getattr(settings, "ALK_DAYTONA_DOCKERFILE", ""):
+        return True
+    digest = (snapshot_digest or "").strip()
+    if not digest:
+        return False
+    allowlist = getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ()
+    return digest in set(allowlist)
+
+
+def clamp_parallelism(
+    requested: int | None, snapshot_digest: str | None
+) -> tuple[int, bool]:
+    """Return ``(admitted, clamped)`` for a requested parallelism.
+
+    A request of W>1 is admitted at 1 (``clamped=True``) whenever the shared
+    predicate denies it (flag off OR digest unlisted). W<=1 is always admitted
+    unchanged. The caller preserves the requested value separately so a later
+    rerun re-evaluates against the then-current flag/digest.
+    """
+    value = requested or 1
+    if value > 1 and not parallelism_w_gt_1_enabled(snapshot_digest):
+        return 1, True
+    return value, False
+
+
 def create_hosted_job(
     organization,
     payload: dict[str, Any],
@@ -151,6 +191,38 @@ def create_hosted_job(
         return job, True
 
 
+def _apply_parallelism_admission(
+    job: HostedHarnessJob, snapshot_digest: str | None
+) -> None:
+    """Record the W>1 admission decision on the job under the shared guard.
+
+    Reads the requested parallelism from ``job.payload.runtime.parallelism`` (the
+    immutable stored intent) and, when the shared guard denies W>1, records
+    ``metadata.parallelism_clamped = {"requested": N}`` so support and the FE can
+    see it. When the request is admitted (W<=1, or W>1 that qualifies), any stale
+    clamp marker from a prior attempt is cleared so a rerun that now qualifies
+    drops the notice. The requested value itself is never rewritten.
+    """
+    runtime = job.payload.get("runtime") or {}
+    requested = runtime.get("parallelism") or 1
+    _admitted, clamped = clamp_parallelism(requested, snapshot_digest)
+    metadata = dict(job.payload.get("metadata") or {})
+    changed = False
+    if clamped:
+        marker = {"requested": requested}
+        if metadata.get("parallelism_clamped") != marker:
+            metadata["parallelism_clamped"] = marker
+            changed = True
+    elif "parallelism_clamped" in metadata:
+        metadata.pop("parallelism_clamped")
+        changed = True
+    if changed:
+        payload = dict(job.payload)
+        payload["metadata"] = metadata
+        job.payload = payload
+        job.save(update_fields=["payload", "updated_at"])
+
+
 def register_attempt(
     job_id: uuid.UUID | str,
     *,
@@ -164,6 +236,16 @@ def register_attempt(
     fence = secrets.token_urlsafe(32)
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+        # AUTHORITATIVE W>1 admission gate (C4 §4 pin ii / §5, decision D23).
+        # register_attempt is the single chokepoint every attempt crosses — fresh
+        # create, rerun_saved, harness_sandbox.rerun, and gateway retry all reach
+        # here — so the shared guard runs here regardless of how the attempt was
+        # requested. A denied W>1 is admitted at 1 and the clamp is recorded on
+        # the job metadata; the job's stored REQUESTED value
+        # (job.payload.runtime.parallelism) is preserved so a later rerun
+        # re-evaluates honestly against the then-current flag/digest. A saved W=4
+        # job therefore reruns at W=1 when the flag/digest no longer qualify.
+        _apply_parallelism_admission(job, snapshot_digest)
         previous_number = job.current_attempt_number
         attempt_number = previous_number + 1
         if previous_number:

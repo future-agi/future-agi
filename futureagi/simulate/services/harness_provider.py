@@ -214,16 +214,34 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     _agent_cfg = job.payload.get("agent") or {}
     _connector = str(_agent_cfg.get("connector") or "").strip().lower()
     detected_connectors = [_connector] if _connector and _connector != "auto" else []
+    # Parallelism surfacing (C4 §6). ``requested`` is the immutable stored intent;
+    # ``effective`` and ``degrade_reasons`` come from the LATEST attempt's
+    # attempt-level projection (updated at ingestion), never the 100-event window
+    # a long run evicts. A new attempt starts cleared, so this reflects the
+    # current attempt only. With no degrade event, effective == requested.
+    _runtime = job.payload.get("runtime") or {}
+    _requested_parallelism = _runtime.get("parallelism") or 1
+    _effective = attempt.effective_parallelism if attempt else None
+    _degrade_reasons = list(attempt.degrade_reasons or []) if attempt else []
     return {
         "job": {
             "job_id": str(job.id),
             "run_id": str(job.run_id),
             "source": job.payload["source"],
             "metadata": job.payload.get("metadata", {}),
+            "runtime": {
+                "parallelism": _requested_parallelism,
+                "cpu_units": _runtime.get("cpu_units"),
+            },
             "run_test_id": str(job.run_test_id) if job.run_test_id else None,
             "test_execution_id": str(job.test_execution_id)
             if job.test_execution_id
             else None,
+        },
+        "parallelism": {
+            "requested": _requested_parallelism,
+            "effective": _effective if _effective is not None else _requested_parallelism,
+            "degrade_reasons": _degrade_reasons,
         },
         "status": {
             "state": job.state,
@@ -503,6 +521,8 @@ class DaytonaHarnessProvider:
             _validate_known_daytona_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        from simulate.services.hosted_harness import clamp_parallelism
+
         runtime = payload["runtime"]
         try:
             source_analysis = _preflight_source_connectors(request, payload)
@@ -523,11 +543,20 @@ class DaytonaHarnessProvider:
         # Every submitted key must be accepted: a wrong model key beside a valid transport
         # key still ends in a run that cannot speak.
         probe_failed = any(not item["ok"] for item in probe)
+        # Continuous advisory surface (C4 §4 pin ii / §5). ``parallelism_enabled``
+        # reflects the same flag-AND-digest state the register_attempt guard
+        # enforces; the ``effective_parallelism`` echo reflects the clamped value
+        # (never the requested value) whenever admission would clamp, so the FE
+        # is never promised a W the platform will refuse.
+        digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
+        admitted, _clamped = clamp_parallelism(runtime["parallelism"], digest)
+        _, denied_at_2 = clamp_parallelism(2, digest)
         return Response(
             {
                 "ready_to_submit": not credentials["missing"] and not probe_failed,
                 "credentials": credentials["report"],
-                "effective_parallelism": runtime["parallelism"],
+                "parallelism_enabled": not denied_at_2,
+                "effective_parallelism": admitted,
                 "snapshot": {
                     "name": getattr(settings, "ALK_DAYTONA_SNAPSHOT", None),
                     "digest": getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", None),
