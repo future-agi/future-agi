@@ -24,7 +24,9 @@ class TestSearch:
             search="hello world",
         )
         query, params = builder.build()
-        assert "ILIKE %(search)s" in query
+        assert "trace_name ILIKE %(search)s" in query
+        assert "input ILIKE %(search)s" in query
+        assert "output ILIKE %(search)s" in query
         assert params["search"] == "%hello world%"
 
     def test_search_none_omits_filter(self, project_id):
@@ -46,7 +48,22 @@ class TestSearch:
         # Must call build() first to set start_date/end_date
         builder.build()
         count_query, count_params = builder.build_count_query()
-        assert "ILIKE %(search)s" in count_query
+        assert "trace_name ILIKE %(search)s" in count_query
+        assert "input ILIKE %(search)s" in count_query
+        assert "output ILIKE %(search)s" in count_query
+
+    def test_search_included_in_id_query(self, project_id):
+        builder = TraceListQueryBuilder(
+            project_id=project_id,
+            search="test",
+        )
+        # Must call build() first to set start_date/end_date
+        builder.build()
+        id_query, id_params = builder.build_id_query()
+        assert "trace_name ILIKE %(search)s" in id_query
+        assert "input ILIKE %(search)s" in id_query
+        assert "output ILIKE %(search)s" in id_query
+        assert id_params["search"] == "%test%"
 
 
 class TestConfigurableColumns:

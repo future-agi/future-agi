@@ -75,6 +75,8 @@ const FilterChips = ({
   onAddFilter,
   onChipClick,
   fieldLabelMap,
+  searchTerm,
+  onRemoveSearch,
 }) => {
   const chips = useMemo(
     () =>
@@ -88,7 +90,7 @@ const FilterChips = ({
     [extraFilters, fieldLabelMap],
   );
 
-  if (chips.length === 0) return null;
+  if (chips.length === 0 && !searchTerm) return null;
 
   return (
     <Box
@@ -121,6 +123,30 @@ const FilterChips = ({
           overflow: "hidden",
         }}
       >
+        {searchTerm && (
+          <Tooltip title={`Search contains ${searchTerm}`} placement="top">
+            <Chip
+              size="small"
+              variant="outlined"
+              data-filter-chip-column="search"
+              onDelete={onRemoveSearch}
+              label={
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Search
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    contains
+                  </Typography>
+                  <Typography variant="caption" fontWeight={600}>
+                    {searchTerm}
+                  </Typography>
+                </Box>
+              }
+              sx={{ maxWidth: 260 }}
+            />
+          </Tooltip>
+        )}
         {chips.map((chip) => (
           <Tooltip
             key={chip._idx}
@@ -318,6 +344,10 @@ FilterChips.propTypes = {
   // { [columnId]: { [value]: label } } — resolves chip display labels for
   // enum-like fields (e.g. Project UUID → project name).
   fieldLabelMap: PropTypes.object,
+  // Applied free-text search term — renders as a removable chip ahead of
+  // the field filters.
+  searchTerm: PropTypes.string,
+  onRemoveSearch: PropTypes.func,
 };
 
 export default React.memo(FilterChips);

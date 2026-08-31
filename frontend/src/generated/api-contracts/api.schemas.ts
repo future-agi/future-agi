@@ -27611,6 +27611,7 @@ page_number?: number;
  */
 page_size?: number;
 interval?: string;
+search?: string;
 };
 
 export type TracerTraceListVoiceCallsParams = {

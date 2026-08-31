@@ -118,6 +118,21 @@ def test_trace_list_v2_build_no_legacy():
     _assert_no_legacy(sql, "TraceList.build")
 
 
+def test_trace_list_v2_search_survives_rewrite():
+    builder = TraceListQueryBuilderV2(
+        project_id=PROJECT_ID, page_number=0, page_size=10,
+        filters=[], sort_params=[],
+        eval_config_ids=[], annotation_label_ids=[],
+        search="boom",
+    )
+    sql, params = builder.build()
+    _assert_no_legacy(sql, "TraceList.build(search)")
+    assert "trace_name ILIKE %(search)s" in sql
+    assert "input ILIKE %(search)s" in sql
+    assert "output ILIKE %(search)s" in sql
+    assert params["search"] == "%boom%"
+
+
 def test_trace_list_v2_count_no_legacy():
     sql, _ = _trace_list_builder().build_count_query()
     _assert_no_legacy(sql, "TraceList.build_count_query")

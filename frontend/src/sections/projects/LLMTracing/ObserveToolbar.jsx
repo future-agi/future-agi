@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
+import {
+  Badge,
+  Button,
+  MenuItem,
+  Popover,
+  Stack,
+  TextField,
+} from "@mui/material";
 import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
@@ -36,6 +43,9 @@ const ObserveToolbar = ({
   dateLabel,
   dateFilter,
   setDateFilter,
+  // Free-text search (traces mode only) — Enter applies the draft
+  searchTerm = "",
+  onSearchApply,
   // Filter
   hasActiveFilter,
   canSaveView,
@@ -112,11 +122,16 @@ const ObserveToolbar = ({
   const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
+  const [searchDraft, setSearchDraft] = useState(searchTerm);
   const dateButtonRef = useRef(null);
   const setFilterButtonNode = useCallback((node) => {
     filterButtonRef.current = node;
     setFilterButtonEl(node);
   }, []);
+
+  // Keep the draft in sync when the applied term changes outside the input
+  // (chip removal, clear all, saved-view load).
+  useEffect(() => setSearchDraft(searchTerm), [searchTerm]);
 
   const handleDateOptionChange = (option) => {
     setDateAnchor(null);
@@ -295,6 +310,23 @@ const ObserveToolbar = ({
 
   const toolbarContent = (
     <Stack direction="row" alignItems="center" gap={1}>
+      {/* Free-text search — traces mode only, hidden in compare mode */}
+      {mode === "traces" && !isCompareActive && onSearchApply && (
+        <TextField
+          size="small"
+          value={searchDraft}
+          onChange={(event) => setSearchDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSearchApply(searchDraft.trim());
+          }}
+          placeholder="Search traces"
+          inputProps={{ "aria-label": "Search traces" }}
+          sx={{
+            width: 190,
+            "& .MuiInputBase-root": { height: 26, fontSize: 13 },
+          }}
+        />
+      )}
       {/* Date picker — hidden in compare mode (each graph has its own) */}
       {dateLabel && !isCompareActive && (
         <>
@@ -542,6 +574,8 @@ ObserveToolbar.propTypes = {
   dateLabel: PropTypes.string,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
+  searchTerm: PropTypes.string,
+  onSearchApply: PropTypes.func,
   hasActiveFilter: PropTypes.bool,
   canSaveView: PropTypes.bool,
   onSaveView: PropTypes.func,

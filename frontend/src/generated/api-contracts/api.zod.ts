@@ -42741,7 +42741,8 @@ export const TracerTraceListTracesOfSessionQueryParams = zod.object({
   "filters": zod.string().min(1).default(tracerTraceListTracesOfSessionQueryFiltersDefault),
   "page_number": zod.number().min(tracerTraceListTracesOfSessionQueryPageNumberMin).default(tracerTraceListTracesOfSessionQueryPageNumberDefault),
   "page_size": zod.number().min(1).max(tracerTraceListTracesOfSessionQueryPageSizeMax).default(tracerTraceListTracesOfSessionQueryPageSizeDefault),
-  "interval": zod.string().optional()
+  "interval": zod.string().optional(),
+  "search": zod.string().optional()
 })
 
 

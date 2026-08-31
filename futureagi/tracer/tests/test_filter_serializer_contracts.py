@@ -500,6 +500,17 @@ class TestFilterSerializerContracts:
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
 
+    def test_trace_observe_list_query_accepts_search(self):
+        serializer = TraceObserveListQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "search": "timeout",
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["search"] == "timeout"
+
     def test_trace_observe_list_query_rejects_camel_case_aliases(self):
         serializer = TraceObserveListQuerySerializer(
             data={
