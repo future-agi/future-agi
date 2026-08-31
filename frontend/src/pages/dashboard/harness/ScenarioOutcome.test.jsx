@@ -76,3 +76,50 @@ describe("ScenarioOutcome", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe("ScenarioOutcome — unjudged checks and failures", () => {
+  const errored = {
+    status: "errored",
+    turns: null,
+    durationMs: null,
+    failure: {
+      domain: "environment",
+      code: "world_unavailable",
+      message: "target agent never joined the room: Target agent did not become ready",
+    },
+    // A scenario that errored before running reports every check as never judged.
+    subGoals: [
+      { name: "address_confirmed", held: null, reason: null },
+      { name: "otp_verified", held: null, reason: null },
+    ],
+  };
+
+  // Counting these as failures claimed the agent failed checks nobody ran.
+  it("does not count unjudged checks as failures", () => {
+    render(<ScenarioOutcome outcome={errored} />);
+    expect(screen.queryByRole("button", { name: /checks failed/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the failure that actually explains the run", () => {
+    render(<ScenarioOutcome outcome={errored} />);
+    expect(screen.getByText(/never joined the room/)).toBeInTheDocument();
+    expect(screen.getByText(/Environment · World unavailable/)).toBeInTheDocument();
+  });
+
+  it("still counts a real failed check", () => {
+    render(
+      <ScenarioOutcome
+        outcome={{
+          status: "failed",
+          turns: 9,
+          durationMs: 88000,
+          subGoals: [
+            { name: "booking_status_checked", held: false, reason: "get_booking_status was never called" },
+            { name: "unjudged_one", held: null, reason: null },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /1 of 2 checks failed/ })).toBeInTheDocument();
+  });
+});
