@@ -14314,7 +14314,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
 }
@@ -14547,7 +14547,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
 }
@@ -14656,7 +14656,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -15892,6 +15892,95 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
+
+export type HarnessJobInfoApiSource = {[key: string]: string};
+
+export type HarnessJobInfoApiMetadata = {[key: string]: string};
+
+export interface HarnessJobInfoApi {
+  job_id: string;
+  run_id: string;
+  source: HarnessJobInfoApiSource;
+  metadata: HarnessJobInfoApiMetadata;
+  run_test_id: string;
+  test_execution_id: string;
+}
+
+export type HarnessJobStatusApiFailure = { [key: string]: unknown };
+
+export interface HarnessJobStatusApi {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  updated_at: string;
+  attempt: number;
+  completed_scenarios: number;
+  failed_scenarios: number;
+  total_scenarios: number;
+  /** @minLength 1 */
+  deadline_at: string;
+  failure: HarnessJobStatusApiFailure;
+}
+
+export type HarnessJobEventApiPayload = { [key: string]: unknown };
+
+export interface HarnessJobEventApi {
+  /** @minLength 1 */
+  event_id: string;
+  sequence: number;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  type: string;
+  payload: HarnessJobEventApiPayload;
+  /** @minLength 1 */
+  emitted_at: string;
+}
+
+export type HarnessStageOutputApiData = { [key: string]: unknown };
+
+export interface HarnessStageOutputApi {
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  /** @minLength 1 */
+  kind: string;
+  data: HarnessStageOutputApiData;
+}
+
+export interface HarnessScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction?: string;
+  use_case?: string;
+  call_execution_id?: string;
+  /** @minLength 1 */
+  status?: string;
+}
+
+export interface HarnessPlatformApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface HarnessJobReadApi {
+  job: HarnessJobInfoApi;
+  status: HarnessJobStatusApi;
+  events: HarnessJobEventApi[];
+  stage_outputs: HarnessStageOutputApi[];
+  scenarios: HarnessScenarioApi[];
+  receipts: HarnessJobReadApiReceiptsItem[];
+  platform: HarnessPlatformApi;
+}
+
 export type HarnessJobCreateApiSchemaVersion = typeof HarnessJobCreateApiSchemaVersion[keyof typeof HarnessJobCreateApiSchemaVersion];
 
 
@@ -16156,6 +16245,12 @@ export interface HarnessSecretFileUploadResponseApi {
   secret_ref: SecretReferenceApi;
   /** @minimum 1 */
   size: number;
+}
+
+export type HarnessSecretValuesApiEnvironmentValues = {[key: string]: string};
+
+export interface HarnessSecretValuesApi {
+  environment_values: HarnessSecretValuesApiEnvironmentValues;
 }
 
 export interface HarnessSourceUploadResponseApi {
@@ -20101,6 +20196,25 @@ export interface ObserveDatasetApi {
   readonly user?: string;
 }
 
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type EvalTaskApiFiltersDatePreset = typeof EvalTaskApiFiltersDatePreset[keyof typeof EvalTaskApiFiltersDatePreset];
+
+
+export const EvalTaskApiFiltersDatePreset = {
+  '30m': '30m',
+  '6h': '6h',
+  today: 'today',
+  yesterday: 'yesterday',
+  '7d': '7d',
+  '30d': '30d',
+  '3m': '3m',
+  '6m': '6m',
+  '12m': '12m',
+  custom: 'custom',
+} as const;
+
 export type EvalTaskApiFiltersFiltersItemFilterConfig = {
   /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
   filter_type: string;
@@ -20156,6 +20270,8 @@ export type EvalTaskApiFilters = {
      * @maxItems 2
      */
   date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: EvalTaskApiFiltersDatePreset;
   /** Lower-bound ISO timestamp for legacy task filters. */
   created_at?: string;
   /** Trace session id(s) to constrain the task. */
@@ -20260,6 +20376,25 @@ export interface EvalTaskMessageResponseApi {
   result: EvalTaskMessageResultApi;
 }
 
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type EvalTaskUpdateRequestApiFiltersDatePreset = typeof EvalTaskUpdateRequestApiFiltersDatePreset[keyof typeof EvalTaskUpdateRequestApiFiltersDatePreset];
+
+
+export const EvalTaskUpdateRequestApiFiltersDatePreset = {
+  '30m': '30m',
+  '6h': '6h',
+  today: 'today',
+  yesterday: 'yesterday',
+  '7d': '7d',
+  '30d': '30d',
+  '3m': '3m',
+  '6m': '6m',
+  '12m': '12m',
+  custom: 'custom',
+} as const;
+
 export type EvalTaskUpdateRequestApiFiltersFiltersItemFilterConfig = {
   /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
   filter_type: string;
@@ -20315,6 +20450,8 @@ export type EvalTaskUpdateRequestApiFilters = {
      * @maxItems 2
      */
   date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: EvalTaskUpdateRequestApiFiltersDatePreset;
   /** Lower-bound ISO timestamp for legacy task filters. */
   created_at?: string;
   /** Trace session id(s) to constrain the task. */
@@ -27152,7 +27289,32 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
+/**
+ * @minimum 1
+ */
+page_size?: number;
+eval_task_id: string;
+period?: TracerEvalTaskGetUsagePeriod;
+eval_id?: string;
+start_date?: string;
+end_date?: string;
+eval_aggregation?: boolean;
+span_aggregation?: boolean;
 };
+
+export type TracerEvalTaskGetUsagePeriod = typeof TracerEvalTaskGetUsagePeriod[keyof typeof TracerEvalTaskGetUsagePeriod];
+
+
+export const TracerEvalTaskGetUsagePeriod = {
+  '30m': '30m',
+  '6h': '6h',
+  '1d': '1d',
+  '7d': '7d',
+  '30d': '30d',
+  '90d': '90d',
+  '180d': '180d',
+  '365d': '365d',
+} as const;
 
 export type TracerEvalTaskGetUsage200 = {
   count: number;

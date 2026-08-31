@@ -140,6 +140,47 @@ describe("getCallLogsColumnDefs", () => {
 
 import {
   getCallLogsColumnDefs,
+  getAgentLatencyFilterValue,
   prefetchCallLogs,
   useCallLogs,
 } from "../helper";
+
+// The Avg Latency cell displays `avg_agent_latency_ms || turnLatencyAverage`,
+// but only the former is what this column filters on — `turnLatencyAverage` is
+// a separate backend column (aliased `response_time`). Offering the filter when
+// the fallback is on screen would filter a number the row never showed.
+describe("getAgentLatencyFilterValue", () => {
+  it("returns the value when the cell is showing avg_agent_latency_ms", () => {
+    expect(
+      getAgentLatencyFilterValue({ data: { avg_agent_latency_ms: 820 } }),
+    ).toBe(820);
+    expect(
+      getAgentLatencyFilterValue({
+        data: { avg_agent_latency_ms: 820, turnLatencyAverage: 640 },
+      }),
+    ).toBe(820);
+  });
+
+  it("returns null when the cell is showing the turnLatencyAverage fallback", () => {
+    // 0 passes the wrapper's null/undefined/"" guard, so without this the click
+    // would apply `avg_agent_latency_ms equals 0` against a cell reading 640ms.
+    expect(
+      getAgentLatencyFilterValue({
+        data: { avg_agent_latency_ms: 0, turnLatencyAverage: 640 },
+      }),
+    ).toBeNull();
+    expect(
+      getAgentLatencyFilterValue({
+        data: { avg_agent_latency_ms: null, turnLatencyAverage: 640 },
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when there is no latency at all", () => {
+    expect(getAgentLatencyFilterValue({ data: {} })).toBeNull();
+    expect(getAgentLatencyFilterValue({})).toBeNull();
+    expect(
+      getAgentLatencyFilterValue({ data: { avg_agent_latency_ms: "n/a" } }),
+    ).toBeNull();
+  });
+});

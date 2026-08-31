@@ -108,6 +108,18 @@ type RequestContext struct {
 	// by plugins, so this is the only reliable way to tell caller-supplied
 	// dimensions apart from gateway internals when exporting telemetry.
 	CustomMetadataKeys []string
+
+	// CallerExtras holds the body's unknown top-level fields (extra_body, plus
+	// every OpenAI param newer than UnmarshalJSON's `known` map). Scalars only.
+	//
+	// Snapshotted in the handler, not read from Request.Extra at export time:
+	// the translation layer writes its own state into that same map, so
+	// provenance is what keeps gateway internals out.
+	CallerExtras map[string]any
+
+	// CallerExtrasDropped counts fields left out — non-scalars and
+	// credential-shaped key names.
+	CallerExtrasDropped int
 }
 
 type RequestFlags struct {
@@ -171,6 +183,8 @@ func (rc *RequestContext) Release() {
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
+	rc.CallerExtras = nil
+	rc.CallerExtrasDropped = 0
 
 	// Reuse maps by clearing them (keeps allocated memory).
 	for k := range rc.Metadata {

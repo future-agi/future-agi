@@ -554,12 +554,14 @@ import type {
   HarnessJobActionApi,
   HarnessJobAdjustmentApi,
   HarnessJobCreateApi,
+  HarnessJobReadApi,
   HarnessManifestApi,
   HarnessPreflightApi,
   HarnessResultReceiptApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
+  HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
@@ -52873,7 +52875,7 @@ export const simulateApiCallExecutionsList = async (params?: SimulateApiCallExec
 
 
 export type simulateApiHarnessJobsListResponse200 = {
-  data: void
+  data: HarnessJobReadApi[]
   status: 200
 }
 
@@ -52918,17 +52920,17 @@ export const simulateApiHarnessJobsList = async ( options?: RequestInit): Promis
 
 
 
-export type simulateApiHarnessJobsCreateResponse201 = {
-  data: HarnessJobCreateApi
-  status: 201
+export type simulateApiHarnessJobsCreateResponse202 = {
+  data: HarnessJobReadApi
+  status: 202
 }
 
 export type simulateApiHarnessJobsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 202>
 }
 
-export type simulateApiHarnessJobsCreateResponseSuccess = (simulateApiHarnessJobsCreateResponse201) & {
+export type simulateApiHarnessJobsCreateResponseSuccess = (simulateApiHarnessJobsCreateResponse202) & {
   headers: Headers;
 };
 export type simulateApiHarnessJobsCreateResponseError = (simulateApiHarnessJobsCreateResponseDefault) & {
@@ -53112,6 +53114,52 @@ if(simulateApiHarnessJobsSecretFileUploadBody?.environment_name !== undefined) {
 
 
 
+export type simulateApiHarnessJobsSecretValuesResponse201 = {
+  data: HarnessSecretValuesApi
+  status: 201
+}
+
+export type simulateApiHarnessJobsSecretValuesResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type simulateApiHarnessJobsSecretValuesResponseSuccess = (simulateApiHarnessJobsSecretValuesResponse201) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsSecretValuesResponseError = (simulateApiHarnessJobsSecretValuesResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsSecretValuesResponse = (simulateApiHarnessJobsSecretValuesResponseSuccess | simulateApiHarnessJobsSecretValuesResponseError)
+
+export const getSimulateApiHarnessJobsSecretValuesUrl = () => {
+
+
+
+
+  return `/simulate/api/harness-jobs/secret-values/`
+}
+
+/**
+ * Values are intentionally separate from platform/model-provider settings. They are scoped
+to the submitting organization and only resolved inside the selected hosted job.
+ * @summary Persist uploaded agent values encrypted and return opaque hosted refs.
+ */
+export const simulateApiHarnessJobsSecretValues = async (harnessSecretValuesApi: HarnessSecretValuesApi, options?: RequestInit): Promise<simulateApiHarnessJobsSecretValuesResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsSecretValuesResponse>(getSimulateApiHarnessJobsSecretValuesUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      harnessSecretValuesApi,)
+  }
+);}
+
+
+
 export type simulateApiHarnessJobsSourceUploadResponse201 = {
   data: HarnessSourceUploadResponseApi
   status: 201
@@ -53170,7 +53218,7 @@ if(simulateApiHarnessJobsSourceUploadBody?.name !== undefined) {
 
 
 export type simulateApiHarnessJobsReadResponse200 = {
-  data: void
+  data: HarnessJobReadApi
   status: 200
 }
 
@@ -53263,17 +53311,17 @@ export const simulateApiHarnessJobsAdjust = async (id: string,
 
 
 
-export type simulateApiHarnessJobsCancelResponse201 = {
-  data: HarnessJobActionApi
-  status: 201
+export type simulateApiHarnessJobsCancelResponse200 = {
+  data: HarnessJobReadApi
+  status: 200
 }
 
 export type simulateApiHarnessJobsCancelResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type simulateApiHarnessJobsCancelResponseSuccess = (simulateApiHarnessJobsCancelResponse201) & {
+export type simulateApiHarnessJobsCancelResponseSuccess = (simulateApiHarnessJobsCancelResponse200) & {
   headers: Headers;
 };
 export type simulateApiHarnessJobsCancelResponseError = (simulateApiHarnessJobsCancelResponseDefault) & {
@@ -61068,7 +61116,7 @@ export type tracerEvalTaskGetUsageResponseError = (tracerEvalTaskGetUsageRespons
 
 export type tracerEvalTaskGetUsageResponse = (tracerEvalTaskGetUsageResponseSuccess | tracerEvalTaskGetUsageResponseError)
 
-export const getTracerEvalTaskGetUsageUrl = (params?: TracerEvalTaskGetUsageParams,) => {
+export const getTracerEvalTaskGetUsageUrl = (params: TracerEvalTaskGetUsageParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -61087,7 +61135,7 @@ export const getTracerEvalTaskGetUsageUrl = (params?: TracerEvalTaskGetUsagePara
   return stringifiedParams.length > 0 ? `/tracer/eval-task/get_usage/?${stringifiedParams}` : `/tracer/eval-task/get_usage/`
 }
 
-export const tracerEvalTaskGetUsage = async (params?: TracerEvalTaskGetUsageParams, options?: RequestInit): Promise<tracerEvalTaskGetUsageResponse> => {
+export const tracerEvalTaskGetUsage = async (params: TracerEvalTaskGetUsageParams, options?: RequestInit): Promise<tracerEvalTaskGetUsageResponse> => {
 
   return apiMutator<tracerEvalTaskGetUsageResponse>(getTracerEvalTaskGetUsageUrl(params),
   {
