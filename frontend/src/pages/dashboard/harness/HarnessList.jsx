@@ -23,6 +23,7 @@ import {
   errorMessage,
   readable,
   stageStatus,
+  environmentName,
 } from "./harnessShared";
 
 const updatedLabel = (status) => {
@@ -55,7 +56,7 @@ export default function HarnessList() {
     const term = debouncedSearchQuery.trim().toLowerCase();
     if (!term) return jobs;
     return jobs.filter((item) =>
-      [item.job?.metadata?.agent_name, item.job?.run_id]
+      [environmentName(item.job, ""), item.job?.run_id]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term)),
     );
@@ -75,7 +76,7 @@ export default function HarnessList() {
         enableSorting: false,
         cell: ({ row }) => (
           <Typography variant="body2" fontWeight={500} noWrap>
-            {row.original.job?.metadata?.agent_name || row.original.job?.job_id}
+            {environmentName(row.original.job)}
           </Typography>
         ),
       },

@@ -177,6 +177,12 @@ export const shortRunId = (runId = "") => {
   return parts.length > 2 ? `${parts[0]}-${parts[1]}` : String(runId);
 };
 
+// Authoring writes `metadata.name`, older jobs `metadata.agent_name`. Never fall back to the
+// job id: it reads as a name and search cannot match it. Callers whose slot cannot be blank
+// pass their own fallback.
+export const environmentName = (job, fallback = "\u2014") =>
+  job?.metadata?.agent_name || job?.metadata?.name || fallback;
+
 // Four visual states for the run checklist.
 export const STAGE_STATE = {
   DONE: "done",
