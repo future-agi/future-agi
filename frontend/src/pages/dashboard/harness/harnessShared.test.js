@@ -9,9 +9,12 @@ import {
   canceledProgress,
   completedStageCount,
   environmentName,
+  callSummary,
   errorMessage,
   eventMessage,
   eventTime,
+  scenarioOutcome,
+  scenarioTally,
   runElapsed,
   shortDuration,
   shortRunId,
@@ -642,5 +645,114 @@ describe("eventMessage — sandbox vocabulary is unchanged", () => {
     expect(
       eventMessage({ type: "stage_changed", payload: { detail: "hand written", to: "running" } }),
     ).toBe("hand written");
+  });
+});
+
+describe("scenarioTally", () => {
+  it("names the failures a hosted run reports", () => {
+    expect(
+      scenarioTally({ completed_scenarios: 1, failed_scenarios: 9, total_scenarios: 10 }),
+    ).toBe("1 passed · 9 failed / 10 scenarios");
+  });
+
+  // The sandbox sends no failure count; inventing one would be worse than the ratio.
+  it("keeps the plain ratio when nothing failed or nothing is counted", () => {
+    expect(scenarioTally({ completed_scenarios: 1, total_scenarios: 1 })).toBe(
+      "1 / 1 scenarios",
+    );
+    expect(
+      scenarioTally({ completed_scenarios: 3, failed_scenarios: 0, total_scenarios: 3 }),
+    ).toBe("3 / 3 scenarios");
+  });
+
+  it("falls back to the requested count before the run reports one", () => {
+    expect(scenarioTally({}, { scenario_count: 10 })).toBe("0 / 10 scenarios");
+    expect(scenarioTally(undefined, undefined)).toBe("0 / 0 scenarios");
+  });
+});
+
+describe("scenarioOutcome", () => {
+  const run = {
+    scenarios: [{ scenario_key: "book-with-card-and-otp", status: "failed" }],
+    receipts: [
+      {
+        scenario_key: "book-with-card-and-otp",
+        scenario_attempt: 1,
+        status: "failed",
+        call: { turns: 13, duration_ms: 97560 },
+        sub_goals: [
+          { name: "ride_booked", held: false, judged: false, reason: "book_ride never succeeded" },
+        ],
+      },
+    ],
+  };
+
+  it("joins a scenario to its call and sub-goals on the key", () => {
+    const outcome = scenarioOutcome("book-with-card-and-otp", 1, run);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.turns).toBe(13);
+    expect(outcome.subGoals).toHaveLength(1);
+    expect(callSummary(outcome)).toBe("13 turns · 1m 37s");
+  });
+
+  // Scenarios are registered before they run, so `scenarios[]` answers for one that has not
+  // started. "registered" is not a verdict and must not reach the row as a chip.
+  it("says nothing for a scenario that has only been registered", () => {
+    expect(
+      scenarioOutcome("pending-one", 1, {
+        scenarios: [{ scenario_key: "pending-one", status: "registered" }],
+        receipts: [],
+      }),
+    ).toBeNull();
+  });
+
+  // A retry emits a second row under the same key. Attempt 1 must not claim attempt 2's verdict.
+  it("keeps each attempt to its own receipt", () => {
+    const retried = {
+      scenarios: [{ scenario_key: "flaky", status: "passed" }],
+      receipts: [
+        { scenario_key: "flaky", scenario_attempt: 1, status: "failed", call: { turns: 4 }, sub_goals: [] },
+        { scenario_key: "flaky", scenario_attempt: 2, status: "passed", call: { turns: 9 }, sub_goals: [] },
+      ],
+    };
+    expect(scenarioOutcome("flaky", 1, retried).status).toBe("failed");
+    expect(scenarioOutcome("flaky", 1, retried).turns).toBe(4);
+    expect(scenarioOutcome("flaky", 2, retried).status).toBe("passed");
+    expect(scenarioOutcome("flaky", 2, retried).turns).toBe(9);
+  });
+
+  // The registration's verdict belongs to the attempt that ran last, so a row whose own
+  // attempt has not reported shows nothing rather than borrowing it.
+  it("does not lend the registration verdict to an unreported attempt", () => {
+    expect(
+      scenarioOutcome("flaky", 1, {
+        scenarios: [{ scenario_key: "flaky", status: "passed" }],
+        receipts: [
+          { scenario_key: "flaky", scenario_attempt: 2, status: "passed", call: {}, sub_goals: [] },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("treats a missing attempt as the first", () => {
+    const outcome = scenarioOutcome("book-with-card-and-otp", undefined, run);
+    expect(outcome.status).toBe("failed");
+  });
+
+  it("returns nothing when the scenario has not reported", () => {
+    expect(scenarioOutcome("not-run-yet", 1, run)).toBeNull();
+    expect(scenarioOutcome("book-with-card-and-otp", 1, { scenarios: [], receipts: [] })).toBeNull();
+    expect(scenarioOutcome(undefined, 1, run)).toBeNull();
+    expect(scenarioOutcome("book-with-card-and-otp", 1, undefined)).toBeNull();
+  });
+
+  it("reports a scenario whose call was never measured", () => {
+    const outcome = scenarioOutcome("k", 1, {
+      scenarios: [{ scenario_key: "k", status: "passed" }],
+      receipts: [],
+    });
+    expect(outcome.status).toBe("passed");
+    expect(callSummary(outcome)).toBe("");
+    expect(outcome.subGoals).toEqual([]);
   });
 });

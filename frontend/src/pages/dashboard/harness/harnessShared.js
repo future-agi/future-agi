@@ -391,6 +391,63 @@ export function eventMessage(event) {
   return readable(event.type || "Progress updated");
 }
 
+// "1 / 10" reads as nine still to come when in fact nine failed. Hosted runs count failures
+// separately, so say so; the sandbox has no such count and keeps the plain ratio.
+export const scenarioTally = (status, job) => {
+  const total = status?.total_scenarios || job?.scenario_count || 0;
+  const passed = status?.completed_scenarios || 0;
+  const failed = status?.failed_scenarios;
+  if (typeof failed !== "number" || failed === 0)
+    return `${passed} / ${total} scenarios`;
+  return `${passed} passed · ${failed} failed / ${total} scenarios`;
+};
+
+// Every verdict a receipt can carry. A scenario is registered before it runs, so anything
+// outside this set — "registered" — means it has not finished, not that it went badly.
+const SETTLED = new Set(["passed", "failed", "errored", "skipped"]);
+
+// A scenario's outcome and its call are reported apart from the event that started it: the
+// stream has no "scenario finished". Join them so a started row can say how it went. A retry
+// emits a second row under the same key, so the attempt has to match too, or the first row
+// would claim the retry's verdict. Absent until the attempt reports, and on sandbox runs,
+// which send neither scenarios nor receipts.
+export const scenarioOutcome = (scenarioKey, scenarioAttempt, run) => {
+  if (!scenarioKey) return null;
+  const attempt = Number(scenarioAttempt) || 1;
+  const attempts = (run?.receipts || []).filter(
+    (item) => item.scenario_key === scenarioKey,
+  );
+  const receipt = attempts.find(
+    (item) => (Number(item.scenario_attempt) || 1) === attempt,
+  );
+  // The registration holds one verdict for the scenario, which belongs to whichever attempt
+  // ran last. Read it only when no attempt has reported one of its own.
+  const registration = attempts.length
+    ? null
+    : (run?.scenarios || []).find((item) => item.scenario_key === scenarioKey);
+  const status = receipt?.status || registration?.status || null;
+  const settled = SETTLED.has(status) ? status : null;
+  if (!settled && !receipt) return null;
+  const call = receipt?.call || {};
+  return {
+    status: settled,
+    turns: call.turns ?? null,
+    durationMs: call.duration_ms ?? null,
+    // `held` is the verdict and carries a reason whenever it is false; `judged` only says
+    // whether a model was the one to decide, so it is not part of the outcome.
+    subGoals: receipt?.sub_goals || [],
+  };
+};
+
+// Turns and duration read as one line under the scenario name, and only when measured.
+export const callSummary = (outcome) =>
+  [
+    outcome?.turns != null ? `${outcome.turns} turns` : "",
+    outcome?.durationMs != null ? shortDuration(outcome.durationMs) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
 // A completed run is 100% regardless of where its stage landed in the list; anything else
 // sits half a stage into its slot, with a floor so a queued run still shows a sliver.
 export const jobProgress = (status) => {
