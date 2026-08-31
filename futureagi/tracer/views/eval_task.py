@@ -2,7 +2,7 @@ import json
 import traceback
 import uuid as uuid_module
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import structlog
 from django.db import models, transaction
@@ -22,6 +22,7 @@ from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.constants.eval_task_usage import UsagePeriod
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
@@ -37,8 +38,9 @@ from tracer.serializers.eval_task import (
     EvalTaskSerializer,
     EvalTaskUpdateRequestSerializer,
     EvalTaskUpdateResponseSerializer,
-    PaginationQuerySerializer,
+    EvalTaskUsageQuerySerializer,
 )
+from tracer.services.eval_tasks import usage
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.utils.filters import FilterEngine
@@ -135,11 +137,6 @@ def _resolve_input_variables(custom_eval_config, obs_span):
             continue
         resolved[var_name] = value
     return resolved
-
-
-def _truthy(v):
-    """Match common DRF bool query-param conventions."""
-    return str(v).lower() in ("true", "1", "yes")
 
 
 def _compute_eval_aggregation(base_qs):
@@ -731,31 +728,23 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(str(e))
 
     # ──────────────────────────────────────────────────────────────────
-    # GET /tracer/eval-task/get_usage/?eval_task_id=<id>&period=<>&...
+    # GET /tracer/eval-task/get_usage/
     #
-    # Replaces the old "stat cards + config snapshot" Usage tab with the
-    # eval-style usage view: a top stats row, a time-series chart, and a
-    # paginated logs table that opens a side panel on click. Mirrors the
-    # response shape of `EvalUsageStatsView` so the frontend can reuse
-    # `UsageChart`, `DataTable`, and `DataTablePagination` directly.
+    # Stats row + time-series chart + paginated logs for one eval task.
+    # Mirrors `EvalUsageStatsView`'s response shape so the frontend reuses
+    # `UsageChart`, `DataTable` and `DataTablePagination` unchanged. The
+    # computations live in `services/eval_tasks/usage.py`.
     # ──────────────────────────────────────────────────────────────────
-    _USAGE_PERIOD_MAP = {
-        "30m": timedelta(minutes=30),
-        "6h": timedelta(hours=6),
-        "1d": timedelta(days=1),
-        "7d": timedelta(days=7),
-        "30d": timedelta(days=30),
-        "90d": timedelta(days=90),
-        "180d": timedelta(days=180),
-        "365d": timedelta(days=365),
-    }
-
     @action(detail=False, methods=["get"])
+    @validated_request(
+        query_serializer=EvalTaskUsageQuerySerializer,
+        framework_query_params=("page", "limit"),
+    )
     def get_usage(self, request, *args, **kwargs):
         try:
-            eval_task_id = self.request.query_params.get("eval_task_id")
-            if not eval_task_id:
-                return self._gm.bad_request("eval_task_id is required")
+            query = request.validated_query_data
+            eval_task_id = str(query["eval_task_id"])
+            eval_id_filter = query.get("eval_id")
 
             if (
                 not self._scope_eval_task_queryset(EvalTask.objects)
@@ -766,242 +755,30 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     f"EvalTask with id {eval_task_id} not found."
                 )
 
-            # ── Query params ──
-            qp = PaginationQuerySerializer(data=self.request.query_params)
-            qp.is_valid(raise_exception=True)
-            page_size = qp.validated_data["page_size"]
-            period = self.request.query_params.get("period", "30d")
-            # Optional eval filter — tasks may run multiple evals; the UI
-            # passes this when the user picks one from the dropdown.
-            eval_id_filter = self.request.query_params.get("eval_id")
-
-            # ── Aggregation short-circuit ──
-            # When either flag is set, return ONLY the aggregated payload.
-            # Soft-deleted rows are excluded (intentional departure from the
-            # legacy path) so rollups reflect the user's current view of
-            # the data. ``period`` is not applied — these are task-wide.
-            #
-            # Spans-only semantics: session-target rows (``observation_span_id
-            # IS NULL``) are excluded from both aggregations so the row set
-            # is consistent whether or not a date range is supplied.
-            #
-            # Optional ``start_date`` / ``end_date`` (ISO-8601) scope the
-            # rollup to spans whose ``observation_span.created_at`` falls
-            # in the range.
-            eval_aggregation = _truthy(
-                self.request.query_params.get("eval_aggregation")
-            )
-            span_aggregation = _truthy(
-                self.request.query_params.get("span_aggregation")
-            )
-            if eval_aggregation or span_aggregation:
-                agg_base_qs = EvalLogger.objects.filter(
-                    eval_task_id=str(eval_task_id),
-                    deleted=False,
-                    observation_span_id__isnull=False,
+            if query["eval_aggregation"] or query["span_aggregation"]:
+                return self._usage_aggregation_response(
+                    query, eval_task_id, eval_id_filter
                 )
-                if eval_id_filter:
-                    agg_base_qs = agg_base_qs.filter(
-                        custom_eval_config_id=eval_id_filter
-                    )
 
-                start_date_str = self.request.query_params.get("start_date")
-                end_date_str = self.request.query_params.get("end_date")
-                if start_date_str:
-                    agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__gte=datetime.fromisoformat(
-                            start_date_str
-                        )
-                    )
-                if end_date_str:
-                    agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__lte=datetime.fromisoformat(
-                            end_date_str
-                        )
-                    )
-
-                agg_response = {"eval_task_id": str(eval_task_id)}
-                if eval_aggregation:
-                    agg_response["eval_aggregation"] = _compute_eval_aggregation(
-                        agg_base_qs
-                    )
-                if span_aggregation:
-                    agg_response["span_aggregation"] = _compute_span_aggregation(
-                        agg_base_qs
-                    )
-                return self._gm.success_response(agg_response)
-
-            period_delta = self._USAGE_PERIOD_MAP.get(period, timedelta(days=30))
-            end_date = timezone.now()
-            start_date = end_date - period_delta
-
-            # ── Configured evals on this task (drives the filter dropdown) ──
-            # Each EvalLogger row links to a CustomEvalConfig, which links
-            # to an EvalTemplate that carries `output_type_normalized`
-            # ("pass_fail" | "percentage" | "deterministic"). We follow
-            # the FK chain in a single query via .values() join syntax.
-            configured_eval_configs = list(
-                CustomEvalConfig.objects.filter(eval_loggers__eval_task_id=eval_task_id)
-                .distinct()
-                .values(
-                    "id",
-                    "name",
-                    "model",
-                    "eval_template_id",
-                    "eval_template__output_type_normalized",
-                )
-            )
-            evals_meta = [
-                {
-                    "id": str(c["id"]),
-                    "name": c.get("name") or "Evaluation",
-                    "output_type": c.get("eval_template__output_type_normalized")
-                    or "pass_fail",
-                    "template_id": (
-                        str(c["eval_template_id"])
-                        if c.get("eval_template_id")
-                        else None
-                    ),
-                    "model": c.get("model"),
-                }
-                for c in configured_eval_configs
-            ]
-
-            # ── Base queryset ──
-            # Match the existing get_eval_task_logs filter exactly so any
-            # task that shows logs also shows usage. We do NOT filter by
-            # `deleted` here because get_eval_task_logs doesn't either —
-            # the two endpoints must agree on what counts as a "run".
-            base_qs = EvalLogger.objects.filter(eval_task_id=str(eval_task_id))
+            # Match get_eval_task_logs' filter exactly — a task that shows
+            # logs must also show usage, so `deleted` is not excluded here.
+            base_qs = EvalLogger.objects.filter(eval_task_id=eval_task_id)
             if eval_id_filter:
                 base_qs = base_qs.filter(custom_eval_config_id=eval_id_filter)
 
             total_runs = base_qs.count()
-            period_qs = base_qs.filter(created_at__gte=start_date)
-            runs_period = period_qs.count()
-
-            # Fallback: if the user picked a period that excludes every
-            # run but the task DOES have runs, widen the window to "all
-            # time" so they aren't staring at an empty chart. The
-            # `period_used` field tells the frontend which period was
-            # actually applied so it can surface a hint.
-            period_used = period
-            if runs_period == 0 and total_runs > 0:
-                period_qs = base_qs
-                runs_period = total_runs
-                period_used = "all"
-                # Recompute start_date to the earliest run so the
-                # zero-fill chart loop covers the right range.
-                earliest = (
-                    base_qs.order_by("created_at")
-                    .values_list("created_at", flat=True)
-                    .first()
-                )
-                if earliest:
-                    start_date = earliest
-
-            success_count = period_qs.filter(error=False).count()
-            error_count = period_qs.filter(error=True).count()
-            pass_rate = (
-                round((success_count / runs_period * 100), 2) if runs_period > 0 else 0
+            period_qs, runs_period, window = usage.apply_window(
+                base_qs,
+                usage.resolve_window(
+                    UsagePeriod(query["period"]),
+                    query.get("start_date"),
+                    query.get("end_date"),
+                ),
+                total_runs,
             )
 
-            # ── Chart data — bucket by period and aggregate ──
-            chart_data = []
-            if runs_period > 0:
-                # Bucket size: minutes for short periods, days for long.
-                if period == "30m":
-                    bucket_minutes = 5
-                elif period == "6h":
-                    bucket_minutes = 30
-                elif period == "1d":
-                    bucket_minutes = 60
-                elif period == "7d":
-                    bucket_minutes = 360  # 6h
-                else:
-                    bucket_minutes = 1440  # 1 day
-
-                buckets_calls = defaultdict(int)
-                buckets_pass = defaultdict(int)
-                buckets_fail = defaultdict(int)
-                buckets_scores = defaultdict(list)
-
-                for log in period_qs.values(
-                    "created_at", "error", "output_bool", "output_float"
-                ):
-                    ts = log["created_at"]
-                    # Round down to bucket boundary
-                    if bucket_minutes >= 1440:
-                        bucket_ts = ts.replace(
-                            hour=0, minute=0, second=0, microsecond=0
-                        )
-                    elif bucket_minutes >= 60:
-                        hours_per_bucket = bucket_minutes // 60
-                        bucket_ts = ts.replace(
-                            hour=(ts.hour // hours_per_bucket) * hours_per_bucket,
-                            minute=0,
-                            second=0,
-                            microsecond=0,
-                        )
-                    else:
-                        bucket_ts = ts.replace(
-                            minute=(ts.minute // bucket_minutes) * bucket_minutes,
-                            second=0,
-                            microsecond=0,
-                        )
-                    bucket_key = bucket_ts.isoformat()
-                    buckets_calls[bucket_key] += 1
-
-                    if log["error"]:
-                        buckets_fail[bucket_key] += 1
-                    else:
-                        bool_val = log["output_bool"]
-                        float_val = log["output_float"]
-                        if bool_val is True:
-                            buckets_pass[bucket_key] += 1
-                            buckets_scores[bucket_key].append(1.0)
-                        elif bool_val is False:
-                            buckets_fail[bucket_key] += 1
-                            buckets_scores[bucket_key].append(0.0)
-                        if float_val is not None:
-                            buckets_scores[bucket_key].append(float(float_val))
-
-                # Zero-fill all buckets in the range so the chart line is
-                # continuous instead of skipping empty days.
-                if bucket_minutes >= 1440:
-                    current_bucket = start_date.replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
-                else:
-                    current_bucket = start_date.replace(
-                        minute=(start_date.minute // bucket_minutes) * bucket_minutes,
-                        second=0,
-                        microsecond=0,
-                    )
-                while current_bucket <= end_date:
-                    key = current_bucket.isoformat()
-                    scores = buckets_scores.get(key, [])
-                    avg_score = sum(scores) / len(scores) if scores else None
-                    chart_data.append(
-                        {
-                            "timestamp": key,
-                            "calls": buckets_calls.get(key, 0),
-                            "pass_count": buckets_pass.get(key, 0),
-                            "fail_count": buckets_fail.get(key, 0),
-                            "avg_score": (
-                                round(avg_score, 3) if avg_score is not None else None
-                            ),
-                            "avg_latency_ms": 0,  # not tracked at logger level
-                        }
-                    )
-                    current_bucket += timedelta(minutes=bucket_minutes)
-
-            # ── Paginated logs ──
-            # Eager-load the related ObservationSpan + CustomEvalConfig
-            # (and through that, the EvalTemplate for output_type) in a
-            # single query — without this we'd hit N+1 inside the loop.
-            # PR3: also eager-load trace_session so session-target rows can
-            # surface session_id / session_name without an extra query.
+            # Eager-load the related span, eval config (and through it the
+            # template) and session, or the row loop below goes N+1.
             logs_qs = period_qs.select_related(
                 "observation_span",
                 "custom_eval_config",
@@ -1010,166 +787,33 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             ).order_by("-created_at")
 
             paginator = ExtendedPageNumberPagination()
-            paginator.page_size = page_size
+            paginator.page_size = query["page_size"]
             logs_page = paginator.paginate_queryset(logs_qs, self.request, view=self)
-
-            log_items = []
-            for log in logs_page:
-                # Derive a Pass/Fail label and a normalized 0-1 score from
-                # the typed output columns. EvalLogger splits output across
-                # output_bool / output_float / output_str depending on the
-                # eval template's output type — see the model definition.
-                if log.error:
-                    result_label = "Error"
-                    score = None
-                    status = "error"
-                elif log.output_bool is True:
-                    result_label = "Passed"
-                    score = 1.0
-                    status = "success"
-                elif log.output_bool is False:
-                    result_label = "Failed"
-                    score = 0.0
-                    status = "success"
-                elif log.output_float is not None:
-                    score = float(log.output_float)
-                    result_label = "Passed" if score >= 0.5 else "Failed"
-                    status = "success"
-                elif log.output_str:
-                    result_label = log.output_str[:50]
-                    score = None
-                    status = "success"
-                else:
-                    result_label = ""
-                    score = None
-                    status = "success"
-
-                obs_span = log.observation_span
-                trace_session = log.trace_session
-                config = log.custom_eval_config
-                target_type = log.target_type
-
-                # Build a short input summary. Span-target and trace-target
-                # rows both have an observation_span (trace target = root
-                # span); session-target rows fall back to the session name.
-                input_str = ""
-                if obs_span:
-                    span_attrs = obs_span.span_attributes or {}
-                    input_val = (
-                        span_attrs.get("input")
-                        or span_attrs.get("input.value")
-                        or obs_span.name
-                        or ""
-                    )
-                    if isinstance(input_val, dict):
-                        input_str = json.dumps(input_val)[:200]
-                    else:
-                        input_str = str(input_val)[:200]
-                elif trace_session:
-                    input_str = (trace_session.name or "")[:200]
-
-                reason = log.eval_explanation or log.error_message or ""
-
-                # Partial-input warnings stored on output_metadata by the
-                # tracer eval path. Surface at the row level so the FE
-                # can render a yellow indicator alongside other status.
-                _output_meta = log.output_metadata or {}
-                warnings = (
-                    _output_meta.get("warnings")
-                    if isinstance(_output_meta, dict)
-                    else None
+            log_items = [
+                usage.build_log_item(
+                    log,
+                    _resolve_input_variables(
+                        log.custom_eval_config, log.observation_span
+                    ),
                 )
-
-                log_items.append(
-                    {
-                        "id": str(log.id),
-                        "input": input_str,
-                        "result": result_label,
-                        "score": score,
-                        "reason": reason,
-                        "status": status,
-                        "source": "eval_task",
-                        "warnings": warnings or [],
-                        "created_at": (
-                            log.created_at.isoformat() if log.created_at else ""
-                        ),
-                        # Cross-references for the side panel — let users
-                        # jump back to the source span/trace/session in the
-                        # observe page. Span and trace rows expose span/trace
-                        # IDs (trace target = root span); session rows expose
-                        # session_id with both other IDs NULL.
-                        "span_id": str(obs_span.id) if obs_span else None,
-                        "trace_id": (
-                            str(obs_span.trace_id)
-                            if obs_span and obs_span.trace_id
-                            else None
-                        ),
-                        "session_id": (
-                            str(trace_session.id) if trace_session else None
-                        ),
-                        "eval_id": str(config.id) if config else None,
-                        "eval_name": config.name if config else None,
-                        "model": config.model if config else None,
-                        "detail": {
-                            "eval_name": config.name if config else None,
-                            "model": config.model if config else None,
-                            "warnings": warnings or [],
-                            "output_type": (
-                                config.eval_template.output_type_normalized
-                                if config and config.eval_template
-                                else None
-                            ),
-                            # PR3: target_type lets the FE side panel switch
-                            # labels per row (Span ID vs Session ID etc.)
-                            # without having to look up the parent EvalTask.
-                            "target_type": target_type,
-                            "span_name": obs_span.name if obs_span else None,
-                            "span_id": str(obs_span.id) if obs_span else None,
-                            "trace_id": (
-                                str(obs_span.trace_id)
-                                if obs_span and obs_span.trace_id
-                                else None
-                            ),
-                            "session_id": (
-                                str(trace_session.id) if trace_session else None
-                            ),
-                            "session_name": (
-                                trace_session.name if trace_session else None
-                            ),
-                            "output_bool": log.output_bool,
-                            "output_float": log.output_float,
-                            "output_str": log.output_str,
-                            "results_explanation": log.results_explanation,
-                            "error_message": log.error_message,
-                            # Eval mapping resolved against the span — the
-                            # side panel renders these as {var: value}
-                            # rows with JsonValueTree for object values.
-                            "input_variables": _resolve_input_variables(
-                                config, obs_span
-                            ),
-                        },
-                    }
-                )
+                for log in logs_page
+            ]
 
             response = {
-                "eval_task_id": str(eval_task_id),
-                "stats": {
-                    "total_runs": total_runs,
-                    "runs_period": runs_period,
-                    "success_count": success_count,
-                    "error_count": error_count,
-                    "pass_rate": pass_rate,
-                },
-                "evals": evals_meta,
-                "chart": chart_data,
+                "eval_task_id": eval_task_id,
+                "stats": usage.build_stats(period_qs, total_runs, runs_period),
+                "evals": usage.list_configured_evals(eval_task_id),
+                "chart": usage.build_chart(period_qs, window, runs_period),
                 # Paginator native shape (matches eval_logs):
                 # {count, next, previous, results, total_pages, current_page}
                 "logs": paginator.get_paginated_response(log_items).data,
-                # Echo back the period actually used. If the user picked
-                # "30D" but the task only has older runs, this will be
-                # "all" — the frontend can show a hint explaining why.
-                "period_requested": period,
-                "period_used": period_used,
+                # `period_used` diverges from `period_requested` when the
+                # requested window held no runs and we widened to all-time;
+                # the frontend shows a hint on that divergence.
+                "period_requested": window.requested.value,
+                "period_used": window.used.value,
+                "start_date_used": window.start_date.isoformat(),
+                "end_date_used": window.end_date.isoformat(),
             }
             return self._gm.success_response(response)
 
@@ -1181,6 +825,36 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 eval_task_id=request.query_params.get("eval_task_id"),
             )
             return self._gm.bad_request(str(e))
+
+    def _usage_aggregation_response(self, query, eval_task_id, eval_id_filter):
+        """Aggregation-only payload — no chart, no logs, `period` not applied.
+
+        Soft-deleted and session-target rows are excluded so the row set is
+        the same whether or not a date range is supplied. Either bound may be
+        given on its own; both scope on the span's `created_at`.
+        """
+        agg_qs = EvalLogger.objects.filter(
+            eval_task_id=eval_task_id,
+            deleted=False,
+            observation_span_id__isnull=False,
+        )
+        if eval_id_filter:
+            agg_qs = agg_qs.filter(custom_eval_config_id=eval_id_filter)
+        if query.get("start_date"):
+            agg_qs = agg_qs.filter(
+                observation_span__created_at__gte=query["start_date"]
+            )
+        if query.get("end_date"):
+            agg_qs = agg_qs.filter(
+                observation_span__created_at__lte=query["end_date"]
+            )
+
+        response = {"eval_task_id": eval_task_id}
+        if query["eval_aggregation"]:
+            response["eval_aggregation"] = _compute_eval_aggregation(agg_qs)
+        if query["span_aggregation"]:
+            response["span_aggregation"] = _compute_span_aggregation(agg_qs)
+        return self._gm.success_response(response)
 
     @validated_request(
         request_serializer=EvalTaskDeleteRequestSerializer,

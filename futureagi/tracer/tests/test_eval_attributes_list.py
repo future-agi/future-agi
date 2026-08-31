@@ -308,20 +308,28 @@ class TestSpanAttributeKeysNormalisation:
 
 
 class TestSpanAttributeKeysPartitionPruning:
-    """The recent-window discovery query must prune by the partition key.
+    """The recent-window discovery query must prune, stay unordered, and stay
+    exhaustive.
 
     ``spans`` is partitioned by ``toDate(start_time)``; ``created_at`` is
     neither the partition key nor in the sort key. Windowing by ``created_at``
     defeats partition pruning and scans the whole project. Pin that the query
     windows by ``start_time`` and does NOT order by it: ``start_time`` sits
     behind ``observation_type``/``service_name`` in the sort key, so an ordered
-    top-N reads the whole window (materializing the fat ``attrs_*`` maps) before
-    ``LIMIT`` applies -> Code 396 / Code 159 on high-volume projects. Without the
-    ORDER BY, ``project_id`` leading the sort key lets ``LIMIT 10000`` bound the
-    scan. Also pin that only the Map ``.keys`` subcolumn is read (never values).
+    lane sorts the whole window (materializing the fat ``attrs_*`` maps) ->
+    Code 396 / Code 159 on high-volume projects.
+
+    Discovery is exhaustive over that window: each lane ARRAY JOINs the
+    ``<map>.keys`` subcolumn over every span, never a row sample, so a key
+    carried by a thin slice of spans still reaches the filter picker. The
+    unbounded path keeps the legacy ``LIMIT 10000`` sample as a visibility-only
+    superset lane that contributes no count. Also pin that only the Map
+    ``.keys`` subcolumn is read (never values).
     """
 
-    def _capture_sql(self, monkeypatch, *, recent_days=7) -> str:
+    WINDOW = "start_time >= now() - toIntervalDay(%(window_days)s)"
+
+    def _capture_sql(self, monkeypatch, *, recent_days=7, **kwargs) -> str:
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
         captured: dict = {}
@@ -337,7 +345,9 @@ class TestSpanAttributeKeysPartitionPruning:
             AnalyticsQueryService, "execute_ch_query", _capture, raising=True
         )
         AnalyticsQueryService().get_span_attribute_keys_ch_for_projects(
-            ["c4de3065-12b5-488c-a814-aa1c8e3f856f"], recent_days=recent_days
+            ["c4de3065-12b5-488c-a814-aa1c8e3f856f"],
+            recent_days=recent_days,
+            **kwargs,
         )
         return captured["query"]
 
@@ -345,7 +355,7 @@ class TestSpanAttributeKeysPartitionPruning:
         sql = self._capture_sql(monkeypatch, recent_days=7)
         # start_time is the partition key -> CH can prune to the window.
         assert "start_time >= now() - toIntervalDay" in sql
-        # The recency ORDER BY is dropped so LIMIT 10000 bounds the scan.
+        # No recency ORDER BY: an ordered lane would sort the whole window.
         assert "ORDER BY start_time" not in sql
 
     def test_reads_keys_subcolumn_not_whole_map(self, monkeypatch):
@@ -357,10 +367,9 @@ class TestSpanAttributeKeysPartitionPruning:
         assert "attrs_bool.keys" in sql
         assert "mapKeys(" not in sql
 
-    def test_preserves_limit_and_type_labels(self, monkeypatch):
+    def test_preserves_type_labels(self, monkeypatch):
         sql = self._capture_sql(monkeypatch, recent_days=7)
-        # The per-map LIMIT and type labels are unchanged by the fix.
-        assert "LIMIT 10000" in sql
+        # The windowed lanes are exhaustive, so only the type labels survive.
         assert "'string'" in sql
         assert "'number'" in sql
         assert "'boolean'" in sql
@@ -372,13 +381,37 @@ class TestSpanAttributeKeysPartitionPruning:
         assert "ORDER BY created_at" not in sql
 
     def test_full_project_discovery_skips_order_by_to_short_circuit(self, monkeypatch):
-        # recent_days=None (dashboard/metrics filter discovery): no window, so
-        # the ORDER BY must be dropped or LIMIT 10000 can't short-circuit and
-        # CH scans the whole project (~477k rows) instead of ~15k.
+        # recent_days=None (dashboard/metrics filter discovery) unions the
+        # windowed lane with the legacy sample; the ORDER BY must stay dropped
+        # or LIMIT 10000 can't short-circuit and CH scans the whole project
+        # (~477k rows) instead of ~15k.
         sql = self._capture_sql(monkeypatch, recent_days=None)
-        assert "start_time >= now()" not in sql
         assert "ORDER BY start_time" not in sql
         assert "LIMIT 10000" in sql
+
+    def test_each_lane_array_joins_keys_across_the_whole_window(self, monkeypatch):
+        # No row sample: every lane reads .keys for every span in the window, so
+        # a key on a thin slice of spans cannot fall outside it (TH-7632).
+        sql = self._capture_sql(monkeypatch, recent_days=7)
+        for column in ("attrs_string", "attrs_number", "attrs_bool"):
+            assert f"FROM spans ARRAY JOIN {column}.keys AS key" in sql
+        assert sql.count(self.WINDOW) == 3
+        assert "LIMIT 10000" not in sql
+
+    def test_unbounded_discovery_keeps_the_legacy_sample_lane(self, monkeypatch):
+        # recent_days=None unions the old sample in, so no key regresses.
+        sql = self._capture_sql(monkeypatch, recent_days=None)
+        assert sql.count(self.WINDOW) == 3
+        assert sql.count("LIMIT 10000") == 3
+        assert sql.count("UNION ALL") == 5
+
+    def test_sample_lane_contributes_no_count(self, monkeypatch):
+        # A span inside both the window and the sample would otherwise be summed
+        # twice by the outer sum(cnt) and inflate argMax(type, cnt).
+        sql = self._capture_sql(monkeypatch, recent_days=None, include_counts=True)
+        assert sql.count("0 AS cnt") == 3
+        assert sql.count("count() AS cnt") == 3
+        assert "sum(cnt) AS count" in sql
 
 
 @pytest.mark.integration

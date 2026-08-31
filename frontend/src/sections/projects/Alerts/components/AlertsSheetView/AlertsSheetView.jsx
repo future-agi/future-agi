@@ -154,14 +154,20 @@ export default function AlertsSheetView() {
               },
             ];
 
-        chartConfig = getSimpleLineChartConfig(data, {
-          seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
-          thresholds,
-        });
+        chartConfig = getSimpleLineChartConfig(
+          data,
+          {
+            seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
+            thresholds,
+          },
+          { isDark },
+        );
       } else if (selectedThresHoldType === "percentage_change") {
-        chartConfig = getCompareChartConfig(data, {
-          seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)),
-        });
+        chartConfig = getCompareChartConfig(
+          data,
+          { seriesName: _.startCase(_.toLower(alertRuleDetails.metricType)) },
+          { isDark },
+        );
       }
 
       if (!chartConfig) return { series: [], options: {} };
@@ -182,7 +188,7 @@ export default function AlertsSheetView() {
     } catch (err) {
       return { series: [], options: {} };
     }
-  }, [selectedThresHoldType, data, alertRuleDetails]);
+  }, [selectedThresHoldType, data, alertRuleDetails, isDark]);
 
   // Render chart with proper loading states
   const renderChart = () => {

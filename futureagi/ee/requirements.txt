@@ -213,8 +213,6 @@ dill==0.4.0
     # via
     #   datasets
     #   multiprocess
-disposable-email-domains==0.0.239
-    # via core-backend
 distro==1.9.0
     # via
     #   anthropic

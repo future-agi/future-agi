@@ -151,6 +151,18 @@ describe("resolveMappingFromRow", () => {
     ]);
     expect(out).toEqual({ note: "from-row" });
   });
+
+  it("omits a non-string mapping value instead of throwing on it", () => {
+    // Called out as a behaviour change: this used to throw out of the walker
+    // and unmount the page. The variable is now simply absent, and the panel
+    // labels it invalid so the owner can see which one to re-map.
+    const out = resolveMappingFromRow(
+      { bad: { value: "input.value" }, good: "input.value" },
+      spanDetail,
+    );
+    expect(out).toEqual({ good: "hello" });
+    expect("bad" in out).toBe(false);
+  });
 });
 
 describe("executeEvalForRow — single eval", () => {
