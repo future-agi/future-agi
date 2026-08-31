@@ -19,6 +19,17 @@ vi.mock("react-apexcharts", () => ({
       data-testid={`apex-${props.type}`}
       data-series={JSON.stringify(props.series)}
       data-labels={JSON.stringify(props.options?.labels ?? null)}
+      data-colors={JSON.stringify(props.options?.colors ?? null)}
+    />
+  ),
+}));
+
+vi.mock("../ChartLegend", () => ({
+  default: (props) => (
+    <div
+      data-testid="chart-legend"
+      data-items={JSON.stringify(props.items)}
+      data-colors={JSON.stringify(props.colors)}
     />
   ),
 }));
@@ -389,5 +400,88 @@ describe("WidgetPieCharts — nothing to draw in any metric", () => {
     expect(
       screen.getByText(/Nothing to chart for this metric/),
     ).toBeInTheDocument();
+  });
+});
+
+
+// Regression guard for TH-7679. The legend used to be handed the raw palette and
+// index it positionally (COLORS[i]), while the lines were coloured by a hash of
+// the series name — so swatch and line agreed only by coincidence. Both must now
+// come from the same per-name lookup.
+describe("WidgetChart — legend swatches match the plotted line colours", () => {
+  const multiSeriesResult = (aggregations) => ({
+    data: {
+      result: {
+        metrics: aggregations.map((aggregation) => ({
+          name: "Latency",
+          aggregation,
+          series: [
+            {
+              name: "total",
+              data: [
+                { timestamp: "2026-07-09T00:00:00Z", value: 12 },
+                { timestamp: "2026-07-09T01:00:00Z", value: 18 },
+              ],
+            },
+          ],
+        })),
+      },
+    },
+  });
+
+  const multiWidget = (aggregations) => ({
+    ...baseWidget,
+    query_config: {
+      metrics: aggregations.map((aggregation) => ({
+        name: "Latency",
+        aggregation,
+      })),
+    },
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = null;
+  });
+
+  it("gives the legend exactly the colours the chart draws the lines with", () => {
+    const aggs = ["p95", "p99", "p50"];
+    h.query.data = multiSeriesResult(aggs);
+    render(<WidgetChart widget={multiWidget(aggs)} globalDateRange={null} />);
+
+    const legend = screen.getByTestId("chart-legend");
+    const chart = screen.getByTestId("apex-line");
+
+    const legendColors = JSON.parse(legend.getAttribute("data-colors"));
+    const lineColors = JSON.parse(chart.getAttribute("data-colors"));
+
+    expect(legendColors).toEqual(lineColors);
+  });
+
+  it("keeps swatch and line aligned per series name, not per position", () => {
+    const aggs = ["p95", "p99", "p50"];
+    h.query.data = multiSeriesResult(aggs);
+    render(<WidgetChart widget={multiWidget(aggs)} globalDateRange={null} />);
+
+    const legend = screen.getByTestId("chart-legend");
+    const items = JSON.parse(legend.getAttribute("data-items"));
+    const legendColors = JSON.parse(legend.getAttribute("data-colors"));
+    const lineColors = JSON.parse(
+      screen.getByTestId("apex-line").getAttribute("data-colors"),
+    );
+
+    expect(items).toEqual([
+      "Latency (p95)",
+      "Latency (p99)",
+      "Latency (p50)",
+    ]);
+    items.forEach((_, i) => {
+      expect(legendColors[i]).toBe(lineColors[i]);
+    });
+    // The names above hash away from the identity mapping, so a positional
+    // legend would disagree here — that is exactly the bug being guarded.
+    expect(new Set(legendColors).size).toBe(items.length);
   });
 });

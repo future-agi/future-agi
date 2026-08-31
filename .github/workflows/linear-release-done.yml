@@ -1,0 +1,54 @@
+# On a stable platform release (vX.Y.Z tag — the dev→main promotion), move every
+# Linear ticket shipped in the release to Done, comment the release link on each,
+# and post a Slack summary. Mirrors the trigger used by release-images.yml.
+name: linear-release-done
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to process, e.g. v1.23.0'
+        required: true
+        type: string
+      dry_run:
+        description: 'Log intended changes without writing to Linear'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: linear-release-done-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  move-tickets:
+    # Skip on forks — secrets aren't available there.
+    if: github.repository == 'future-agi/future-agi'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check out release-done script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Move shipped Linear tickets to Done
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.version || github.ref_name }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: node .github/scripts/linear-release-done.mjs

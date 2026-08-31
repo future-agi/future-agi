@@ -13,6 +13,7 @@ import {
 } from "../../constants";
 import { enqueueSnackbar } from "notistack";
 import { copyToClipboard } from "src/utils/utils";
+import { HOST_API } from "src/config-global";
 
 const AgentConfigurationStepRightSection = ({ control, getValues }) => {
   const [open, setOpen] = useState(false);
@@ -217,9 +218,7 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
                     color="text.primary"
                     component={"span"}
                     onClick={() => {
-                      copyToClipboard(
-                        "https://api.futureagi.com/tracer/webhook",
-                      );
+                      copyToClipboard(`${HOST_API}/tracer/webhook`);
                       enqueueSnackbar({
                         message: "Copied to clipboard",
                         variant: "success",
@@ -232,7 +231,7 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
                       },
                     }}
                   >
-                    https://api.futureagi.com/tracer/webhook
+                    {`${HOST_API}/tracer/webhook`}
                   </Typography>
                   {` to the Agent Level Webhook URL on Retell`}
                 </Typography>

@@ -56716,6 +56716,73 @@
                         "description": "Number of results to return per page.",
                         "required": false,
                         "type": "integer"
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 25,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "eval_task_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "period",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "30m",
+                            "6h",
+                            "1d",
+                            "7d",
+                            "30d",
+                            "90d",
+                            "180d",
+                            "365d"
+                        ],
+                        "default": "30d"
+                    },
+                    {
+                        "name": "eval_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "start_date",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "end_date",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    {
+                        "name": "eval_aggregation",
+                        "in": "query",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
+                    },
+                    {
+                        "name": "span_aggregation",
+                        "in": "query",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
                     }
                 ],
                 "responses": {
@@ -56759,7 +56826,8 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true
             },
             "parameters": []
         },
@@ -124172,6 +124240,22 @@
                             "maxItems": 2,
                             "description": "Inclusive start/end ISO timestamps."
                         },
+                        "date_preset": {
+                            "type": "string",
+                            "enum": [
+                                "30m",
+                                "6h",
+                                "today",
+                                "yesterday",
+                                "7d",
+                                "30d",
+                                "3m",
+                                "6m",
+                                "12m",
+                                "custom"
+                            ],
+                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+                        },
                         "created_at": {
                             "type": "string",
                             "description": "Lower-bound ISO timestamp for legacy task filters."
@@ -124519,6 +124603,22 @@
                             "minItems": 2,
                             "maxItems": 2,
                             "description": "Inclusive start/end ISO timestamps."
+                        },
+                        "date_preset": {
+                            "type": "string",
+                            "enum": [
+                                "30m",
+                                "6h",
+                                "today",
+                                "yesterday",
+                                "7d",
+                                "30d",
+                                "3m",
+                                "6m",
+                                "12m",
+                                "custom"
+                            ],
+                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
                         },
                         "created_at": {
                             "type": "string",

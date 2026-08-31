@@ -1,6 +1,7 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "src/utils/test-utils";
+import { screen } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
@@ -133,8 +134,14 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
     useCapabilities: () => ({ data: undefined, isLoading: false }),
   };
 });
+const { deploymentMode } = vi.hoisted(() => ({
+  // Mutable on purpose: TH-7177 tests flip the mode per test. Reset in the
+  // gating suite's beforeEach; default matches cloud so other suites keep
+  // seeing the pre-existing UI.
+  deploymentMode: { mode: "cloud", isCloud: true, isOSS: false, isEE: false },
+}));
 vi.mock("src/hooks/useDeploymentMode", () => ({
-  useDeploymentMode: () => ({ isOSS: false }),
+  useDeploymentMode: () => deploymentMode,
 }));
 
 vi.mock("notistack", async (importOriginal) => {
@@ -205,5 +212,33 @@ describe("EvalPickerConfigFull — task preview time window", () => {
         (f) => f.column_id === "created_at",
       ),
     ).toBe(false);
+  });
+});
+
+describe("EvalPickerConfigFull — error localization gating (TH-7177)", () => {
+  beforeEach(() => {
+    Object.assign(deploymentMode, {
+      mode: "cloud",
+      isCloud: true,
+      isOSS: false,
+      isEE: false,
+    });
+  });
+
+  it("shows the Error Localization checkbox on cloud", () => {
+    renderConfigFull();
+    expect(screen.getByText("Error Localization")).toBeTruthy();
+  });
+
+  it("hides the Error Localization checkbox on OSS", () => {
+    Object.assign(deploymentMode, { mode: "oss", isCloud: false, isOSS: true });
+    renderConfigFull();
+    expect(screen.queryByText("Error Localization")).toBeNull();
+  });
+
+  it("shows the Error Localization checkbox on licensed self-hosted EE", () => {
+    Object.assign(deploymentMode, { mode: "ee", isCloud: false, isEE: true });
+    renderConfigFull();
+    expect(screen.getByText("Error Localization")).toBeTruthy();
   });
 });

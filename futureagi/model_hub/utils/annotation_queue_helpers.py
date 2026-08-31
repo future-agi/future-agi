@@ -1521,7 +1521,8 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             data["type"] = "trace"
             data["trace_id"] = str(item.trace_id)
             data.pop("span_id", None)
-            # The FE picks the voice call UI off project_source == "simulator".
+            # The FE picks the voice call UI off observation_type ==
+            # "conversation", with project_source == "simulator" as a fallback.
             data["project_source"] = _queue_item_project_source(item)
             return data
 

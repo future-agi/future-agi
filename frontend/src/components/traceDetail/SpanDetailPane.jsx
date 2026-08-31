@@ -17,7 +17,7 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import {
@@ -26,7 +26,12 @@ import {
   formatTokenCount,
 } from "src/sections/projects/LLMTracing/formatters";
 import Markdown from "react-markdown";
-import { JsonView, allExpanded, defaultStyles } from "react-json-view-lite";
+import {
+  JsonView,
+  allExpanded,
+  darkStyles,
+  defaultStyles,
+} from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { enqueueSnackbar } from "notistack";
@@ -405,6 +410,8 @@ const JsonPreviewBlock = ({
   hideInlineSearch = false,
 }) => {
   const [jsonSearch, setJsonSearch] = useState("");
+  const isDark = useTheme().palette.mode === "dark";
+  const jsonViewBase = isDark ? darkStyles : defaultStyles;
 
   const jsonData = useMemo(() => {
     const data = {};
@@ -507,11 +514,27 @@ const JsonPreviewBlock = ({
       {/* JSON tree view */}
       <Box
         sx={{
-          maxHeight: "calc(100vh - 380px)",
-          overflow: "auto",
+          // No vertical cap: a fixed height nests a second scroll container
+          // inside the Preview pane and traps the wheel there.
+          overflowX: "auto",
           p: 1,
           fontSize: 12,
-          "& > div": { fontFamily: "monospace !important" },
+          "& > div": {
+            fontFamily: "monospace !important",
+            backgroundColor: "transparent !important",
+          },
+          // Syntax palette, theme-aware via global.css.
+          "& .fi-json-label": { color: "var(--text-primary)" },
+          "& .fi-json-clickable": {
+            color: "var(--text-primary)",
+            fontWeight: 600,
+            cursor: "pointer",
+          },
+          "& .fi-json-string": { color: "var(--syntax-string)" },
+          "& .fi-json-number": { color: "var(--syntax-number)" },
+          "& .fi-json-boolean": { color: "var(--syntax-boolean)" },
+          "& .fi-json-nullish": { color: "var(--text-disabled)" },
+          "& .fi-json-punctuation": { color: "var(--syntax-punctuation)" },
           // Highlight matching text lines
           ...(activeSearch
             ? {
@@ -526,22 +549,21 @@ const JsonPreviewBlock = ({
           data={jsonData}
           shouldExpandNode={allExpanded}
           clickToExpandNode
+          // Class names, not style objects — the objects previously here
+          // became `class="[object Object]"` and applied nothing. Blank
+          // container/basicChildStyle preserves the original spacing.
           style={{
-            ...defaultStyles,
-            container: {
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: "11px",
-              lineHeight: "18px",
-              backgroundColor: "transparent",
-            },
-            basicChildStyle: { paddingLeft: "16px" },
-            label: { color: "var(--text-primary)", fontWeight: 500 },
-            stringValue: { color: "var(--syntax-string)" },
-            numberValue: { color: "var(--syntax-number)" },
-            booleanValue: { color: "var(--syntax-boolean)" },
-            nullValue: { color: "var(--text-disabled)" },
-            undefinedValue: { color: "var(--text-disabled)" },
-            punctuation: { color: "var(--text-disabled)" },
+            ...jsonViewBase,
+            container: "",
+            basicChildStyle: "",
+            label: "fi-json-label",
+            clickableLabel: `${jsonViewBase.clickableLabel} fi-json-clickable`,
+            stringValue: "fi-json-string",
+            numberValue: "fi-json-number",
+            booleanValue: "fi-json-boolean",
+            nullValue: "fi-json-nullish",
+            undefinedValue: "fi-json-nullish",
+            punctuation: "fi-json-punctuation",
           }}
         />
       </Box>
