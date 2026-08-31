@@ -148,6 +148,35 @@ export const evalNodeFormSchema = z.object({
 });
 
 /**
+ * Schema for HTTP Request Node Form
+ */
+export const httpRequestNodeFormSchema = z.object({
+  nodeType: z.literal(NODE_TYPES.HTTP_REQUEST).optional(),
+  nodeId: z.string().optional(),
+  name: z
+    .string()
+    .min(1, "Node name is required")
+    .regex(
+      /^[a-z][a-z0-9_]*$/,
+      "Name must be lowercase letters, numbers, and underscores only",
+    )
+    .trim(),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+  url: z
+    .string()
+    .min(1, "URL is required")
+    .regex(/^https?:\/\//, "URL must start with http:// or https://"),
+  headers: z.record(z.string()).optional().default({}),
+  body: z.union([z.string(), z.object({}).passthrough()]).optional(),
+  authType: z.enum(["none", "bearer", "basic"]).optional().default("none"),
+  authToken: z.string().optional().default(""),
+  authUsername: z.string().optional().default(""),
+  authPassword: z.string().optional().default(""),
+  timeout: z.number().min(1).max(300).optional().default(30),
+  retries: z.number().min(0).max(5).optional().default(0),
+});
+
+/**
  * Get the appropriate schema based on node type
  * @param {string} nodeType - The type of node ('prompt', 'agent', 'eval')
  * @returns {z.ZodSchema} The Zod schema for the node type
@@ -158,6 +187,8 @@ export function getNodeFormSchema(nodeType) {
       return getPromptNodeFormSchema();
     case NODE_TYPES.AGENT:
       return agentNodeFormSchema;
+    case NODE_TYPES.HTTP_REQUEST:
+      return httpRequestNodeFormSchema;
     case "eval":
       return evalNodeFormSchema;
     default:

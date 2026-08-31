@@ -1965,6 +1965,8 @@ export const CreateNodeApiType = {
 
 export type CreateNodeApiPosition = { [key: string]: unknown };
 
+export type CreateNodeApiConfig = { [key: string]: unknown };
+
 /**
  * Type of content item
  */
@@ -2126,6 +2128,7 @@ export interface CreateNodeApi {
   position?: CreateNodeApiPosition;
   source_node_id?: string;
   prompt_template?: PromptTemplateDataApi;
+  config?: CreateNodeApiConfig;
   ports?: PortCreateApi[];
   /** List of input mappings from port display_name to source reference */
   input_mappings?: InputMappingApi[];
@@ -2204,6 +2207,8 @@ export interface NodeReadApi {
   /** UI coordinates {"x": 0, "y": 0} */
   readonly position?: NodeReadApiPosition;
   readonly node_template_id?: string;
+  /** @minLength 1 */
+  readonly node_template_name?: string;
   readonly ref_graph_version_id?: string;
   /** @minLength 1 */
   readonly ref_graph_name?: string;
@@ -2216,6 +2221,8 @@ export interface NodeReadApi {
 
 export type UpdateNodeApiPosition = { [key: string]: unknown };
 
+export type UpdateNodeApiConfig = { [key: string]: unknown };
+
 export interface UpdateNodeApi {
   /**
      * @minLength 1
@@ -2224,6 +2231,7 @@ export interface UpdateNodeApi {
   name?: string;
   position?: UpdateNodeApiPosition;
   prompt_template?: PromptTemplateDataApi;
+  config?: UpdateNodeApiConfig;
   ref_graph_version_id?: string;
   /** List of input mappings from port display_name to source reference */
   input_mappings?: InputMappingApi[];

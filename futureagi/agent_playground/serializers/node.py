@@ -22,6 +22,9 @@ class NodeReadSerializer(serializers.ModelSerializer):
     node_template_id = serializers.UUIDField(
         source="node_template.id", read_only=True, allow_null=True
     )
+    node_template_name = serializers.CharField(
+        source="node_template.name", read_only=True, allow_null=True, default=None
+    )
     ref_graph_version_id = serializers.UUIDField(
         source="ref_graph_version.id", read_only=True, allow_null=True
     )
@@ -50,6 +53,7 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "config",
             "position",
             "node_template_id",
+            "node_template_name",
             "ref_graph_version_id",
             "ref_graph_name",
             "ref_graph_id",
@@ -501,6 +505,7 @@ class CreateNodeSerializer(serializers.Serializer):
     prompt_template = PromptTemplateDataSerializer(
         required=False, allow_null=True, default=None
     )
+    config = serializers.JSONField(required=False, default=dict)
     ports = PortCreateSerializer(many=True, required=False, default=list)
     input_mappings = InputMappingSerializer(
         many=True,
@@ -550,6 +555,7 @@ class UpdateNodeSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, max_length=255)
     position = serializers.JSONField(required=False)
     prompt_template = PromptTemplateDataSerializer(required=False, allow_null=True)
+    config = serializers.JSONField(required=False)
     ref_graph_version_id = serializers.UUIDField(required=False, allow_null=True)
     input_mappings = InputMappingSerializer(
         many=True,

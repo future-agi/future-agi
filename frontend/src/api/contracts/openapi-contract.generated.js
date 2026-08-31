@@ -50686,6 +50686,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "prompt_template": {
           "$ref": "#/definitions/PromptTemplateData"
         },
+        "config": {
+          "title": "Config",
+          "type": "object",
+          "default": {}
+        },
         "ports": {
           "type": "array",
           "items": {
@@ -61762,6 +61767,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "readOnly": true,
+          "x-nullable": true
+        },
+        "node_template_name": {
+          "title": "Node template name",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
           "x-nullable": true
         },
         "ref_graph_version_id": {
@@ -73033,6 +73045,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "prompt_template": {
           "$ref": "#/definitions/PromptTemplateData"
+        },
+        "config": {
+          "title": "Config",
+          "type": "object"
         },
         "ref_graph_version_id": {
           "title": "Ref graph version id",

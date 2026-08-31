@@ -4,6 +4,7 @@ export const NODE_X_OFFSET = 450;
 export const NODE_TYPES = {
   LLM_PROMPT: "llm_prompt",
   AGENT: "agent",
+  HTTP_REQUEST: "http_request",
 };
 
 export const AGENT_NODE = {
@@ -21,6 +22,13 @@ export const NODE_TYPE_CONFIG = {
     description: "Run a prompt against an LLM",
     iconSrc: "/assets/icons/ic_chat_single.svg",
     color: "orange.500",
+  },
+  [NODE_TYPES.HTTP_REQUEST]: {
+    id: NODE_TYPES.HTTP_REQUEST,
+    title: "HTTP Request",
+    description: "Make an HTTP request to an external API",
+    iconSrc: "/assets/icons/integrations/cloud-storage.svg",
+    color: "blue.600",
   },
   [NODE_TYPES.AGENT]: AGENT_NODE,
 };
