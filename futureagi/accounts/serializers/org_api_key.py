@@ -19,3 +19,4 @@ class UserSecretKeySerializer(serializers.Serializer):
 
 class CreateSecretKeySerializer(serializers.Serializer):
     key_name = serializers.CharField(max_length=100, required=True)
+    expires_at = serializers.DateTimeField(required=False, allow_null=True)

@@ -167,7 +167,6 @@ class APIKeyAuthentication(BaseAuthentication):
             ).get(
                 api_key=api_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
 
@@ -175,9 +174,7 @@ class APIKeyAuthentication(BaseAuthentication):
             if not org_api_key.organization:
                 raise AuthenticationFailed("API key has no organization")
 
-            # Validate that the API key is enabled
-            if not org_api_key.enabled:
-                raise AuthenticationFailed("API key is disabled")
+            self._enforce_org_api_key_access(org_api_key)
 
             # Get or create a system user for this organization
             if org_api_key.type == "system":
@@ -201,6 +198,23 @@ class APIKeyAuthentication(BaseAuthentication):
             return user, None
         except OrgApiKey.DoesNotExist as e:
             raise AuthenticationFailed("Invalid API key or secret key") from e
+
+    def _enforce_org_api_key_access(self, org_api_key):
+        """Reject expired keys first, then disabled keys.
+
+        The lookup must not filter on ``enabled=True``. An expired key is
+        auto-disabled, and a subsequent request has to keep matching so the
+        caller still sees "API key has expired" rather than a generic invalid
+        key error.
+        """
+        expires_at = org_api_key.expires_at
+        if expires_at is not None and expires_at <= timezone.now():
+            if org_api_key.enabled:
+                org_api_key.enabled = False
+                org_api_key.save(update_fields=["enabled"])
+            raise AuthenticationFailed("API key has expired")
+        if not org_api_key.enabled:
+            raise AuthenticationFailed("API key is disabled")
 
     def _set_workspace_context(self, request, user):
         """Set workspace context after successful authentication.
@@ -579,7 +593,6 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
             ).get(
                 api_key=public_key,
                 secret_key=secret_key,
-                enabled=True,
                 deleted=False,
             )
         except OrgApiKey.DoesNotExist as e:
@@ -587,6 +600,8 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
 
         if not org_api_key.organization:
             raise AuthenticationFailed("API key has no organization")
+
+        self._enforce_org_api_key_access(org_api_key)
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":

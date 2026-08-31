@@ -23,10 +23,12 @@ import SvgColor from "src/components/svg-color";
 
 const CreateApiKey = ({ open, onClose, refreshGrid }) => {
   const [keyName, setKeyName] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
   const [showKeys, setShowKeys] = useState(false);
 
   const handleClose = () => {
     setKeyName("");
+    setExpiresAt("");
     setShowKeys(false);
     reset();
     onClose();
@@ -38,10 +40,13 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
     isPending: loading,
     reset,
   } = useMutation({
-    mutationFn: () =>
-      axios.post(endpoints.keys.generateSecretKey, {
-        key_name: keyName,
-      }),
+    mutationFn: () => {
+      const payload = { key_name: keyName };
+      if (expiresAt) {
+        payload.expires_at = new Date(expiresAt).toISOString();
+      }
+      return axios.post(endpoints.keys.generateSecretKey, payload);
+    },
     onSuccess: () => {
       setShowKeys(true);
       // trackEvent(Events.saveApiClicked, { [PropertyName.click]: true });
@@ -97,7 +102,14 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
 
         <DialogContent sx={{ padding: 0, margin: 0 }}>
           <ShowComponent condition={!isSecretKey}>
-            <Box sx={{ marginTop: 2 }}>
+            <Box
+              sx={{
+                marginTop: 2,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+            >
               <TextField
                 label={"Key name"}
                 value={keyName}
@@ -113,6 +125,17 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                 variant="outlined"
                 required
                 size="small"
+              />
+              <TextField
+                label="Expires (optional)"
+                type="datetime-local"
+                value={expiresAt}
+                onChange={(e) => setExpiresAt(e.target.value)}
+                fullWidth
+                variant="outlined"
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                helperText="Leave blank for a key that never expires"
               />
             </Box>
           </ShowComponent>
