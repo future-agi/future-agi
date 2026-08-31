@@ -7,6 +7,7 @@ import { NO_DATA_FOR_RANGE_MESSAGE } from "../constants";
 
 const h = vi.hoisted(() => ({
   query: { data: null, isPending: false, isError: false, mutate: vi.fn() },
+  apexProps: null,
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
@@ -14,14 +15,17 @@ vi.mock("src/hooks/useDashboards", () => ({
 }));
 
 vi.mock("react-apexcharts", () => ({
-  default: (props) => (
-    <div
-      data-testid={`apex-${props.type}`}
-      data-series={JSON.stringify(props.series)}
-      data-labels={JSON.stringify(props.options?.labels ?? null)}
-      data-colors={JSON.stringify(props.options?.colors ?? null)}
-    />
-  ),
+  default: (props) => {
+    h.apexProps = props;
+    return (
+      <div
+        data-testid={`apex-${props.type}`}
+        data-series={JSON.stringify(props.series)}
+        data-labels={JSON.stringify(props.options?.labels ?? null)}
+        data-colors={JSON.stringify(props.options?.colors ?? null)}
+      />
+    );
+  },
 }));
 
 vi.mock("../ChartLegend", () => ({
@@ -64,6 +68,7 @@ describe("WidgetChart — empty time-range state", () => {
     h.query.isPending = false;
     h.query.isError = false;
     h.query.data = null;
+    h.apexProps = null;
   });
 
   it("shows the empty-range message when the metric's series has zero data points", () => {
@@ -95,6 +100,50 @@ describe("WidgetChart — empty time-range state", () => {
 
     expect(screen.getByText(NO_DATA_MESSAGE)).toBeInTheDocument();
     expect(screen.queryByTestId("apex-pie")).not.toBeInTheDocument();
+  });
+
+  it("renders distribution buckets as a categorical bar chart", () => {
+    h.query.data = {
+      data: {
+        result: {
+          metrics: [
+            {
+              name: "Accuracy",
+              aggregation: "count",
+              series: [
+                {
+                  name: "total",
+                  data: [
+                    { bucket_start: 0, bucket_end: 0.5, value: 3 },
+                    { bucket_start: 0.5, bucket_end: 1, value: 7 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const distributionWidget = {
+      ...baseWidget,
+      query_config: {
+        ...baseWidget.query_config,
+        query_mode: "distribution",
+      },
+      chart_config: { chart_type: "distribution" },
+    };
+
+    render(<WidgetChart widget={distributionWidget} globalDateRange={null} />);
+
+    expect(screen.getByTestId("apex-bar")).toBeInTheDocument();
+    expect(h.apexProps.options.xaxis.type).toBe("category");
+    expect(h.apexProps.series[0].data).toEqual([
+      { x: "0 - 0.5", y: 3 },
+      { x: "0.5 - 1", y: 7 },
+    ]);
+    expect(h.apexProps.options.tooltip.x.formatter("0 - 0.5")).toBe(
+      "Score range: 0 - 0.5",
+    );
   });
 });
 
