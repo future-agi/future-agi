@@ -70,6 +70,11 @@ class HarnessSourceSerializer(serializers.Serializer):
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(choices=("livekit", "vapi", "retell", "auto"))
+    mode = serializers.ChoiceField(
+        choices=("connect_only", "environment_backed"),
+        required=False,
+        allow_null=True,
+    )
     config = serializers.DictField(default=dict)
     secret_refs = serializers.DictField(
         child=SecretReferenceSerializer(), required=False, default=dict
@@ -102,6 +107,32 @@ class HarnessAgentSerializer(serializers.Serializer):
                     "agent secret_refs only accept purpose target_provider"
                 )
         return value
+
+    def validate(self, attrs):
+        connector = attrs["connector"]
+        mode = attrs.get("mode")
+        config = attrs.get("config") or {}
+        if mode and connector not in {"vapi", "retell"}:
+            raise serializers.ValidationError(
+                {"mode": "provider mode is supported only for Vapi and Retell"}
+            )
+        if mode == "connect_only":
+            target_key = "assistant_id" if connector == "vapi" else "agent_id"
+            if not str(config.get(target_key) or "").strip():
+                raise serializers.ValidationError(
+                    {"config": f"{target_key} is required for connect_only"}
+                )
+        if mode == "environment_backed":
+            if "assistant_id" in config or "agent_id" in config:
+                raise serializers.ValidationError(
+                    {"config": "the provider target ID is produced by repository code"}
+                )
+            manifest = str(config.get("lifecycle_manifest") or "alk.yaml")
+            if manifest.startswith("/") or ".." in manifest.split("/"):
+                raise serializers.ValidationError(
+                    {"config": "lifecycle_manifest must be repository-relative"}
+                )
+        return attrs
 
 
 class HarnessRuntimeSerializer(serializers.Serializer):

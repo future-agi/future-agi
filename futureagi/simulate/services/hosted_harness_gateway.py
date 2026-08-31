@@ -448,6 +448,21 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
                 domains.add(f"{region}-aiplatform.googleapis.com")
     if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"}:
         domains.add("generativelanguage.googleapis.com")
+    if "VAPI_API_KEY" in aliases:
+        # Both repository-owned lifecycle commands and the direct websocket caller use Vapi's
+        # public API. Vapi's documented websocket URL is also hosted on api.vapi.ai.
+        domains.add("api.vapi.ai")
+    if "RETELL_API_KEY" in aliases:
+        # Retell web calls are created through its API, then bridged through Retell's managed
+        # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
+        # instead of asking customers to understand Daytona's network policy.
+        domains.update(
+            {
+                "api.retellai.com",
+                "*.livekit.cloud",
+                "*.turn.livekit.cloud",
+            }
+        )
     return domains
 
 

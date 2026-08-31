@@ -7,6 +7,18 @@ from rest_framework import serializers
 _SHA256 = r"^sha256:[0-9a-f]{64}$"
 
 
+class HarnessIngressRequestSerializer(serializers.Serializer):
+    port = serializers.IntegerField(min_value=1, max_value=65535)
+    expires_in_seconds = serializers.IntegerField(
+        min_value=60, max_value=86400, required=False, default=7200
+    )
+
+
+class HarnessIngressResponseSerializer(serializers.Serializer):
+    url = serializers.URLField()
+    expires_in_seconds = serializers.IntegerField(min_value=60, max_value=86400)
+
+
 def _reject_non_finite(value: float) -> None:
     # FloatField min/max never reject NaN/inf: every comparison with NaN is
     # False, so a `score: NaN` slips past bounds and canonicalizes into

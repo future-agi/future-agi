@@ -218,6 +218,7 @@ def register_attempt(
             "results": f"{prefix}/results/",
             "artifacts": f"{prefix}/artifacts/",
             "scenarios": f"{prefix}/scenarios/",
+            "ingress": f"{prefix}/ingress/",
         },
     }
     return AttemptCapability(

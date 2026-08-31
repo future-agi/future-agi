@@ -164,6 +164,9 @@ export default function HarnessCreate() {
   const [githubRepository, setGithubRepository] = useState("");
   const [githubVisibility, setGithubVisibility] = useState("public");
   const [githubInstallationId, setGithubInstallationId] = useState("");
+  const [connector, setConnector] = useState("auto");
+  const [providerMode, setProviderMode] = useState("environment_backed");
+  const [providerTargetId, setProviderTargetId] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
   const [preflight, setPreflight] = useState(null);
   // A changed input does not invalidate what preflight already told us — it just means the
@@ -265,8 +268,23 @@ export default function HarnessCreate() {
     schema_version: "futureagi.harness-job.v1",
     source: sourcePayload(),
     agent: {
-      connector: "auto",
-      config: configurationValues,
+      connector,
+      ...(connector === "vapi" || connector === "retell"
+        ? { mode: providerMode }
+        : {}),
+      config: {
+        ...configurationValues,
+        ...(connector === "vapi" && providerMode === "connect_only"
+          ? { assistant_id: providerTargetId.trim() }
+          : {}),
+        ...(connector === "retell" && providerMode === "connect_only"
+          ? { agent_id: providerTargetId.trim() }
+          : {}),
+        ...(providerMode === "environment_backed" &&
+        (connector === "vapi" || connector === "retell")
+          ? { lifecycle_manifest: "alk.yaml" }
+          : {}),
+      },
       secret_refs: { ...secretFileRefs, ...secretRefs },
     },
     scenario_count: Number(scenarioCount),
@@ -454,6 +472,19 @@ export default function HarnessCreate() {
   const detectedRequirements = requirements.filter(
     (item) => item.status !== "missing",
   );
+  const providerApiKeyName =
+    connector === "vapi"
+      ? "VAPI_API_KEY"
+      : connector === "retell"
+        ? "RETELL_API_KEY"
+        : null;
+  const providerApiKeyConfigured =
+    !providerApiKeyName ||
+    Boolean(String(environmentValues[providerApiKeyName] || "").trim());
+  const providerTargetConfigured =
+    providerMode !== "connect_only" || Boolean(providerTargetId.trim());
+  const providerConnectionReady =
+    providerApiKeyConfigured && providerTargetConfigured;
   const toggleSecret = (name) =>
     setRevealedSecrets((current) => {
       const next = new Set(current);
@@ -1093,6 +1124,94 @@ export default function HarnessCreate() {
               </Section>
 
               <Section
+                title="Agent connection"
+                description="Let ALK detect the runtime, or explicitly test an agent hosted by Vapi or Retell."
+              >
+                <Stack spacing={1.5}>
+                  <TextField
+                    select
+                    size="small"
+                    label="Agent platform"
+                    value={connector}
+                    onChange={(event) => {
+                      setConnector(event.target.value);
+                      setPreflightDirty(Boolean(preflight));
+                    }}
+                    sx={{ maxWidth: 320 }}
+                  >
+                    <MenuItem value="auto">Detect from repository</MenuItem>
+                    <MenuItem value="livekit">LiveKit</MenuItem>
+                    <MenuItem value="vapi">Vapi</MenuItem>
+                    <MenuItem value="retell">Retell</MenuItem>
+                  </TextField>
+
+                  {(connector === "vapi" || connector === "retell") && (
+                    <>
+                      <Box
+                        role="radiogroup"
+                        aria-label="Provider target setup"
+                        sx={{
+                          display: "grid",
+                          gap: 1.5,
+                          gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                        }}
+                      >
+                        <SourceTile
+                          icon="solar:code-square-linear"
+                          title="Create from repository code"
+                          description="Run alk.yaml to create an isolated temporary agent and remove it after testing."
+                          selected={providerMode === "environment_backed"}
+                          onSelect={() => {
+                            setProviderMode("environment_backed");
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                        />
+                        <SourceTile
+                          icon="solar:link-circle-linear"
+                          title="Use existing agent ID"
+                          description="Connect to the existing provider agent without changing or cloning it."
+                          selected={providerMode === "connect_only"}
+                          onSelect={() => {
+                            setProviderMode("connect_only");
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                        />
+                      </Box>
+                      {providerMode === "connect_only" ? (
+                        <TextField
+                          size="small"
+                          label={
+                            connector === "vapi"
+                              ? "Vapi assistant ID"
+                              : "Retell agent ID"
+                          }
+                          value={providerTargetId}
+                          onChange={(event) => {
+                            setProviderTargetId(event.target.value);
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                          helperText={`The matching ${connector === "vapi" ? "VAPI_API_KEY" : "RETELL_API_KEY"} must be supplied below.`}
+                        />
+                      ) : (
+                        <Alert severity="info" variant="outlined">
+                          The repository must include alk.yaml with explicit provision and
+                          destroy commands. ALK supplies world URLs and the provider API key;
+                          your code owns the complete agent definition.
+                        </Alert>
+                      )}
+                      {!providerApiKeyConfigured && (
+                        <Alert severity="warning" variant="outlined">
+                          Add {providerApiKeyName} in Environment values and click
+                          Use values before starting. ALK stores it as a run-scoped
+                          secret and never writes it into the job or bundle.
+                        </Alert>
+                      )}
+                    </>
+                  )}
+                </Stack>
+              </Section>
+
+              <Section
                 title="Run settings"
                 description="How much of the agent to exercise in this run."
               >
@@ -1133,7 +1252,7 @@ export default function HarnessCreate() {
                       submitting,
                       checking,
                       uploadingSecretFile,
-                    })
+                    }) || !providerConnectionReady
                   }
                   onClick={run}
                   startIcon={

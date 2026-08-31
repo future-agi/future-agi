@@ -44,6 +44,17 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
     }
 
 
+def test_provider_egress_includes_vapi_and_retell_call_hosts():
+    assert _provider_egress_domains({"VAPI_API_KEY": "opaque"}) == {
+        "api.vapi.ai",
+    }
+    assert _provider_egress_domains({"RETELL_API_KEY": "opaque"}) == {
+        "api.retellai.com",
+        "*.livekit.cloud",
+        "*.turn.livekit.cloud",
+    }
+
+
 def test_resolved_egress_rejects_daytona_domain_overflow():
     with pytest.raises(HostedHarnessError, match="Daytona supports at most 20"):
         _validate_resolved_egress_domains(
