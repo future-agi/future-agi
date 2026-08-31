@@ -54,6 +54,7 @@ import {
   stages,
   stageStatus,
   terminalStages,
+  environmentName,
 } from "./harnessShared";
 
 // A tab says where the run is: spinning while its stage is being worked, ticked once it has
@@ -392,7 +393,7 @@ export default function HarnessDetail() {
     <>
       <Helmet>
         <title>
-          {current.job?.metadata?.agent_name || "RL Environment"} | Future AGI
+          {environmentName(current.job, "RL Environment")} | Future AGI
         </title>
       </Helmet>
 
@@ -434,7 +435,7 @@ export default function HarnessDetail() {
               <EnvironmentSwitcher
                 jobs={jobs}
                 currentJobId={jobId}
-                currentName={current.job?.metadata?.agent_name}
+                currentName={environmentName(current.job, "")}
                 onSelect={(nextId) =>
                   navigate(paths.dashboard.simulate.harness.detail(nextId))
                 }
@@ -526,7 +527,7 @@ export default function HarnessDetail() {
             }}
           >
             <Typography variant="h6">
-              {current.job?.metadata?.agent_name}
+              {environmentName(current.job)}
             </Typography>
             <Stack direction="row" alignItems="center" spacing={0.5}>
               <Typography variant="caption" color="text.secondary" noWrap>

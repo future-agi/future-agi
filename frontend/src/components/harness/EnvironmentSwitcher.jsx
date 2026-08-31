@@ -18,6 +18,7 @@ import {
   ICON_GUTTER,
   ICON_SIZE,
   agentTypeIcon,
+  environmentName,
   readable,
   stageStatus,
 } from "src/pages/dashboard/harness/harnessShared";
@@ -41,8 +42,7 @@ export default function EnvironmentSwitcher({
   const close = () => setAnchorEl(null);
 
   const current = jobs.find((item) => item.job?.job_id === currentJobId);
-  const label =
-    current?.job?.metadata?.agent_name || currentName || "RL environment";
+  const label = environmentName(current?.job, currentName || "RL environment");
 
   // A cold load of a detail URL can leave the list request unresolved or failed. Without
   // environments to switch between, a dropdown would open onto nothing but the create row,
@@ -126,7 +126,7 @@ export default function EnvironmentSwitcher({
                 />
                 <Stack sx={{ minWidth: 0, flex: 1 }}>
                   <Typography variant="body2" noWrap>
-                    {item.job.metadata?.agent_name || jobId}
+                    {environmentName(item.job)}
                   </Typography>
                   {updated && (
                     <Typography variant="caption" color="text.secondary" noWrap>
