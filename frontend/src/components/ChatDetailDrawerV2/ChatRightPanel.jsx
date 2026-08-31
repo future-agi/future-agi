@@ -169,6 +169,8 @@ const ChatRightPanel = ({
         score_label: scoreLabel,
         explanation: e?.reason || e?.explanation,
         cell_id: e?.cell_id || e?.cellId,
+        template_type: e?.template_type,
+        composite: e?.composite,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:

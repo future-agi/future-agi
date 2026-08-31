@@ -7,6 +7,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
@@ -166,7 +167,12 @@ const EvalTableRow = ({
   // flow. Rows with just an explanation still expand without it.
   // Composite evals have no localizable input of their own — skip the whole
   // localization flow before computing any of its identifiers.
-  const isComposite = ev?.template_type === "composite";
+  const compositeChildren = Array.isArray(ev?.composite?.children)
+    ? ev.composite.children
+    : [];
+  const hasCompositeBreakdown = compositeChildren.length > 0;
+  const isComposite =
+    ev?.template_type === "composite" || hasCompositeBreakdown;
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -186,7 +192,8 @@ const EvalTableRow = ({
       !!cellId ||
       !!initialStatus ||
       !!(observationSpanId && customEvalConfigId));
-  const canExpand = !!explanation || hasErrorLocalization;
+  const canExpand =
+    !!explanation || hasErrorLocalization || hasCompositeBreakdown;
 
   return (
     <>
@@ -350,7 +357,19 @@ const EvalTableRow = ({
             gap: 1,
           }}
         >
-          {explanation && (
+          {hasCompositeBreakdown && (
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+              }}
+            >
+              <CompositeResultView compositeResult={ev.composite} />
+            </Box>
+          )}
+
+          {explanation && !hasCompositeBreakdown && (
             <Box
               sx={{
                 fontSize: 11,

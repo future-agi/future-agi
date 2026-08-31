@@ -1835,6 +1835,7 @@ class EvalUsageLogItemDetailSerializer(_ExtraFieldsMixin, serializers.Serializer
     )
     model = StringOrObjectField(required=False, allow_null=True)
     version_id = serializers.CharField(required=False, allow_null=True)
+    version_id = serializers.CharField(required=False, allow_null=True)
     version_number = serializers.IntegerField(required=False, allow_null=True)
     # composite-only fields
     children = serializers.ListField(required=False, default=list)
@@ -2346,6 +2347,7 @@ class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
     )
     model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     config_snapshot = serializers.JSONField(required=False, allow_null=True)
+    set_as_default = serializers.BooleanField(required=False, default=True)
 
 
 class EvalTemplateVersionItemSerializer(serializers.Serializer):
@@ -2457,6 +2459,7 @@ class CompositeEvalUpdateRequestSerializer(serializers.Serializer):
         allow_blank=True,
     )
 
+    skip_template_update = serializers.BooleanField(required=False, default=False)
 
 class CompositeEvalExecuteRequestSerializer(serializers.Serializer):
     mapping = serializers.JSONField()

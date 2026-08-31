@@ -96,9 +96,7 @@ const TestDetailConfigureEval = () => {
         evalConfigId: editingEvalItem.id,
         payload: {
           ...payload,
-          ...(executionId
-            ? { run: true, test_execution_id: executionId }
-            : {}),
+          ...(executionId ? { run: true, test_execution_id: executionId } : {}),
         },
       });
 
@@ -122,6 +120,7 @@ const TestDetailConfigureEval = () => {
       mapping: editingEvalItem.mapping || {},
       config: editingEvalItem.config || {},
       run_config: editingEvalItem.config?.run_config || {},
+      pinned_version_id: editingEvalItem.pinned_version_id ?? null,
     };
   }, [editingEvalItem]);
 

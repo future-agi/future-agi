@@ -5,7 +5,7 @@ from django.db import models
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from model_hub.models.eval_groups import EvalGroup
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from tfc.utils.base_model import BaseModel
 
 from .run_test import RunTest
@@ -36,6 +36,14 @@ class SimulateEvalConfig(BaseModel):
         max_length=50,
         choices=StatusType.get_choices(),
         default=StatusType.COMPLETED.value,
+    )
+    pinned_version = models.ForeignKey(
+        EvalTemplateVersion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_simulate_eval_configs",
+        help_text="Pin to a specific template version for runtime.",
     )
 
     eval_group = models.ForeignKey(

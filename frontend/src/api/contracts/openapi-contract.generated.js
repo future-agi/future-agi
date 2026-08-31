@@ -50308,6 +50308,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "code"
           ],
           "x-nullable": true
+        },
+        "skip_template_update": {
+          "title": "Skip template update",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -53790,6 +53795,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid"
         },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "description": "Eval template version to pin for runtime. Omit to leave the current pin unchanged, or pass null to unpin. Ignored for system evals.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
         "filters": {
           "description": "Updated canonical filter list to restrict which test results are evaluated.",
           "type": "array",
@@ -55712,6 +55724,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config snapshot",
           "type": "object",
           "x-nullable": true
+        },
+        "set_as_default": {
+          "title": "Set as default",
+          "type": "boolean",
+          "default": true
         }
       }
     },
@@ -76819,6 +76836,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "description": "Eval template version to pin for runtime. Ignored for system evals. When omitted, a custom eval pins the template's default version.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
@@ -76895,6 +76919,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "uuid",
           "readOnly": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "readOnly": true
+        },
+        "pinned_version_number": {
+          "title": "Pinned version number",
+          "type": "integer",
+          "readOnly": true,
+          "x-nullable": true
         }
       }
     },
@@ -78641,6 +78676,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "error_localizer": {
           "title": "Error localizer",
           "type": "boolean"
+        },
+        "composite": {
+          "title": "Composite",
+          "type": "object",
+          "x-nullable": true
         },
         "error_analysis": {
           "title": "Error analysis",
@@ -95213,6 +95253,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Api key available",
           "type": "boolean",
           "readOnly": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "pinned_version_number": {
+          "title": "Pinned version number",
+          "type": "integer",
+          "readOnly": true,
+          "x-nullable": true
         }
       }
     },

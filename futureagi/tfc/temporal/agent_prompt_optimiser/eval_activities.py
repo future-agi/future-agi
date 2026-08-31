@@ -51,6 +51,11 @@ def serialize_eval_config(eval_config: Any) -> Dict[str, Any]:
         "model": eval_config.model,
         "error_localizer": bool(eval_config.error_localizer),
         "kb_id": str(eval_config.kb_id.id) if eval_config.kb_id else None,
+        "pinned_version_id": (
+            str(eval_config.pinned_version_id)
+            if getattr(eval_config, "pinned_version_id", None)
+            else None
+        ),
         "eval_template": serialized_template,
     }
 
@@ -124,11 +129,39 @@ class EvalConfigProxy:
         self.model = serialized["model"]
         self.error_localizer = serialized["error_localizer"]
         self.kb_id = serialized["kb_id"]
+        self.pinned_version_id = serialized.get("pinned_version_id")
+        self._pinned_version = None
 
         if serialized.get("eval_template"):
             self.eval_template = EvalTemplateProxy(serialized["eval_template"])
         else:
             self.eval_template = None
+
+    @property
+    def pinned_version(self):
+        """The pinned EvalTemplateVersion, fetched on first use.
+
+        The activity runs in a Django context, so the FK is re-read here
+        rather than serialized whole. Deliberately not exposed on
+        EvalTemplateProxy: SimulationEvaluator._resolve_eval_template_for_runner
+        returns the proxy verbatim when it carries an `owner` attribute, and
+        the engine needs the real EvalTemplate for its column-level fields.
+        """
+        if self._pinned_version is not None or not self.pinned_version_id:
+            return self._pinned_version
+        try:
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            self._pinned_version = EvalTemplateVersion.objects.filter(
+                id=self.pinned_version_id, deleted=False
+            ).first()
+        except Exception:
+            logger.warning(
+                "pinned_version_resolution_failed",
+                pinned_version_id=self.pinned_version_id,
+                exc_info=True,
+            )
+        return self._pinned_version
 
 
 class EvalTemplateProxy:

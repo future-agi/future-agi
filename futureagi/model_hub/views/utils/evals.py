@@ -153,6 +153,7 @@ def run_eval_func(
             protect=protect,
             organization_id=org.id,
             workspace_id=workspace.id if workspace else None,
+            version_number=kwargs.get("version_number"),
         )
 
         source_config = {

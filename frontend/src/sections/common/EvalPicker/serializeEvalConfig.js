@@ -58,5 +58,9 @@ export function serializeEvalConfig(evalConfig) {
     },
     error_localizer: !!evalConfig.error_localizer_enabled,
     filters: evalConfig.filters || [],
+
+    ...(evalConfig.versionId
+      ? { pinned_version_id: evalConfig.versionId }
+      : {}),
   };
 }

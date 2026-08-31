@@ -551,6 +551,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
           error_localizer: evalConfig?.errorLocalizer,
           ...(evalConfig?.model && { model: evalConfig.model }),
           ...(evalConfig?.evalGroup && { eval_group: evalConfig.evalGroup }),
+          ...(evalConfig?.pinned_version_id && {
+            pinned_version_id: evalConfig.pinned_version_id,
+          }),
         };
       },
     );
@@ -662,6 +665,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
         [],
       evalTemplateTags: evalConfig.evalTemplate?.tags || [],
       errorLocalizer: !!evalConfig.error_localizer_enabled,
+      pinned_version_id: serialized.pinned_version_id ?? null,
     };
   };
 

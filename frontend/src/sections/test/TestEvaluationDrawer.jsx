@@ -182,6 +182,7 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
                 mapping: editingEvalItem.mapping || {},
                 config: editingEvalItem.config || {},
                 run_config: editingEvalItem.config?.run_config || {},
+                pinned_version_id: editingEvalItem.pinned_version_id ?? null,
               }
             : null
         }

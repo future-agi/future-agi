@@ -434,6 +434,15 @@ class DirectEvaluator:
                 template_name=getattr(eval_template, "name", None),
             )
 
+            from model_hub.services.eval_version_pinning import (
+                resolve_version_for_binding,
+            )
+
+            resolved_version = resolve_version_for_binding(
+                eval_template_for_runner,
+                getattr(eval_config, "pinned_version", None),
+            )
+
             eval_result = run_eval_func(
                 config=config,
                 mappings=updated_mapping,
@@ -442,6 +451,10 @@ class DirectEvaluator:
                 model=eval_template.model or self.execution_model,
                 workspace=self.workspace,
                 source=self.eval_source,
+                version_number=(
+                    resolved_version.version_number if resolved_version else None
+                ),
+                resolved_version=resolved_version,
             )
 
             # DEBUG: Log the full eval result
