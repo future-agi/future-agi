@@ -107,7 +107,7 @@ class EditRunPromptColumnTool(BaseTool):
     ) -> ToolResult:
         from django.db import transaction
 
-        from model_hub.models.choices import SourceChoices, StatusType
+        from model_hub.models.choices import CellStatus, SourceChoices, StatusType
         from model_hub.models.develop_dataset import Cell, Column, Dataset
         from model_hub.models.run_prompt import RunPrompter
         from model_hub.tasks.run_prompt import process_prompts_single
@@ -231,10 +231,12 @@ class EditRunPromptColumnTool(BaseTool):
             if params.tools is not None:
                 rp.tools.set(tool_objects)
 
-            # Clear existing cells for rerun
+            # Clear existing cells for rerun. Cell.status uses the CellStatus
+            # enum ("running"), not StatusType ("Running") — the wrong enum
+            # makes the UI ignore the cells and recovery unable to match them.
             if params.run:
                 Cell.objects.filter(dataset=dataset, column=column).update(
-                    value=None, status=StatusType.RUNNING.value
+                    value=None, status=CellStatus.RUNNING.value
                 )
 
         # Trigger re-execution if requested

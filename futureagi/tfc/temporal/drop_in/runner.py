@@ -211,6 +211,7 @@ async def _start_activity_async(
                 args=safe_args,
                 kwargs=safe_kwargs,
                 queue=queue,
+                time_limit=activity_metadata.get("time_limit"),
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),
             ),

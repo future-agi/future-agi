@@ -516,6 +516,52 @@ class TestEditRunPromptColumnTool:
         assert result.data["name"] == "Updated"
         assert result.data["model"] == "gpt-4o-mini"
 
+    def test_edit_rerun_resets_cells_with_cell_status_enum(
+        self, tool_context, writable_dataset, mock_celery
+    ):
+        """Rerun must write CellStatus ("running") into Cell.status, not
+        StatusType ("Running") — the wrong enum makes the UI ignore the
+        cells and the stuck-run recovery unable to match them."""
+        from model_hub.models.choices import CellStatus
+        from model_hub.models.develop_dataset import Cell, Column, Row
+
+        create_result = run_tool(
+            "add_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "name": "Rerun Column",
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": "test"}],
+                "run": False,
+            },
+            tool_context,
+        )
+        column = Column.objects.get(id=create_result.data["column_id"])
+        row = Row.objects.create(dataset=writable_dataset, order=0)
+        cell = Cell.objects.create(
+            dataset=writable_dataset,
+            column=column,
+            row=row,
+            value="old value",
+            status=CellStatus.PASS.value,
+        )
+
+        result = run_tool(
+            "edit_run_prompt_column",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "column_id": str(column.id),
+                "model": "gpt-4o-mini",
+                "run": True,
+            },
+            tool_context,
+        )
+        assert not result.is_error
+
+        cell.refresh_from_db()
+        assert cell.status == CellStatus.RUNNING.value  # "running", not "Running"
+        assert cell.value is None
+
     def test_edit_nonexistent_column(self, tool_context, writable_dataset):
         result = run_tool(
             "edit_run_prompt_column",

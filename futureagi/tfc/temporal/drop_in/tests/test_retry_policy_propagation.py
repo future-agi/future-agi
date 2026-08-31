@@ -227,6 +227,9 @@ class TestRunnerInputConstruction:
         assert run_input.activity_name == "fixture_activity_for_runner"
         assert run_input.max_retries == 2
         assert run_input.retry_delay == 15
+        # time_limit must reach TaskRunnerInput so the workflow applies the
+        # decorator's start_to_close timeout instead of the 12h default.
+        assert run_input.time_limit == 3600
 
     @pytest.mark.asyncio
     async def test_runner_passes_none_when_activity_unknown(self):
@@ -259,3 +262,35 @@ class TestRunnerInputConstruction:
         run_input = captured["input"]
         assert run_input.max_retries is None
         assert run_input.retry_delay is None
+        assert run_input.time_limit is None  # falls back to workflow default
+
+    @pytest.mark.asyncio
+    async def test_runner_threads_explicit_time_limit(self):
+        """A decorator-declared time_limit must propagate to TaskRunnerInput."""
+        _decorate("fixture_activity_time_limit", time_limit=4 * 3600)
+
+        captured = {}
+
+        async def _capture_start_workflow(workflow_run, run_input, **kwargs):
+            captured["input"] = run_input
+            return MagicMock()
+
+        fake_client = MagicMock()
+        fake_client.start_workflow = AsyncMock(side_effect=_capture_start_workflow)
+        fake_client.namespace = "default"
+
+        with patch(
+            "tfc.temporal.common.client.get_client",
+            new=AsyncMock(return_value=fake_client),
+        ):
+            from tfc.temporal.drop_in.runner import _start_activity_async
+
+            await _start_activity_async(
+                activity_name="fixture_activity_time_limit",
+                args=(),
+                kwargs={},
+                queue="default",
+                task_id="t-3",
+            )
+
+        assert captured["input"].time_limit == 4 * 3600

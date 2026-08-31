@@ -367,6 +367,35 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
+    def refresh_running(self, eval_id: int, ttl: Optional[int] = None) -> bool:
+        """
+        Renew this instance's lease on a running entry.
+
+        Re-writes the entry with a fresh TTL and stamps
+        ``metadata["renewed_at"]`` so other instances can distinguish a live
+        owner (recent renewal) from a dead one (stale renewal). Only the
+        owning instance may renew.
+
+        Args:
+            eval_id: The task ID.
+            ttl: TTL for the renewed entry; defaults to default_ttl.
+
+        Returns:
+            True if renewed, False when the entry is missing, owned by
+            another instance, or Redis is unavailable.
+        """
+        key = str(eval_id)
+        try:
+            info = self.get_running_info(eval_id)
+            if not info or info.instance_id != self._instance_id:
+                return False
+            info.metadata = dict(info.metadata or {})
+            info.metadata["renewed_at"] = datetime.utcnow().isoformat()
+            return self.set(key, info.to_dict(), ttl=ttl)
+        except Exception as e:
+            logger.warning(f"Failed to refresh running entry {eval_id}: {e}")
+            return False
+
     def is_running(self, eval_id: int) -> bool:
         """
         Check if an evaluation is currently running on any instance.
