@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
+import { act } from "react-dom/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
 
@@ -61,7 +62,12 @@ vi.mock("../hooks/useCanEditDashboard", () => ({
 }));
 
 vi.mock("../WidgetChart", () => ({
-  default: () => <div data-testid="widget-chart" />,
+  default: ({ globalDateRange }) => (
+    <div
+      data-testid="widget-chart"
+      data-global-date-range={JSON.stringify(globalDateRange)}
+    />
+  ),
 }));
 
 vi.mock("src/components/snackbar", () => ({
@@ -125,6 +131,62 @@ describe("DashboardDetailView — delete confirmation", () => {
       expect.objectContaining({ onSettled: expect.any(Function) }),
     );
     expect(h.deleteWidget.mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe("DashboardDetailView - time filter debounce", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
+    h.canEdit = { ...WRITER };
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("updates the chip immediately and only propagates the final rapid selection", async () => {
+    render(<DashboardDetailView />);
+
+    const chart = screen.getByTestId("widget-chart");
+    const sevenDayLabel = screen.getByText("7D");
+    const thirtyDayLabel = screen.getByText("30D");
+    const sevenDayChip = sevenDayLabel.closest(".MuiChip-root");
+    const thirtyDayChip = thirtyDayLabel.closest(".MuiChip-root");
+
+    expect(chart).toHaveAttribute("data-global-date-range", "null");
+
+    fireEvent.click(sevenDayChip);
+    expect(sevenDayChip).toHaveClass("MuiChip-filled");
+    expect(chart).toHaveAttribute("data-global-date-range", "null");
+
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+
+    fireEvent.click(thirtyDayChip);
+    expect(thirtyDayChip).toHaveClass("MuiChip-filled");
+    expect(chart).toHaveAttribute("data-global-date-range", "null");
+
+    await act(async () => {
+      vi.advanceTimersByTime(499);
+    });
+
+    expect(chart).toHaveAttribute("data-global-date-range", "null");
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+
+    const updatedChart = screen.getByTestId("widget-chart");
+    expect(
+      JSON.parse(updatedChart.getAttribute("data-global-date-range")),
+    ).toEqual({
+      start: "2026-07-14T12:00:00.250Z",
+      end: "2026-08-13T12:00:00.250Z",
+    });
   });
 });
 
