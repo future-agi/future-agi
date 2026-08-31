@@ -1,0 +1,45 @@
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  collector:
+    container_name: ${SLOT_COLLECTOR_NAME:?SLOT_COLLECTOR_NAME is required}
+    build:
+      context: ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/fi-collector
+      dockerfile: Dockerfile
+    image: ${SLOT_COLLECTOR_IMAGE:-futureagi/slot-collector}:${SLOT_ID:?SLOT_ID is required}
+    env_file:
+      - ${SLOT_ENV_FILE:?SLOT_ENV_FILE is required}
+    environment:
+      FI_CH_URL: http://${SLOT_CH_HOST:-${SLOTS_CLICKHOUSE_NAME:-futureagi-slots-clickhouse}}:8123
+      FI_CH_DATABASE: ${SLOT_CH_DATABASE:?SLOT_CH_DATABASE is required}
+      FI_PG_WRITE: postgres://${SLOTS_PG_USER:-futureagi}:${SLOTS_PG_PASSWORD:-futureagi}@${SLOT_PG_HOST:-${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}}:5432/${SLOT_PG_DB:?SLOT_PG_DB is required}?sslmode=disable
+      FI_PG_READ: postgres://${SLOTS_PG_USER:-futureagi}:${SLOTS_PG_PASSWORD:-futureagi}@${SLOT_PG_HOST:-${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}}:5432/${SLOT_PG_DB:?SLOT_PG_DB is required}?sslmode=disable
+      FI_AUTH_REDIS_ADDR: ${SLOT_REDIS_HOST:-${SLOTS_REDIS_NAME:-futureagi-slots-redis}}:6379
+      FI_AUTH_REDIS_DB: ${SLOT_REDIS_DB:?SLOT_REDIS_DB is required}
+      # fi-collector validates this provider-bound database number (0..63).
+      FI_GRPC_ADDR: ":4317"
+      FI_HTTP_ADDR: ":4318"
+      FI_ADMIN_ADDR: ":9464"
+      FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
+    volumes:
+      - slot-collector-data:/var/lib/fi-collector
+    networks: [slots]
+    healthcheck:
+      # The production image is distroless, so use its built-in probe rather
+      # than a shell/curl command that would always fail in that image.
+      test:
+        ["CMD", "/usr/local/bin/fi-collector", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true
+
+volumes:
+  slot-collector-data:
+    name: ${SLOT_COLLECTOR_VOLUME:-futureagi-slot-${SLOT_ID:-00}-collector-data}

@@ -1,0 +1,230 @@
+# Optional, slot-private CDC stack. Its one-shot initializers are idempotent
+# Compose services, and the `peerdb` target gives lifecycle commands one safe
+# service name that brings up the complete stack.
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+x-peerdb-catalog: &peerdb-catalog
+  PEERDB_CATALOG_HOST: ${SLOT_PEERDB_CATALOG_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-catalog}
+  PEERDB_CATALOG_PORT: "5432"
+  PEERDB_CATALOG_USER: postgres
+  PEERDB_CATALOG_PASSWORD: ${SLOT_PEERDB_PASSWORD:-peerdb}
+  PEERDB_CATALOG_DATABASE: postgres
+
+x-peerdb-flow: &peerdb-flow
+  TEMPORAL_HOST_PORT: ${SLOT_PEERDB_TEMPORAL_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-temporal}:7233
+  PEERDB_TEMPORAL_NAMESPACE: default
+
+x-peerdb-minio: &peerdb-minio
+  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_ACCESS_KEY_ID: ${SLOT_PEERDB_MINIO_USER:-peerdb}
+  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_SECRET_ACCESS_KEY: ${SLOT_PEERDB_MINIO_PASSWORD:-peerdb-local-only}
+  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_REGION: us-east-1
+  PEERDB_CLICKHOUSE_AWS_CREDENTIALS_AWS_ENDPOINT_URL_S3: http://${SLOT_PEERDB_MINIO_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-minio}:9000
+  PEERDB_CLICKHOUSE_AWS_S3_BUCKET_NAME: ${SLOT_PEERDB_MINIO_BUCKET:-peerdb}
+
+services:
+  peerdb-catalog:
+    image: postgres:16-alpine
+    container_name: ${SLOT_PEERDB_CATALOG_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-catalog}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${SLOT_PEERDB_PASSWORD:-peerdb}
+      POSTGRES_DB: postgres
+    volumes: ["slot-peerdb-catalog-data:/var/lib/postgresql/data"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  peerdb-temporal:
+    image: temporalio/auto-setup:1.29.1
+    container_name: ${SLOT_PEERDB_TEMPORAL_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-temporal}
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PWD: ${SLOT_PEERDB_PASSWORD:-peerdb}
+      POSTGRES_SEEDS: ${SLOT_PEERDB_CATALOG_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-catalog}
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    volumes:
+      - ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/futureagi/config/peerdb/temporal-dynamicconfig.yaml:/etc/temporal/config/dynamicconfig/development-sql.yaml:ro
+    networks: [slots]
+    depends_on:
+      peerdb-catalog: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x temporal-server"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # PeerDB requires this Temporal search attribute. Wait for the server, then
+  # accept only the known `already exists` response as an idempotent success.
+  peerdb-temporal-init:
+    image: temporalio/admin-tools:1.29.6
+    container_name: ${SLOT_PEERDB_TEMPORAL_INIT_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-temporal-init}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        attempt=0;
+        while :; do
+          if attributes=$$(temporal operator search-attribute list --namespace default --address "$${PEERDB_TEMPORAL_ADDRESS}" 2>&1); then
+            if printf '%s\n' "$$attributes" | grep -Eq '(^|[[:space:]])MirrorName([[:space:]]|$$)'; then exit 0; fi;
+            if output=$$(temporal operator search-attribute create --namespace default --name MirrorName --type Keyword --address "$${PEERDB_TEMPORAL_ADDRESS}" 2>&1); then exit 0; fi;
+            if printf '%s\n' "$$output" | grep -qi 'already exists'; then exit 0; fi;
+            printf '%s\n' "$$output" >&2; exit 1;
+          fi;
+          attempt=$$((attempt + 1));
+          if [ "$$attempt" -ge 30 ]; then printf '%s\n' "$$attributes" >&2; exit 1; fi;
+          sleep 2;
+        done
+    environment:
+      PEERDB_TEMPORAL_ADDRESS: ${SLOT_PEERDB_TEMPORAL_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-temporal}:7233
+    networks: [slots]
+    depends_on:
+      peerdb-temporal: {condition: service_healthy}
+    restart: "no"
+
+  peerdb-minio:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    container_name: ${SLOT_PEERDB_MINIO_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-minio}
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${SLOT_PEERDB_MINIO_USER:-peerdb}
+      MINIO_ROOT_PASSWORD: ${SLOT_PEERDB_MINIO_PASSWORD:-peerdb-local-only}
+    volumes: ["slot-peerdb-minio-data:/data"]
+    networks: [slots]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # PeerDB's ClickHouse staging bucket is separate from the application MinIO
+  # bucket. The runtime can safely rerun this one-shot initializer.
+  peerdb-minio-init:
+    image: minio/minio:RELEASE.2025-02-07T23-21-09Z
+    container_name: ${SLOT_PEERDB_MINIO_INIT_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-minio-init}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until mc alias set local http://${SLOT_PEERDB_MINIO_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-minio}:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done;
+        mc mb --ignore-existing "local/${SLOT_PEERDB_MINIO_BUCKET:-peerdb}"
+    environment:
+      MINIO_ROOT_USER: ${SLOT_PEERDB_MINIO_USER:-peerdb}
+      MINIO_ROOT_PASSWORD: ${SLOT_PEERDB_MINIO_PASSWORD:-peerdb-local-only}
+    networks: [slots]
+    depends_on:
+      peerdb-minio: {condition: service_healthy}
+    restart: "no"
+
+  peerdb-flow-api:
+    image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
+    container_name: ${SLOT_PEERDB_FLOW_API_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-flow-api}
+    environment:
+      <<: [*peerdb-catalog, *peerdb-flow, *peerdb-minio]
+    networks: [slots]
+    depends_on:
+      peerdb-temporal: {condition: service_healthy}
+      peerdb-minio-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  peerdb-flow-worker:
+    image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
+    container_name: ${SLOT_PEERDB_FLOW_WORKER_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-flow-worker}
+    environment:
+      <<: [*peerdb-catalog, *peerdb-flow, *peerdb-minio]
+    networks: [slots]
+    depends_on:
+      peerdb-temporal: {condition: service_healthy}
+      peerdb-minio-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  peerdb-server:
+    image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
+    container_name: ${SLOT_PEERDB_SERVER_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-server}
+    stop_signal: SIGINT
+    environment:
+      <<: *peerdb-catalog
+      PEERDB_PASSWORD: ${SLOT_PEERDB_PASSWORD:-peerdb}
+      PEERDB_FLOW_SERVER_ADDRESS: grpc://${SLOT_PEERDB_FLOW_API_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-flow-api}:8112
+    networks: [slots]
+    depends_on:
+      peerdb-catalog: {condition: service_healthy}
+    restart: unless-stopped
+
+  peerdb-ui:
+    image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
+    container_name: ${SLOT_PEERDB_UI_NAME:?SLOT_PEERDB_UI_NAME is required}
+    environment:
+      <<: *peerdb-catalog
+      PEERDB_FLOW_SERVER_HTTP: http://${SLOT_PEERDB_FLOW_API_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-flow-api}:8113
+      NEXTAUTH_SECRET: ${SLOT_PEERDB_NEXTAUTH_SECRET:-peerdb-local-only}
+      NEXTAUTH_URL: http://peerdb.${SLOT:?SLOT is required}.localhost:${SLOTS_HTTP_PORT:-80}
+    networks: [slots]
+    depends_on:
+      peerdb-flow-api: {condition: service_started}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Canonical peer/mirror setup, bound to the selected backend provider rather
+  # than root-compose service names. The script retries server readiness and is
+  # intentionally idempotent (`CREATE ... IF NOT EXISTS`).
+  peerdb-init:
+    image: postgres:16
+    container_name: ${SLOT_PEERDB_INIT_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-init}
+    entrypoint: ["/bin/bash", "/scripts/peerdb-setup-mirrors.sh"]
+    environment:
+      PEERDB_HOST: ${SLOT_PEERDB_SERVER_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-server}
+      PEERDB_PORT: "9900"
+      SRC_PG_HOST: ${SLOT_PG_HOST:-${SLOTS_POSTGRES_NAME:-futureagi-slots-postgres}}
+      SRC_PG_PORT: "5432"
+      SRC_PG_USER: ${SLOTS_PG_USER:-futureagi}
+      SRC_PG_PASSWORD: ${SLOTS_PG_PASSWORD:-futureagi}
+      SRC_PG_DB: ${SLOT_PG_DB:?SLOT_PG_DB is required}
+      DST_CH_HOST: ${SLOT_CH_HOST:-${SLOTS_CLICKHOUSE_NAME:-futureagi-slots-clickhouse}}
+      DST_CH_PORT: "9000"
+      DST_CH_USER: ${SLOTS_CH_USER:-default}
+      DST_CH_PASSWORD: ${SLOTS_CH_PASSWORD:-}
+      DST_CH_DB: ${SLOT_CH_DATABASE:?SLOT_CH_DATABASE is required}
+    volumes:
+      - ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/futureagi/scripts/peerdb-setup-mirrors.sh:/scripts/peerdb-setup-mirrors.sh:ro
+    networks: [slots]
+    depends_on:
+      peerdb-server: {condition: service_started}
+      peerdb-temporal-init: {condition: service_completed_successfully}
+      peerdb-minio-init: {condition: service_completed_successfully}
+    restart: "no"
+
+  # The lifecycle provider target. Compose starts all dependencies, including
+  # the one-shot initialization services, before marking this target complete.
+  peerdb:
+    image: busybox:1.36
+    container_name: ${SLOT_PEERDB_AGGREGATE_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-peerdb-aggregate}
+    command: ["true"]
+    networks: [slots]
+    depends_on:
+      peerdb-flow-worker: {condition: service_started}
+      peerdb-ui: {condition: service_started}
+      peerdb-init: {condition: service_completed_successfully}
+      peerdb-minio-init: {condition: service_completed_successfully}
+    restart: "no"
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true
+
+volumes:
+  slot-peerdb-catalog-data:
+    name: ${SLOT_PEERDB_CATALOG_VOLUME:-futureagi-slot-${SLOT_ID:-00}-peerdb-catalog-data}
+  slot-peerdb-minio-data:
+    name: ${SLOT_PEERDB_MINIO_VOLUME:-futureagi-slot-${SLOT_ID:-00}-peerdb-minio-data}

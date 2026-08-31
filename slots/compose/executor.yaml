@@ -1,0 +1,27 @@
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  executor:
+    container_name: ${SLOT_EXECUTOR_NAME:?SLOT_EXECUTOR_NAME is required}
+    build:
+      context: ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/futureagi/code-executor
+      dockerfile: Dockerfile
+    image: ${SLOT_EXECUTOR_IMAGE:-futureagi/slot-executor}:${SLOT_ID:?SLOT_ID is required}
+    env_file:
+      - ${SLOT_ENV_FILE:?SLOT_ENV_FILE is required}
+    privileged: true
+    deploy:
+      resources:
+        limits: {memory: 1G, cpus: "2"}
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8060/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true

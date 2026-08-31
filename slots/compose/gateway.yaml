@@ -1,0 +1,34 @@
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  gateway:
+    container_name: ${SLOT_GATEWAY_NAME:?SLOT_GATEWAY_NAME is required}
+    build:
+      context: ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/agentcc-gateway
+      dockerfile: Dockerfile
+    image: ${SLOT_GATEWAY_IMAGE:-futureagi/slot-gateway}:${SLOT_ID:?SLOT_ID is required}
+    env_file:
+      - ${SLOT_ENV_FILE:?SLOT_ENV_FILE is required}
+    environment:
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
+      AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/Vertex_AI_Creds.json
+      AGENTCC_REDIS_ADDRESS: ${SLOT_REDIS_HOST:-${SLOTS_REDIS_NAME:-futureagi-slots-redis}}:6379
+      AGENTCC_REDIS_DB: ${SLOT_REDIS_DB:?SLOT_REDIS_DB is required}
+    volumes:
+      - ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro
+    networks: [slots]
+    # The production image is `FROM scratch`: it has neither a shell nor wget.
+    # Runtime health validation must probe the routed /healthz endpoint instead.
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true

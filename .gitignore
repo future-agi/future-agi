@@ -249,6 +249,9 @@ uninstall-*.log
 # Local compose override (developer testing, not shipped)
 docker-compose.override.yml
 
+# Slot orchestrator runtime state. Configuration and skills under slots/,
+# .claude/skills/, and .agents/skills/ remain tracked.
+/.slots/
 
 # (The private repo's own .gitignore now lives inside futureagi/ee/cloud/,
 # which is already ignored above — no separate rule needed.)

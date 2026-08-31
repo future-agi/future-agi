@@ -1,0 +1,7 @@
+interface:
+  display_name: "FutureAGI Slots"
+  short_description: "Operate parallel worktree development stacks"
+  default_prompt: "Use $futureagi-slots to start or operate a safe parallel development slot for this worktree."
+
+policy:
+  allow_implicit_invocation: true

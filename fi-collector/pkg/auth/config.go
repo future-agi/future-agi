@@ -8,6 +8,7 @@ type Config struct {
 	PGWrite     string        `yaml:"pg_write"`
 	PGRead      string        `yaml:"pg_read"`
 	RedisAddr   string        `yaml:"redis_addr"`
+	RedisDB     int           `yaml:"redis_db"`
 	CacheTTL    time.Duration `yaml:"cache_ttl"`
 	WarmTTL     time.Duration `yaml:"warm_ttl"`
 	PGPoolRead  int           `yaml:"pg_pool_read"`

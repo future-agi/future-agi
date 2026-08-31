@@ -1,0 +1,50 @@
+# Always include this template. The frontend remains private even when every
+# other provider is shared, and Traefik reaches it over the external network.
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  frontend:
+    container_name: ${SLOT_FRONTEND_NAME:?SLOT_FRONTEND_NAME is required}
+    build:
+      context: ${SLOT_WORKTREE:?SLOT_WORKTREE is required}
+      dockerfile: frontend/Dockerfile
+      target: dev
+    image: ${SLOT_FRONTEND_IMAGE:-futureagi/slot-frontend}:${SLOT_ID:?SLOT_ID is required}
+    working_dir: /app
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        lock_hash=$$(sha256sum yarn.lock | cut -d ' ' -f1)
+        installed_hash=$$(cat node_modules/.slot-lock-hash 2>/dev/null || true)
+        if [ ! -x node_modules/.bin/vite ] || [ "$$installed_hash" != "$$lock_hash" ]; then
+          yarn install --frozen-lockfile --network-timeout 600000
+          printf '%s\n' "$$lock_hash" > node_modules/.slot-lock-hash
+        fi
+        exec yarn dev --host 0.0.0.0 --port 3000
+    env_file:
+      - ${SLOT_ENV_FILE:?SLOT_ENV_FILE is required}
+    environment:
+      VITE_USE_POLLING: "true"
+      VITE_HOST_API: http://api.${SLOT:?SLOT is required}.localhost:${SLOTS_HTTP_PORT:-80}
+      VITE_ENVIRONMENT: development
+    volumes:
+      - ${SLOT_WORKTREE:?SLOT_WORKTREE is required}/frontend:/app
+      - slot-frontend-node-modules:/app/node_modules
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 300s
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true
+
+volumes:
+  slot-frontend-node-modules:
+    name: ${SLOT_FRONTEND_NODE_MODULES_VOLUME:-futureagi-slot-${SLOT_ID:-00}-frontend-node-modules}

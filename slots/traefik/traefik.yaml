@@ -1,0 +1,20 @@
+# Static Traefik configuration for the shared slot control plane.
+# Dynamic routers are generated from routes.template.yaml into SLOTS_ROUTE_DIR.
+entryPoints:
+  web:
+    address: ":80"
+
+api:
+  dashboard: false
+
+ping: {}
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+log:
+  level: WARN
+
+accessLog: {}

@@ -1,0 +1,22 @@
+name: ${SLOT_PROJECT:?SLOT_PROJECT is required}
+
+services:
+  observability:
+    image: jaegertracing/all-in-one:1.65.0
+    container_name: ${SLOT_OBSERVABILITY_NAME:-futureagi-slot-${SLOT_ID:?SLOT_ID is required}-jaeger}
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: ${SLOT_JAEGER_MAX_TRACES:-50000}
+    networks: [slots]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:16686 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  slots:
+    name: ${SLOTS_NETWORK:-futureagi-slots}
+    external: true

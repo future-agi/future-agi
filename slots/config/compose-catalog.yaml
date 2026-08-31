@@ -1,0 +1,258 @@
+# Stable interface between the slot planner and Compose/routing templates.
+# Values marked required are emitted into the private, mode-0600 slot env file.
+# The worktree-root .env is copied first; generated topology is appended last so
+# application configuration is inherited without allowing it to replace slot
+# identity, routing, or state values with the same key.
+version: 1
+
+compose:
+  control_plane: slots/compose/control-plane.yaml
+  isolated_infra: slots/compose/isolated-infra.yaml
+  frontend: slots/compose/frontend.yaml
+  backend: slots/compose/backend.yaml
+  simulation: slots/compose/simulation.yaml
+  gateway: slots/compose/gateway.yaml
+  collector: slots/compose/collector.yaml
+  serving: slots/compose/serving.yaml
+  executor: slots/compose/executor.yaml
+  peerdb: slots/compose/peerdb.yaml
+  observability: slots/compose/observability.yaml
+  traefik_static: slots/traefik/traefik.yaml
+  traefik_routes_template: slots/traefik/routes.template.yaml
+
+environment:
+  control_plane:
+    SLOTS_CONTROL_PROJECT: futureagi-slots
+    SLOTS_NETWORK: futureagi-slots
+    SLOTS_HTTP_PORT: "80"
+    SLOTS_STATE_DIR: required
+    SLOTS_ROUTE_DIR: required
+    SLOTS_TRAEFIK_NAME: futureagi-slots-traefik
+    SLOTS_POSTGRES_NAME: futureagi-slots-postgres
+    SLOTS_CLICKHOUSE_NAME: futureagi-slots-clickhouse
+    SLOTS_REDIS_NAME: futureagi-slots-redis
+    SLOTS_RABBITMQ_NAME: futureagi-slots-rabbitmq
+    SLOTS_MINIO_NAME: futureagi-slots-minio
+    SLOTS_TEMPORAL_NAME: futureagi-slots-temporal
+    SLOTS_TEMPORAL_UI_NAME: futureagi-slots-temporal-ui
+  slot:
+    SLOT: required
+    SLOT_ID: required # zero-padded 01..20
+    SLOT_PROJECT: required
+    SLOT_WORKTREE: required
+    SLOT_ENV_FILE: required
+    SLOT_STATE_ID: required # e.g. futureagi-slot-03
+    SLOT_ROUTE_FILE: required
+    SLOT_FRONTEND_NAME: required
+    SLOT_BACKEND_NAME: required
+    SLOT_WORKER_NAME: required
+    SLOT_SIMULATION_NAME: required
+    SLOT_GATEWAY_NAME: required
+    SLOT_COLLECTOR_NAME: required
+    SLOT_SERVING_NAME: required
+    SLOT_EXECUTOR_NAME: required
+    SLOT_PEERDB_UI_NAME: required
+    SLOT_OBSERVABILITY_NAME: required
+    SLOT_PG_DB: required
+    SLOT_CH_DATABASE: required
+    SLOT_REDIS_DB: required
+    SLOT_REDIS_CACHE_DB: required
+    SLOT_REDIS_LOCK_DB: required
+    SLOT_RABBITMQ_VHOST: required
+    SLOT_MINIO_BUCKET: required
+    SLOT_TEMPORAL_NAMESPACE: required
+    # Optional explicit isolated resource names.  Compose defaults below are
+    # deterministic, but emitting them makes route selection inspectable.
+    SLOT_ISOLATED_POSTGRES_NAME: optional
+    SLOT_ISOLATED_CLICKHOUSE_NAME: optional
+    SLOT_ISOLATED_REDIS_NAME: optional
+    SLOT_ISOLATED_RABBITMQ_NAME: optional
+    SLOT_ISOLATED_MINIO_NAME: optional
+    SLOT_ISOLATED_TEMPORAL_NAME: optional
+    SLOT_ISOLATED_TEMPORAL_POSTGRES_NAME: optional
+    SLOT_TEMPORAL_UI_NAME: optional
+    SLOT_TEMPORAL_POSTGRES_USER: optional
+    SLOT_TEMPORAL_POSTGRES_PASSWORD: optional
+    SLOT_TEMPORAL_POSTGRES_DB: optional
+    # Provider identity overrides. The runtime must emit the shared values in
+    # shared_provider_overrides for a shared project; omitting them preserves
+    # the slot-private defaults embedded in each Compose template.
+    SLOT_BACKEND_MEDIA_VOLUME: optional
+    SLOT_COLLECTOR_VOLUME: optional
+    SLOT_PEERDB_CATALOG_NAME: optional
+    SLOT_PEERDB_TEMPORAL_NAME: optional
+    SLOT_PEERDB_TEMPORAL_INIT_NAME: optional
+    SLOT_PEERDB_MINIO_NAME: optional
+    SLOT_PEERDB_MINIO_INIT_NAME: optional
+    SLOT_PEERDB_FLOW_API_NAME: optional
+    SLOT_PEERDB_FLOW_WORKER_NAME: optional
+    SLOT_PEERDB_SERVER_NAME: optional
+    SLOT_PEERDB_INIT_NAME: optional
+    SLOT_PEERDB_AGGREGATE_NAME: optional
+    SLOT_PEERDB_CATALOG_VOLUME: optional
+    SLOT_PEERDB_MINIO_VOLUME: optional
+    SLOT_PORT_BASE: required # 20000 + SLOT * 100; host mappings are loopback-only
+    SLOT_POSTGRES_PORT: optional # SLOT_PORT_BASE + 1, for isolated postgres
+    SLOT_CLICKHOUSE_HTTP_PORT: optional # SLOT_PORT_BASE + 2
+    SLOT_CLICKHOUSE_NATIVE_PORT: optional # SLOT_PORT_BASE + 3
+    SLOT_REDIS_PORT: optional # SLOT_PORT_BASE + 4
+    SLOT_RABBITMQ_PORT: optional # SLOT_PORT_BASE + 5
+    SLOT_RABBITMQ_MANAGEMENT_PORT: optional # SLOT_PORT_BASE + 6
+    SLOT_MINIO_API_PORT: optional # SLOT_PORT_BASE + 7
+    SLOT_MINIO_CONSOLE_PORT: optional # SLOT_PORT_BASE + 8
+    SLOT_TEMPORAL_PORT: optional # SLOT_PORT_BASE + 9
+
+isolated_infra:
+  volumes:
+    postgres: futureagi_slot_${slot_id}_postgres_data
+    clickhouse: futureagi_slot_${slot_id}_clickhouse_data
+    redis: futureagi_slot_${slot_id}_redis_data
+    rabbitmq: futureagi_slot_${slot_id}_rabbitmq_data
+    minio: futureagi_slot_${slot_id}_minio_data
+    temporal: futureagi_slot_${slot_id}_temporal_data
+  startup_services:
+    minio: [isolated-minio, isolated-minio-init]
+    temporal: [isolated-temporal-postgres, isolated-temporal, isolated-temporal-init, isolated-temporal-ui]
+  initialization:
+    rabbitmq: SLOT_RABBITMQ_VHOST
+    minio: SLOT_MINIO_BUCKET
+    temporal: SLOT_TEMPORAL_NAMESPACE
+
+provider_groups:
+  none: []
+  backend: [backend, worker]
+  simulation: [simulation]
+  gateway: [gateway]
+  collector: [collector]
+  serving: [serving]
+  executor: [executor]
+  peerdb: [peerdb, peerdb-catalog, peerdb-temporal, peerdb-temporal-init, peerdb-minio, peerdb-minio-init, peerdb-flow-api, peerdb-flow-worker, peerdb-server, peerdb-ui, peerdb-init]
+  observability: [observability]
+  all: [backend, worker, simulation, gateway, collector, serving, executor, peerdb, observability]
+
+# Names supplied when an omitted provider is started once as a shared default.
+# Runtime must write these values into the owner slot's generated env file;
+# Compose uses its documented slot-name fallbacks only for private providers.
+shared_provider_overrides:
+  backend:
+    SLOT_BACKEND_NAME: shared-backend
+    SLOT_WORKER_NAME: shared-backend-worker
+    SLOT_BACKEND_MEDIA_VOLUME: futureagi-shared-backend-media
+  simulation:
+    SLOT_SIMULATION_NAME: shared-simulation
+  gateway:
+    SLOT_GATEWAY_NAME: shared-gateway
+  collector:
+    SLOT_COLLECTOR_NAME: shared-collector
+    SLOT_COLLECTOR_VOLUME: futureagi-shared-collector-data
+  serving:
+    SLOT_SERVING_NAME: shared-serving
+  executor:
+    SLOT_EXECUTOR_NAME: shared-executor
+  observability:
+    SLOT_OBSERVABILITY_NAME: shared-observability
+  peerdb:
+    SLOT_PEERDB_AGGREGATE_NAME: shared-peerdb-aggregate
+    SLOT_PEERDB_CATALOG_NAME: shared-peerdb-catalog
+    SLOT_PEERDB_TEMPORAL_NAME: shared-peerdb-temporal
+    SLOT_PEERDB_TEMPORAL_INIT_NAME: shared-peerdb-temporal-init
+    SLOT_PEERDB_MINIO_NAME: shared-peerdb-minio
+    SLOT_PEERDB_MINIO_INIT_NAME: shared-peerdb-minio-init
+    SLOT_PEERDB_FLOW_API_NAME: shared-peerdb-flow-api
+    SLOT_PEERDB_FLOW_WORKER_NAME: shared-peerdb-flow-worker
+    SLOT_PEERDB_SERVER_NAME: shared-peerdb-server
+    SLOT_PEERDB_UI_NAME: shared-peerdb-ui
+    SLOT_PEERDB_INIT_NAME: shared-peerdb-init
+    SLOT_PEERDB_CATALOG_VOLUME: futureagi-shared-peerdb-catalog-data
+    SLOT_PEERDB_MINIO_VOLUME: futureagi-shared-peerdb-minio-data
+
+private_provider_defaults:
+  containers: futureagi-slot-${slot_id}-${provider} (or the documented PeerDB component suffix)
+  backend_media_volume: futureagi-slot-${slot_id}-backend-media
+  collector_volume: futureagi-slot-${slot_id}-collector-data
+  peerdb_catalog_volume: futureagi-slot-${slot_id}-peerdb-catalog-data
+  peerdb_minio_volume: futureagi-slot-${slot_id}-peerdb-minio-data
+
+state_coupled_provider_closure:
+  backend: [backend, worker]
+  simulation:
+    requires: [backend]
+    state: uses the selected backend provider's PostgreSQL, ClickHouse, Redis, RabbitMQ, MinIO, and Temporal tuple
+  collector:
+    requires: [backend]
+    state: uses the selected backend provider's PostgreSQL, ClickHouse, and Redis tuple
+  peerdb:
+    requires: [backend]
+    state: mirrors the selected backend provider's PostgreSQL database into its selected ClickHouse database
+
+teardown_contract:
+  ordinary_down: docker compose down without --volumes; provider data is retained
+  volume_removal: only exact named volumes selected by the generated SLOT_*_VOLUME overrides may be removed
+  shared_refusal: shared provider volumes are never selected by slot-purge
+
+routes:
+  frontend: {host: "${slot}.localhost", target_env: SLOT_FRONTEND_NAME, port: 3000}
+  backend: {host: "api.${slot}.localhost", target_env: SLOT_BACKEND_NAME, port: 80}
+  temporal: {host: "temporal.${slot}.localhost", target_env: SLOTS_TEMPORAL_UI_NAME, port: 8080}
+  minio: {host: "minio.${slot}.localhost", target_env: SLOTS_MINIO_NAME, port: 9000}
+  minio_console: {host: "minio-console.${slot}.localhost", target_env: SLOTS_MINIO_NAME, port: 9001}
+  rabbitmq: {host: "rabbitmq.${slot}.localhost", target_env: SLOTS_RABBITMQ_NAME, port: 15672}
+  gateway: {host: "gateway.${slot}.localhost", target_env: SLOT_GATEWAY_NAME, port: 8080}
+  serving: {host: "serving.${slot}.localhost", target_env: SLOT_SERVING_NAME, port: 8080}
+  collector: {host: "collector.${slot}.localhost", target_env: SLOT_COLLECTOR_NAME, port: 9464}
+  executor: {host: "executor.${slot}.localhost", target_env: SLOT_EXECUTOR_NAME, port: 8060}
+  jaeger: {host: "jaeger.${slot}.localhost", target_env: SLOT_OBSERVABILITY_NAME, port: 16686}
+  peerdb: {host: "peerdb.${slot}.localhost", target_env: SLOT_PEERDB_UI_NAME, port: 3000}
+
+public_urls:
+  scheme: http
+  port_env: SLOTS_HTTP_PORT
+  default_port: "80"
+  rendering: omit the port when SLOTS_HTTP_PORT is 80; otherwise append :${SLOTS_HTTP_PORT}
+
+# The route file is per-slot, but its template tokens retain the historical
+# SLOTS_* names.  Before rendering an isolated slot, the runtime must choose
+# the matching isolated container names below instead of the control-plane
+# defaults.  It must also start temporal's init/UI services listed above.
+runtime_requirements:
+  completion_contracts:
+    peerdb:
+      aggregate_service: peerdb
+      initializers: [peerdb-temporal-init, peerdb-minio-init, peerdb-init]
+      success_condition: service_completed_successfully
+      startup_gate: compose_up_dependency_conditions
+  route_target_selection:
+    shared:
+      SLOTS_MINIO_NAME: futureagi-slots-minio
+      SLOTS_RABBITMQ_NAME: futureagi-slots-rabbitmq
+      SLOTS_TEMPORAL_UI_NAME: futureagi-slots-temporal-ui
+    isolated:
+      minio: SLOT_ISOLATED_MINIO_NAME
+      rabbitmq: SLOT_ISOLATED_RABBITMQ_NAME
+      temporal: SLOT_TEMPORAL_UI_NAME
+  isolated_compose:
+    - Emit the SLOT_ISOLATED_* names (or accept the documented Compose defaults).
+    - Start isolated-minio, then run isolated-minio-init with --rm to create SLOT_MINIO_BUCKET.
+    - Start isolated-temporal-init and isolated-temporal-ui with isolated-temporal.
+    - Route MinIO API to port 9000; expose the console only at minio-console.${slot}.localhost.
+  public_status:
+    - Build all returned browser URLs with public_urls.port_env.
+  health:
+    - Probe gateway through http://gateway.${slot}.localhost[:SLOTS_HTTP_PORT]/healthz because its scratch image has no in-container probe.
+  reload:
+    backend: bind-mounted Django source with the local development entrypoint reload.
+    frontend: bind-mounted Vite source with the dev server reload.
+    simulation: bind-mounted backend source; restart its worker after dependency changes.
+    collector: immutable distroless image; rebuild and recreate after source changes.
+    gateway: immutable scratch image; rebuild and recreate after source/config changes.
+    serving: image-based provider; rebuild and recreate after source changes.
+    executor: image-based provider; rebuild and recreate after source changes.
+
+invariants:
+  - The control plane and every provider join the pre-created external SLOTS_NETWORK.
+  - Traefik only reads generated file-provider routes; it never receives a Docker socket.
+  - The frontend template is always selected and no provider template publishes a host port by default.
+  - Generated route and env files live beneath SLOTS_STATE_DIR, outside slot worktrees.
+  - A generated provider env inherits its owner worktree's root .env, then appends generated topology values with higher precedence.
+  - Dedicated host mappings use 127.0.0.1:${SLOT_PORT_BASE}+offset only.
+  - "minio.${slot}.localhost is the S3 API; the optional console is minio-console.${slot}.localhost."

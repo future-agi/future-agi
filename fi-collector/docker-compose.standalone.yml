@@ -79,7 +79,7 @@ services:
           "/usr/local/bin/fi-collector",
           "-config",
           "/etc/fi-collector/config.yaml",
-          "--healthcheck-noop",
+          "--healthcheck",
         ]
       interval: 10s
       timeout: 2s
