@@ -68,8 +68,8 @@ describe("parseGitHubInput", () => {
 });
 
 describe("MAX_SCENARIO_COUNT", () => {
-  it("is 10", () => {
-    expect(MAX_SCENARIO_COUNT).toBe(10);
+  it("is 200", () => {
+    expect(MAX_SCENARIO_COUNT).toBe(200);
   });
 });
 
@@ -137,7 +137,8 @@ describe("buildJobPayload", () => {
   });
 
   it("clamps scenario_count to MAX_SCENARIO_COUNT", () => {
-    expect(buildJobPayload({ ...baseState, scenarioCount: 50 }).scenario_count).toBe(10);
+    expect(buildJobPayload({ ...baseState, scenarioCount: 201 }).scenario_count).toBe(200);
+    expect(buildJobPayload({ ...baseState, scenarioCount: 200 }).scenario_count).toBe(200);
     expect(buildJobPayload({ ...baseState, scenarioCount: 0 }).scenario_count).toBe(1);
     expect(buildJobPayload({ ...baseState, scenarioCount: -5 }).scenario_count).toBe(1);
   });

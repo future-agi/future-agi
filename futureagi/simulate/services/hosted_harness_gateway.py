@@ -608,7 +608,12 @@ class DaytonaHostedGateway:
         secrets), runs the same ``authoring_entrypoint`` the local SDK uses, and returns the packed
         frozen authoring archive that ``bundle_author_v2`` later seals inside the execution sandbox.
         """
-        from daytona import CreateSandboxFromSnapshotParams
+        from daytona import (
+            CreateSandboxFromImageParams,
+            CreateSandboxFromSnapshotParams,
+            Image,
+            Resources,
+        )
 
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         payload = dict(job.payload)
@@ -675,25 +680,43 @@ class DaytonaHostedGateway:
         ttl_minutes = int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40))
         sandbox = None
         try:
-            sandbox = self.client.create(
-                CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    language="python",
-                    os_user=getattr(
-                        settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                    ),
-                    labels={
-                        "futureagi.job": str(job.id),
-                        "futureagi.authoring": "1",
-                    },
-                    network_block_all=not allowed_domains,
-                    domain_allow_list=",".join(sorted(allowed_domains)) or None,
-                    ephemeral=True,
-                    ttl_minutes=ttl_minutes,
-                    auto_delete_interval=ttl_minutes,
+            common_params = {
+                "language": "python",
+                "os_user": getattr(
+                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
                 ),
-                timeout=300,
-            )
+                "labels": {
+                    "futureagi.job": str(job.id),
+                    "futureagi.authoring": "1",
+                },
+                "network_block_all": not allowed_domains,
+                "domain_allow_list": ",".join(sorted(allowed_domains)) or None,
+                "ephemeral": True,
+                "ttl_minutes": ttl_minutes,
+                "auto_delete_interval": ttl_minutes,
+            }
+            dockerfile = getattr(self, "dockerfile", "")
+            if dockerfile:
+                launch_params = CreateSandboxFromImageParams(
+                    image=Image.from_dockerfile(dockerfile),
+                    resources=Resources(
+                        cpu=payload["runtime"]["cpu_units"],
+                        memory=max(
+                            4,
+                            (payload["runtime"]["memory_mb"] + 1023) // 1024,
+                        ),
+                        disk=10,
+                    ),
+                    **common_params,
+                )
+                launch_timeout = 1200
+            else:
+                launch_params = CreateSandboxFromSnapshotParams(
+                    snapshot=self.snapshot,
+                    **common_params,
+                )
+                launch_timeout = 300
+            sandbox = self.client.create(launch_params, timeout=launch_timeout)
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
@@ -1186,10 +1209,10 @@ class DaytonaHostedGateway:
                     return locked
 
             delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 10:
+            if delta and locked.scenario_count + delta > 200:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 10 scenarios",
+                    "a hosted run can contain at most 200 scenarios",
                     status_code=422,
                 )
             record = {

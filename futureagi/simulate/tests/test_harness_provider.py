@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from simulate.models import RunTest
+from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services.harness_provider import (
     DaytonaHarnessProvider,
     SandboxHarnessProvider,
@@ -66,6 +67,15 @@ def _v1_payload(**overrides):
 
 def test_default_provider_is_daytona():
     assert isinstance(get_harness_provider(), DaytonaHarnessProvider)
+
+
+def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
+    accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
+    assert accepted.is_valid(), accepted.errors
+
+    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    assert not rejected.is_valid()
+    assert "scenario_count" in rejected.errors
 
 
 def test_harness_create_cors_preflight_allows_idempotency_key():

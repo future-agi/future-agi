@@ -1107,7 +1107,7 @@ export default function HarnessCreate() {
                     type="number"
                     value={scenarioCount}
                     onChange={(event) => setScenarioCount(event.target.value)}
-                    inputProps={{ min: 1, max: 100 }}
+                    inputProps={{ min: 1, max: 200 }}
                     sx={{ width: 140, flexShrink: 0 }}
                   />
                   <Typography variant="caption" color="text.secondary">
