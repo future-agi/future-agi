@@ -6,7 +6,7 @@ import Iconify from "src/components/iconify";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
 
-import { callSummary } from "./harnessShared";
+import { callSummary, readable } from "./harnessShared";
 
 const chipStatus = (status) => {
   if (status === "passed") return STATUS_TYPES.PASS;
@@ -29,10 +29,13 @@ export default function ScenarioOutcome({ outcome }) {
   // A check that did not hold carries the sentence explaining why, which is the reason to
   // open this at all. The denominator matters too: one of one reads very differently from
   // five of six. A scenario that passed every check stays closed and quiet.
-  const failed = outcome.subGoals.filter((goal) => !goal.held);
+  // `held` is tri-state: true held, false did not, null never judged — which is what a
+  // scenario that errored before running reports. Counting null as failed claims the agent
+  // failed checks nobody ran.
+  const failed = outcome.subGoals.filter((goal) => goal.held === false);
   // An outcome can carry nothing worth drawing — a skipped scenario with no call and no
   // checks. Leave the row as it was rather than opening a gap under it.
-  if (!outcome.status && !summary && failed.length === 0) return null;
+  if (!outcome.status && !summary && failed.length === 0 && !outcome.failure) return null;
 
   return (
     <Stack spacing={0.75} sx={{ mt: 0.75 }}>
@@ -47,6 +50,16 @@ export default function ScenarioOutcome({ outcome }) {
         {summary && (
           <Typography variant="caption" color="text.secondary">
             {summary}
+          </Typography>
+        )}
+        {outcome.failure?.message && (
+          <Typography variant="caption" color="error.main" sx={{ minWidth: 0 }}>
+            {[outcome.failure.domain, outcome.failure.code]
+              .filter(Boolean)
+              .map(readable)
+              .join(" · ")}
+            {" — "}
+            {outcome.failure.message}
           </Typography>
         )}
         {failed.length > 0 && (
@@ -91,6 +104,11 @@ ScenarioOutcome.propTypes = {
     status: PropTypes.string,
     turns: PropTypes.number,
     durationMs: PropTypes.number,
+    failure: PropTypes.shape({
+      domain: PropTypes.string,
+      code: PropTypes.string,
+      message: PropTypes.string,
+    }),
     subGoals: PropTypes.arrayOf(
       PropTypes.shape({
         name: PropTypes.string,
