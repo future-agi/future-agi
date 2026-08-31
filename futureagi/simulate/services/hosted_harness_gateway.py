@@ -392,6 +392,10 @@ _PRIVATE_HOST_PATTERNS = re.compile(
     r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost$)"
 )
 _GOOGLE_REGION = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+# A dotted hostname, so a value that is not an endpoint at all cannot become an egress rule.
+_HOSTNAME = re.compile(
+    r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+)
 
 
 def _validate_egress_domains(domains: list[str]) -> None:
@@ -411,15 +415,51 @@ def _validate_egress_domains(domains: list[str]) -> None:
             )
 
 
-def _validate_resolved_egress_domains(domains: set[str]) -> None:
-    """Enforce Daytona's cap after platform, provider, and customer hosts are combined."""
+def _validate_resolved_egress_domains(
+    domains: set[str], requested: list[str] | None = None
+) -> None:
+    """Enforce Daytona's cap after platform, provider, and customer hosts are combined.
+
+    Provider hosts are derived rather than requested, so a job can sit under the request cap and
+    still overflow here. Name the split so the caller knows which half to trim; dropping a derived
+    host instead would take away the route the credential needs and fail the run much later.
+    """
     if len(domains) > _MAX_EGRESS_DOMAINS:
+        breakdown = (
+            f" ({len(requested)} requested, {len(domains) - len(requested)} required by the "
+            "credentials supplied)"
+            if requested is not None
+            else ""
+        )
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             "resolved sandbox egress requires "
-            f"{len(domains)} domains; Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            f"{len(domains)} domains{breakdown}; Daytona supports at most "
+            f"{_MAX_EGRESS_DOMAINS}",
             status_code=400,
         )
+
+
+def _host_of(value: str) -> str:
+    """The bare host of a provider endpoint, given a URL or an already-bare host.
+
+    Returns "" for anything unusable rather than raising: an unparseable endpoint must not stop a
+    job being launched, it just contributes no rule. Private and loopback hosts are dropped too,
+    since they are unreachable from the sandbox and are rejected on the requested path anyway.
+    """
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    if "//" not in candidate:
+        candidate = f"//{candidate}"
+    try:
+        host = urlparse(candidate).hostname or ""
+    except ValueError:
+        return ""
+    host = host.lower()
+    if _PRIVATE_HOST_PATTERNS.match(host) or not _HOSTNAME.fullmatch(host):
+        return ""
+    return host
 
 
 def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
@@ -427,10 +467,26 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
 
     These are platform-managed dependencies of the selected credential type, not customer
     requested egress. In particular, Vertex service-account credentials cannot work unless the
-    OAuth token endpoint and regional Vertex endpoint are reachable.
+    OAuth token endpoint and regional Vertex endpoint are reachable, and a voice run cannot place
+    a call unless its media server and speech providers are reachable.
+
+    A self-hosted LiveKit deployment that terminates TURN on a separate host is the one case this
+    cannot cover, because that host does not appear in ``LIVEKIT_URL``. Add it to the job's own
+    ``allowed_egress_domains`` or to ``ALK_HOSTED_BASE_EGRESS_DOMAINS``.
     """
     aliases = {name.upper() for name in secrets_map}
     domains: set[str] = set()
+    livekit_host = _host_of(secrets_map.get("LIVEKIT_URL", ""))
+    if livekit_host:
+        domains.add(livekit_host)
+    if aliases & {"DEEPGRAM_API_KEY"}:
+        domains.add("api.deepgram.com")
+    if aliases & {"CARTESIA_API_KEY"}:
+        domains.add("api.cartesia.ai")
+    if aliases & {"ELEVENLABS_API_KEY", "ELEVEN_API_KEY"}:
+        domains.add("api.elevenlabs.io")
+    if aliases & {"OPENAI_API_KEY"}:
+        domains.add("api.openai.com")
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
         "GOOGLE_APPLICATION_CREDENTIALS",
@@ -907,7 +963,9 @@ class DaytonaHostedGateway:
             allowed_domains.add(platform_host)
         # Egress union validation: cap at 20 user-supplied domains.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
+        _validate_resolved_egress_domains(
+            allowed_domains, payload["security"]["allowed_egress_domains"]
+        )
         # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
         # domain-allowlist cannot express when media and signaling resolve to different IPs. When
         # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;

@@ -44,6 +44,63 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
     }
 
 
+def test_provider_egress_derives_voice_hosts_from_credentials():
+    domains = _provider_egress_domains(
+        {
+            "LIVEKIT_URL": "wss://example-project.livekit.cloud",
+            "LIVEKIT_API_KEY": "<encrypted-at-rest>",
+            "DEEPGRAM_API_KEY": "<encrypted-at-rest>",
+        }
+    )
+
+    assert domains == {"example-project.livekit.cloud", "api.deepgram.com"}
+
+
+def test_provider_egress_covers_every_supported_speech_provider():
+    domains = _provider_egress_domains(
+        {
+            "CARTESIA_API_KEY": "<encrypted-at-rest>",
+            "ELEVENLABS_API_KEY": "<encrypted-at-rest>",
+            "OPENAI_API_KEY": "<encrypted-at-rest>",
+        }
+    )
+
+    assert domains == {
+        "api.cartesia.ai",
+        "api.elevenlabs.io",
+        "api.openai.com",
+    }
+
+
+def test_provider_egress_derives_nothing_without_credentials():
+    assert _provider_egress_domains({}) == set()
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["", "   ", "not a url", "wss://", "ws://localhost:7880", "wss://127.0.0.1:7880"],
+)
+def test_provider_egress_ignores_unusable_livekit_urls(url):
+    """A malformed or private endpoint contributes no rule and never stops a launch."""
+    assert _provider_egress_domains({"LIVEKIT_URL": url}) == set()
+
+
+def test_provider_egress_accepts_a_bare_livekit_host():
+    assert _provider_egress_domains({"LIVEKIT_URL": "LiveKit.Example.COM"}) == {
+        "livekit.example.com"
+    }
+
+
+def test_resolved_egress_overflow_separates_requested_from_derived():
+    requested = [f"customer-{index}.example.com" for index in range(18)]
+    resolved = set(requested) | {"api.deepgram.com", "oauth2.googleapis.com", "x.io"}
+
+    with pytest.raises(HostedHarnessError) as raised:
+        _validate_resolved_egress_domains(resolved, requested)
+
+    assert "18 requested, 3 required by the credentials supplied" in str(raised.value)
+
+
 def test_resolved_egress_rejects_daytona_domain_overflow():
     with pytest.raises(HostedHarnessError, match="Daytona supports at most 20"):
         _validate_resolved_egress_domains(
