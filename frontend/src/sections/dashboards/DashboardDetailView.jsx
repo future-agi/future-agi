@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useDebounce } from "src/hooks/use-debounce";
 import {
   Box,
   Breadcrumbs,
@@ -67,6 +68,8 @@ import {
   useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
+
+const DASHBOARD_FILTER_DEBOUNCE_MS = 400;
 
 /** Group a flat sorted widget list into rows based on cumulative widths.
  *  Widgets in each row are normalized so their widths sum to exactly 12. */
@@ -573,10 +576,10 @@ function DraggableWidgetCard({
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}${
+              key={`${widget.id}${
                 globalDateRange
                   ? `:${globalDateRange.start}:${globalDateRange.end}`
-                  : ""
+                  : ":default"
               }`}
               widget={widget}
               globalDateRange={globalDateRange}
@@ -666,6 +669,7 @@ export default function DashboardDetailView() {
     () => resolveGlobalDateRange(datePreset, customDateRange),
     [datePreset, customDateRange],
   );
+  const debouncedGlobalDateRange = useDebounce(globalDateRange, DASHBOARD_FILTER_DEBOUNCE_MS);
 
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -1367,7 +1371,7 @@ export default function DashboardDetailView() {
                               dashboardId={dashboardId}
                               navigate={navigate}
                               onMenuOpen={handleWidgetMenuOpen}
-                              globalDateRange={globalDateRange}
+                              globalDateRange={debouncedGlobalDateRange}
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
