@@ -1616,3 +1616,32 @@ def _dispatch_evaluations_once(call_execution: CallExecution) -> bool:
         call_execution.call_metadata = call_metadata
         call_execution.save(update_fields=["call_metadata"])
         return False
+
+
+def _dispatch_sub_goal_judging_once(call_execution: CallExecution) -> None:
+    """Send this call's undecided judged sub-goals to be judged, at most once.
+
+    The pending list is the latch: the task clears the names it decides, so a crash between
+    here and the worker leaves them pending and a later delivery retries them. A flag written
+    before the enqueue would strand them instead.
+    """
+    metadata = dict(call_execution.call_metadata or {})
+    pending = [str(name) for name in (metadata.get("harness_judge_pending") or [])]
+    if not pending or metadata.get("harness_judge_status") == "running":
+        return
+    metadata["harness_judge_status"] = "running"
+    call_execution.call_metadata = metadata
+    call_execution.save(update_fields=["call_metadata"])
+    try:
+        from simulate.tasks.alk_sim import judge_harness_sub_goals
+
+        judge_harness_sub_goals.apply_async(args=(str(call_execution.id),))
+    except Exception as dispatch_error:
+        logger.exception(
+            "harness_judge_dispatch_failed",
+            call_execution_id=str(call_execution.id),
+        )
+        metadata["harness_judge_status"] = "failed"
+        metadata["harness_judge_error"] = str(dispatch_error)[:2000]
+        call_execution.call_metadata = metadata
+        call_execution.save(update_fields=["call_metadata"])

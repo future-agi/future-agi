@@ -186,3 +186,81 @@ def _set_csat_state(
         metadata.pop("csat_error", None)
     call.call_metadata = metadata
     call.save(update_fields=["call_metadata"])
+
+
+@temporal_activity(
+    time_limit=900,
+    max_retries=2,
+    queue="tasks_xl",
+)
+def judge_harness_sub_goals(call_execution_id: str) -> None:
+    """Decide the sub-goals no code could settle, from the evidence the guest sealed.
+
+    The sandbox holds no platform credentials, so judging happens here, where the run's
+    organization and workspace are already known.
+    """
+    close_old_connections()
+    try:
+        call = CallExecution.objects.select_related(
+            "test_execution", "test_execution__run_test"
+        ).get(id=call_execution_id)
+    except CallExecution.DoesNotExist:
+        logger.warning("harness_judge_call_missing", call_execution_id=call_execution_id)
+        return
+
+    metadata = dict(call.call_metadata or {})
+    pending = [str(name) for name in (metadata.get("harness_judge_pending") or [])]
+    if not pending:
+        return
+
+    from simulate.services.harness_judging import (
+        judge_sub_goal,
+        load_scenario_evidence,
+    )
+
+    evidence = load_scenario_evidence(call)
+    if evidence is None:
+        _set_judge_state(call, "failed", "no evidence artifact was sealed for this scenario")
+        return
+
+    claims = {
+        str(item.get("name")): item
+        for item in (evidence.get("judged_sub_goals") or [])
+        if isinstance(item, dict) and item.get("name")
+    }
+    outputs = dict(call.eval_outputs or {})
+    decided = 0
+    for name in pending:
+        claim = claims.get(name)
+        if claim is None:
+            logger.warning(
+                "harness_judge_claim_missing",
+                call_execution_id=call_execution_id,
+                sub_goal=name,
+            )
+            continue
+        output_id, result = judge_sub_goal(call, claim, evidence)
+        if result is None:
+            continue
+        outputs[output_id] = result
+        decided += 1
+
+    call.eval_outputs = outputs
+    metadata = dict(call.call_metadata or {})
+    metadata["harness_judge_pending"] = [
+        name for name in pending if name not in claims
+    ]
+    metadata["harness_judge_status"] = "completed" if decided else "failed"
+    call.call_metadata = metadata
+    call.save(update_fields=["eval_outputs", "call_metadata"])
+
+
+def _set_judge_state(call: CallExecution, status: str, error: str = "") -> None:
+    metadata = dict(call.call_metadata or {})
+    metadata["harness_judge_status"] = status
+    if error:
+        metadata["harness_judge_error"] = error[:2000]
+    else:
+        metadata.pop("harness_judge_error", None)
+    call.call_metadata = metadata
+    call.save(update_fields=["call_metadata"])

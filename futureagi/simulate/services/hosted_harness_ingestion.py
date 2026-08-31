@@ -778,8 +778,19 @@ def _apply_receipt_to_call(
         _apply_conversation_metrics,
         _apply_harness_evaluation_outputs,
         _dispatch_csat_once,
+        _dispatch_sub_goal_judging_once,
     )
 
+    # A judged sub-goal arrives undecided: the sandbox holds no platform credentials, so the
+    # verdict is reached here instead. Recorded before the save so the dispatch below has it.
+    metadata["harness_judge_pending"] = [
+        str(goal["name"])
+        for goal in body.get("sub_goals") or []
+        if isinstance(goal, dict)
+        and goal.get("name")
+        and goal.get("judged")
+        and goal.get("held") is None
+    ]
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
     if body.get("failure"):
@@ -822,6 +833,13 @@ def _apply_receipt_to_call(
         call_id = call.id
         transaction.on_commit(
             lambda: _dispatch_csat_once(CallExecution.objects.get(id=call_id))
+        )
+        transaction.on_commit(
+            lambda: _dispatch_sub_goal_judging_once(
+                CallExecution.objects.select_related(
+                    "test_execution", "test_execution__run_test"
+                ).get(id=call_id)
+            )
         )
 
 
