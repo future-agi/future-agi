@@ -26,22 +26,12 @@
   },
   "app_wide_summary": {
     "runtime_backed_validated_request_decorators": 481,
-    "direct_swagger_auto_schema_decorators": 248,
-    "doc_only_input_contract_decorators": 1,
+    "direct_swagger_auto_schema_decorators": 247,
+    "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [],
   "broad_request_contract_decorators": [],
-  "app_wide_doc_only_input_contract_decorators": [
-    {
-      "path": "futureagi/simulate/views/hosted_harness.py",
-      "line": 102,
-      "class": "HostedHarnessAttemptViewSet",
-      "function": "artifact_upload",
-      "serializers": [
-        "openapi"
-      ]
-    }
-  ],
+  "app_wide_doc_only_input_contract_decorators": [],
   "app_wide_broad_request_contract_decorators": []
 }
