@@ -22,12 +22,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Minted before checkout, not after: actions/checkout persists whatever
+      # credential it authenticated with, and the job's GITHUB_TOKEN is
+      # contents:read, so a later push would be rejected. Setting GH_TOKEN on
+      # the push step only authenticates `gh`, not `git`.
+      - name: Mint an app token
+        # A GITHUB_TOKEN-authored push never triggers other workflows, so the
+        # PR would sit with no CI. Same app used by release-please.yml.
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
       # Scheduled runs always check out the default branch (main), regardless
       # of which branch this workflow file lives on. The refresh PR targets
       # dev, so the diff has to be computed against dev too.
       - uses: actions/checkout@v4
         with:
           ref: dev
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Fetch the latest source list
         id: fetch
@@ -57,16 +71,6 @@ jobs:
             --version "${{ steps.fetch.outputs.version }}" \
             --out futureagi/accounts/disposable_domains.py \
             --github-output "$GITHUB_OUTPUT"
-
-      - name: Mint an app token
-        # A GITHUB_TOKEN-authored push never triggers other workflows, so the
-        # PR would sit with no CI. Same app used by release-please.yml.
-        if: steps.generate.outputs.changed == 'true'
-        uses: actions/create-github-app-token@v2
-        id: app-token
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
       - name: Open the PR
         if: steps.generate.outputs.changed == 'true'

@@ -13,7 +13,11 @@ the PR diff, and safe to run locally for the same result:
 
 import argparse
 import ast
+import re
 from pathlib import Path
+
+
+VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+!-]{0,63}$")
 
 TEMPLATE = '''"""Disposable/throwaway email domains used to reject signups.
 
@@ -62,6 +66,15 @@ def load_existing_domains(out_path):
     return set()
 
 
+def validate_version(version):
+    if not VERSION_RE.match(version or ""):
+        raise ValueError(
+            f"Refusing to render untrusted upstream version {version!r}: "
+            "expected only alphanumerics, dot, underscore, plus, hyphen or '!'"
+        )
+    return version
+
+
 def render(domains, version):
     # repr() rather than an f-string interpolation: the domain came from an
     # untrusted upstream file, and this text becomes a Python module that
@@ -69,7 +82,10 @@ def render(domains, version):
     # so a value like `x", __import__("os").system("..."), "y` stays inert
     # data instead of becoming code.
     body = "\n".join(f"        {d!r}," for d in sorted(domains))
-    return TEMPLATE.format(version=version, body=body)
+    # Same problem one level up: the version comes from the upstream PyPI JSON
+    # and lands inside the generated module's docstring, where a triple quote
+    # would close it and turn everything after into code.
+    return TEMPLATE.format(version=validate_version(version), body=body)
 
 
 def main(argv=None):
@@ -90,8 +106,11 @@ def main(argv=None):
     new_domains = load_domains(args.domains)
     old_domains = load_existing_domains(args.out)
 
+    # Render before opening for write: a rejected version raises here rather
+    # than after "w" has already truncated the vendored list.
+    rendered = render(new_domains, args.version)
     with open(args.out, "w") as f:
-        f.write(render(new_domains, args.version))
+        f.write(rendered)
 
     added = len(new_domains - old_domains)
     removed = len(old_domains - new_domains)

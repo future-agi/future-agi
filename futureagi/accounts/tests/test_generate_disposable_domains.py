@@ -215,6 +215,89 @@ class TestGeneratedModuleIsSafeAgainstUntrustedDomains:
 
 
 @pytest.mark.unit
+class TestGeneratedModuleIsSafeAgainstUntrustedVersion:
+    """The version comes from the same untrusted PyPI JSON as the domain list,
+    and lands inside the generated module's docstring. A value carrying a
+    triple quote closes that docstring and turns whatever follows into code
+    that runs on import."""
+
+    MALICIOUS_VERSION = '0.0.1"""\nversion_was_executed = True\n"""'
+
+    def test_malicious_version_is_rejected(self, tmp_path, domains_file):
+        out = tmp_path / "disposable_domains.py"
+        with pytest.raises(ValueError, match="untrusted upstream version"):
+            gen.main(
+                [
+                    "--domains",
+                    str(domains_file({"a.com"})),
+                    "--version",
+                    self.MALICIOUS_VERSION,
+                    "--out",
+                    str(out),
+                ]
+            )
+
+    def test_rejected_version_does_not_truncate_the_existing_file(
+        self, tmp_path, domains_file
+    ):
+        """Rendering happens before the output is opened for write, so a bad
+        version leaves the previously vendored list intact rather than
+        clobbering it with an empty file."""
+        out = tmp_path / "disposable_domains.py"
+        gen.main(
+            [
+                "--domains",
+                str(domains_file({"a.com", "b.com"})),
+                "--version",
+                "0.0.1",
+                "--out",
+                str(out),
+            ]
+        )
+        before = out.read_text()
+
+        with pytest.raises(ValueError):
+            gen.main(
+                [
+                    "--domains",
+                    str(domains_file({"a.com"})),
+                    "--version",
+                    self.MALICIOUS_VERSION,
+                    "--out",
+                    str(out),
+                ]
+            )
+
+        assert out.read_text() == before
+        assert gen.load_existing_domains(out) == {"a.com", "b.com"}
+
+    def test_malicious_version_does_not_execute_on_import(self, tmp_path):
+        """Belt and braces: render() is the choke point, so drive it directly
+        and confirm the payload cannot reach the module even if a future caller
+        skips main()."""
+        with pytest.raises(ValueError):
+            gen.render({"a.com"}, self.MALICIOUS_VERSION)
+
+    @pytest.mark.parametrize(
+        "version",
+        ["0.0.240", "1.2.3", "2024.1.1", "1.0.0rc1", "1.0.0.post1", "1!2.0"],
+    )
+    def test_real_upstream_versions_are_accepted(self, version, tmp_path, domains_file):
+        out = tmp_path / "disposable_domains.py"
+        gen.main(
+            [
+                "--domains",
+                str(domains_file({"a.com"})),
+                "--version",
+                version,
+                "--out",
+                str(out),
+            ]
+        )
+        assert f"disposable-email-domains {version}" in out.read_text()
+
+
+@pytest.mark.unit
 class TestRefreshWorkflowStructure:
     """Lightweight regression coverage for the two workflow-level bugs that
     aren't reachable from a Python unit test: a scheduled run computing its
@@ -225,10 +308,38 @@ class TestRefreshWorkflowStructure:
     def _load_workflow(self):
         self.workflow = yaml.safe_load(WORKFLOW_PATH.read_text())
 
+    def _steps(self):
+        return self.workflow["jobs"]["refresh"]["steps"]
+
+    def _step_index(self, predicate):
+        return next(i for i, s in enumerate(self._steps()) if predicate(s))
+
+    @staticmethod
+    def _is_checkout(step):
+        return step.get("uses", "").startswith("actions/checkout@")
+
     def test_checkout_targets_dev_not_the_scheduled_default_branch(self):
-        checkout_step = self.workflow["jobs"]["refresh"]["steps"][0]
-        assert checkout_step["uses"].startswith("actions/checkout@")
+        checkout_step = next(s for s in self._steps() if self._is_checkout(s))
         assert checkout_step.get("with", {}).get("ref") == "dev"
+
+    def test_checkout_authenticates_with_the_app_token_not_the_job_token(self):
+        """actions/checkout persists the credential it authenticated with, and
+        the job's GITHUB_TOKEN is contents:read — so if checkout runs on the
+        default token, the `git push` in "Open the PR" is rejected no matter
+        what GH_TOKEN is set to on that step."""
+        mint_index = self._step_index(lambda s: s.get("id") == "app-token")
+        checkout_index = self._step_index(self._is_checkout)
+        assert mint_index < checkout_index
+
+        checkout_step = self._steps()[checkout_index]
+        assert checkout_step["with"]["token"] == "${{ steps.app-token.outputs.token }}"
+
+    def test_app_token_is_not_gated_on_a_later_step(self):
+        """Minting moved ahead of checkout, so it can no longer be conditioned
+        on the generate step's output — that would evaluate to false and leave
+        checkout with no token at all."""
+        mint_step = next(s for s in self._steps() if s.get("id") == "app-token")
+        assert "if" not in mint_step
 
     def test_open_pr_step_updates_an_existing_branch_safely(self):
         open_pr_step = next(
