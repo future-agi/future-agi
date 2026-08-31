@@ -284,6 +284,8 @@ export default function HarnessCreate() {
       read_only_source: true,
       allow_privileged: false,
       allow_host_runtime_control: false,
+      // Provider hosts are derived from the supplied credentials server-side. Only a host the
+      // credentials cannot imply, such as a self-hosted TURN server, needs adding here.
       allowed_egress_domains: [],
     },
     retry: {
@@ -327,6 +329,12 @@ export default function HarnessCreate() {
   };
 
   const run = async () => {
+    if (environmentText.trim()) {
+      setEnvironmentError(
+        "Apply the pasted values before starting the run, or clear the box.",
+      );
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -367,6 +375,7 @@ export default function HarnessCreate() {
       );
       setEnvironmentValues(merged.environmentValues);
       setConfigurationValues(merged.configurationValues);
+      setEnvironmentText("");
       setEnvironmentError("");
       setPreflightDirty(Boolean(preflight));
     } catch (parseError) {
@@ -1009,6 +1018,11 @@ export default function HarnessCreate() {
                       onChange={(event) =>
                         setEnvironmentText(event.target.value)
                       }
+                      onBlur={() => {
+                        if (environmentText.trim()) {
+                          loadEnvironment(environmentText);
+                        }
+                      }}
                     />
                     <Button
                       variant="text"
