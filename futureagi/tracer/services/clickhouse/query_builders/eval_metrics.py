@@ -5,10 +5,10 @@ Replaces ``get_eval_graph_data()`` and its helpers from
 ``tracer.utils.graphs_optimized`` with ClickHouse-native queries.
 
 Strategy:
-- Unfiltered eval dashboard queries read from the ``eval_metrics_hourly``
-  pre-aggregated table.
-- Filtered queries or per-eval-config breakdowns read from the
-  ``tracer_eval_logger`` CDC table (with FINAL for correct deduplication).
+- Eval dashboard queries read from the ``tracer_eval_logger`` CDC table with
+  ``FINAL`` by default.
+- ``eval_metrics_hourly`` remains available as an explicit opt-in. Its CDC
+  materialized view does not retract aggregates for updated source rows.
 
 Supports three eval output types:
 - **float (SCORE):** ``avg(output_float) * 100`` per time bucket.
@@ -21,6 +21,7 @@ Supports three eval output types:
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 
 # Eval output type constants (mirrors EvalOutputType from Django models)
@@ -53,9 +54,9 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         eval_name: Human-readable name of the eval config (for output).
         choices: List of choice strings (required when ``eval_output_type``
             is ``"CHOICES"``).
-        use_preaggregated: Whether to attempt reading from the pre-aggregated
-            table.  Defaults to ``True``; set ``False`` when specific filters
-            prevent using the aggregate table.
+        use_preaggregated: Whether to read from the pre-aggregated table.
+            Defaults to ``False`` because its CDC materialized view does not
+            retract aggregates for updated source rows.
     """
 
     AGG_TABLE = "eval_metrics_hourly"
@@ -71,7 +72,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         eval_output_type: str = SCORE,
         eval_name: str = "",
         choices: Optional[List[str]] = None,
-        use_preaggregated: bool = True,
+        use_preaggregated: bool = False,
         filters: Optional[List[dict]] = None,
         **kwargs: Any,
     ) -> None:
@@ -133,6 +134,30 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
                 f"AND {extra_where})"
             )
         return ""
+
+    @staticmethod
+    def _project_id_expr(alias: str = "e") -> str:
+        """Resolve project_id for span/trace and session eval rows."""
+        prefix = f"{alias}." if alias else ""
+        return (
+            "if("
+            f"{prefix}target_type = 'session', "
+            "dictGetOrDefault('trace_session_dict', 'project_id', "
+            f"toUUID({prefix}trace_session_id), "
+            "toUUID('00000000-0000-0000-0000-000000000000')), "
+            "dictGetOrDefault('trace_dict', 'project_id', "
+            f"toUUID({prefix}trace_id), "
+            "toUUID('00000000-0000-0000-0000-000000000000'))"
+            ")"
+        )
+
+    @staticmethod
+    def _raw_source() -> Tuple[str, str]:
+        """Return the configured eval logger table and delete predicate."""
+        table, predicate = eval_logger_source(
+            alias="e", include_cdc_tombstone_guard=True
+        )
+        return f"{table} AS e FINAL", predicate
 
     # ------------------------------------------------------------------
     # Public API
@@ -206,19 +231,20 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         return query, self.params
 
     def _build_score_raw(self) -> Tuple[str, Dict[str, Any]]:
-        """Score query against the raw CDC table."""
+        """Score query against the deduplicated eval logger table."""
         bucket_fn = self.time_bucket_expr(self.interval)
         filter_frag = self._filter_fragment()
+        source, delete_predicate = self._raw_source()
         query = f"""
         SELECT
-            {bucket_fn}(created_at) AS time_bucket,
-            ifNotFinite(avg(output_float) * 100, NULL) AS value
-        FROM {self.RAW_TABLE} FINAL
-        WHERE project_id = %(project_id)s
-          AND (deleted = 0 OR deleted IS NULL)
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND created_at >= %(start_date)s
-          AND created_at < %(end_date)s
+            {bucket_fn}(e.created_at) AS time_bucket,
+            ifNotFinite(avg(e.output_float) * 100, NULL) AS value
+        FROM {source}
+        WHERE {self._project_id_expr()} = toUUID(%(project_id)s)
+          AND {delete_predicate}
+          AND e.custom_eval_config_id = toUUID(%(eval_config_id)s)
+          AND e.created_at >= %(start_date)s
+          AND e.created_at < %(end_date)s
           {filter_frag}
         GROUP BY time_bucket
         ORDER BY time_bucket
@@ -254,20 +280,21 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         return query, self.params
 
     def _build_pass_fail_raw(self) -> Tuple[str, Dict[str, Any]]:
-        """Pass/Fail query against the raw CDC table."""
+        """Pass/fail query against the deduplicated eval logger table."""
         bucket_fn = self.time_bucket_expr(self.interval)
         filter_frag = self._filter_fragment()
+        source, delete_predicate = self._raw_source()
         query = f"""
         SELECT
-            {bucket_fn}(created_at) AS time_bucket,
-            ifNotFinite(avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
+            {bucket_fn}(e.created_at) AS time_bucket,
+            ifNotFinite(avg(CASE WHEN e.output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
                 AS value
-        FROM {self.RAW_TABLE} FINAL
-        WHERE project_id = %(project_id)s
-          AND (deleted = 0 OR deleted IS NULL)
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND created_at >= %(start_date)s
-          AND created_at < %(end_date)s
+        FROM {source}
+        WHERE {self._project_id_expr()} = toUUID(%(project_id)s)
+          AND {delete_predicate}
+          AND e.custom_eval_config_id = toUUID(%(eval_config_id)s)
+          AND e.created_at >= %(start_date)s
+          AND e.created_at < %(end_date)s
           {filter_frag}
         GROUP BY time_bucket
         ORDER BY time_bucket
@@ -294,30 +321,31 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         # string, so parse it before calling has(); output_str is kept as the
         # single-choice fallback for older rows/imports.
         choice_cols: List[str] = []
-        choice_array_expr = "JSONExtract(output_str_list, 'Array(String)')"
+        choice_array_expr = "JSONExtract(e.output_str_list, 'Array(String)')"
         for i, choice in enumerate(self.choices):
             param_name = f"choice_{i}"
             self.params[param_name] = choice
             choice_cols.append(
                 f"countIf(has({choice_array_expr}, %({param_name})s) "
-                f"OR output_str = %({param_name})s) * 100.0 "
+                f"OR e.output_str = %({param_name})s) * 100.0 "
                 f"/ greatest(count(), 1) AS `choice_{i}`"
             )
 
         choice_select = ",\n            ".join(choice_cols)
 
         filter_frag = self._filter_fragment()
+        source, delete_predicate = self._raw_source()
         query = f"""
         SELECT
-            {bucket_fn}(created_at) AS time_bucket,
+            {bucket_fn}(e.created_at) AS time_bucket,
             count() AS total_count,
             {choice_select}
-        FROM {self.RAW_TABLE} FINAL
-        WHERE project_id = %(project_id)s
-          AND (deleted = 0 OR deleted IS NULL)
-          AND custom_eval_config_id = toUUID(%(eval_config_id)s)
-          AND created_at >= %(start_date)s
-          AND created_at < %(end_date)s
+        FROM {source}
+        WHERE {self._project_id_expr()} = toUUID(%(project_id)s)
+          AND {delete_predicate}
+          AND e.custom_eval_config_id = toUUID(%(eval_config_id)s)
+          AND e.created_at >= %(start_date)s
+          AND e.created_at < %(end_date)s
           {filter_frag}
         GROUP BY time_bucket
         ORDER BY time_bucket

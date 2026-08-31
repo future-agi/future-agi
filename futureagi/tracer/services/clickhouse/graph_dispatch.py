@@ -2,7 +2,6 @@ from typing import Any, Dict, List
 
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
-
 from tracer.services.clickhouse.query_builders import (
     AnnotationGraphQueryBuilder,
     EvalMetricsQueryBuilder,
@@ -84,6 +83,8 @@ def fetch_eval_graph_ch(
         interval=interval,
         eval_output_type=req_data_config.get("eval_output_type", "SCORE"),
         choices=req_data_config.get("choices", []),
+        # The hourly rollup does not handle updated CDC rows.
+        use_preaggregated=False,
     )
     query, params = builder.build()
     result = analytics.execute_ch_query(query, params, timeout_ms=timeout_ms)
