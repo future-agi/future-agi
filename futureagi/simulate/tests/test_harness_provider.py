@@ -78,6 +78,54 @@ def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
     assert "scenario_count" in rejected.errors
 
 
+def test_customer_cannot_submit_platform_simulator_secret_purpose():
+    payload = _v1_payload()
+    payload["agent"]["secret_refs"] = {
+        "DEEPGRAM_API_KEY": {
+            "manager": "platform-vault",
+            "key": "DEEPGRAM_API_KEY",
+            "purpose": "simulator_provider",
+        }
+    }
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "target_provider" in str(serializer.errors)
+
+
+def test_customer_cannot_submit_platform_config_secret_manager():
+    payload = _v1_payload()
+    payload["agent"]["secret_refs"] = {
+        "DEEPGRAM_API_KEY": {
+            "manager": "platform-config",
+            "key": "DEEPGRAM_API_KEY",
+            "purpose": "target_provider",
+        }
+    }
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "platform-vault" in str(serializer.errors)
+
+
+def test_customer_cannot_use_reserved_simulator_alias_for_agent_secret():
+    payload = _v1_payload()
+    payload["agent"]["secret_refs"] = {
+        "SIMULATOR_DEEPGRAM_API_KEY": {
+            "manager": "platform-vault",
+            "key": "customer-secret",
+            "purpose": "target_provider",
+        }
+    }
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "reserved" in str(serializer.errors)
+
+
 def test_harness_create_cors_preflight_allows_idempotency_key():
     response = APIClient().options(
         "/simulate/api/harness-jobs/",

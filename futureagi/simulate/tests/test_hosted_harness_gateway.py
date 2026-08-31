@@ -22,10 +22,18 @@ from simulate.services.hosted_harness_gateway import (
     _authoring_archive_for,
     _provider_egress_domains,
     _validate_resolved_egress_domains,
+    attach_platform_simulator_secret_refs,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
+    resolve_platform_simulator_secrets,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_platform_simulator_environment(settings):
+    """Tests opt in explicitly instead of reading the developer machine's provider keys."""
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -42,6 +50,46 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
         "us-central1-aiplatform.googleapis.com",
         "us-east5-aiplatform.googleapis.com",
     }
+
+
+def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
+    settings, monkeypatch, tmp_path
+):
+    adc = tmp_path / "vertex.json"
+    adc.write_text('{"project_id":"futureagi"}', encoding="utf-8")
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {
+        "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
+        "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+        ),
+    }
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(adc))
+
+    resolved = resolve_platform_simulator_secrets()
+
+    assert resolved == {
+        "SIMULATOR_DEEPGRAM_API_KEY": "platform-deepgram",
+        "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": '{"project_id":"futureagi"}',
+    }
+
+
+def test_platform_simulator_refs_are_ephemeral_value_free_and_do_not_mutate_payload():
+    payload = _payload()
+    original = json.loads(json.dumps(payload))
+
+    dispatched = attach_platform_simulator_secret_refs(
+        payload,
+        {"SIMULATOR_DEEPGRAM_API_KEY": "must-never-appear"},
+    )
+
+    assert payload == original
+    assert dispatched["agent"]["secret_refs"]["SIMULATOR_DEEPGRAM_API_KEY"] == {
+        "manager": "platform-config",
+        "key": "SIMULATOR_DEEPGRAM_API_KEY",
+        "purpose": "simulator_provider",
+    }
+    assert "must-never-appear" not in json.dumps(dispatched)
 
 
 def test_resolved_egress_rejects_daytona_domain_overflow():
@@ -175,9 +223,7 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
     ) as store:
         DaytonaHostedGateway._sync_authoring_progress(attempt, sandbox)
 
-    store.assert_called_once_with(
-        job, b"frozen-authoring", advance_lifecycle=False
-    )
+    store.assert_called_once_with(job, b"frozen-authoring", advance_lifecycle=False)
 
 
 def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):
@@ -342,7 +388,7 @@ class _Daytona:
 
 @pytest.mark.django_db
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
-    organization, settings
+    organization, settings, monkeypatch
 ):
     payload = _payload()
     payload["source"] = {
@@ -359,6 +405,10 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.resolve_platform_simulator_secrets",
+        lambda: {"SIMULATOR_DEEPGRAM_API_KEY": "platform-deepgram"},
+    )
 
     attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
@@ -372,6 +422,16 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/run/futureagi/entrypoint-command-id",
     }
     assert client.sandbox.process.sessions == ["alk-harness"]
+    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert dispatched["agent"]["secret_refs"]["SIMULATOR_DEEPGRAM_API_KEY"] == {
+        "key": "SIMULATOR_DEEPGRAM_API_KEY",
+        "manager": "platform-config",
+        "purpose": "simulator_provider",
+    }
+    injected = json.loads(client.sandbox.fs.uploads["/run/futureagi/secrets.json"])
+    assert injected["SIMULATOR_DEEPGRAM_API_KEY"] == "platform-deepgram"
+    job.refresh_from_db()
+    assert "SIMULATOR_DEEPGRAM_API_KEY" not in job.payload["agent"]["secret_refs"]
     assert "--adjustments /run/futureagi/adjustments.jsonl" in (
         client.sandbox.process.session_request.command
     )
