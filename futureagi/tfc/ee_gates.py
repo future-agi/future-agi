@@ -6,8 +6,15 @@ through EE code paths)."""
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from rest_framework.response import Response
 from tfc.utils.api_errors import build_error_envelope
+
+_VOICE_SIM_UNAVAILABLE = (
+    "Voice simulation is not available on this deployment. "
+    "Upgrade to cloud or enterprise to run voice calls."
+)
 
 _TURING_MODELS = frozenset(
     {
@@ -56,6 +63,45 @@ def voice_sim_oss_gate_response() -> Response | None:
     if has_ee("ee.voice"):
         return None
     return _voice_sim_code_unavailable_response()
+
+
+class VoiceSimDenial(NamedTuple):
+    """Why the plan layer blocks voice simulation.
+
+    ``upgrade_required`` separates the two answers a caller owes: code that isn't installed is
+    an upgrade prompt, while a plan that excludes the feature is a refusal.
+    """
+
+    reason: str
+    upgrade_required: bool
+
+
+def voice_sim_plan_denial(organization_id: object) -> VoiceSimDenial | None:
+    """Why this organization's plan blocks voice simulation, or None.
+
+    The second of the two layers, after `voice_sim_oss_gate_response` decides code
+    availability. Shared rather than restated, so that every surface which stands up a voice
+    simulation — one created in the UI, one reported by an external runner — allows and
+    refuses exactly the same organizations.
+    """
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.services.entitlements import Entitlements
+    except ImportError:
+        # Past the code gate but unable to answer: a partial EE install. Fail closed.
+        return VoiceSimDenial(_VOICE_SIM_UNAVAILABLE, upgrade_required=True)
+
+    if not DeploymentMode.is_cloud():
+        # Voice sim is open on self-hosted (voice_sim is not oss_locked), and plan
+        # entitlements are a cloud-only concept. Nothing to decide off-cloud.
+        return None
+
+    check = Entitlements.check_feature(str(organization_id), "has_voice_sim")
+    if check.allowed:
+        return None
+    return VoiceSimDenial(
+        str(check.reason or _VOICE_SIM_UNAVAILABLE), upgrade_required=False
+    )
 
 
 def _voice_sim_code_unavailable_response() -> Response:

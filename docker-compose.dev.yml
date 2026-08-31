@@ -4,8 +4,14 @@ x-dev-worker: &dev-worker
   pull_policy: never
   volumes:
     - ./futureagi:/app/backend
+    # .env names the key by a path relative to the working directory, which lands inside the
+    # mounted source tree where no key lives. Supplied here instead, from the one copy at the
+    # repository root, and named absolutely below.
+    - ${VERTEX_CREDENTIALS:-./Vertex_AI_Creds.json}:/etc/vertex/creds.json:ro
   environment:
     FAST_STARTUP: "true"
+    HARNESS_INTERNAL_URL: http://harness:8777
+    GOOGLE_APPLICATION_CREDENTIALS: /etc/vertex/creds.json
 
 services:
   frontend:
@@ -35,8 +41,14 @@ services:
       - "${FLOWER_PORT:-5555}:5555"
     volumes:
       - ./futureagi:/app/backend
+      - harness-artifacts:/app/harness-artifacts
+      # Same reason as the worker anchor above: the one key lives at the repository root.
+      - ${VERTEX_CREDENTIALS:-./Vertex_AI_Creds.json}:/etc/vertex/creds.json:ro
     environment:
       FAST_STARTUP: "true"
+      HARNESS_INTERNAL_URL: http://harness:8777
+      GOOGLE_APPLICATION_CREDENTIALS: /etc/vertex/creds.json
+      HARNESS_LINKS_DIR: /app/harness-artifacts/platform-links
 
   # agentcc-gateway, serving, and code-executor are separate services we
   # don't modify in local dev, so they are NOT built from source here —
@@ -159,3 +171,66 @@ services:
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     restart: unless-stopped
+
+  # Agent-testing harness. Internal-only: the backend proxies to it at
+  # /simulate/harness/, so neither port is published to the host. Never
+  # restart it mid-suite — a run in flight is lost.
+  harness:
+    build: ./futureagi/harness
+    env_file:
+      - path: .env
+        required: false
+      # The WebRTC target and the harness must use the same LiveKit project. Keep
+      # platform/model settings from this repo, but take LiveKit credentials from
+      # the local agent that is actually registered for these calls.
+      - path: ../uber-voice-agent/.env.local
+        required: false
+    environment:
+      HARNESS_HOST: 0.0.0.0
+      HARNESS_PORT: 8777
+      HARNESS_WEBHOOK_HOST: 0.0.0.0
+      HARNESS_WEBHOOK_PORT: 8787
+      # Reachable by name inside the network, so no cloudflared tunnel starts.
+      HARNESS_WEBHOOK_URL: http://harness:8787
+      DOCKER_HOST: tcp://docker-proxy:2375
+      # Store containers the harness starts join this network and are
+      # addressed by container name instead of loopback.
+      ALK_DOCKER_NETWORK: ${HARNESS_DOCKER_NETWORK:-futureagi_default}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Evals are scored against the hosted platform, where the templates live; runs are
+      # reported to the backend beside us, so they appear in the UI being looked at.
+      HARNESS_PLATFORM_URL: ${HARNESS_PLATFORM_URL:-http://backend:80}
+      HARNESS_PLATFORM_API_KEY: ${HARNESS_PLATFORM_API_KEY:-}
+      HARNESS_PLATFORM_SECRET_KEY: ${HARNESS_PLATFORM_SECRET_KEY:-}
+      # Voice. 1.1.2 reaches a LiveKit worker over WebRTC; the caller and the agent must be
+      # on the same LiveKit instance, so this is the agent's project, not the EU one.
+      HARNESS_VOICE_CASE: ${HARNESS_VOICE_CASE:-1.1.2}
+      # Empty means voice_cases falls back to LIVEKIT_URL from the agent env file.
+      ACCEPTANCE_LIVEKIT_URL: ""
+      # Match the dedicated local worker; the generic name may also be registered by
+      # old or remote deployments and makes scenario identity nondeterministic.
+      LIVEKIT_TARGET_AGENT_NAME: uber-voice-booking-harness-local
+      LIVEKIT_TARGET_SYSTEM_PROMPT: ${LIVEKIT_TARGET_SYSTEM_PROMPT:-}
+      # Flash Lite tended to repeat the caller's opening line instead of using
+      # scenario details (address, OTP, payment) after the target asked for them.
+      SIMULATOR_LLM_MODEL: gemini-2.5-flash
+      # A normal booking needs enough room for address confirmation, fares,
+      # payment verification and final read-back without a hard two-minute cut.
+      VOICE_MAX_SECONDS: ${VOICE_MAX_SECONDS:-240}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      # .env names the credentials by a path relative to the host checkout, which resolves to
+      # nothing in here. Mounted below at a fixed location and repointed, or every stage fails
+      # at its first model call.
+      GOOGLE_APPLICATION_CREDENTIALS: /etc/harness/vertex.json
+    volumes:
+      # Source of truth for every session, world and recording — not a cache.
+      - harness-artifacts:/app/artifacts
+      # Source edits apply on restart without a rebuild.
+      - ./futureagi/harness:/app
+      - ${HARNESS_VERTEX_CREDENTIALS:-./Vertex_AI_Creds.json}:/etc/harness/vertex.json:ro
+    depends_on:
+      - docker-proxy
+    restart: unless-stopped
+
+volumes:
+  harness-artifacts:

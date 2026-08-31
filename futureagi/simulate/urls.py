@@ -1,4 +1,4 @@
-from django.urls import include, path
+from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
@@ -14,6 +14,7 @@ from simulate.views.chat_simulation import (
     RunTestNameView,
     TestExecutionChatBatchView,
 )
+from simulate.views.harness_proxy import HarnessProxyView
 from simulate.views.prompt_simulation import (
     ExecutePromptSimulationView,
     PromptSimulationDetailView,
@@ -125,6 +126,7 @@ router.register(
 )
 
 urlpatterns = [
+    re_path(r"^harness/(?P<path>.+)$", HarnessProxyView.as_view(), name="harness-proxy"),
     path("api/", include(router.urls)),
     # Persona duplicate endpoint with custom URL pattern
     path(

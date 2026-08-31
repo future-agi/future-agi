@@ -85,6 +85,12 @@ export const paths = {
       agentDefinition: `${ROOTS.DASHBOARD}/simulate/agent-definitions`,
       scenarios: `${ROOTS.DASHBOARD}/simulate/scenarios`,
       personas: `${ROOTS.DASHBOARD}/simulate/personas`,
+      alEnvironment: `${ROOTS.DASHBOARD}/simulate/rl-environment`,
+      alEnvironmentDetail: (sessionId) =>
+        `${ROOTS.DASHBOARD}/simulate/rl-environment/${sessionId}`,
+      callDetails: (testId, executionId) =>
+        `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
+      testRuns: (testId) => `${ROOTS.DASHBOARD}/simulate/test/${testId}/runs`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
     },

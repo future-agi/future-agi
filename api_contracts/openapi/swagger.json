@@ -51104,6 +51104,76 @@
                 }
             ]
         },
+        "/simulate/harness/{path}": {
+            "get": {
+                "operationId": "simulate_harness_read",
+                "summary": "One authenticated door to every harness endpoint.",
+                "description": "The harness has no auth and no notion of platform entities, so this view\nsupplies both: platform auth in front, and run_test/execution ids attached\non the way back out. Forwarded verbatim otherwise — the FE contract in\napi_contracts/harness/frontend-contract.md is the harness's own API.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "post": {
+                "operationId": "simulate_harness_create",
+                "summary": "One authenticated door to every harness endpoint.",
+                "description": "The harness has no auth and no notion of platform entities, so this view\nsupplies both: platform auth in front, and run_test/execution ids attached\non the way back out. Forwarded verbatim otherwise — the FE contract in\napi_contracts/harness/frontend-contract.md is the harness's own API.",
+                "parameters": [],
+                "responses": {
+                    "201": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "delete": {
+                "operationId": "simulate_harness_delete",
+                "summary": "One authenticated door to every harness endpoint.",
+                "description": "The harness has no auth and no notion of platform entities, so this view\nsupplies both: platform auth in front, and run_test/execution ids attached\non the way back out. Forwarded verbatim otherwise — the FE contract in\napi_contracts/harness/frontend-contract.md is the harness's own API.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "path",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/prompt-simulations/scenarios/": {
             "get": {
                 "operationId": "simulate_prompt-simulations_scenarios_list",
@@ -113583,6 +113653,39 @@
                 }
             }
         },
+        "ALKSimulateReportedEvaluation": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "score": {
+                    "title": "Score",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "passed": {
+                    "title": "Passed",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
         "ALKSimulateCostBreakdown": {
             "type": "object",
             "properties": {
@@ -113663,6 +113766,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/ALKSimulateTranscriptSegment"
+                    }
+                },
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ALKSimulateReportedEvaluation"
                     }
                 },
                 "recording_url": {
@@ -113811,6 +113920,15 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "voice"
+                    ],
+                    "default": "text"
                 },
                 "description": {
                     "title": "Description",
