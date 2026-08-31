@@ -965,6 +965,68 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     }
 
 
+def _launch_and_read_job_json(organization, settings, *, requested_parallelism):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    payload["runtime"]["parallelism"] = requested_parallelism
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key=f"parallelism-{requested_parallelism}"
+    )
+    client = _Daytona()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:good"
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+
+    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    job.refresh_from_db()
+    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    return job, dispatched
+
+
+@pytest.mark.django_db
+def test_daytona_launch_clamps_guest_parallelism_when_disabled(organization, settings):
+    # Flag off => W>1 is denied by the shared guard. The guest must be launched at
+    # the ADMITTED W=1 even though the requested value stays on job.payload so a
+    # later rerun re-evaluates against the then-current flag/digest.
+    settings.HARNESS_PARALLELISM_ENABLED = False
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["sha256:good"]
+    settings.ALK_DAYTONA_DOCKERFILE = ""
+
+    job, dispatched = _launch_and_read_job_json(
+        organization, settings, requested_parallelism=4
+    )
+
+    assert dispatched["runtime"]["parallelism"] == 1
+    assert job.payload["runtime"]["parallelism"] == 4
+
+
+@pytest.mark.django_db
+def test_daytona_launch_passes_admitted_parallelism_when_enabled(
+    organization, settings
+):
+    # Flag on and the registered digest is allowlisted => W>1 is admitted, so the
+    # guest receives the requested W unchanged.
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["sha256:good"]
+    settings.ALK_DAYTONA_DOCKERFILE = ""
+
+    job, dispatched = _launch_and_read_job_json(
+        organization, settings, requested_parallelism=4
+    )
+
+    assert dispatched["runtime"]["parallelism"] == 4
+    assert job.payload["runtime"]["parallelism"] == 4
+
+
 @pytest.mark.django_db
 def test_unified_provider_import_authoring_receives_one_shot_target_key(
     organization, settings, monkeypatch
