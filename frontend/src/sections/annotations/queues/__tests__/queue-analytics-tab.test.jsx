@@ -14,12 +14,16 @@ const {
   mockRevokeObjectURL,
   mockUseQueueAnalytics,
   mockEnqueueSnackbar,
+  mockWaitForExportJob,
+  mockTriggerBrowserDownload,
 } = vi.hoisted(() => ({
   mockAxiosGet: vi.fn(),
   mockCreateObjectURL: vi.fn(),
   mockRevokeObjectURL: vi.fn(),
   mockUseQueueAnalytics: vi.fn(),
   mockEnqueueSnackbar: vi.fn(),
+  mockWaitForExportJob: vi.fn(),
+  mockTriggerBrowserDownload: vi.fn(),
 }));
 
 vi.mock("src/components/iconify", () => ({
@@ -31,8 +35,12 @@ vi.mock("src/components/iconify", () => ({
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   annotationQueueEndpoints: {
     export: (queueId) => `/model-hub/annotation-queues/${queueId}/export/`,
+    exportJob: (queueId, jobId) =>
+      `/model-hub/annotation-queues/${queueId}/export-jobs/${jobId}/`,
   },
   useQueueAnalytics: mockUseQueueAnalytics,
+  waitForExportJob: mockWaitForExportJob,
+  triggerBrowserDownload: mockTriggerBrowserDownload,
 }));
 
 vi.mock("src/utils/axios", () => ({
@@ -51,6 +59,8 @@ describe("QueueAnalyticsTab", () => {
     mockCreateObjectURL.mockReset();
     mockRevokeObjectURL.mockReset();
     mockEnqueueSnackbar.mockReset();
+    mockWaitForExportJob.mockReset();
+    mockTriggerBrowserDownload.mockReset();
     mockCreateObjectURL.mockReturnValue("blob:queue-export");
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -206,6 +216,61 @@ describe("QueueAnalyticsTab", () => {
         variant: "error",
       });
     });
+    expect(mockCreateObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("waits for the background job and hands over the stored file on 202", async () => {
+    const user = userEvent.setup();
+    mockUseQueueAnalytics.mockReturnValue({
+      isLoading: false,
+      data: {
+        total: 5000,
+        status_breakdown: {
+          pending: 0,
+          in_review: 0,
+          needs_changes: 0,
+          resubmitted: 0,
+          completed: 5000,
+          skipped: 0,
+        },
+        throughput: { avg_per_day: 1, total_completed: 5000, daily: [] },
+        annotator_performance: [],
+        label_distribution: {},
+      },
+    });
+
+    // The request asks for responseType:"blob", so the 202 body arrives as a
+    // Blob and has to be read before it can be told apart from a real export.
+    const scheduled = new Blob([
+      JSON.stringify({
+        result: { job_id: "job-9", message: "We're preparing the file." },
+      }),
+    ]);
+    scheduled.text = async () =>
+      JSON.stringify({
+        result: { job_id: "job-9", message: "We're preparing the file." },
+      });
+    mockAxiosGet.mockResolvedValue({ status: 202, data: scheduled });
+    mockWaitForExportJob.mockResolvedValue({
+      status: "succeeded",
+      file_url: "http://storage/queue.csv",
+      file_name: "queue_1_annotations.csv",
+    });
+
+    render(<QueueAnalyticsTab queueId="queue-1" />);
+
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    await waitFor(() => {
+      expect(mockTriggerBrowserDownload).toHaveBeenCalledWith(
+        "http://storage/queue.csv",
+        "queue_1_annotations.csv",
+        { newTab: true },
+      );
+    });
+    expect(mockWaitForExportJob.mock.calls[0][2]).toBe("job-9");
+    // The scheduling JSON must never be saved as though it were the export —
+    // that is what a plain blob download would do with a 202.
     expect(mockCreateObjectURL).not.toHaveBeenCalled();
   });
 });

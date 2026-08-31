@@ -1036,6 +1036,35 @@ class QueueExportAnnotationsResponseSerializer(serializers.Serializer):
     result = serializers.ListField(child=serializers.JSONField())
 
 
+class QueueExportScheduledResponseSerializer(serializers.Serializer):
+    """202 from the export route when the queue is over the sync cap."""
+
+    status = serializers.CharField()
+    job_id = serializers.UUIDField()
+    workflow_id = serializers.CharField()
+    export_format = serializers.CharField()
+    message = serializers.CharField()
+
+
+class QueueExportJobResultSerializer(serializers.Serializer):
+    job_id = serializers.UUIDField()
+    queue_id = serializers.UUIDField()
+    status = serializers.CharField()
+    export_format = serializers.CharField()
+    item_count = serializers.IntegerField(allow_null=True)
+    file_url = serializers.CharField(allow_null=True)
+    file_name = serializers.CharField(allow_null=True)
+    error = serializers.CharField(allow_null=True)
+    created_at = serializers.DateTimeField()
+    started_at = serializers.DateTimeField(allow_null=True)
+    finished_at = serializers.DateTimeField(allow_null=True)
+
+
+class QueueExportJobResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueExportJobResultSerializer()
+
+
 class QueueJsonResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.JSONField()
@@ -1856,11 +1885,15 @@ class AnnotateDetailSerializer(serializers.Serializer):
                         status=QueueItemReviewThread.STATUS_ADDRESSED,
                         deleted=False,
                     ).exists()
-                    else "in_review"
-                    if item.review_status == "pending_review"
-                    else "needs_changes"
-                    if item.review_status == "rejected"
-                    else item.status
+                    else (
+                        "in_review"
+                        if item.review_status == "pending_review"
+                        else (
+                            "needs_changes"
+                            if item.review_status == "rejected"
+                            else item.status
+                        )
+                    )
                 ),
                 "review_status": item.review_status,
                 "order": item.order,

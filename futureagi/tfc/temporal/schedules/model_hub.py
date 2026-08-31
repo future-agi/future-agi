@@ -79,4 +79,11 @@ MODEL_HUB_SCHEDULES: List[ScheduleConfig] = [
         queue="default",
         description="Daily annotation digest at user-local morning",
     ),
+    ScheduleConfig(
+        schedule_id="annotation-export-cleanup",
+        activity_name="cleanup_expired_export_jobs",
+        interval_seconds=36000,  # 10 hours, like delete-unused-compare-folder
+        queue="default",
+        description="Reclaim finished annotation export jobs past retention",
+    ),
 ]
