@@ -27683,7 +27683,7 @@ export const simulateAgentDefinitionsCreateCreateBodyDescriptionDefault = ``;
 export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault = false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 
 
@@ -27802,7 +27802,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
 
 
 
@@ -27937,7 +27937,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault = false;
@@ -29564,6 +29564,89 @@ selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
 ``sandbox``). See ``simulate.services.harness_provider``.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const SimulateApiHarnessJobsListResponseItem = zod.object({
+  "job": zod.object({
+  "job_id": zod.string().uuid(),
+  "run_id": zod.string().uuid(),
+  "source": zod.record(zod.string(), zod.string()),
+  "metadata": zod.record(zod.string(), zod.string()),
+  "run_test_id": zod.string().uuid(),
+  "test_execution_id": zod.string().uuid()
+}),
+  "status": zod.object({
+  "state": zod.string().min(1),
+  "stage": zod.string().min(1),
+  "updated_at": zod.string().min(1),
+  "attempt": zod.number(),
+  "completed_scenarios": zod.number(),
+  "failed_scenarios": zod.number(),
+  "total_scenarios": zod.number(),
+  "deadline_at": zod.string().min(1),
+  "failure": zod.object({
+
+}).passthrough()
+}),
+  "events": zod.array(zod.object({
+  "event_id": zod.string().min(1),
+  "sequence": zod.number(),
+  "stage": zod.string().min(1),
+  "type": zod.string().min(1),
+  "payload": zod.object({
+
+}).passthrough(),
+  "emitted_at": zod.string().min(1)
+})),
+  "stage_outputs": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "title": zod.string().min(1),
+  "summary": zod.string(),
+  "kind": zod.string().min(1),
+  "data": zod.object({
+
+}).passthrough()
+})),
+  "scenarios": zod.array(zod.object({
+  "scenario_key": zod.string().min(1),
+  "scenario_id": zod.string().uuid(),
+  "name": zod.string(),
+  "instruction": zod.string().optional(),
+  "use_case": zod.string().optional(),
+  "call_execution_id": zod.string().uuid().optional(),
+  "status": zod.string().min(1).optional()
+})),
+  "receipts": zod.array(zod.object({
+
+}).passthrough()),
+  "platform": zod.object({
+  "run_test_id": zod.string().uuid(),
+  "test_execution_id": zod.string().uuid(),
+  "url": zod.string().min(1)
+})
+})
+export const SimulateApiHarnessJobsListResponse = zod.array(SimulateApiHarnessJobsListResponseItem)
+
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the backend
+selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
+``sandbox``). See ``simulate.services.harness_provider``.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
 export const simulateApiHarnessJobsCreateBodySchemaVersionDefault = `futureagi.harness-job.v1`;
 
 export const simulateApiHarnessJobsCreateBodySourceRepositoryRegExp = new RegExp('^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$');
@@ -29841,6 +29924,20 @@ export const SimulateApiHarnessJobsSecretFileUploadBody = zod.object({
 
 
 /**
+ * Values are intentionally separate from platform/model-provider settings. They are scoped
+to the submitting organization and only resolved inside the selected hosted job.
+ * @summary Persist uploaded agent values encrypted and return opaque hosted refs.
+ */
+export const simulateApiHarnessJobsSecretValuesBodyEnvironmentValuesMaxOne = 65536;
+
+
+
+export const SimulateApiHarnessJobsSecretValuesBody = zod.object({
+  "environment_values": zod.record(zod.string(), zod.string().min(1).max(simulateApiHarnessJobsSecretValuesBodyEnvironmentValuesMaxOne))
+})
+
+
+/**
  * Validates the v1.6 request contract and delegates execution to the backend
 selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
 ``sandbox``). See ``simulate.services.harness_provider``.
@@ -29861,6 +29958,81 @@ selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   "id": zod.string()
+})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const SimulateApiHarnessJobsReadResponse = zod.object({
+  "job": zod.object({
+  "job_id": zod.string().uuid(),
+  "run_id": zod.string().uuid(),
+  "source": zod.record(zod.string(), zod.string()),
+  "metadata": zod.record(zod.string(), zod.string()),
+  "run_test_id": zod.string().uuid(),
+  "test_execution_id": zod.string().uuid()
+}),
+  "status": zod.object({
+  "state": zod.string().min(1),
+  "stage": zod.string().min(1),
+  "updated_at": zod.string().min(1),
+  "attempt": zod.number(),
+  "completed_scenarios": zod.number(),
+  "failed_scenarios": zod.number(),
+  "total_scenarios": zod.number(),
+  "deadline_at": zod.string().min(1),
+  "failure": zod.object({
+
+}).passthrough()
+}),
+  "events": zod.array(zod.object({
+  "event_id": zod.string().min(1),
+  "sequence": zod.number(),
+  "stage": zod.string().min(1),
+  "type": zod.string().min(1),
+  "payload": zod.object({
+
+}).passthrough(),
+  "emitted_at": zod.string().min(1)
+})),
+  "stage_outputs": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "title": zod.string().min(1),
+  "summary": zod.string(),
+  "kind": zod.string().min(1),
+  "data": zod.object({
+
+}).passthrough()
+})),
+  "scenarios": zod.array(zod.object({
+  "scenario_key": zod.string().min(1),
+  "scenario_id": zod.string().uuid(),
+  "name": zod.string(),
+  "instruction": zod.string().optional(),
+  "use_case": zod.string().optional(),
+  "call_execution_id": zod.string().uuid().optional(),
+  "status": zod.string().min(1).optional()
+})),
+  "receipts": zod.array(zod.object({
+
+}).passthrough()),
+  "platform": zod.object({
+  "run_test_id": zod.string().uuid(),
+  "test_execution_id": zod.string().uuid(),
+  "url": zod.string().min(1)
+})
 })
 
 
@@ -29900,6 +30072,81 @@ export const simulateApiHarnessJobsCancelBodyReasonDefault = `user_canceled`;
 
 export const SimulateApiHarnessJobsCancelBody = zod.object({
   "reason": zod.enum(['user_canceled', 'ttl_exceeded']).default(simulateApiHarnessJobsCancelBodyReasonDefault)
+})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const SimulateApiHarnessJobsCancelResponse = zod.object({
+  "job": zod.object({
+  "job_id": zod.string().uuid(),
+  "run_id": zod.string().uuid(),
+  "source": zod.record(zod.string(), zod.string()),
+  "metadata": zod.record(zod.string(), zod.string()),
+  "run_test_id": zod.string().uuid(),
+  "test_execution_id": zod.string().uuid()
+}),
+  "status": zod.object({
+  "state": zod.string().min(1),
+  "stage": zod.string().min(1),
+  "updated_at": zod.string().min(1),
+  "attempt": zod.number(),
+  "completed_scenarios": zod.number(),
+  "failed_scenarios": zod.number(),
+  "total_scenarios": zod.number(),
+  "deadline_at": zod.string().min(1),
+  "failure": zod.object({
+
+}).passthrough()
+}),
+  "events": zod.array(zod.object({
+  "event_id": zod.string().min(1),
+  "sequence": zod.number(),
+  "stage": zod.string().min(1),
+  "type": zod.string().min(1),
+  "payload": zod.object({
+
+}).passthrough(),
+  "emitted_at": zod.string().min(1)
+})),
+  "stage_outputs": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "title": zod.string().min(1),
+  "summary": zod.string(),
+  "kind": zod.string().min(1),
+  "data": zod.object({
+
+}).passthrough()
+})),
+  "scenarios": zod.array(zod.object({
+  "scenario_key": zod.string().min(1),
+  "scenario_id": zod.string().uuid(),
+  "name": zod.string(),
+  "instruction": zod.string().optional(),
+  "use_case": zod.string().optional(),
+  "call_execution_id": zod.string().uuid().optional(),
+  "status": zod.string().min(1).optional()
+})),
+  "receipts": zod.array(zod.object({
+
+}).passthrough()),
+  "platform": zod.object({
+  "run_test_id": zod.string().uuid(),
+  "test_execution_id": zod.string().uuid(),
+  "url": zod.string().min(1)
+})
 })
 
 

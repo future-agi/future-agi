@@ -14314,7 +14314,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
 }
@@ -14547,7 +14547,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
 }
@@ -14656,7 +14656,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -15892,6 +15892,95 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
+
+export type HarnessJobInfoApiSource = {[key: string]: string};
+
+export type HarnessJobInfoApiMetadata = {[key: string]: string};
+
+export interface HarnessJobInfoApi {
+  job_id: string;
+  run_id: string;
+  source: HarnessJobInfoApiSource;
+  metadata: HarnessJobInfoApiMetadata;
+  run_test_id: string;
+  test_execution_id: string;
+}
+
+export type HarnessJobStatusApiFailure = { [key: string]: unknown };
+
+export interface HarnessJobStatusApi {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  updated_at: string;
+  attempt: number;
+  completed_scenarios: number;
+  failed_scenarios: number;
+  total_scenarios: number;
+  /** @minLength 1 */
+  deadline_at: string;
+  failure: HarnessJobStatusApiFailure;
+}
+
+export type HarnessJobEventApiPayload = { [key: string]: unknown };
+
+export interface HarnessJobEventApi {
+  /** @minLength 1 */
+  event_id: string;
+  sequence: number;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  type: string;
+  payload: HarnessJobEventApiPayload;
+  /** @minLength 1 */
+  emitted_at: string;
+}
+
+export type HarnessStageOutputApiData = { [key: string]: unknown };
+
+export interface HarnessStageOutputApi {
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  /** @minLength 1 */
+  kind: string;
+  data: HarnessStageOutputApiData;
+}
+
+export interface HarnessScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction?: string;
+  use_case?: string;
+  call_execution_id?: string;
+  /** @minLength 1 */
+  status?: string;
+}
+
+export interface HarnessPlatformApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface HarnessJobReadApi {
+  job: HarnessJobInfoApi;
+  status: HarnessJobStatusApi;
+  events: HarnessJobEventApi[];
+  stage_outputs: HarnessStageOutputApi[];
+  scenarios: HarnessScenarioApi[];
+  receipts: HarnessJobReadApiReceiptsItem[];
+  platform: HarnessPlatformApi;
+}
+
 export type HarnessJobCreateApiSchemaVersion = typeof HarnessJobCreateApiSchemaVersion[keyof typeof HarnessJobCreateApiSchemaVersion];
 
 
@@ -16156,6 +16245,12 @@ export interface HarnessSecretFileUploadResponseApi {
   secret_ref: SecretReferenceApi;
   /** @minimum 1 */
   size: number;
+}
+
+export type HarnessSecretValuesApiEnvironmentValues = {[key: string]: string};
+
+export interface HarnessSecretValuesApi {
+  environment_values: HarnessSecretValuesApiEnvironmentValues;
 }
 
 export interface HarnessSourceUploadResponseApi {

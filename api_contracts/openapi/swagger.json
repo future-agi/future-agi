@@ -689,7 +689,7 @@
             "get": {
                 "operationId": "accounts_accept-invitation_read",
                 "summary": "Accept an invitation link.",
-                "description": "GET  \u2014 validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST \u2014 set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
+                "description": "GET  — validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST — set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -742,7 +742,7 @@
             "post": {
                 "operationId": "accounts_accept-invitation_create",
                 "summary": "Accept an invitation link.",
-                "description": "GET  \u2014 validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST \u2014 set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
+                "description": "GET  — validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST — set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
                 "parameters": [
                     {
                         "name": "data",
@@ -7504,7 +7504,7 @@
             "get": {
                 "operationId": "agent-playground_graphs_read",
                 "summary": "Get graph detail with the active version expanded (or latest draft if no active).",
-                "description": "Returns full nested structure: nodes\u2192ports, edges.",
+                "description": "Returns full nested structure: nodes→ports, edges.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -7879,7 +7879,7 @@
         "/agent-playground/graphs/{id}/versions/{version_id}/": {
             "get": {
                 "operationId": "agent-playground_graphs_versions_read",
-                "description": "Get a specific version with full nested structure (nodes\u2192ports, edges).",
+                "description": "Get a specific version with full nested structure (nodes→ports, edges).",
                 "parameters": [
                     {
                         "name": "page",
@@ -7960,7 +7960,7 @@
             "put": {
                 "operationId": "agent-playground_graphs_versions_update",
                 "summary": "Metadata-only update endpoint (PUT/PATCH).",
-                "description": "Updates commit_message and/or promotes draft \u2192 active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
+                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
                 "parameters": [
                     {
                         "name": "data",
@@ -8010,7 +8010,7 @@
             "patch": {
                 "operationId": "agent-playground_graphs_versions_partial_update",
                 "summary": "Metadata-only update endpoint (PUT/PATCH).",
-                "description": "Updates commit_message and/or promotes draft \u2192 active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
+                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10525,7 +10525,7 @@
         "/agentcc/gateways/": {
             "get": {
                 "operationId": "agentcc_gateways_list",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10587,7 +10587,7 @@
         "/agentcc/gateways/{id}/": {
             "get": {
                 "operationId": "agentcc_gateways_read",
-                "description": "Accept any pk and ignore it \u2014 there is only one gateway.",
+                "description": "Accept any pk and ignore it — there is only one gateway.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10625,7 +10625,7 @@
         "/agentcc/gateways/{id}/cancel-batch/": {
             "post": {
                 "operationId": "agentcc_gateways_cancel_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10680,7 +10680,7 @@
         "/agentcc/gateways/{id}/config/": {
             "get": {
                 "operationId": "agentcc_gateways_config",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10718,7 +10718,7 @@
         "/agentcc/gateways/{id}/get-batch/": {
             "get": {
                 "operationId": "agentcc_gateways_get_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10762,7 +10762,7 @@
         "/agentcc/gateways/{id}/health_check/": {
             "post": {
                 "operationId": "agentcc_gateways_health_check",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10811,7 +10811,7 @@
         "/agentcc/gateways/{id}/mcp-prompts/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_prompts",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10843,7 +10843,7 @@
         "/agentcc/gateways/{id}/mcp-resources/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_resources",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10875,7 +10875,7 @@
         "/agentcc/gateways/{id}/mcp-status/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_status",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10913,7 +10913,7 @@
         "/agentcc/gateways/{id}/mcp-tools/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_tools",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10945,7 +10945,7 @@
         "/agentcc/gateways/{id}/providers/": {
             "get": {
                 "operationId": "agentcc_gateways_providers",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11032,7 +11032,7 @@
         "/agentcc/gateways/{id}/remove-budget/": {
             "post": {
                 "operationId": "agentcc_gateways_remove_budget",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11081,7 +11081,7 @@
         "/agentcc/gateways/{id}/remove-mcp-server/": {
             "post": {
                 "operationId": "agentcc_gateways_remove_mcp_server",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11191,7 +11191,7 @@
         "/agentcc/gateways/{id}/set-budget/": {
             "post": {
                 "operationId": "agentcc_gateways_set_budget",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11240,7 +11240,7 @@
         "/agentcc/gateways/{id}/submit-batch/": {
             "post": {
                 "operationId": "agentcc_gateways_submit_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11289,7 +11289,7 @@
         "/agentcc/gateways/{id}/test-mcp-tool/": {
             "post": {
                 "operationId": "agentcc_gateways_test_mcp_tool",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11387,7 +11387,7 @@
         "/agentcc/gateways/{id}/toggle-guardrail/": {
             "post": {
                 "operationId": "agentcc_gateways_toggle_guardrail",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11485,7 +11485,7 @@
         "/agentcc/gateways/{id}/update-guardrail/": {
             "post": {
                 "operationId": "agentcc_gateways_update_guardrail",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11534,7 +11534,7 @@
         "/agentcc/gateways/{id}/update-mcp-guardrails/": {
             "post": {
                 "operationId": "agentcc_gateways_update_mcp_guardrails",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11583,7 +11583,7 @@
         "/agentcc/gateways/{id}/update-mcp-server/": {
             "post": {
                 "operationId": "agentcc_gateways_update_mcp_server",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12581,7 +12581,7 @@
             },
             "put": {
                 "operationId": "agentcc_org-configs_update",
-                "description": "Disabled \u2014 configs are immutable versions. Create a new one instead.",
+                "description": "Disabled — configs are immutable versions. Create a new one instead.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12997,7 +12997,7 @@
         "/agentcc/provider-credentials/{id}/rotate/": {
             "post": {
                 "operationId": "agentcc_provider-credentials_rotate",
-                "description": "Rotate credentials \u2014 accepts new credentials, encrypts, and updates.",
+                "description": "Rotate credentials — accepts new credentials, encrypts, and updates.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13558,7 +13558,7 @@
             },
             "put": {
                 "operationId": "agentcc_routing-policies_update",
-                "description": "Updates are disabled \u2014 create a new version instead.",
+                "description": "Updates are disabled — create a new version instead.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13694,7 +13694,7 @@
         "/agentcc/sessions/": {
             "get": {
                 "operationId": "agentcc_sessions_list",
-                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
+                "description": "Session management — create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "page",
@@ -13756,7 +13756,7 @@
             },
             "post": {
                 "operationId": "agentcc_sessions_create",
-                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
+                "description": "Session management — create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13790,7 +13790,7 @@
         "/agentcc/sessions/{id}/": {
             "get": {
                 "operationId": "agentcc_sessions_read",
-                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
+                "description": "Session management — create, list, retrieve sessions with stats.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -13812,7 +13812,7 @@
             },
             "put": {
                 "operationId": "agentcc_sessions_update",
-                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
+                "description": "Session management — create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13843,7 +13843,7 @@
             },
             "patch": {
                 "operationId": "agentcc_sessions_partial_update",
-                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
+                "description": "Session management — create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13874,7 +13874,7 @@
             },
             "delete": {
                 "operationId": "agentcc_sessions_delete",
-                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
+                "description": "Session management — create, list, retrieve sessions with stats.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -15044,7 +15044,7 @@
             "get": {
                 "operationId": "api_deployment-info_list",
                 "summary": "Public deployment-mode probe used by the frontend to gate UI.",
-                "description": "Returns ``{\"mode\": \"oss\"|\"ee\"|\"cloud\"}``. No auth \u2014 public config.",
+                "description": "Returns ``{\"mode\": \"oss\"|\"ee\"|\"cloud\"}``. No auth — public config.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -15242,7 +15242,7 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth \u2014\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -17922,7 +17922,7 @@
         "/mcp/oauth/authorize/": {
             "get": {
                 "operationId": "mcp_oauth_authorize_list",
-                "description": "GET /mcp/oauth/authorize/ \u2014 Return consent screen data.",
+                "description": "GET /mcp/oauth/authorize/ — Return consent screen data.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -17953,7 +17953,7 @@
         "/mcp/oauth/consent/": {
             "post": {
                 "operationId": "mcp_oauth_consent_create",
-                "description": "POST /mcp/oauth/consent/ \u2014 Process user consent decision.",
+                "description": "POST /mcp/oauth/consent/ — Process user consent decision.",
                 "parameters": [
                     {
                         "name": "data",
@@ -18001,7 +18001,7 @@
         "/mcp/oauth/token/": {
             "post": {
                 "operationId": "mcp_oauth_token_create",
-                "description": "POST /mcp/oauth/token/ \u2014 Exchange code or refresh token for access token.",
+                "description": "POST /mcp/oauth/token/ — Exchange code or refresh token for access token.",
                 "parameters": [
                     {
                         "name": "data",
@@ -19086,7 +19086,7 @@
             "post": {
                 "operationId": "model-hub_annotation-queues_hard_delete",
                 "summary": "Permanently remove a queue + everything attached.",
-                "description": "Hard delete cascades through the FK graph (rules, items,\nassignments, scores) via ``on_delete=CASCADE``. There is no\nrecovery \u2014 callers must pass ``force=true`` AND the queue's\nexact name as ``confirm_name`` so the action can't fire from\na typo'd request.",
+                "description": "Hard delete cascades through the FK graph (rules, items,\nassignments, scores) via ``on_delete=CASCADE``. There is no\nrecovery — callers must pass ``force=true`` AND the queue's\nexact name as ``confirm_name`` so the action can't fire from\na typo'd request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -19675,7 +19675,7 @@
             "post": {
                 "operationId": "model-hub_annotation-queues_automation-rules_evaluate",
                 "summary": "Trigger a manual rule run with a sync-or-async branch.",
-                "description": "Small runs (filter resolves to \u2264 ``RULE_RUN_SYNC_THRESHOLD``) finish\nin the HTTP request and return 200 with the result \u2014 fast feedback\nfor the common case. Large runs (mostly first-ever runs on backlogs\nor rules with wide filters) hand the work to a Temporal activity and\nreturn 202 immediately. The activity emails creator + queue managers\non completion.\n\nThe peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) \u2014 sub-\n100ms even on 10M+ row trace tables \u2014 so this branch costs little\neven when it ends up taking the sync path.",
+                "description": "Small runs (filter resolves to ≤ ``RULE_RUN_SYNC_THRESHOLD``) finish\nin the HTTP request and return 200 with the result — fast feedback\nfor the common case. Large runs (mostly first-ever runs on backlogs\nor rules with wide filters) hand the work to a Temporal activity and\nreturn 202 immediately. The activity emails creator + queue managers\non completion.\n\nThe peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) — sub-\n100ms even on 10M+ row trace tables — so this branch costs little\neven when it ends up taking the sync path.",
                 "parameters": [
                     {
                         "name": "data",
@@ -20271,7 +20271,7 @@
             "get": {
                 "operationId": "model-hub_annotation-queues_items_next_item",
                 "summary": "Get the next or previous item in the queue.",
-                "description": "Query params:\n  exclude: comma-separated item IDs to skip\n  before:  item ID \u2014 returns the item immediately before this one in order\n  review_status: optional review status filter (for reviewer queues)\n  exclude_review_status: optional review status to omit (for annotator queues)\n  include_completed: when true, navigation can visit completed items too",
+                "description": "Query params:\n  exclude: comma-separated item IDs to skip\n  before:  item ID — returns the item immediately before this one in order\n  review_status: optional review status filter (for reviewer queues)\n  exclude_review_status: optional review status to omit (for annotator queues)\n  include_completed: when true, navigation can visit completed items too",
                 "parameters": [
                     {
                         "name": "page",
@@ -23114,7 +23114,7 @@
         "/model-hub/cells/{cell_id}/run-error-localizer/": {
             "get": {
                 "operationId": "model-hub_cells_run-error-localizer_list",
-                "description": "Poll endpoint \u2014 returns the current state of the localizer task\nfor a given cell, including the analysis once completed.",
+                "description": "Poll endpoint — returns the current state of the localizer task\nfor a given cell, including the analysis once completed.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -23167,7 +23167,7 @@
             "post": {
                 "operationId": "model-hub_cells_run-error-localizer_create",
                 "summary": "On-demand error localization for a single dataset cell.",
-                "description": "Use case: in the dataset detail drawer, the user opens an eval cell\nthat doesn't have an `error_analysis` block (because the eval was\nrun before error_localization was enabled, or the user wants a\nfresh run). They click \"Run error localization\" and we:\n\n  1. Look up the cell + its UserEvalMetric (column.source_id) +\n     the EvalTemplate.\n  2. Resolve the metric's `mapping` (template_var \u2192 column UUID)\n     against the row's other cells to build `input_data`.\n  3. Pull the eval verdict + reason from `cell.value` /\n     `cell.value_infos`.\n  4. Upsert an `ErrorLocalizerTask(source=DATASET, source_id=cell.id,\n     status=PENDING)` so the existing 30s Temporal schedule picks it\n     up and processes it via `process_single_error_localization`.\n\nReturns the task id + status. The frontend then polls the cell\ndetail / task status endpoint until `error_analysis` lands in\n`cell.value_infos`.\n\nPOST /model-hub/cells/{cell_id}/run-error-localizer/",
+                "description": "Use case: in the dataset detail drawer, the user opens an eval cell\nthat doesn't have an `error_analysis` block (because the eval was\nrun before error_localization was enabled, or the user wants a\nfresh run). They click \"Run error localization\" and we:\n\n  1. Look up the cell + its UserEvalMetric (column.source_id) +\n     the EvalTemplate.\n  2. Resolve the metric's `mapping` (template_var → column UUID)\n     against the row's other cells to build `input_data`.\n  3. Pull the eval verdict + reason from `cell.value` /\n     `cell.value_infos`.\n  4. Upsert an `ErrorLocalizerTask(source=DATASET, source_id=cell.id,\n     status=PENDING)` so the existing 30s Temporal schedule picks it\n     up and processes it via `process_single_error_localization`.\n\nReturns the task id + status. The frontend then polls the cell\ndetail / task status endpoint until `error_analysis` lands in\n`cell.value_infos`.\n\nPOST /model-hub/cells/{cell_id}/run-error-localizer/",
                 "parameters": [
                     {
                         "name": "data",
@@ -32273,7 +32273,7 @@
             },
             "patch": {
                 "operationId": "model-hub_eval-templates_composite_partial_update",
-                "summary": "PATCH \u2014 partial update of a composite eval.",
+                "summary": "PATCH — partial update of a composite eval.",
                 "description": "Supported fields (all optional):\n  name, description, tags,\n  aggregation_enabled, aggregation_function,\n  child_template_ids (replaces the child list),\n  child_weights (map of child_id -> weight).",
                 "parameters": [
                     {
@@ -32348,7 +32348,7 @@
             "post": {
                 "operationId": "model-hub_eval-templates_composite_execute_create",
                 "summary": "POST /model-hub/eval-templates/<template_id>/composite/execute/",
-                "description": "Execute all child evals in a composite and optionally aggregate results.\nThin wrapper around `execute_composite_children_sync` \u2014 the same helper\nthe dataset/experiment `CompositeEvaluationRunner` uses, so aggregation\nsemantics stay consistent across surfaces.",
+                "description": "Execute all child evals in a composite and optionally aggregate results.\nThin wrapper around `execute_composite_children_sync` — the same helper\nthe dataset/experiment `CompositeEvaluationRunner` uses, so aggregation\nsemantics stay consistent across surfaces.",
                 "parameters": [
                     {
                         "name": "data",
@@ -32758,7 +32758,7 @@
             "get": {
                 "operationId": "model-hub_eval-templates_usage_list",
                 "summary": "GET /model-hub/eval-templates/<id>/usage/",
-                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period \u2014 sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.",
+                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period — sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.",
                 "parameters": [
                     {
                         "name": "page",
@@ -33012,7 +33012,7 @@
             "post": {
                 "operationId": "model-hub_eval-templates_versions_restore_create",
                 "summary": "POST /model-hub/eval-templates/<id>/versions/<version_id>/restore/",
-                "description": "Restore a version by creating a new version with the old version's config.\nDoes NOT modify the old version \u2014 creates a new one on top.",
+                "description": "Restore a version by creating a new version with the old version's config.\nDoes NOT modify the old version — creates a new one on top.",
                 "parameters": [
                     {
                         "name": "data",
@@ -33891,7 +33891,7 @@
             "post": {
                 "operationId": "model-hub_experiments_v2_re-run_create",
                 "summary": "V2 re-run: org-scoped, uses V2 Temporal workflow.",
-                "description": "No manual workflow cancel needed \u2014 Temporal's TERMINATE_IF_RUNNING ID\nreuse policy automatically cancels any running workflow with the same ID.\nCell reset is handled by the workflow itself (cleanup + setup activities).",
+                "description": "No manual workflow cancel needed — Temporal's TERMINATE_IF_RUNNING ID\nreuse policy automatically cancels any running workflow with the same ID.\nCell reset is handled by the workflow itself (cleanup + setup activities).",
                 "parameters": [
                     {
                         "name": "data",
@@ -34193,7 +34193,7 @@
             "put": {
                 "operationId": "model-hub_experiments_v2_update",
                 "summary": "Update a V2 experiment with diff-based selective re-run.",
-                "description": "Editable fields: column_id, prompt_config, user_eval_metrics.\nRe-run triggers (determined by fingerprint diffs, not field presence):\n- prompt_config has new/modified entries \u2192 re-run those configs + ALL dependent evals\n- user_eval_metrics has new/modified entries \u2192 re-run only those evals\n- column_id changed \u2192 delete old base eval columns, re-run base evals\n- If FE sends unchanged data, diffs return empty \u2192 no re-run",
+                "description": "Editable fields: column_id, prompt_config, user_eval_metrics.\nRe-run triggers (determined by fingerprint diffs, not field presence):\n- prompt_config has new/modified entries → re-run those configs + ALL dependent evals\n- user_eval_metrics has new/modified entries → re-run only those evals\n- column_id changed → delete old base eval columns, re-run base evals\n- If FE sends unchanged data, diffs return empty → no re-run",
                 "parameters": [
                     {
                         "name": "data",
@@ -34791,7 +34791,7 @@
         "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/": {
             "post": {
                 "operationId": "model-hub_experiments_v2_feedback_submit-feedback_create",
-                "description": "Submit feedback action \u2014 triggers temporal eval rerun for experiments.",
+                "description": "Submit feedback action — triggers temporal eval rerun for experiments.",
                 "parameters": [
                     {
                         "name": "data",
@@ -37064,7 +37064,7 @@
         "/model-hub/ground-truth/{ground_truth_id}/embed/": {
             "post": {
                 "operationId": "model-hub_ground-truth_embed_create",
-                "description": "POST /model-hub/ground-truth/<id>/embed/ \u2014 trigger embedding generation.",
+                "description": "POST /model-hub/ground-truth/<id>/embed/ — trigger embedding generation.",
                 "parameters": [
                     {
                         "name": "data",
@@ -48992,7 +48992,7 @@
         "/simulate/api/alk-simulate/call-executions/{call_execution_id}/status/": {
             "patch": {
                 "operationId": "simulate_api_alk-simulate_call-executions_status",
-                "description": "Non-terminal per-call status ping (currently only ``ongoing``): the\nSDK marks a pre-created PENDING row ONGOING the moment its call starts,\nso the UI shows progress instead of PENDING \u2192 terminal. PENDING-gated in\nthe service, so a late ping never clobbers a result that already landed.",
+                "description": "Non-terminal per-call status ping (currently only ``ongoing``): the\nSDK marks a pre-created PENDING row ONGOING the moment its call starts,\nso the UI shows progress instead of PENDING → terminal. PENDING-gated in\nthe service, so a late ping never clobbers a result that already landed.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49053,7 +49053,7 @@
         "/simulate/api/alk-simulate/run-tests/provision/": {
             "post": {
                 "operationId": "simulate_api_alk-simulate_run-tests_provision_run_test",
-                "description": "Stand up a chat RunTest + scenario-of-record from SDK personas so an\nSDK-first run has somewhere to post \u2014 without the native UI's async\nscenario generation. See ``provision_alk_sim_run_test``.",
+                "description": "Stand up a chat RunTest + scenario-of-record from SDK personas so an\nSDK-first run has somewhere to post — without the native UI's async\nscenario generation. See ``provision_alk_sim_run_test``.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49316,7 +49316,13 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/HarnessJobRead"
+                            }
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -49344,10 +49350,10 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "202": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessJobCreate"
+                            "$ref": "#/definitions/HarnessJobRead"
                         }
                     },
                     "default": {
@@ -49360,7 +49366,8 @@
                 "tags": [
                     "simulate"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -49467,6 +49474,42 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-jobs/secret-values/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_secret_values",
+                "summary": "Persist uploaded agent values encrypted and return opaque hosted refs.",
+                "description": "Values are intentionally separate from platform/model-provider settings. They are scoped\nto the submitting organization and only resolved inside the selected hosted job.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSecretValues"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSecretValues"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": []
+        },
         "/simulate/api/harness-jobs/sources/": {
             "post": {
                 "operationId": "simulate_api_harness-jobs_source_upload",
@@ -49525,7 +49568,10 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -49606,10 +49652,10 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessJobAction"
+                            "$ref": "#/definitions/HarnessJobRead"
                         }
                     },
                     "default": {
@@ -49622,7 +49668,8 @@
                 "tags": [
                     "simulate"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -49713,7 +49760,8 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true
             },
             "parameters": [
                 {
@@ -50191,7 +50239,7 @@
             "post": {
                 "operationId": "simulate_api_livekit_webhook_create",
                 "summary": "Receive and process LiveKit server webhooks.",
-                "description": "Handles lifecycle events (room start/finish, participant join/leave,\negress completion). This is the **reliable** path for updating call\nlifecycle and signaling Temporal \u2014 it fires even if the agent worker\ncrashes mid-call.",
+                "description": "Handles lifecycle events (room start/finish, participant join/leave,\negress completion). This is the **reliable** path for updating call\nlifecycle and signaling Temporal — it fires even if the agent worker\ncrashes mid-call.",
                 "parameters": [
                     {
                         "name": "data",
@@ -57311,7 +57359,7 @@
         "/tracer/feed/issues/": {
             "get": {
                 "operationId": "tracer_feed_issues_list",
-                "description": "GET /tracer/feed/issues/ \u2014 paginated cluster list with filters/sort.",
+                "description": "GET /tracer/feed/issues/ — paginated cluster list with filters/sort.",
                 "parameters": [
                     {
                         "name": "project_id",
@@ -57471,7 +57519,7 @@
         "/tracer/feed/issues/stats/": {
             "get": {
                 "operationId": "tracer_feed_issues_stats_list",
-                "description": "GET /tracer/feed/issues/stats/ \u2014 top stats bar totals.",
+                "description": "GET /tracer/feed/issues/stats/ — top stats bar totals.",
                 "parameters": [
                     {
                         "name": "project_id",
@@ -62456,7 +62504,7 @@
             "post": {
                 "operationId": "tracer_trace-session_get_session_graph_data",
                 "summary": "Fetch time-series session metrics for the observe graph.",
-                "description": "Supports the same metric types as the trace graph endpoint:\n- SYSTEM_METRIC: latency, tokens, cost, error_rate, session_count,\n  avg_duration, avg_traces_per_session \u2014 all aggregated at session level\n- EVAL: eval scores averaged across sessions\n- ANNOTATION: annotation scores averaged across sessions\n\nResponse shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}",
+                "description": "Supports the same metric types as the trace graph endpoint:\n- SYSTEM_METRIC: latency, tokens, cost, error_rate, session_count,\n  avg_duration, avg_traces_per_session — all aggregated at session level\n- EVAL: eval scores averaged across sessions\n- ANNOTATION: annotation scores averaged across sessions\n\nResponse shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}",
                 "parameters": [
                     {
                         "name": "data",
@@ -62795,7 +62843,7 @@
             "get": {
                 "operationId": "tracer_trace-session_eval_logs",
                 "summary": "Session-scoped eval log feed for TracesDrawer's \"Evals\" tab.",
-                "description": "Session-level eval results are walled off from span/trace surfaces\nby ``target_type='session'`` \u2014 this endpoint is the only place\nthey appear.\n\nQuery params:\n    page (int, 0-indexed, default 0)\n    page_size (int, default 25, max 100)",
+                "description": "Session-level eval results are walled off from span/trace surfaces\nby ``target_type='session'`` — this endpoint is the only place\nthey appear.\n\nQuery params:\n    page (int, 0-indexed, default 0)\n    page_size (int, default 25, max 100)",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -62924,7 +62972,7 @@
             "get": {
                 "operationId": "tracer_trace_agent_graph",
                 "summary": "Return the aggregate agent graph for a project.",
-                "description": "Computes nodes (distinct span types/names) and edges (parent\u2192child\ntransitions) across all traces in the given time window.",
+                "description": "Computes nodes (distinct span types/names) and edges (parent→child\ntransitions) across all traces in the given time window.",
                 "parameters": [
                     {
                         "name": "page",
@@ -63765,7 +63813,7 @@
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
                 "summary": "Return the heavy / detail-only fields for a single voice call.",
-                "description": "Query params:\n- trace_id (required) \u2014 UUID of the voice call trace.",
+                "description": "Query params:\n- trace_id (required) — UUID of the voice call trace.",
                 "parameters": [
                     {
                         "name": "page",
@@ -72470,7 +72518,7 @@
             "post": {
                 "operationId": "usage_v2_stripe-webhook_create",
                 "summary": "Handle Stripe webhook events.",
-                "description": "No auth \u2014 Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
+                "description": "No auth — Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
                 "parameters": [
                     {
                         "name": "data",
@@ -72942,7 +72990,7 @@
             "post": {
                 "operationId": "usage_webhook_create",
                 "summary": "Handle Stripe webhook events.",
-                "description": "No auth \u2014 Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
+                "description": "No auth — Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
                 "parameters": [
                     {
                         "name": "data",
@@ -82699,7 +82747,7 @@
                 },
                 "sample_rate": {
                     "title": "Sample rate",
-                    "description": "Fraction of traffic to mirror (0.0\u20131.0)",
+                    "description": "Fraction of traffic to mirror (0.0–1.0)",
                     "type": "number"
                 },
                 "status": {
@@ -111166,7 +111214,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -111585,7 +111633,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -111822,7 +111870,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1
                 },
                 "commit_message": {
@@ -114555,6 +114603,312 @@
                 }
             }
         },
+        "HarnessJobInfo": {
+            "required": [
+                "job_id",
+                "run_id",
+                "source",
+                "metadata",
+                "run_test_id",
+                "test_execution_id"
+            ],
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobStatus": {
+            "required": [
+                "state",
+                "stage",
+                "updated_at",
+                "attempt",
+                "completed_scenarios",
+                "failed_scenarios",
+                "total_scenarios",
+                "deadline_at",
+                "failure"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer"
+                },
+                "completed_scenarios": {
+                    "title": "Completed scenarios",
+                    "type": "integer"
+                },
+                "failed_scenarios": {
+                    "title": "Failed scenarios",
+                    "type": "integer"
+                },
+                "total_scenarios": {
+                    "title": "Total scenarios",
+                    "type": "integer"
+                },
+                "deadline_at": {
+                    "title": "Deadline at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure": {
+                    "title": "Failure",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobEvent": {
+            "required": [
+                "event_id",
+                "sequence",
+                "stage",
+                "type",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer"
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessStageOutput": {
+            "required": [
+                "id",
+                "title",
+                "summary",
+                "kind",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "title": "Data",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessScenario": {
+            "required": [
+                "scenario_key",
+                "scenario_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_id": {
+                    "title": "Scenario id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessPlatform": {
+            "required": [
+                "run_test_id",
+                "test_execution_id",
+                "url"
+            ],
+            "type": "object",
+            "properties": {
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "url": {
+                    "title": "Url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobRead": {
+            "required": [
+                "job",
+                "status",
+                "events",
+                "stage_outputs",
+                "scenarios",
+                "receipts",
+                "platform"
+            ],
+            "type": "object",
+            "properties": {
+                "job": {
+                    "$ref": "#/definitions/HarnessJobInfo"
+                },
+                "status": {
+                    "$ref": "#/definitions/HarnessJobStatus"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessJobEvent"
+                    }
+                },
+                "stage_outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessStageOutput"
+                    }
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenario"
+                    }
+                },
+                "receipts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "platform": {
+                    "$ref": "#/definitions/HarnessPlatform"
+                }
+            }
+        },
         "HarnessSource": {
             "required": [
                 "kind"
@@ -115044,6 +115398,23 @@
                     "title": "Size",
                     "type": "integer",
                     "minimum": 1
+                }
+            }
+        },
+        "HarnessSecretValues": {
+            "required": [
+                "environment_values"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_values": {
+                    "title": "Environment values",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "maxLength": 65536,
+                        "minLength": 1
+                    }
                 }
             }
         },
