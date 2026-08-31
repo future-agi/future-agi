@@ -42,10 +42,15 @@ class _MissingExtra(types.ModuleType):
         self._extras_group = extras_group
 
     def __getattr__(self, attr: str):
+        # Dunder lookups get AttributeError, not ImportError: hasattr() only
+        # swallows AttributeError, and pickle/copy/inspect probe dunders
+        # speculatively — those probes must not explode.
+        if attr.startswith("__") and attr.endswith("__"):
+            raise AttributeError(attr)
         raise ImportError(_install_hint(self.__name__, self._extras_group))
 
     def __call__(self, *args, **kwargs):
-        self.__getattr__("__call__")
+        raise ImportError(_install_hint(self.__name__, self._extras_group))
 
     # Explicit __repr__ so log processors and debuggers dumping locals
     # (e.g. structlog rendering a frame) print a marker instead of

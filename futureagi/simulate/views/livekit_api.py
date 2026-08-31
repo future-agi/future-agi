@@ -448,7 +448,10 @@ class LiveCallListenerTokenView(APIView):
         },
     )
     def get(self, request: Request, call_id: str) -> Response:
-        from livekit.api import AccessToken, VideoGrants
+        from tfc.utils.lazy_extras import load_extra
+
+        _lk_api = load_extra("livekit.api", "voice")
+        AccessToken, VideoGrants = _lk_api.AccessToken, _lk_api.VideoGrants
 
         from simulate.models.test_execution import CallExecution
 
@@ -533,12 +536,13 @@ class ValidateLiveKitCredentialsView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request: Request) -> Response:
-        from livekit.api import (
-            CreateAgentDispatchRequest,
-            CreateRoomRequest,
-            DeleteRoomRequest,
-            LiveKitAPI,
-        )
+        from tfc.utils.lazy_extras import load_extra
+
+        _lk_api = load_extra("livekit.api", "voice")
+        CreateAgentDispatchRequest = _lk_api.CreateAgentDispatchRequest
+        CreateRoomRequest = _lk_api.CreateRoomRequest
+        DeleteRoomRequest = _lk_api.DeleteRoomRequest
+        LiveKitAPI = _lk_api.LiveKitAPI
 
         data = request.validated_data
         livekit_url = (data.get("livekit_url") or "").strip()

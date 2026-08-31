@@ -157,7 +157,8 @@ audio = [
     "numba>=0.60.0",
     "llvmlite>=0.43.0",
     "librosa>=0.10.1",
-    "pydub",
+    # pydub logically belongs here but lives in base deps (Deepgram STT is a
+    # base feature), so listing it in this extra would be unreachable.
     "elevenlabs",
 ]
 ml = [

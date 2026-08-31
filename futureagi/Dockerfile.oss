@@ -31,11 +31,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install uv
 
 WORKDIR /build
-COPY requirements.txt pyproject.toml uv.lock ./
+# Separate COPY layers: lockfile churn must not invalidate the expensive
+# base install layer when requirements.txt itself didn't change.
+COPY requirements.txt ./
 RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache
+COPY pyproject.toml uv.lock ./
 RUN if [ -n "$EXTRAS" ]; then \
         uv export --frozen --no-dev --no-hashes --no-emit-project \
-            $(echo "$EXTRAS" | tr ',' '\n' | sed 's/^/--extra /' | tr '\n' ' ') \
+            $(echo "$EXTRAS" | tr ',' '\n' | grep -v '^$' | sed 's/^/--extra /' | tr '\n' ' ') \
             -o /tmp/extras-requirements.txt \
         && uv pip install --system -r /tmp/extras-requirements.txt \
             --compile-bytecode --no-cache; \

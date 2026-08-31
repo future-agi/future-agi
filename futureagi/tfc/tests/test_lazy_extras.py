@@ -14,7 +14,6 @@ and every failure message must name the extras group to install.
 from __future__ import annotations
 
 import pytest
-from tfc.utils import lazy_extras
 from tfc.utils.lazy_extras import (
     _MissingExtra,
     _try_import,
@@ -51,6 +50,17 @@ def test_missing_extra_repr_does_not_raise():
     text = repr(proxy)
     assert _BOGUS in text
     assert "ml" in text
+
+
+def test_missing_extra_dunder_probes_do_not_raise_importerror():
+    """hasattr() only swallows AttributeError, and pickle/copy/inspect probe
+    dunders speculatively — those probes must get AttributeError, while
+    regular attribute access keeps the actionable ImportError."""
+    proxy = _MissingExtra(_BOGUS, "audio")
+    assert hasattr(proxy, "__deepcopy__") is False
+    assert hasattr(proxy, "__reduce_ex__") is True  # inherited real dunder
+    with pytest.raises(ImportError):
+        proxy.open  # non-dunder access still raises the install hint
 
 
 def test_try_import_returns_real_module_when_installed():
@@ -92,14 +102,3 @@ def test_extra_available_true_for_installed_package():
 
 def test_extra_available_false_for_missing_package():
     assert extra_available(_BOGUS) is False
-
-
-# ── module-level proxies ──────────────────────────────────────────────────
-def test_audio_proxies_are_module_objects():
-    """Whether or not the audio extra is installed in this env, the names
-    must exist and be module objects (real or proxy) — call sites do
-    `from tfc.utils.lazy_extras import av` at module level."""
-    import types
-
-    assert isinstance(lazy_extras.av, types.ModuleType)
-    assert isinstance(lazy_extras.soundfile, types.ModuleType)

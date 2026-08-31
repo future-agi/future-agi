@@ -1259,7 +1259,6 @@ audio = [
     { name = "librosa" },
     { name = "llvmlite" },
     { name = "numba" },
-    { name = "pydub" },
     { name = "soundfile" },
 ]
 dev = [
@@ -1420,7 +1419,6 @@ requires-dist = [
     { name = "psycopg", extras = ["binary", "pool"] },
     { name = "pydantic", specifier = ">=2.11.10" },
     { name = "pydub" },
-    { name = "pydub", marker = "extra == 'audio'" },
     { name = "pyjwt" },
     { name = "pyotp", specifier = ">=2.9.0" },
     { name = "pypdf" },

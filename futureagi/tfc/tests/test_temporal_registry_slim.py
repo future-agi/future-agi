@@ -2,12 +2,16 @@
 
 On the slim OSS image the `voice` extra's packages are stripped, so
 importing `ee.voice.temporal.workflows.*` raises ImportError. Historically
-one try/except wrapped BOTH the voice workflows and the plain text-sim
+one try/except wrapped BOTH the voice workflows and the simulation
 orchestrators (TestExecutionWorkflow / RerunCoordinatorWorkflow), so a
-missing voice extra silently took out text simulation too. The registry
-now registers them in separate guarded blocks; this test simulates the
-slim image by blocking `ee.voice` imports and asserts text simulation
-still registers on the `tasks_l` queue.
+voice-side ImportError silently unregistered the orchestrators too.
+(Note: hosted text simulation routes through SimulationRunnerWorkflow —
+these orchestrators are the native voice/dispatch path — so the split is
+defense in depth for every caller that still dispatches them directly,
+not a text-sim-was-broken fix.) The registry now registers them in
+separate guarded blocks; this test simulates the slim image by blocking
+`ee.voice` imports and asserts the orchestrators still register on the
+`tasks_l` queue.
 """
 
 from __future__ import annotations
@@ -55,11 +59,11 @@ def slim_registry():
         registry._workflows_registered = saved_flag
 
 
-def test_text_simulation_registers_without_voice_extra(slim_registry):
+def test_orchestrators_register_without_voice_extra(slim_registry):
     workflows = slim_registry.get_workflows_for_queue("tasks_l")
     names = {w.__name__ for w in workflows}
 
-    # Text-simulation orchestrators must survive the missing voice extra.
+    # Simulation orchestrators must survive the missing voice extra.
     assert "TestExecutionWorkflow" in names
     assert "RerunCoordinatorWorkflow" in names
 

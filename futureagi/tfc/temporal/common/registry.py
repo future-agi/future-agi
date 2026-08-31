@@ -316,10 +316,12 @@ def _ensure_workflows_registered() -> None:
     # Register simulation orchestration workflows for tasks_l queue.
     # TestExecutionWorkflow: Parent orchestrator for test executions
     # RerunCoordinatorWorkflow: Parent orchestrator for call execution reruns
-    # Registered separately from the ee.voice workflows below so that a
-    # build without the `voice` extra (slim OSS image) still runs text
-    # simulation — child voice workflows are referenced by name, so this
-    # block has no import-time dependency on ee.voice.
+    # Registered separately from the ee.voice workflows below: their imports
+    # of CallExecutionWorkflow are function-scoped (inside _launch_batch), so
+    # this block has no IMPORT-TIME dependency on ee.voice and registration
+    # succeeds on builds without the `voice` extra. At runtime, launching a
+    # voice batch on such a build fails visibly with a non-retryable
+    # ApplicationError (see _launch_batch in both workflows).
     try:
         from simulate.temporal.workflows.rerun_coordinator_workflow import (
             RerunCoordinatorWorkflow,

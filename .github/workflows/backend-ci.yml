@@ -213,13 +213,17 @@ jobs:
 
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS
-    # image ships: every other job syncs --all-extras, so a module-level
+    # image ships: every other job syncs --all-extras, so a MODULE-LEVEL
     # import of an extras package (torch, av, weaviate, retell, ...) in base
     # code would merge green and break the published image. This job syncs
-    # without extras, boots Django, force-loads the full URLconf (catches
-    # request-time view imports), and loads the temporal worker registry
-    # (catches worker-side imports), asserting text-simulation workflows
-    # still register when the voice extra is absent.
+    # without extras, boots Django, force-loads the full URLconf, and loads
+    # both halves of the temporal worker registry (workflows AND activities),
+    # asserting simulation orchestrators still register when the voice extra
+    # is absent. Scope note: this catches module-level imports only —
+    # function-scoped request-time imports are invisible here; the
+    # tfc.utils.lazy_extras boundary is the defense for those. The drift
+    # check guards the committed requirements exports against uv.lock, so a
+    # dependency change can't ship a slim image that silently lost it.
     name: Slim image boot smoke (no extras)
     needs: changes
     if: needs.changes.outputs.backend == 'true'
@@ -238,6 +242,16 @@ jobs:
 
       - name: Install base dependencies only (no extras)
         run: uv sync --frozen
+
+      - name: Requirements exports match uv.lock (drift check)
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project \
+            -o requirements.txt
+          uv export --frozen --no-dev --no-hashes --no-emit-project \
+            --extra audio --extra ml --extra voice --extra pii \
+            --extra prompt-opt --extra vectordb \
+            -o ee/requirements.txt
+          git diff --exit-code -- requirements.txt ee/requirements.txt
 
       - name: Boot Django, load URLconf and temporal registry
         run: |
@@ -262,10 +276,21 @@ jobs:
           names = {w.__name__ for w in workflows}
           missing = {"TestExecutionWorkflow", "RerunCoordinatorWorkflow"} - names
           assert not missing, (
-              f"text-simulation workflows failed to register without the "
+              f"simulation orchestrators failed to register without the "
               f"voice extra: missing {missing}"
           )
-          print(f"temporal registry OK: {sorted(names)} on tasks_l")
+          print(f"temporal workflow registry OK: {sorted(names)} on tasks_l")
+
+          # Activities half — imports the Django-dependent activity modules
+          # (a different import closure than workflows; e.g. voice activities
+          # pull transformers). Missing-extra modules are skipped by the
+          # registry's per-block ImportError guards; anything else raises.
+          activity_count = sum(
+              len(registry.get_activities_for_queue(queue))
+              for queue in registry.get_all_queues()
+          )
+          assert activity_count > 0, "no temporal activities registered"
+          print(f"temporal activity registry OK: {activity_count} activities")
           EOF
 
   backend-tests:

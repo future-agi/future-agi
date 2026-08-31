@@ -111,6 +111,26 @@ class RunAgentTestTool(BaseTool):
                 "Please assign a new simulator agent before running."
             )
 
+        # Voice simulation gate — mirrors the deny in the execute view's
+        # _voice_sim_gate_response. Without this, a slim OSS build (voice
+        # extra absent) would accept the run and dispatch a workflow the
+        # worker can never complete.
+        from simulate.models.agent_definition import AgentDefinition
+
+        if (
+            run_test.agent_definition is not None
+            and run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.VOICE
+        ):
+            from tfc.ee_gates import voice_sim_oss_gate_response
+
+            if voice_sim_oss_gate_response() is not None:
+                return ToolResult.error(
+                    "Voice simulation is not available in this deployment. "
+                    "Upgrade to cloud or enterprise to run voice calls.",
+                    error_code="ENTITLEMENT_DENIED",
+                )
+
         # Create test execution using ExecutionStatus enum
         execution = TestExecution(
             run_test=run_test,
