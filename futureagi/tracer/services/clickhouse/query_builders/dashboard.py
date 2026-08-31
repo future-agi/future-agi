@@ -32,6 +32,7 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
+from tracer.utils.eval_helpers import resolve_eval_template_id
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,9 @@ _ROLLUP_COVERED_ATTRS = frozenset({"final_status", "country"})
 
 # Rollup is hour-resolution; sub-hour granularities keep the spans scan.
 _ROLLUP_GRANULARITIES = frozenset({"hour", "day", "week", "month", "year"})
+
+DISTRIBUTION_QUERY_MODE = "distribution"
+DISTRIBUTION_BUCKET_COUNT = 10
 
 # Metrics that are non-numeric identifiers — force count_distinct aggregation
 _COUNT_DISTINCT_METRICS = frozenset(
@@ -383,6 +387,7 @@ class DashboardQueryBuilder:
         self.organization_id = query_config.get("organization_id", "")
         self.workspace_id = query_config.get("workspace_id", "")
         self.granularity = query_config.get("granularity", "day")
+        self.query_mode = query_config.get("query_mode", "time_series")
         self.metrics = query_config.get("metrics", [])
         self.global_filters = query_config.get("filters", [])
         self.breakdowns = query_config.get("breakdowns", [])
@@ -433,6 +438,27 @@ class DashboardQueryBuilder:
         metric_name = metric.get("id") or metric.get("name", "")
         aggregation = metric.get("aggregation", "avg")
         per_metric_filters = metric.get("filters", [])
+
+        if self.query_mode == DISTRIBUTION_QUERY_MODE:
+            if len(self.metrics) != 1:
+                raise ValueError("Distribution queries require exactly one metric.")
+            if metric_type != "eval_metric":
+                raise ValueError("Distribution queries only support eval metrics.")
+            if metric.get("source", "traces") not in ("traces", "both", "all"):
+                raise ValueError(
+                    "Distribution queries only support trace-sourced eval metrics."
+                )
+            output_type = str(
+                metric.get("output_type") or metric.get("outputType") or "SCORE"
+            ).upper()
+            if output_type not in ("SCORE", "NUMERIC"):
+                raise ValueError(
+                    "Distribution queries require a numeric score eval metric."
+                )
+            if aggregation != "count":
+                raise ValueError("Distribution queries use count aggregation.")
+            if self.breakdowns:
+                raise ValueError("Distribution queries do not support breakdowns.")
 
         start_date, end_date = self.parse_time_range()
         bucket_fn = GRANULARITY_TO_CH.get(self.granularity, "toStartOfDay")
@@ -719,9 +745,9 @@ class DashboardQueryBuilder:
         """
         # Accept both config_id (legacy) and name (new) as the template identifier
         eval_template_id = metric.get("config_id") or metric.get("name", "")
-        output_type = (metric.get("output_type") or "SCORE").upper()
-
-        from tracer.utils.eval_helpers import resolve_eval_template_id
+        output_type = str(
+            metric.get("output_type") or metric.get("outputType") or "SCORE"
+        ).upper()
 
         eval_template_id = resolve_eval_template_id(
             eval_template_id, organization_id=self.organization_id
@@ -737,6 +763,19 @@ class DashboardQueryBuilder:
         _is_pass = eval_pass_expr("e.eval_score", "e.eval_output_str")
         _is_fail = eval_fail_expr("e.eval_score", "e.eval_output_str")
         _unified_score = f"if({_is_pass}, 1.0, e.eval_score)"
+
+        is_distribution = self.query_mode == DISTRIBUTION_QUERY_MODE
+        if output_type == "PASS_FAIL":
+            col_expr = _unified_score
+        else:
+            # Some templates with missing output_type still emit pass/fail strings.
+            col_expr = (
+                "if(e.eval_output_str = '', NULL, "
+                f"if({_output_str_lower} IN ('passed', 'pass', 'true', '1'), 1.0, "
+                f"if({_output_str_lower} IN ('failed', 'fail', 'false', '0'), 0.0, "
+                "if(match(e.eval_output_str, '^-?[0-9]+\\.?[0-9]*$'), "
+                "e.eval_score, NULL))))"
+            )
 
         _EVAL_AGGREGATIONS: dict[str, str] = {
             "pass_rate": f"countIf({_is_pass}) / nullIf(count(), 0)",
@@ -768,10 +807,14 @@ class DashboardQueryBuilder:
                 )
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
-        group_parts = ["time_bucket"]
-        order_parts = ["time_bucket"]
-        select_parts.append(f"{agg_expr} AS value")
+        select_parts = []
+        group_parts = []
+        order_parts = []
+        if not is_distribution:
+            select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
+            group_parts = ["time_bucket"]
+            order_parts = ["time_bucket"]
+            select_parts.append(f"{agg_expr} AS value")
 
         # Scope to workspace when available, otherwise org
         if self.workspace_id:
@@ -1018,14 +1061,75 @@ class DashboardQueryBuilder:
 
         join_str = "\n".join(joins)
 
-        query = (
-            f"SELECT {', '.join(select_parts)}\n"
-            f"FROM usage_apicalllog AS e FINAL\n"
-            f"{join_str}\n"
-            f"WHERE {' AND '.join(where_parts)}\n"
-            f"GROUP BY {', '.join(group_parts)}\n"
-            f"ORDER BY {', '.join(order_parts)}"
-        )
+        if is_distribution:
+            query = (
+                "WITH\n"
+                "filtered_scores AS (\n"
+                "    SELECT score\n"
+                "    FROM (\n"
+                f"        SELECT {col_expr} AS score\n"
+                "        FROM usage_apicalllog AS e FINAL\n"
+                f"        {join_str}\n"
+                f"        WHERE {' AND '.join(where_parts)}\n"
+                "    )\n"
+                "    WHERE score IS NOT NULL\n"
+                "),\n"
+                "score_bounds AS (\n"
+                "    SELECT min(score) AS min_score, max(score) AS max_score\n"
+                "    FROM filtered_scores\n"
+                "),\n"
+                "bucketed_scores AS (\n"
+                "    SELECT\n"
+                "        fs.score,\n"
+                "        sb.min_score,\n"
+                "        sb.max_score,\n"
+                "        if(\n"
+                "            sb.max_score = sb.min_score,\n"
+                "            toUInt8(0),\n"
+                "            least(\n"
+                f"                toUInt8({DISTRIBUTION_BUCKET_COUNT - 1}),\n"
+                f"                toUInt8(floor((fs.score - sb.min_score) / (sb.max_score - sb.min_score) * {DISTRIBUTION_BUCKET_COUNT}))\n"
+                "            )\n"
+                "        ) AS bucket_index\n"
+                "    FROM filtered_scores AS fs\n"
+                "    CROSS JOIN score_bounds AS sb\n"
+                "),\n"
+                "bucket_counts AS (\n"
+                "    SELECT bucket_index, count() AS value\n"
+                "    FROM bucketed_scores\n"
+                "    GROUP BY bucket_index\n"
+                ")\n"
+                "SELECT\n"
+                f"    buckets.min_score + (buckets.max_score - buckets.min_score) * buckets.bucket_index / {DISTRIBUTION_BUCKET_COUNT} AS bucket_start,\n"
+                "    if(\n"
+                f"        buckets.bucket_index = {DISTRIBUTION_BUCKET_COUNT - 1},\n"
+                "        buckets.max_score,\n"
+                f"        buckets.min_score + (buckets.max_score - buckets.min_score) * (buckets.bucket_index + 1) / {DISTRIBUTION_BUCKET_COUNT}\n"
+                "    ) AS bucket_end,\n"
+                "    ifNull(bucket_counts.value, 0) AS value\n"
+                "FROM (\n"
+                "    SELECT\n"
+                "        min_score,\n"
+                "        max_score,\n"
+                "        bucket_index\n"
+                "    FROM score_bounds\n"
+                f"    ARRAY JOIN range({DISTRIBUTION_BUCKET_COUNT}) AS bucket_index\n"
+                ")\n"
+                "    AS buckets\n"
+                "LEFT JOIN bucket_counts\n"
+                "    ON bucket_counts.bucket_index = buckets.bucket_index\n"
+                "WHERE buckets.min_score IS NOT NULL\n"
+                "ORDER BY bucket_start, bucket_end"
+            )
+        else:
+            query = (
+                f"SELECT {', '.join(select_parts)}\n"
+                f"FROM usage_apicalllog AS e FINAL\n"
+                f"{join_str}\n"
+                f"WHERE {' AND '.join(where_parts)}\n"
+                f"GROUP BY {', '.join(group_parts)}\n"
+                f"ORDER BY {', '.join(order_parts)}"
+            )
         return query, params
 
     # ------------------------------------------------------------------
@@ -1218,7 +1322,11 @@ class DashboardQueryBuilder:
             or metric.get("displayName")
             or metric.get("name", ""),
             "type": metric.get("type", "system_metric"),
-            "aggregation": metric.get("aggregation", "avg"),
+            "aggregation": (
+                "count"
+                if self.query_mode == DISTRIBUTION_QUERY_MODE
+                else metric.get("aggregation", "avg")
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -1325,6 +1433,52 @@ class DashboardQueryBuilder:
                 "aggregation": metric_info.get("aggregation", "avg"),
                 "unit": unit,
                 "series": series,
+            }
+            if metric_info.get("error"):
+                formatted_metric["error"] = metric_info["error"]
+            formatted_metrics.append(formatted_metric)
+
+        return {
+            "metrics": formatted_metrics,
+            "time_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+            },
+            "granularity": self.granularity,
+        }
+
+    def format_distribution_results(
+        self, metric_results: list[tuple[dict, list[dict]]]
+    ) -> dict:
+        """Format ClickHouse histogram buckets without inserting time buckets."""
+        start_date, end_date = self.parse_time_range()
+        formatted_metrics = []
+
+        for metric_info, rows in metric_results:
+            data = []
+            for row in rows:
+                bucket_start = row.get("bucket_start")
+                bucket_end = row.get("bucket_end")
+                if bucket_start is None or bucket_end is None:
+                    continue
+                value = row.get("value")
+                if isinstance(value, float):
+                    value = round(value, 6)
+                data.append(
+                    {
+                        "bucket_start": round(float(bucket_start), 6),
+                        "bucket_end": round(float(bucket_end), 6),
+                        "value": value,
+                    }
+                )
+
+            data.sort(key=lambda point: (point["bucket_start"], point["bucket_end"]))
+            formatted_metric = {
+                "id": metric_info.get("id", ""),
+                "name": metric_info.get("name", ""),
+                "aggregation": "count",
+                "unit": "",
+                "series": [{"name": "total", "data": data}],
             }
             if metric_info.get("error"):
                 formatted_metric["error"] = metric_info["error"]

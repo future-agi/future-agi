@@ -51704,6 +51704,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           ],
           "default": "day"
         },
+        "query_mode": {
+          "title": "Query mode",
+          "type": "string",
+          "enum": [
+            "time_series",
+            "distribution"
+          ],
+          "default": "time_series"
+        },
         "metrics": {
           "type": "array",
           "items": {
@@ -102078,7 +102087,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "DashboardQuerySeriesPoint": {
       "required": [
-        "timestamp",
         "value"
       ],
       "type": "object",
@@ -102087,6 +102095,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Timestamp",
           "type": "string",
           "minLength": 1
+        },
+        "bucket_start": {
+          "title": "Bucket start",
+          "type": "number"
+        },
+        "bucket_end": {
+          "title": "Bucket end",
+          "type": "number"
         },
         "value": {
           "title": "Value",
