@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import timedelta
 from unittest import mock
 
 import pytest
@@ -18,12 +19,23 @@ from django.test.utils import override_settings
 from rest_framework import status
 from rest_framework.utils.encoders import JSONEncoder
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
+
 from model_hub.models.annotation_queues import AnnotationExportJob, QueueItem
-from model_hub.models.choices import AnnotationExportJobStatus, QueueItemStatus
+from model_hub.models.choices import (
+    AnnotationExportJobStatus,
+    QueueItemSourceType,
+    QueueItemStatus,
+)
 from model_hub.tasks.annotation_export import (
+    EXPORT_RETENTION_DAYS,
+    cleanup_expired_export_jobs,
     export_annotation_queue_async,
     render_export,
 )
+from model_hub.utils.annotation_queue_helpers import CollectorSourceCache
 
 # The activity is invoked through ``_original_func`` the way the other activity
 # tests in this repo do it: the decorator wraps the call in
@@ -31,7 +43,10 @@ from model_hub.tasks.annotation_export import (
 # transaction is running on.
 from model_hub.tests.test_annotation_export_batch_cap import (
     EXPORT_URL,
+    _build_call_execution_queue,
+    _build_ch_source_queue,
     _build_dataset_queue,
+    _build_prototype_run_queue,
     _unwrap,
 )
 
@@ -425,3 +440,257 @@ def test_direct_invocation_is_treated_as_the_last_attempt():
     from model_hub.tasks.annotation_export import _temporal_will_retry
 
     assert _temporal_will_retry() is False
+
+
+# ---------------------------------------------------------------------------
+# Source-type coverage above the cap.
+#
+# The parity tests above all seed dataset rows. The export has to hold for every
+# source type issue #2311 lists, and each resolves differently: call executions
+# are the widest rows (prefetched transcripts, per-item eval metrics), prototype
+# runs are a plain PG read, and the tracer sources (trace / observation_span /
+# trace_session) resolve CH-only. A regression that broke rendering for, say,
+# call executions would pass every dataset-row test, so each type is pinned here
+# on the same async render path.
+# ---------------------------------------------------------------------------
+
+
+def _transcript_queries(captured):
+    """Captured SQL statements that read the call-transcript table."""
+    return [
+        q for q in captured.captured_queries if "simulate_call_transcript" in q["sql"]
+    ]
+
+
+@pytest.mark.django_db
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
+def test_async_call_execution_matches_sync_download(
+    auth_client, organization, workspace, user
+):
+    """Call-execution rows come out of the worker identical to the sync download."""
+    seed = _build_call_execution_queue(
+        organization=organization, workspace=workspace, user=user, n_items=5
+    )
+    sync_resp = auth_client.get(
+        EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+    )
+    assert sync_resp.status_code == status.HTTP_200_OK, sync_resp.data
+    sync_rows = _unwrap(sync_resp.data)
+
+    job = _make_job(seed["queue"], organization, workspace, user, "json")
+    text, item_count, _size = _render_text(job)
+
+    assert item_count == 5
+    assert json.loads(text) == json.loads(json.dumps(sync_rows, cls=JSONEncoder))
+    # Every item resolved as a call execution, not a "could not resolve" sentinel.
+    assert all(row["source"]["type"] == "call_execution" for row in json.loads(text))
+
+
+@pytest.mark.django_db
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
+def test_async_call_execution_prefetches_transcripts_no_n_plus_one(
+    organization, workspace, user
+):
+    """The transcript read stays batched over the chunk, not one query per call.
+
+    ``queue_export_items_queryset`` carries the ``call_execution__transcripts``
+    prefetch; the render reads each call's transcripts off it. Drop the prefetch
+    and this becomes one transcript query per item — the N+1 the async path exists
+    to avoid on the widest source rows.
+    """
+    seed = _build_call_execution_queue(
+        organization=organization, workspace=workspace, user=user, n_items=6
+    )
+    job = _make_job(seed["queue"], organization, workspace, user, "json")
+
+    with CaptureQueriesContext(connection) as cap:
+        _text, item_count, _size = _render_text(job)
+
+    assert item_count == 6
+    # One batched prefetch for the whole queue, never 6.
+    assert len(_transcript_queries(cap)) <= 1, [
+        q["sql"] for q in _transcript_queries(cap)
+    ]
+
+
+@pytest.mark.django_db
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
+def test_async_prototype_run_matches_sync_download(
+    auth_client, organization, workspace, user
+):
+    """Prototype-run rows come out of the worker identical to the sync download."""
+    seed = _build_prototype_run_queue(
+        organization=organization, workspace=workspace, user=user, n_items=4
+    )
+    sync_resp = auth_client.get(
+        EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+    )
+    assert sync_resp.status_code == status.HTTP_200_OK, sync_resp.data
+    sync_rows = _unwrap(sync_resp.data)
+
+    job = _make_job(seed["queue"], organization, workspace, user, "json")
+    text, item_count, _size = _render_text(job)
+
+    assert item_count == 4
+    assert json.loads(text) == json.loads(json.dumps(sync_rows, cls=JSONEncoder))
+    assert all(row["source"]["type"] == "prototype_run" for row in json.loads(text))
+
+
+@pytest.mark.django_db
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=50)
+@pytest.mark.parametrize(
+    "source_type",
+    [
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    ],
+)
+def test_async_ch_source_matches_sync_download(
+    auth_client, organization, workspace, user, source_type
+):
+    """Each ClickHouse-native source renders on the worker the same as sync.
+
+    Both paths resolve tracer sources through ``CollectorSourceCache.for_items``;
+    patching it with a pre-populated cache lets the sync download and the async
+    render be compared byte for byte without a live ClickHouse, and pins that the
+    worker handles trace / span / session content, not just dataset rows.
+    """
+    seed = _build_ch_source_queue(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source_type=source_type,
+        n_items=3,
+    )
+
+    with mock.patch.object(
+        CollectorSourceCache, "for_items", return_value=seed["cache"]
+    ):
+        sync_resp = auth_client.get(
+            EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+        )
+        assert sync_resp.status_code == status.HTTP_200_OK, sync_resp.data
+        sync_rows = _unwrap(sync_resp.data)
+
+        job = _make_job(seed["queue"], organization, workspace, user, "json")
+        text, item_count, _size = _render_text(job)
+
+    assert item_count == 3
+    assert json.loads(text) == json.loads(json.dumps(sync_rows, cls=JSONEncoder))
+
+
+# ---------------------------------------------------------------------------
+# Retention: a finished export leaves a DB row and a stored object, and nothing
+# in the write path reclaims either. cleanup_expired_export_jobs sweeps the
+# terminal jobs past the retention window.
+# ---------------------------------------------------------------------------
+
+
+def _finished_job(queue, organization, workspace, user, *, status_value, age_days):
+    """An export job in a terminal state that finished ``age_days`` days ago."""
+    job = _make_job(queue, organization, workspace, user, "json")
+    job.status = status_value
+    job.file_url = f"http://storage/{job.id}.json"
+    job.finished_at = timezone.now() - timedelta(days=age_days)
+    job.save(update_fields=["status", "file_url", "finished_at"])
+    return job
+
+
+@pytest.mark.django_db
+def test_cleanup_soft_deletes_terminal_jobs_past_retention(
+    organization, workspace, user
+):
+    """Only succeeded/failed jobs past the cutoff are reclaimed; in-flight and
+    recent ones are left alone."""
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    queue = seed["queue"]
+    old = EXPORT_RETENTION_DAYS + 1
+
+    stale_ok = _finished_job(
+        queue, organization, workspace, user,
+        status_value=AnnotationExportJobStatus.SUCCEEDED.value, age_days=old,
+    )
+    stale_failed = _finished_job(
+        queue, organization, workspace, user,
+        status_value=AnnotationExportJobStatus.FAILED.value, age_days=old,
+    )
+    recent = _finished_job(
+        queue, organization, workspace, user,
+        status_value=AnnotationExportJobStatus.SUCCEEDED.value, age_days=1,
+    )
+    # A pending job carries no finished_at, so it can't be past any cutoff.
+    pending = _make_job(queue, organization, workspace, user, "json")
+
+    with mock.patch(
+        "model_hub.tasks.annotation_export._delete_export_object"
+    ) as delete_obj:
+        result = cleanup_expired_export_jobs._original_func()
+
+    assert result == {"deleted": 2}
+    swept = {c.args[0].id for c in delete_obj.call_args_list}
+    assert swept == {stale_ok.id, stale_failed.id}
+
+    live = set(AnnotationExportJob.objects.values_list("id", flat=True))
+    assert live == {recent.id, pending.id}
+    # The reclaimed rows are soft-deleted, not gone.
+    assert AnnotationExportJob.all_objects.get(pk=stale_ok.id).deleted is True
+    assert AnnotationExportJob.all_objects.get(pk=stale_failed.id).deleted is True
+
+
+@pytest.mark.django_db
+def test_cleanup_continues_past_a_storage_failure(organization, workspace, user):
+    """One object-store failure must not abort the whole sweep."""
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    queue = seed["queue"]
+    old = EXPORT_RETENTION_DAYS + 5
+    for _ in range(3):
+        _finished_job(
+            queue, organization, workspace, user,
+            status_value=AnnotationExportJobStatus.SUCCEEDED.value, age_days=old,
+        )
+
+    calls = {"n": 0}
+
+    def _flaky(job):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("minio down")
+
+    with mock.patch(
+        "model_hub.tasks.annotation_export._delete_export_object", side_effect=_flaky
+    ):
+        result = cleanup_expired_export_jobs._original_func()
+
+    # The failing job is left for the next sweep; the other two are reclaimed.
+    assert calls["n"] == 3
+    assert result == {"deleted": 2}
+    assert AnnotationExportJob.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_cleanup_deletes_the_stored_object_for_the_reclaimed_job(
+    organization, workspace, user
+):
+    """The stored file is removed with the deterministic key the export wrote."""
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=1
+    )
+    job = _finished_job(
+        seed["queue"], organization, workspace, user,
+        status_value=AnnotationExportJobStatus.SUCCEEDED.value,
+        age_days=EXPORT_RETENTION_DAYS + 1,
+    )
+
+    client = mock.MagicMock()
+    with mock.patch(
+        "tfc.utils.storage_client.get_storage_client", return_value=client
+    ):
+        cleanup_expired_export_jobs._original_func()
+
+    bucket, key = client.remove_object.call_args.args
+    assert key == f"annotation-exports/{job.queue_id}/{job.id}.json"

@@ -9,6 +9,7 @@ produces a file instead of a 413 or a request timeout.
 import csv
 import io
 import tempfile
+from datetime import timedelta
 
 import structlog
 from django.utils import timezone
@@ -34,6 +35,11 @@ EXPORT_CHUNK_SIZE = 200
 # document in RAM, which just trades the request timeout for a worker OOM on
 # the very queues this is meant to serve.
 EXPORT_SPOOL_MAX_BYTES = 32 * 1024 * 1024
+
+# A finished export leaves a DB row and a stored object; both are reclaimed
+# this many days after the job finished. Time (not space) is the predicate for
+# every cleanup in this repo, and finished_at is the natural cutoff here.
+EXPORT_RETENTION_DAYS = 30
 
 
 def _is_csv(job):
@@ -142,6 +148,26 @@ def _store_export_file(job, fileobj, size):
     )
 
 
+def _delete_export_object(job):
+    """Remove a job's stored export from object storage.
+
+    The key is the same deterministic one ``_store_export_file`` wrote, so a
+    finished job's file is addressable without a list call. A job that never
+    produced a file (failed before the store) has nothing to remove.
+    """
+    if not job.file_url:
+        return
+
+    from tfc.settings.settings import UPLOAD_BUCKET_NAME
+    from tfc.utils.storage_client import get_storage_client
+
+    extension = "csv" if _is_csv(job) else "json"
+    object_key = f"annotation-exports/{job.queue_id}/{job.id}.{extension}"
+
+    client = get_storage_client()
+    client.remove_object(UPLOAD_BUCKET_NAME, object_key)
+
+
 def _temporal_will_retry():
     """True when Temporal still has attempts left for this activity.
 
@@ -225,3 +251,43 @@ def export_annotation_queue_async(job_id):
         item_count=item_count,
     )
     return {"job_id": str(job.id), "item_count": item_count, "file_url": file_url}
+
+
+@temporal_activity(time_limit=600, queue="default")
+def cleanup_expired_export_jobs():
+    """Reclaim export jobs that finished more than the retention window ago.
+
+    Each oversize export leaves one ``AnnotationExportJob`` row and one stored
+    object, and nothing in the write path cleans either up, so they pile up.
+    This mirrors ``delete_unused_compare_folder``: a periodic schedule that
+    deletes the storage object and soft-deletes the row, with a per-item
+    try/except so one failure doesn't stop the sweep.
+
+    Only terminal jobs (``succeeded``/``failed``) past the cutoff are touched —
+    an in-flight ``pending``/``running`` export is never deleted.
+    """
+    cutoff = timezone.now() - timedelta(days=EXPORT_RETENTION_DAYS)
+    stale = AnnotationExportJob.objects.filter(
+        deleted=False,
+        status__in=[
+            AnnotationExportJobStatus.SUCCEEDED.value,
+            AnnotationExportJobStatus.FAILED.value,
+        ],
+        finished_at__lt=cutoff,
+    )
+
+    deleted = 0
+    for job in stale.iterator():
+        try:
+            _delete_export_object(job)
+            job.delete()  # BaseModel.delete is a soft delete.
+            deleted += 1
+        except Exception as exc:
+            logger.error(
+                "annotation_export_cleanup_failed",
+                job_id=str(job.id),
+                error=str(exc),
+            )
+
+    logger.info("annotation_export_cleanup_completed", deleted=deleted)
+    return {"deleted": deleted}

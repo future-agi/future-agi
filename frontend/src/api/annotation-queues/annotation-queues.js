@@ -1431,7 +1431,6 @@ export const useExportToDataset = () => {
 // export is built on a worker. Both download paths below poll that job and then
 // hand the user the stored file.
 const EXPORT_POLL_INTERVAL_MS = 2000;
-const EXPORT_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 export const isScheduledExport = (response) =>
   response?.status === 202 || !!extractData(response, {})?.job_id;
@@ -1447,9 +1446,14 @@ export const waitForExportJob = async (
   jobId,
   { signal } = {},
 ) => {
-  const deadline = Date.now() + EXPORT_POLL_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
+  // Poll until the job reaches a terminal state, the way the repo's other
+  // long-running polls do — no client-side deadline. A client cap would give
+  // up on an export the worker is still finishing (its `job_id` discarded, so
+  // the user can't resume) on exactly the large queues this path exists for.
+  // The backend `time_limit` bounds the job: a stuck export reaches terminal
+  // `failed` and throws below, so this can't hang forever.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
     if (signal?.aborted) throw new Error("Export cancelled");
 
     // eslint-disable-next-line no-await-in-loop
@@ -1468,8 +1472,6 @@ export const waitForExportJob = async (
     // eslint-disable-next-line no-await-in-loop
     await sleep(EXPORT_POLL_INTERVAL_MS);
   }
-
-  throw new Error("Export is taking longer than expected. Try again shortly.");
 };
 
 export const triggerBrowserDownload = (href, filename, { newTab } = {}) => {
