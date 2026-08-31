@@ -21,6 +21,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
 import StageOutput from "./StageOutput";
@@ -51,6 +52,8 @@ import {
   eventMessage,
   jobProgress,
   readable,
+  scenarioOutcome,
+  scenarioTally,
   stages,
   stageStatus,
   terminalStages,
@@ -563,9 +566,7 @@ export default function HarnessDetail() {
             />
             <Stack direction="row" justifyContent="space-between" mt={0.5}>
               <Typography variant="caption" color="text.secondary">
-                {status?.completed_scenarios || 0} /{" "}
-                {status?.total_scenarios || current.job?.scenario_count || 0}{" "}
-                scenarios
+                {scenarioTally(status, current.job)}
               </Typography>
               {elapsedLabel && (
                 <Typography variant="caption" color="text.secondary">
@@ -906,8 +907,13 @@ export default function HarnessDetail() {
                       >
                         <Stack direction="row" justifyContent="space-between">
                           <Typography variant="caption" color="accent.brand">
+                            {/* Hosted events name their stage at the top level, the
+                              sandbox nests it in the payload. Without both, a hosted
+                              card falls back to its type and repeats the body. */}
                             {readable(
-                              entry.event.payload?.stage || entry.event.type,
+                              entry.event.payload?.stage ||
+                                entry.event.stage ||
+                                entry.event.type,
                             )}
                           </Typography>
                           <Typography
@@ -921,6 +927,13 @@ export default function HarnessDetail() {
                         <Typography variant="body2">
                           {eventMessage(entry.event)}
                         </Typography>
+                        <ScenarioOutcome
+                          outcome={scenarioOutcome(
+                            entry.event.payload?.scenario_key,
+                            entry.event.payload?.scenario_attempt,
+                            current,
+                          )}
+                        />
                       </Paper>
                     ),
                   )}

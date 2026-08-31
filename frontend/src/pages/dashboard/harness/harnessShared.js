@@ -316,11 +316,69 @@ export const agentTypeIcon = (item) => {
   return { src: "/assets/icons/ic_bot.svg", label: "Not detected" };
 };
 
+// Hosted runs speak a different event vocabulary to the local sandbox: flat types that keep
+// their detail in named payload fields rather than a `detail` string. Read those fields, or
+// every card in the feed renders as its own type name — ten scenarios in a row reading
+// "Scenario started" with the key that tells them apart sitting unused in the payload.
+const hostedMessage = (type, payload) => {
+  switch (type) {
+    case "stage_changed":
+      // The first stage has no predecessor to arrow from.
+      return payload.from
+        ? `${readable(payload.from)} → ${readable(payload.to)}`
+        : `Started ${readable(payload.to).toLowerCase()}`;
+    case "baseline_frozen":
+      return payload.baseline_ref
+        ? `Baseline frozen · ${payload.baseline_ref}`
+        : "Baseline frozen";
+    case "baseline_inputs_changed":
+      return "Baseline inputs changed";
+    case "world_unhealthy":
+      return "World unhealthy";
+    case "parallelism_degraded":
+      return `Parallelism reduced ${payload.requested} → ${payload.effective} · ${readable(payload.reason)}`;
+    case "scenario_started":
+    case "scenario_retried": {
+      const verb = type === "scenario_retried" ? "retried" : "started";
+      const attempt = Number(payload.scenario_attempt) || 1;
+      // A first attempt is the norm and saying so on every line is noise.
+      const again = attempt > 1 ? ` · attempt ${attempt}` : "";
+      return `Scenario ${payload.scenario_key} ${verb}${again}`;
+    }
+    case "terminal": {
+      const counts = payload.scenario_counts || {};
+      // How the run actually went is the most useful line in the feed; it was being dropped.
+      const tally = ["passed", "failed", "errored", "skipped"]
+        .filter((outcome) => counts[outcome])
+        .map((outcome) => `${counts[outcome]} ${outcome}`)
+        .join(", ");
+      return [
+        readable(payload.stage || ""),
+        tally,
+        payload.reason ? readable(payload.reason) : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
+    default:
+      return null;
+  }
+};
+
 export function eventMessage(event) {
   const payload = event.payload || {};
   if (payload.detail) return String(payload.detail);
+  // Hosted `log` events land here, carrying the line they want shown.
   if (payload.message) return String(payload.message);
+
+  const hosted = hostedMessage(event.type, payload);
+  if (hosted) return hosted;
+
   if (payload.stage) {
+    // A run-level event names the run, not the stage: "Run completed", never the
+    // "Completed completed" that reading its terminal stage back produced.
+    if (event.type?.startsWith("harness.run."))
+      return `Run ${event.type.slice("harness.run.".length)}`;
     // "Calls completed" reads better than "Calls Harness.stage.completed".
     if (event.type?.endsWith(".started"))
       return `${readable(payload.stage)} started`;
@@ -332,6 +390,63 @@ export function eventMessage(event) {
   }
   return readable(event.type || "Progress updated");
 }
+
+// "1 / 10" reads as nine still to come when in fact nine failed. Hosted runs count failures
+// separately, so say so; the sandbox has no such count and keeps the plain ratio.
+export const scenarioTally = (status, job) => {
+  const total = status?.total_scenarios || job?.scenario_count || 0;
+  const passed = status?.completed_scenarios || 0;
+  const failed = status?.failed_scenarios;
+  if (typeof failed !== "number" || failed === 0)
+    return `${passed} / ${total} scenarios`;
+  return `${passed} passed · ${failed} failed / ${total} scenarios`;
+};
+
+// Every verdict a receipt can carry. A scenario is registered before it runs, so anything
+// outside this set — "registered" — means it has not finished, not that it went badly.
+const SETTLED = new Set(["passed", "failed", "errored", "skipped"]);
+
+// A scenario's outcome and its call are reported apart from the event that started it: the
+// stream has no "scenario finished". Join them so a started row can say how it went. A retry
+// emits a second row under the same key, so the attempt has to match too, or the first row
+// would claim the retry's verdict. Absent until the attempt reports, and on sandbox runs,
+// which send neither scenarios nor receipts.
+export const scenarioOutcome = (scenarioKey, scenarioAttempt, run) => {
+  if (!scenarioKey) return null;
+  const attempt = Number(scenarioAttempt) || 1;
+  const attempts = (run?.receipts || []).filter(
+    (item) => item.scenario_key === scenarioKey,
+  );
+  const receipt = attempts.find(
+    (item) => (Number(item.scenario_attempt) || 1) === attempt,
+  );
+  // The registration holds one verdict for the scenario, which belongs to whichever attempt
+  // ran last. Read it only when no attempt has reported one of its own.
+  const registration = attempts.length
+    ? null
+    : (run?.scenarios || []).find((item) => item.scenario_key === scenarioKey);
+  const status = receipt?.status || registration?.status || null;
+  const settled = SETTLED.has(status) ? status : null;
+  if (!settled && !receipt) return null;
+  const call = receipt?.call || {};
+  return {
+    status: settled,
+    turns: call.turns ?? null,
+    durationMs: call.duration_ms ?? null,
+    // `held` is the verdict and carries a reason whenever it is false; `judged` only says
+    // whether a model was the one to decide, so it is not part of the outcome.
+    subGoals: receipt?.sub_goals || [],
+  };
+};
+
+// Turns and duration read as one line under the scenario name, and only when measured.
+export const callSummary = (outcome) =>
+  [
+    outcome?.turns != null ? `${outcome.turns} turns` : "",
+    outcome?.durationMs != null ? shortDuration(outcome.durationMs) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
 // A completed run is 100% regardless of where its stage landed in the list; anything else
 // sits half a stage into its slot, with a floor so a queued run still shows a sliver.
