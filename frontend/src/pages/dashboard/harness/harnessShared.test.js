@@ -8,6 +8,7 @@ import {
   readable,
   canceledProgress,
   completedStageCount,
+  environmentName,
   errorMessage,
   eventTime,
   runElapsed,
@@ -498,5 +499,39 @@ describe("tabState", () => {
     expect(tabState("environment", at("canceled"), [])).not.toBe(
       TAB_STATE.WORKING,
     );
+  });
+});
+
+describe("environmentName", () => {
+  it("prefers agent_name, which only older jobs carry", () => {
+    expect(
+      environmentName({ metadata: { agent_name: "ride-voice-agent", name: "repo" } }),
+    ).toBe("ride-voice-agent");
+  });
+
+  it("falls back to the name authoring writes", () => {
+    expect(environmentName({ metadata: { name: "harden-voice-harness-flows" } })).toBe(
+      "harden-voice-harness-flows",
+    );
+  });
+
+  // The job id is the value the list used to show, and the one search cannot match.
+  it("never shows the job id", () => {
+    const job = { job_id: "ee0f9fa4-e5a8-4c0e-a6d3-05522801abf5", metadata: {} };
+    expect(environmentName(job)).toBe("\u2014");
+  });
+
+  it("says nothing rather than a uuid when there is no name", () => {
+    expect(environmentName({ metadata: {} })).toBe("\u2014");
+    expect(environmentName({})).toBe("\u2014");
+    expect(environmentName(undefined)).toBe("\u2014");
+  });
+
+  it("treats a blank name as absent", () => {
+    expect(environmentName({ metadata: { agent_name: "", name: "" } })).toBe("\u2014");
+  });
+
+  it("lets a caller supply its own fallback for slots that cannot be blank", () => {
+    expect(environmentName({ metadata: {} }, "RL Environment")).toBe("RL Environment");
   });
 });
