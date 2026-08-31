@@ -906,8 +906,13 @@ export default function HarnessDetail() {
                       >
                         <Stack direction="row" justifyContent="space-between">
                           <Typography variant="caption" color="accent.brand">
+                            {/* Hosted events name their stage at the top level, the
+                              sandbox nests it in the payload. Without both, a hosted
+                              card falls back to its type and repeats the body. */}
                             {readable(
-                              entry.event.payload?.stage || entry.event.type,
+                              entry.event.payload?.stage ||
+                                entry.event.stage ||
+                                entry.event.type,
                             )}
                           </Typography>
                           <Typography

@@ -10,6 +10,7 @@ import {
   completedStageCount,
   environmentName,
   errorMessage,
+  eventMessage,
   eventTime,
   runElapsed,
   shortDuration,
@@ -533,5 +534,113 @@ describe("environmentName", () => {
 
   it("lets a caller supply its own fallback for slots that cannot be blank", () => {
     expect(environmentName({ metadata: {} }, "RL Environment")).toBe("RL Environment");
+  });
+});
+
+describe("eventMessage — hosted vocabulary", () => {
+  const hosted = (type, payload, stage) => ({ type, stage, payload });
+
+  it("arrows a stage change, and says 'started' when there is no predecessor", () => {
+    expect(
+      eventMessage(hosted("stage_changed", { from: null, to: "validating_environment" })),
+    ).toBe("Started validating environment");
+    expect(
+      eventMessage(
+        hosted("stage_changed", { from: "validating_environment", to: "running" }),
+      ),
+    ).toBe("Validating environment → Running scenarios");
+  });
+
+  it("names the frozen baseline", () => {
+    expect(
+      eventMessage(hosted("baseline_frozen", { baseline_ref: "alk_baseline_world_db" })),
+    ).toBe("Baseline frozen · alk_baseline_world_db");
+    expect(eventMessage(hosted("baseline_frozen", {}))).toBe("Baseline frozen");
+  });
+
+  // Ten of these in a row are indistinguishable without the key.
+  it("names the scenario, and only mentions a repeat attempt", () => {
+    expect(
+      eventMessage(
+        hosted("scenario_started", { scenario_key: "book-with-card-and-otp", scenario_attempt: 1 }),
+      ),
+    ).toBe("Scenario book-with-card-and-otp started");
+    expect(
+      eventMessage(
+        hosted("scenario_retried", { scenario_key: "cancel-booked-ride", scenario_attempt: 2 }),
+      ),
+    ).toBe("Scenario cancel-booked-ride retried · attempt 2");
+  });
+
+  it("reports how the run actually went", () => {
+    expect(
+      eventMessage(
+        hosted("terminal", {
+          stage: "completed",
+          reason: null,
+          scenario_counts: { passed: 1, failed: 9, errored: 0, skipped: 0 },
+        }),
+      ),
+    ).toBe("Completed · 1 passed, 9 failed");
+  });
+
+  it("gives the reason a run was cut short", () => {
+    expect(
+      eventMessage(
+        hosted("terminal", { stage: "canceled", reason: "ttl_exceeded", scenario_counts: {} }),
+      ),
+    ).toBe("Canceled · Ttl exceeded");
+  });
+
+  it("spells out degraded parallelism", () => {
+    expect(
+      eventMessage(
+        hosted("parallelism_degraded", { requested: 4, effective: 1, reason: "fixed_port" }),
+      ),
+    ).toBe("Parallelism reduced 4 → 1 · Fixed port");
+  });
+
+  it("covers the remaining contract types", () => {
+    expect(eventMessage(hosted("world_unhealthy", {}))).toBe("World unhealthy");
+    expect(eventMessage(hosted("baseline_inputs_changed", {}))).toBe(
+      "Baseline inputs changed",
+    );
+  });
+
+  it("shows a log line as written", () => {
+    expect(
+      eventMessage(hosted("log", { level: "warning", message: "retrying upload" })),
+    ).toBe("retrying upload");
+  });
+
+  // An event type ALK adds later still reads as its name rather than breaking.
+  it("falls back to the type for an unknown event", () => {
+    expect(eventMessage(hosted("something_new", {}))).toBe("Something new");
+  });
+});
+
+describe("eventMessage — sandbox vocabulary is unchanged", () => {
+  it("still reads stage events off the payload", () => {
+    expect(
+      eventMessage({ type: "harness.stage.started", payload: { stage: "environment" } }),
+    ).toBe("Environment started");
+    expect(
+      eventMessage({ type: "harness.stage.completed", payload: { stage: "calls" } }),
+    ).toBe("Calls completed");
+    expect(
+      eventMessage({ type: "harness.stage.failed", payload: { stage: "scenarios" } }),
+    ).toBe("Scenarios failed");
+  });
+
+  it("names the run rather than repeating its terminal stage", () => {
+    expect(
+      eventMessage({ type: "harness.run.completed", payload: { stage: "completed" } }),
+    ).toBe("Run completed");
+  });
+
+  it("still prefers an explicit detail or message", () => {
+    expect(
+      eventMessage({ type: "stage_changed", payload: { detail: "hand written", to: "running" } }),
+    ).toBe("hand written");
   });
 });
