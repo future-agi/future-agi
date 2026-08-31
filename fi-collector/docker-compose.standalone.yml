@@ -65,6 +65,10 @@ services:
       FI_GRPC_ADDR: ":4317"
       FI_HTTP_ADDR: ":4318"
       FI_ADMIN_ADDR: ":9464"
+      FI_MAX_PENDING_REQUESTS: 1000
+      FI_MAX_PENDING_ROWS: 20000
+      FI_MAX_PENDING_MIB: 64
+      FI_MAX_CONCURRENT_REQUESTS: 32
       FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
     ports:
       - "4317:4317"
@@ -88,6 +92,7 @@ services:
       # health-probe binary. For MVP just rely on the admin /healthz being
       # scraped from the host side.
       disable: true
+    stop_grace_period: 600s
 
 volumes:
   ch-data:

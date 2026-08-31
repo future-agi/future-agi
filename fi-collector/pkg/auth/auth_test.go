@@ -933,17 +933,20 @@ func TestUsageEmitterEmitIngestionNil(t *testing.T) {
 }
 
 func TestBillingEventIDDeterministic(t *testing.T) {
-	a := billingEventID("trace-abc")
-	if a != billingEventID("trace-abc") {
+	a := billingEventID("org-1", "trace-abc")
+	if a != billingEventID("org-1", "trace-abc") {
 		t.Error("same dedupKey must yield the same event_id (re-poll must dedup, even across a mode flip)")
 	}
-	if billingEventID("trace-xyz") == a {
+	if billingEventID("org-1", "trace-xyz") == a {
 		t.Error("different dedupKey must yield distinct ids")
+	}
+	if billingEventID("org-2", "trace-abc") == a {
+		t.Error("the same dedupKey in different organizations must yield distinct ids")
 	}
 }
 
 func TestBillingEventIDEmptyKeyIsRandom(t *testing.T) {
-	if billingEventID("") == billingEventID("") {
+	if billingEventID("org-1", "") == billingEventID("org-1", "") {
 		t.Error("empty dedupKey must fall back to a random event_id (SDK batches)")
 	}
 }

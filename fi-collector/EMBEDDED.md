@@ -51,6 +51,14 @@ spec:
               value: ":4317"
             - name: FI_ADMIN_ADDR
               value: ":9464"
+            - name: FI_MAX_PENDING_REQUESTS
+              value: "1000"
+            - name: FI_MAX_PENDING_ROWS
+              value: "20000"
+            - name: FI_MAX_PENDING_MIB
+              value: "64"
+            - name: FI_MAX_CONCURRENT_REQUESTS
+              value: "32"
           ports:
             - containerPort: 4317
               name: otlp
@@ -63,7 +71,8 @@ spec:
             limits:
               cpu: 1
               memory: 512Mi
-          # The dead-letter queue must survive pod restarts. Use an
+          # The dead-letter file must survive pod restarts. The bounded
+          # in-memory queue is intentionally not persistent. Use an
           # emptyDir for ephemeral durability or a persistent volume
           # for stronger guarantees.
           volumeMounts:
@@ -72,6 +81,7 @@ spec:
       volumes:
         - name: fi-collector-dl
           emptyDir: { sizeLimit: 1Gi }
+      terminationGracePeriodSeconds: 600
 ```
 
 Pros: same lifecycle, localhost-loopback latency, single deploy unit. Cons: scaling is coupled (more web pods → more collectors); restarts of either container restart the pod.

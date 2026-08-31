@@ -8,11 +8,11 @@ mandated to die by `PLAN_V2_NO_CDC.md`.
 ```
 Customer SDK (OTLP / HTTP / gRPC)
     → fi-collector  (this binary)
-       • OTLP receiver
-       • memory_limiter (backpressure)
-       • batch processor (10K spans / 5s)
+       • minimal OTLP receiver
+       • bounded admission (requests + rows + bytes)
+       • batch processor (5K spans / 5s by default)
        • clickhouse25 exporter — splits OTel attrs into typed Maps + typed JSON,
-                                 writes via clickhouse-go native protocol
+                                 writes via HTTP JSONEachRow
     → ClickHouse 25.3 spans table
 ```
 
@@ -54,35 +54,29 @@ Off-the-shelf options considered:
 - **Direct CH writer in Django** — keeps Python in the hot path, which is the
   entire reason for moving off PG-as-write-target. Doesn't scale to 1B/day.
 
-- **Custom Go OTel exporter (this)** — uses the official OTel Collector
-  framework (receivers / processors / exporters / queue / retry / batching
-  all come for free); custom exporter component does ONE thing: take OTLP
-  span pdata and write a row matching `tracer/services/clickhouse/v2/schema/`
-  via the official `clickhouse-go/v2` native driver. Same code path SigNoz,
-  ClickStack, and Uptrace all use.
+- **Minimal Go receiver + custom exporter (this)** — uses the official OTel
+  pdata model but deliberately avoids the full Collector framework. The server
+  owns OTLP decoding, bounded admission and batching; the exporter converts
+  spans to rows matching `tracer/services/clickhouse/v2/schema/`, and the
+  writer sends JSONEachRow over ClickHouse HTTP.
 
 ## Layout
 
 ```
 fi-collector/
-├── cmd/fi-collector/main.go               — ocb-generated entrypoint
+├── cmd/fi-collector/main.go               — config, auth, admin and server entrypoint
 ├── pkg/
 │   ├── adapter/                           — typed-Map split logic
 │   │   ├── adapter.go                     — port of pg_to_ch_adapter.py:split_attributes
 │   │   └── adapter_test.go                — table-driven tests pinning every branch
+│   ├── server/                             — OTLP/gRPC + HTTP, admission and batching
 │   └── chwriter/                          — CH 25.3 writer
-│       ├── writer.go                      — clickhouse-go/v2 batched bulk insert
+│       ├── writer.go                      — HTTP JSONEachRow insert + dead letter
 │       └── writer_test.go
-├── exporter/clickhouse25exporter/         — the OTel Collector component
-│   ├── config.go                          — yaml-config schema
-│   ├── factory.go                         — component registration with otelcol
-│   ├── exporter.go                        — OTLP traces → adapter → chwriter
-│   └── exporter_test.go
+├── exporter/clickhouse25exporter/         — pdata traces → typed CH rows
 ├── config/
-│   ├── fi-collector-local.yaml            — local dev: OTLP → batch → clickhouse25
-│   └── fi-collector-prod.yaml             — prod: + memory_limiter, retry, queue
-├── builder-config.yaml                    — ocb manifest (which components to compile in)
-├── Dockerfile                             — scratch runtime, ~25 MiB image
+│   └── collector.yaml                     — server, writer and auth defaults
+├── Dockerfile                             — distroless nonroot runtime
 ├── docker-compose.standalone.yml          — collector + CH only, for isolated testing
 ├── Makefile                               — build / run / test / docker / bench
 ├── go.mod / go.sum
@@ -99,8 +93,6 @@ make run                 # bin/fi-collector --config config/fi-collector-local.y
 make test                # unit tests
 make bench               # benchmark adapter + writer
 ```
-
-For OCB (the OTel Collector builder): the Makefile installs it if missing.
 
 ## Pricing Configuration
 
@@ -138,18 +130,29 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 
 ```
 SDK   ──HTTP/gRPC──►   fi-collector
-                        ├─ OTLP receiver       (default queue: 1K requests)
-                        ├─ memory_limiter      (hard ceiling — drops if exceeded)
-                        ├─ batch processor     (10K spans / 5s, whichever first)
-                        ├─ retry-on-failure    (exponential, max 5 min)
-                        └─ persistent queue    (disk-backed, survives restart)
-                                ▼
-                        ClickHouse 25.3 (async_insert=1 server-side batching)
+                        ├─ atomic admission    (1K requests / 20K rows / 64 MiB)
+                        ├─ batch processor     (5K spans / 5s, whichever first)
+                        ├─ retry-on-failure    (exponential, 5 retries by default)
+                        └─ fsynced dead letter (terminal CH failures)
+                                 ▼
+                        ClickHouse 25.3 (synchronous HTTP insert by default)
 ```
 
-If ClickHouse is briefly unavailable, the persistent queue absorbs the
-backlog. If memory crosses the limit, the receiver returns 429 and SDKs
-back off — no silent drops, no OOM crashes. Same pattern SigNoz uses.
+The three admission limits cover both queued and canonical-writer in-flight
+work. A shared concurrency gate (32 HTTP/gRPC handlers by default) also bounds
+decoded and converting request memory. A request is admitted in full or rejected in full. Temporary saturation
+returns gRPC `Unavailable` with `RetryInfo`, or HTTP `503` with `Retry-After`,
+so compliant SDKs back off. A request that cannot fit even in an empty queue is
+rejected with gRPC `ResourceExhausted` or HTTP `413` and must be rebatched.
+
+An accepted request is acknowledged only after ClickHouse accepts the batch or
+the terminal failure has been fsynced to the dead-letter file. The in-memory
+queue itself does not survive a process crash; the delayed acknowledgement is
+what lets an SDK retry work that never reached a durable boundary.
+
+Shutdown grace is 600 seconds by default. This covers a canonical batch already
+in flight plus one accepted pending batch exhausting six 30-second attempts and
+capped backoff before their final dead-letter fsyncs.
 
 ## Migration relationship
 

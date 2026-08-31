@@ -370,6 +370,11 @@ services:
       FI_CH_DATABASE: ${CH25_DATABASE:-futureagi}
       FI_GRPC_ADDR: ":4317"
       FI_HTTP_ADDR: ":4318"
+      FI_ADMIN_ADDR: ":9464"
+      FI_MAX_PENDING_REQUESTS: ${FI_MAX_PENDING_REQUESTS:-1000}
+      FI_MAX_PENDING_ROWS: ${FI_MAX_PENDING_ROWS:-20000}
+      FI_MAX_PENDING_MIB: ${FI_MAX_PENDING_MIB:-64}
+      FI_MAX_CONCURRENT_REQUESTS: ${FI_MAX_CONCURRENT_REQUESTS:-32}
       FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
       FI_PG_WRITE: postgres://${PG_USER:-user}:${PG_PASSWORD:-password}@db:5432/${PG_DB:-tfc}
       FI_PG_READ: postgres://${PG_USER:-user}:${PG_PASSWORD:-password}@db:5432/${PG_DB:-tfc}
@@ -377,9 +382,11 @@ services:
     ports:
       - "${FI_COLLECTOR_GRPC_PORT:-4317}:4317"
       - "${FI_COLLECTOR_HTTP_PORT:-4318}:4318"
+      - "127.0.0.1:${FI_COLLECTOR_ADMIN_PORT:-9464}:9464"
     volumes:
       - fi-dead-letter:/var/lib/fi-collector
     restart: unless-stopped
+    stop_grace_period: 600s
 
   # ===========================================
   # Message Queue & Cache
