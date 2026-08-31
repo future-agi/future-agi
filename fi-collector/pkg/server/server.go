@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,10 +31,18 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
+)
+
+var (
+	errOversized = errors.New("request size exceeds total queue capacity")
+	errOverload  = errors.New("queue capacity exhausted")
+	errClosing   = errors.New("server is shutting down")
 )
 
 // Config is what main() passes us. Public fields = YAML wire format.
@@ -43,14 +52,36 @@ type Config struct {
 	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
 	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
 	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
+
+	QueueMaxRequests int   `yaml:"queue_max_requests"` // max pending + in-flight OTLP requests
+	QueueMaxRows     int   `yaml:"queue_max_rows"`     // max pending + in-flight rows
+	QueueMaxBytes    int64 `yaml:"queue_max_bytes"`    // max pending + in-flight bytes
+}
+
+type requestItem struct {
+	rows     []map[string]any
+	ids      *curatedwriter.Batch
+	numRows  int
+	numBytes int64
+	done     chan error
+}
+
+// QueueStats snapshot for admin/health endpoints.
+type QueueStats struct {
+	PendingRequests  int   `json:"pending_requests"`
+	PendingRows      int   `json:"pending_rows"`
+	PendingBytes     int64 `json:"pending_bytes"`
+	InFlightRequests int   `json:"inflight_requests"`
+	InFlightRows     int   `json:"inflight_rows"`
+	InFlightBytes    int64 `json:"inflight_bytes"`
+	QueueMaxRequests int   `json:"queue_max_requests"`
+	QueueMaxRows     int   `json:"queue_max_rows"`
+	QueueMaxBytes    int64 `json:"queue_max_bytes"`
+	RejectedOverload uint64 `json:"rejected_overload"`
+	RejectedOversized uint64 `json:"rejected_oversized"`
 }
 
 // Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
-//
-// gRPC and HTTP both decode an OTLP ExportTraceServiceRequest, run the same
-// converter, and push rows onto the same `pending` buffer. The wire layer is
-// the only difference: gRPC uses the generated stub; HTTP accepts
-// `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
 	cfg      Config
 	writer   *chwriter.Writer
@@ -63,21 +94,19 @@ type Server struct {
 	grpc     *grpc.Server
 	httpd    *http.Server
 
-	// Batching: the receiver handler pushes converted rows onto `pending` and
-	// signals via `pendCh`. A single flusher goroutine drains it on either
-	// the row-count or age trigger. One channel/one goroutine keeps lock
-	// contention minimal at 100K spans/sec.
-	//
-	// `pendCurated` accumulates the CURATED dimension identities for ALL
-	// payloads received since the last flush into ONE drain-scoped batch (it
-	// dedups across merges). So each drain emits at most one end_users + one
-	// trace_sessions best-effort insert — bounding the curated latency and
-	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
-	// `pend` so the curated dual-write flushes with the span batch.
-	pendMu      sync.Mutex
-	pend        []map[string]any
-	pendCurated *curatedwriter.Batch
-	pendCh      chan struct{}
+	pendMu            sync.Mutex
+	pendItems         []requestItem
+	pendCurated       *curatedwriter.Batch
+	pendCh            chan struct{}
+	curRequests       int
+	curRows           int
+	curBytes          int64
+	inFlightRequests  int
+	inFlightRows      int
+	inFlightBytes     int64
+	rejectedOverload  uint64
+	rejectedOversized uint64
+	closing           bool
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -97,15 +126,6 @@ func WithLogger(l *slog.Logger) Option { return Option{log: l} }
 func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 
 // New wires up the server but does NOT start serving. Call Run().
-//
-// Defaults:
-//   - GRPCAddr ":4317" (OTLP gRPC). Set to "" to disable.
-//   - HTTPAddr ":4318" (OTLP/HTTP). Set to "" to disable.
-//   - BatchMaxRows 5000, BatchMaxAge 5s.
-//
-// At least one of GRPCAddr / HTTPAddr must be non-empty or Run returns an
-// error. We default both ON because every supported SDK picks one of them;
-// disabling either is an opt-in deployment choice.
 func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator, usage UsageEmitter, metering Metering, opts ...Option) *Server {
 	if cfg.GRPCAddr == "" {
 		cfg.GRPCAddr = ":4317"
@@ -120,13 +140,20 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		cfg.BatchMaxAge = 5 * time.Second
 	}
 	if cfg.GRPCMaxRecvMiB <= 0 {
-		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
-		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
-		// Match the OTLP/HTTP body cap so both transports accept the same spans.
 		cfg.GRPCMaxRecvMiB = maxOTLPHTTPBodyBytes >> 20
 	}
 	if cfg.GRPCMaxRecvMiB > 1024 {
-		cfg.GRPCMaxRecvMiB = 1024 // keep the <<20 shift well under proto's 2 GiB ceiling
+		cfg.GRPCMaxRecvMiB = 1024
+	}
+
+	if cfg.QueueMaxRequests <= 0 {
+		cfg.QueueMaxRequests = 1000
+	}
+	if cfg.QueueMaxRows <= 0 {
+		cfg.QueueMaxRows = 50000
+	}
+	if cfg.QueueMaxBytes <= 0 {
+		cfg.QueueMaxBytes = 128 << 20 // 128 MiB default
 	}
 
 	log := slog.Default()
@@ -148,29 +175,21 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		metering: metering,
 		log:      log,
 		pricer:   pricer,
-		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
-		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
-		// single POST, no retry, no dead-letter) so it can't stall the span flush
-		// loop or pollute the span dead-letter. Targets end_users /
-		// trace_sessions, never the pinned span table.
-		curated: curatedwriter.New(writer),
-		pendCh:  make(chan struct{}, 1),
-		stopCh:  make(chan struct{}),
+		curated:  curatedwriter.New(writer),
+		pendCh:   make(chan struct{}, 1),
+		stopCh:   make(chan struct{}),
 	}
 	return s
 }
 
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
-// we drain pending rows once before returning so an SIGTERM doesn't lose
-// the in-flight batch (DECISIONS: in-flight loss bounded to last 5 s as
-// the deliberate at-least-once boundary).
+// we drain pending rows once before returning so a SIGTERM doesn't lose
+// in-flight batches.
 func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.GRPCAddr == "" && s.cfg.HTTPAddr == "" {
 		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
 	}
 
-	// One error channel sized for both listeners — first error wins, the
-	// other listener is shut down by the select-case below.
 	serveErr := make(chan error, 2)
 
 	if s.cfg.GRPCAddr != "" {
@@ -193,13 +212,6 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.cfg.HTTPAddr != "" {
 		mux := http.NewServeMux()
-		// OTLP/HTTP wire spec: a single endpoint per signal. `/v1/traces` is
-		// the trace signal — POST only, body is a serialised
-		// ExportTraceServiceRequest in one of two media types:
-		//   application/x-protobuf  (preferred — every server-side SDK)
-		//   application/json        (browser SDKs, lightweight clients)
-		// Any other method or content-type is rejected with 415 / 405 per
-		// the spec.
 		mux.HandleFunc("/v1/traces", s.handleHTTPTraces)
 		mux.HandleFunc("/tracer/v1/traces", s.handleHTTPTraces)
 		var handler http.Handler = mux
@@ -230,17 +242,17 @@ func (s *Server) Run(ctx context.Context) error {
 		return ctx.Err()
 	case err := <-serveErr:
 		s.shutdown()
-		// http.ErrServerClosed is the expected return when we call Shutdown,
-		// not a real failure — but here we got the error BEFORE shutdown so
-		// it's a genuine listener crash.
 		return err
 	}
 }
 
 // shutdown stops both listeners, waits for the flusher to exit, drains the
-// in-flight batch. Called once from Run on either ctx cancel or a serve
-// error. Safe to call when one of grpc/httpd is nil.
+// in-flight batch.
 func (s *Server) shutdown() {
+	s.pendMu.Lock()
+	s.closing = true
+	s.pendMu.Unlock()
+
 	if s.grpc != nil {
 		s.grpc.GracefulStop()
 	}
@@ -254,25 +266,13 @@ func (s *Server) shutdown() {
 	s.drainNow(context.Background())
 }
 
-// grpcErrLogger surfaces transport-level message-size rejections. A message
-// larger than MaxRecvMsgSize is rejected with RESOURCE_EXHAUSTED before the
-// handler or interceptor runs, so a stats.Handler is the only server-side
-// hook that sees it — without this, the client's span is dropped with no
-// trace in the collector's own logs. Deliberately narrow: auth failures are
-// logged by the interceptor, quota rejections are silent by design (same
-// code, would be indistinguishable spam), and client cancels are benign.
+// grpcErrLogger surfaces transport-level message-size rejections.
 type grpcErrLogger struct {
 	log *slog.Logger
 }
 
 type grpcMethodKey struct{}
 
-// grpc-go's MaxRecvMsgSize rejection message. Both recv variants
-// ("received message larger than max" and the gzip "received message after
-// decompression larger than max") share these two substrings; matching both
-// excludes the send-side "trying to send message larger than max", which
-// carries the same ResourceExhausted code but is the wrong story for a
-// "request rejected" log.
 const (
 	grpcMsgRecv     = "received message"
 	grpcMsgTooLarge = "larger than max"
@@ -334,31 +334,45 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueue(rows, ids)
 
 	payloadBytes, _ := req.MarshalProto()
-	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
+	numBytes := int64(len(payloadBytes))
 
+	doneCh, err := h.s.enqueue(ctx, rows, ids, numBytes)
+	if err != nil {
+		if errors.Is(err, errOversized) {
+			return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "request size (%d rows, %d bytes) exceeds queue capacity limits (%d rows, %d bytes)", len(rows), numBytes, h.s.cfg.QueueMaxRows, h.s.cfg.QueueMaxBytes)
+		}
+		if errors.Is(err, errClosing) {
+			return ptraceotlp.NewExportResponse(), status.Errorf(codes.Unavailable, "server is shutting down")
+		}
+		// Overload retryable backpressure with RetryInfo
+		st := status.New(codes.Unavailable, "queue capacity exhausted")
+		if stWithDetails, dErr := st.WithDetails(&errdetails.RetryInfo{
+			RetryDelay: durationpb.New(1 * time.Second),
+		}); dErr == nil {
+			return ptraceotlp.NewExportResponse(), stWithDetails.Err()
+		}
+		return ptraceotlp.NewExportResponse(), st.Err()
+	}
+
+	if doneCh != nil {
+		select {
+		case <-ctx.Done():
+			return ptraceotlp.NewExportResponse(), ctx.Err()
+		case writeErr := <-doneCh:
+			if writeErr != nil {
+				return ptraceotlp.NewExportResponse(), status.Errorf(codes.Unavailable, "durable write failed: %v", writeErr)
+			}
+		}
+	}
+
+	h.s.emitUsage(ctx, req.Traces(), numBytes)
 	return ptraceotlp.NewExportResponse(), nil
 }
 
-// Cap the body size we will read from an OTLP/HTTP request. 16 MiB matches
-// the conservative default in the upstream OTel collector receiver and
-// covers a 5000-span batch carrying ~3 KiB of attrs each. Larger bodies
-// almost certainly indicate a misconfigured exporter (no batching) and
-// would let a single client consume memory unboundedly.
 const maxOTLPHTTPBodyBytes = 16 << 20
 
-// handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
-// (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
-// `application/x-protobuf` and `application/json`. Any other method or
-// content type is rejected with the canonical status code.
-//
-// Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
-// in the response media type that matches the request — the spec requires
-// echoing the content-type so client SDKs can decode the partial-success
-// field. We always return the fully-successful response since our pipeline
-// is at-least-once + dead-letter for failed inserts.
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -367,8 +381,6 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ct := r.Header.Get("Content-Type")
-	// Strip any `;charset=...` suffix. The spec only mentions the two base
-	// types but charset is allowed and common (esp. from JSON clients).
 	if i := indexByte(ct, ';'); i >= 0 {
 		ct = ct[:i]
 	}
@@ -380,8 +392,6 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > maxOTLPHTTPBodyBytes {
-		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
-		// equally visible server-side.
 		s.log.Error("http body over size cap, request rejected",
 			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
@@ -401,7 +411,6 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		// The spec is explicit: unsupported media types return 415.
 		w.Header().Set("Accept", "application/x-protobuf, application/json")
 		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
 		return
@@ -412,7 +421,6 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stamp auth-resolved org/project IDs onto resource attributes.
 	if result := auth.FromContext(r.Context()); result != nil {
 		ck := auth.CacheKeyFromContext(r.Context())
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
@@ -427,17 +435,43 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
-		// 4xx — the SDK shouldn't retry a malformed conversion.
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueue(rows, ids)
 
-	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
+	numBytes := int64(len(body))
+	doneCh, enqueueErr := s.enqueue(r.Context(), rows, ids, numBytes)
+	if enqueueErr != nil {
+		if errors.Is(enqueueErr, errOversized) {
+			http.Error(w, "request payload exceeds total capacity limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if errors.Is(enqueueErr, errClosing) {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "server queue capacity exhausted", http.StatusServiceUnavailable)
+		return
+	}
 
-	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
-	// the request's content-type. The spec requires the response media type
-	// to match the request.
+	if doneCh != nil {
+		select {
+		case <-r.Context().Done():
+			http.Error(w, r.Context().Err().Error(), http.StatusServiceUnavailable)
+			return
+		case writeErr := <-doneCh:
+			if writeErr != nil {
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "durable write failed: "+writeErr.Error(), http.StatusServiceUnavailable)
+				return
+			}
+		}
+	}
+
+	s.emitUsage(r.Context(), req.Traces(), numBytes)
+
 	resp := ptraceotlp.NewExportResponse()
 	var out []byte
 	switch ct {
@@ -455,9 +489,6 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
-// indexByte and trimSpace are lifted here so the file doesn't grow a
-// strings import just for content-type parsing. Inline 5-line helpers are
-// cheaper than a stdlib pull when we already share package boundaries.
 func indexByte(s string, c byte) int {
 	for i := 0; i < len(s); i++ {
 		if s[i] == c {
@@ -477,37 +508,74 @@ func trimSpace(s string) string {
 	return s
 }
 
-// enqueue parks rows on the pending buffer and signals the flusher.
-// We choose non-blocking signalling: if the channel already holds a tick
-// the flusher will already wake up and see this batch.
-//
-// `ids` are the CURATED dimension identities collected for this same payload;
-// they ride alongside `rows` so the curated dual-write flushes with the span
-// batch. A nil / empty Batch is skipped (the common no-user/no-session case).
-func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
+// enqueue parks rows on the pending queue, enforcing bounded limits atomically.
+// Returns a done channel that receives the final durable write outcome, or an error
+// if admission is rejected.
+func (s *Server) enqueue(ctx context.Context, rows []map[string]any, ids *curatedwriter.Batch, numBytes int64) (<-chan error, error) {
 	if len(rows) == 0 {
-		return
+		return nil, nil
 	}
+
+	numRows := len(rows)
+
 	s.pendMu.Lock()
-	s.pend = append(s.pend, rows...)
+	if s.closing {
+		s.pendMu.Unlock()
+		return nil, errClosing
+	}
+
+	// 1. Single request larger than total capacity is non-retryable.
+	if 1 > s.cfg.QueueMaxRequests || numRows > s.cfg.QueueMaxRows || numBytes > s.cfg.QueueMaxBytes {
+		s.rejectedOversized++
+		s.pendMu.Unlock()
+		return nil, errOversized
+	}
+
+	// 2. Total pending + in-flight capacity check.
+	totalReqs := s.curRequests + s.inFlightRequests + 1
+	totalRows := s.curRows + s.inFlightRows + numRows
+	totalBytes := s.curBytes + s.inFlightBytes + numBytes
+
+	if totalReqs > s.cfg.QueueMaxRequests || totalRows > s.cfg.QueueMaxRows || totalBytes > s.cfg.QueueMaxBytes {
+		s.rejectedOverload++
+		s.pendMu.Unlock()
+		return nil, errOverload
+	}
+
+	done := make(chan error, 1)
+	item := requestItem{
+		rows:     rows,
+		ids:      ids,
+		numRows:  numRows,
+		numBytes: numBytes,
+		done:     done,
+	}
+
+	s.pendItems = append(s.pendItems, item)
+	s.curRequests++
+	s.curRows += numRows
+	s.curBytes += numBytes
+
 	if ids != nil && !ids.Empty() {
 		if s.pendCurated == nil {
 			s.pendCurated = curatedwriter.NewBatch()
 		}
 		s.pendCurated.Merge(ids)
 	}
-	shouldKick := len(s.pend) >= s.cfg.BatchMaxRows
+
+	shouldKick := s.curRows >= s.cfg.BatchMaxRows || s.curRequests >= s.cfg.QueueMaxRequests
 	s.pendMu.Unlock()
+
 	if shouldKick {
 		select {
 		case s.pendCh <- struct{}{}:
 		default:
 		}
 	}
+
+	return done, nil
 }
 
-// flushLoop runs until stopCh closes. Wakes on either an explicit kick
-// (row-count threshold) or the time-based ticker.
 func (s *Server) flushLoop() {
 	defer s.wg.Done()
 	t := time.NewTicker(s.cfg.BatchMaxAge)
@@ -524,33 +592,80 @@ func (s *Server) flushLoop() {
 	}
 }
 
-// drainNow swaps the pending buffer and flushes it. Uses a fresh slice so
-// the next request can immediately start filling without contending.
+// drainNow swaps the pending buffer, moves pending accounting to in-flight,
+// performs the canonical write, releases capacity, and resolves completions.
 func (s *Server) drainNow(ctx context.Context) {
 	s.pendMu.Lock()
-	batch := s.pend
+	items := s.pendItems
 	curated := s.pendCurated
-	s.pend = nil
+
+	s.pendItems = nil
 	s.pendCurated = nil
+
+	// Transition pending items to in-flight
+	itemRequests := len(items)
+	var itemRows int
+	var itemBytes int64
+	for _, it := range items {
+		itemRows += it.numRows
+		itemBytes += it.numBytes
+	}
+
+	s.curRequests -= itemRequests
+	s.curRows -= itemRows
+	s.curBytes -= itemBytes
+
+	s.inFlightRequests += itemRequests
+	s.inFlightRows += itemRows
+	s.inFlightBytes += itemBytes
 	s.pendMu.Unlock()
-	if len(batch) == 0 {
+
+	if len(items) == 0 {
 		return
 	}
-	_ = s.writer.Insert(ctx, batch)
-	// Insert returns an error on dead-letter; the writer already persisted
-	// the rows + bumped stats. We swallow here because the flusher's job
-	// is to make progress, not propagate per-batch failures. /healthz
-	// surfaces the writer's failure counter.
 
-	// CH-derived dimensions (P3b step2 HALF 2): BEST-EFFORT mirror the
-	// drain-scoped curated end_users / trace_sessions identities AFTER the span
-	// insert. curated.Write uses chwriter.InsertBestEffort (single POST, no
-	// retry, no dead-letter — see its doc), so even on a CH outage this adds at
-	// most two bounded requests and can NEVER stall span draining or pollute the
-	// span dead-letter. The result is swallowed — the span insert above already
-	// completed and Django's backfill reconciles any curated gap. One `now`
-	// stamps version/first_seen for every curated row in this drain.
+	var batch []map[string]any
+	for _, it := range items {
+		batch = append(batch, it.rows...)
+	}
+
+	writeErr := s.writer.Insert(ctx, batch)
+	var finalErr error
+	if writeErr != nil && !chwriter.IsDeadLettered(writeErr) {
+		finalErr = writeErr
+	}
+
+	s.pendMu.Lock()
+	s.inFlightRequests -= itemRequests
+	s.inFlightRows -= itemRows
+	s.inFlightBytes -= itemBytes
+	s.pendMu.Unlock()
+
+	for _, it := range items {
+		it.done <- finalErr
+	}
+
 	if curated != nil && !curated.Empty() {
 		_ = s.curated.Write(ctx, curated, time.Now().UTC())
 	}
 }
+
+// QueueStats returns current queue depth, limits, and rejection stats.
+func (s *Server) QueueStats() QueueStats {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	return QueueStats{
+		PendingRequests:   s.curRequests,
+		PendingRows:       s.curRows,
+		PendingBytes:      s.curBytes,
+		InFlightRequests:  s.inFlightRequests,
+		InFlightRows:      s.inFlightRows,
+		InFlightBytes:     s.inFlightBytes,
+		QueueMaxRequests:  s.cfg.QueueMaxRequests,
+		QueueMaxRows:      s.cfg.QueueMaxRows,
+		QueueMaxBytes:     s.cfg.QueueMaxBytes,
+		RejectedOverload:  s.rejectedOverload,
+		RejectedOversized: s.rejectedOversized,
+	}
+}
+

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -702,9 +703,9 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 	r2a, ids2a, _ := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userA", "sessX", 0x02), nil) // dup identity
 	r2b, ids2b, _ := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userB", "sessY", 0x03), nil)
 
-	s.enqueue(r1, ids1)
-	s.enqueue(r2a, ids2a)
-	s.enqueue(r2b, ids2b)
+	_, _ = s.enqueue(context.Background(), r1, ids1, 100)
+	_, _ = s.enqueue(context.Background(), r2a, ids2a, 100)
+	_, _ = s.enqueue(context.Background(), r2b, ids2b, 100)
 
 	// One drain → one span insert + one end_users + one trace_sessions.
 	s.drainNow(context.Background())
@@ -887,3 +888,453 @@ func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 type writerFunc func(p []byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// TestQueueLimits_OversizedRequestRejected tests that an individual request
+// exceeding maximum configured capacity is rejected with non-retryable error
+// (gRPC ResourceExhausted, HTTP 413 Payload Too Large).
+func TestQueueLimits_OversizedRequestRejected(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+
+	httpAddr := "127.0.0.1:24330"
+	grpcAddr := "127.0.0.1:24331"
+	s := New(Config{
+		GRPCAddr:         grpcAddr,
+		HTTPAddr:         httpAddr,
+		BatchMaxRows:     100,
+		BatchMaxAge:      time.Hour,
+		QueueMaxRequests: 10,
+		QueueMaxRows:     2, // max 2 rows total capacity
+		QueueMaxBytes:    100 << 20,
+	}, w, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	if !waitPort(grpcAddr, 2*time.Second) || !waitPort(httpAddr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	// 1. gRPC over-row-capacity request
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("fi.project_id", "11111111-1111-4111-8111-111111111111")
+	spans := rs.ScopeSpans().AppendEmpty().Spans()
+	for i := 0; i < 5; i++ { // 5 rows > QueueMaxRows (2)
+		sp := spans.AppendEmpty()
+		sp.SetName("oversized-span")
+		sp.SetTraceID([16]byte{0xaa})
+		sp.SetSpanID([8]byte{byte(i + 1)})
+	}
+
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+	_, err = ptraceotlp.NewGRPCClient(conn).Export(context.Background(), req)
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Errorf("gRPC oversized request: want ResourceExhausted, got %v", err)
+	}
+
+	// 2. HTTP over-row-capacity request
+	pb, _ := req.MarshalProto()
+	resp, err := http.Post("http://"+httpAddr+"/v1/traces", "application/x-protobuf", bytes.NewReader(pb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("HTTP oversized request: want 413 Payload Too Large, got %d", resp.StatusCode)
+	}
+
+	stats := s.QueueStats()
+	if stats.RejectedOversized == 0 {
+		t.Error("expected RejectedOversized > 0")
+	}
+}
+
+// TestQueueLimits_OverloadBackpressure tests that when queue capacity is full,
+// incoming requests receive retryable overload responses (HTTP 503 + Retry-After, gRPC Unavailable + RetryInfo).
+func TestQueueLimits_OverloadBackpressure(t *testing.T) {
+	chBlock := make(chan struct{})
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if insertTable(r) == "spans" {
+			<-chBlock
+		}
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+	defer w.Close()
+
+	httpAddr := "127.0.0.1:24332"
+	grpcAddr := "127.0.0.1:24333"
+	s := New(Config{
+		GRPCAddr:         grpcAddr,
+		HTTPAddr:         httpAddr,
+		BatchMaxRows:     1, // flush immediately so 1st request becomes in-flight
+		BatchMaxAge:      50 * time.Millisecond,
+		QueueMaxRequests: 1, // only 1 request capacity
+		QueueMaxRows:     100,
+		QueueMaxBytes:    100 << 20,
+	}, w, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	if !waitPort(grpcAddr, 2*time.Second) || !waitPort(httpAddr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	traces := makeTraces("span-1", "11111111-1111-4111-8111-111111111111")
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := ptraceotlp.NewGRPCClient(conn)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = client.Export(context.Background(), req)
+	}()
+
+	// Wait until 1st request is in-flight (or pending)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st := s.QueueStats()
+		if st.PendingRequests+st.InFlightRequests > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 2nd gRPC request when queue is full → Unavailable overload with RetryInfo
+	_, err = client.Export(context.Background(), req)
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("overloaded gRPC: want Unavailable, got %v", err)
+	}
+
+	// 3rd HTTP request when queue is full → 503 Service Unavailable with Retry-After
+	pb, _ := req.MarshalProto()
+	resp, err := http.Post("http://"+httpAddr+"/v1/traces", "application/x-protobuf", bytes.NewReader(pb))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("overloaded HTTP: want 503, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "1" {
+		t.Errorf("overloaded HTTP: Retry-After = %q, want 1", got)
+	}
+
+	// Unblock 1st request insert
+	close(chBlock)
+	wg.Wait()
+
+	if s.QueueStats().RejectedOverload < 2 {
+		t.Errorf("expected RejectedOverload >= 2, got %d", s.QueueStats().RejectedOverload)
+	}
+}
+
+// TestDurableAcknowledgement_CHSuccess verifies that an OTLP request is acknowledged
+// only after ClickHouse successfully accepts the batch.
+func TestDurableAcknowledgement_CHSuccess(t *testing.T) {
+	chCalled := make(chan struct{})
+	chBlock := make(chan struct{})
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if insertTable(r) == "spans" {
+			close(chCalled)
+			<-chBlock
+		}
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+
+	grpcAddr := "127.0.0.1:24334"
+	s := New(Config{
+		GRPCAddr:     grpcAddr,
+		HTTPAddr:     "",
+		BatchMaxRows: 1, // flush immediately on enqueue
+		BatchMaxAge:  50 * time.Millisecond,
+	}, w, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	if !waitPort(grpcAddr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		traces := makeTraces("ack-test-span", "11111111-1111-4111-8111-111111111111")
+		req := ptraceotlp.NewExportRequestFromTraces(traces)
+		_, err := ptraceotlp.NewGRPCClient(conn).Export(context.Background(), req)
+		done <- err
+	}()
+
+	// Wait until CH receives write call
+	select {
+	case <-chCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for CH insert call")
+	}
+
+	// Verify request is NOT yet unblocked/acknowledged while CH write is in-flight
+	select {
+	case err := <-done:
+		t.Fatalf("request completed before CH write finished! err=%v", err)
+	default:
+	}
+
+	// Unblock CH write
+	close(chBlock)
+
+	// Now request should complete successfully
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Export failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for request completion after CH write")
+	}
+}
+
+// TestDurableAcknowledgement_DeadLetterSuccess verifies that when ClickHouse fails,
+// the OTLP request is acknowledged after the batch is durably written to the dead-letter file.
+func TestDurableAcknowledgement_DeadLetterSuccess(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer chSrv.Close()
+
+	dlFile := t.TempDir() + "/dl.jsonl"
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: dlFile,
+	})
+	defer w.Close()
+
+	grpcAddr := "127.0.0.1:24335"
+	s := New(Config{
+		GRPCAddr:     grpcAddr,
+		HTTPAddr:     "",
+		BatchMaxRows: 1,
+		BatchMaxAge:  50 * time.Millisecond,
+	}, w, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	if !waitPort(grpcAddr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	traces := makeTraces("dead-letter-span", "22222222-2222-4222-8222-222222222222")
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+
+	_, err = ptraceotlp.NewGRPCClient(conn).Export(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Export should succeed on durable dead-letter fsync, got: %v", err)
+	}
+
+	b, err := os.ReadFile(dlFile)
+	if err != nil || len(b) == 0 {
+		t.Fatalf("dead-letter file empty or unreadable: %v", err)
+	}
+	if !strings.Contains(string(b), "dead-letter-span") {
+		t.Errorf("dead-letter file missing span: %s", string(b))
+	}
+}
+
+// TestDurableAcknowledgement_DoubleFailure verifies that when both ClickHouse write
+// AND dead-letter fsync fail, the request receives a retryable error response.
+func TestDurableAcknowledgement_DoubleFailure(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer chSrv.Close()
+
+	dlFile := t.TempDir() + "/dl.jsonl"
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: dlFile,
+	})
+	defer w.Close()
+
+	// Create directory with same name as dlFile to force appendDeadLetter open file to fail
+	if err := os.MkdirAll(dlFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	grpcAddr := "127.0.0.1:24336"
+	s := New(Config{
+		GRPCAddr:     grpcAddr,
+		HTTPAddr:     "",
+		BatchMaxRows: 1,
+		BatchMaxAge:  50 * time.Millisecond,
+	}, w, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	if !waitPort(grpcAddr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	traces := makeTraces("double-fail-span", "33333333-3333-4333-8333-333333333333")
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+
+	_, err = ptraceotlp.NewGRPCClient(conn).Export(context.Background(), req)
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("double failure: want Unavailable, got %v", err)
+	}
+}
+
+// TestShutdown_RejectsNewAndDrainsExisting tests graceful shutdown behavior:
+// existing accepted requests are drained and completed before shutdown finishes,
+// while new requests during shutdown are rejected.
+func TestShutdown_RejectsNewAndDrainsExisting(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+
+	grpcAddr := "127.0.0.1:24337"
+	s := New(Config{
+		GRPCAddr:     grpcAddr,
+		HTTPAddr:     "",
+		BatchMaxRows: 100,
+		BatchMaxAge:  10 * time.Second,
+	}, w, nil, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { _ = s.Run(ctx) }()
+
+	if !waitPort(grpcAddr, 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	conn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client := ptraceotlp.NewGRPCClient(conn)
+
+	traces := makeTraces("shutdown-span", "44444444-4444-4444-8444-444444444444")
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+
+	var reqErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, reqErr = client.Export(context.Background(), req)
+	}()
+
+	// Wait until request is queued
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && s.QueueStats().PendingRequests < 1 {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Trigger shutdown
+	cancel()
+	wg.Wait()
+
+	if reqErr != nil {
+		t.Errorf("previously accepted request failed during shutdown: %v", reqErr)
+	}
+}

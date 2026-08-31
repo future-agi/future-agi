@@ -105,7 +105,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	go runAdmin(":9464", srv, writer, log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -187,11 +187,6 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 		c.Server.GRPCAddr = v
 	}
 	if v := os.Getenv("FI_HTTP_ADDR"); v != "" {
-		// `FI_HTTP_ADDR=disable` (or `off`) turns the OTLP/HTTP listener
-		// off entirely. Useful when deploying behind an external HTTP
-		// gateway that strips OTLP/HTTP at the edge. The string `disable`
-		// is more obvious in compose env lines than an empty value, which
-		// docker compose silently swallows.
 		switch v {
 		case "disable", "off":
 			c.Server.HTTPAddr = ""
@@ -203,9 +198,28 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.Server.GRPCMaxRecvMiB = n
 		} else {
-			// Silent fallback here would reproduce the silent-loss failure
-			// mode this knob exists to fix — an operator must see it.
 			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
+		}
+	}
+	if v := os.Getenv("FI_QUEUE_MAX_REQUESTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.Server.QueueMaxRequests = n
+		} else {
+			log.Warn("ignoring invalid FI_QUEUE_MAX_REQUESTS", "value", v)
+		}
+	}
+	if v := os.Getenv("FI_QUEUE_MAX_ROWS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.Server.QueueMaxRows = n
+		} else {
+			log.Warn("ignoring invalid FI_QUEUE_MAX_ROWS", "value", v)
+		}
+	}
+	if v := os.Getenv("FI_QUEUE_MAX_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			c.Server.QueueMaxBytes = n
+		} else {
+			log.Warn("ignoring invalid FI_QUEUE_MAX_BYTES", "value", v)
 		}
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
@@ -224,21 +238,23 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 }
 
 // runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
+func runAdmin(addr string, srv *server.Server, w *chwriter.Writer, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
+		qs := srv.QueueStats()
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s})
+			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s, "queue": qs})
 			return
 		}
 		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
+		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s, "queue": qs})
 	})
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	adminServer := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)
 	}
 }
+
