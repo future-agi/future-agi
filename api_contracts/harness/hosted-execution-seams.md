@@ -695,6 +695,12 @@ MUST read the carried domain and never re-derive it from the code alone
   is `build_failed`) → `environment`.
 - `spawn_failed` — a `source` or `managed` process failed to start →
   `infrastructure` if a managed engine, `agent` if source.
+- `port_not_consumable` — a process declared `fixed_port_consumable` did
+  not honor its per-world allocated port at effective W>1 (detected by the
+  gate declared-port listener check, or a consumable process's world-≥1
+  bind death naming a declared port) → `agent` (terminal, NOT a degrade;
+  the agent must read its assigned port env or the run must request
+  `parallelism=1`) (v1.16, D28 post-freeze reconciliation).
 - `depends_on_timeout` — a dependency did not become ready within its
   probe/`started_check` timeout (stage `building_environment`) →
   `infrastructure`.
