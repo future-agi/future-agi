@@ -347,8 +347,11 @@ def _ensure_workflows_registered() -> None:
     # Register voice call execution workflows for tasks_l queue.
     # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
     # CallDispatcherWorkflow: Singleton rate limiter for call slots
-    # These import ee.voice (and the `voice` extra's deps), so they are
-    # expected to be absent on slim OSS builds.
+    # These live under ee/, so this block is skipped on builds where the ee
+    # code tree is stripped. Note: the workflow modules themselves import only
+    # temporalio + simulate types at module level, so on a deps-stripped build
+    # that still ships ee/ code they DO register — there, voice dispatch is
+    # blocked up front by voice_sim_oss_gate_response at every entry point.
     try:
         from ee.voice.temporal.workflows.call_dispatcher_workflow import (
             CallDispatcherWorkflow,

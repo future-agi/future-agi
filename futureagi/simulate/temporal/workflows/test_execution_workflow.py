@@ -393,7 +393,6 @@ class TestExecutionWorkflow:
                 CallExecutionWorkflow,
             )
         except ImportError as exc:
-           
             raise ApplicationError(
                 "Voice call execution workflow is unavailable in this build "
                 "(requires the `voice` extra / Enterprise Edition).",

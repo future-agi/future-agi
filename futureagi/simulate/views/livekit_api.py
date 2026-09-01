@@ -679,9 +679,15 @@ class LiveKitWebhookView(AsyncAPIView):
                 code="not_authenticated",
             )
 
-        try:
-            from livekit.api import TokenVerifier, WebhookReceiver
+        # Import OUTSIDE the try below: the except reports a 401 signature
+        # failure, and a missing `voice` extra must not masquerade as an
+        # auth problem. load_extra raises an ImportError naming the extra.
+        from tfc.utils.lazy_extras import load_extra
 
+        _lk_api = load_extra("livekit.api", "voice")
+        TokenVerifier, WebhookReceiver = _lk_api.TokenVerifier, _lk_api.WebhookReceiver
+
+        try:
             verifier = TokenVerifier(
                 api_key=settings.LIVEKIT_API_KEY,
                 api_secret=settings.LIVEKIT_API_SECRET,
