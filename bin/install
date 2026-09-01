@@ -385,7 +385,9 @@ set_env_var() {
 
 # All host-bound ports. Data-store ports bind 127.0.0.1 in compose, but
 # they still collide with anything else on that interface (other docker
-# stacks, SSH tunnels, host services). PeerDB ports only matter in --full.
+# stacks, SSH tunnels, host services). fi-collector OTLP/admin are on the
+# default stack. Temporal UI publishes only under the observability/full
+# profiles. PeerDB ports only matter in --full.
 declare -a PORTS_TO_CHECK=(
   "FRONTEND_PORT:3000"
   "BACKEND_PORT:8000"
@@ -399,9 +401,16 @@ declare -a PORTS_TO_CHECK=(
   "MINIO_API_PORT:9005"
   "MINIO_CONSOLE_PORT:9006"
   "TEMPORAL_PORT:7233"
+  "FI_COLLECTOR_OTLP_PORT:4317"
+  "FI_COLLECTOR_OTLP_HTTP_PORT:4318"
+  "FI_COLLECTOR_ADMIN_PORT:9464"
 )
 if [[ "$FULL" -eq 1 ]]; then
-  PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900")
+  PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900" "TEMPORAL_UI_PORT:8085")
+elif grep -Eq '^COMPOSE_PROFILES=([A-Za-z0-9._-]+,)*(observability|full)(,|$)' .env; then
+  # observability (or a pre-existing full profile without --full) still
+  # publishes Temporal UI. Do not pull in PeerDB ports here.
+  PORTS_TO_CHECK+=("TEMPORAL_UI_PORT:8085")
 fi
 
 declare -a UNRESOLVED=()
