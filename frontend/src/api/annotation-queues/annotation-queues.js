@@ -380,6 +380,11 @@ export const useUpdateAnnotationQueueStatus = () => {
       queryClient.invalidateQueries({
         queryKey: annotationQueueKeys.detail(variables.id),
       });
+      // Judge-vs-human agreement only computes for COMPLETED queues — a
+      // status flip must re-fetch it or the tab keeps its stale empty-state.
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.agreement(variables.id),
+      });
     },
     onError: (error) => {
       // Revert optimistic update on error

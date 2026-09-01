@@ -36,6 +36,7 @@ from model_hub.utils.annotation_queue_helpers import (
 )
 from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.project import Project
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 _ROLE_LIST_SCHEMA = serializers.ListField(child=serializers.CharField())
@@ -263,6 +264,10 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         return organization, getattr(request, "workspace", None)
 
     def _queue_project_id(self):
+        resolved = self.context.get("_resolved_project")
+        if resolved is not None:
+            return str(resolved.pk)
+
         if self.instance and getattr(self.instance, "project_id", None):
             return str(self.instance.project_id)
 
@@ -356,7 +361,45 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        self._resolve_and_stash_project(attrs)
+
         return attrs
+
+    def _resolve_and_stash_project(self, attrs):
+        """Resolve ``project_id`` from the request body on create and stash the
+        validated ``Project`` for :meth:`validate_custom_eval_config` and
+        :meth:`create`.
+
+        ``project`` is a read-only serializer field (validated_data never
+        carries it), so without this resolution a fresh queue has no project
+        at validation time and the same-project evaluator guard would silently
+        pass on create. The lookup is org-scoped and rejects unknown ids with
+        a 400 — a bare ``.first()`` would let the queue silently drop its
+        project (or worse, a non-org-scoped one would let a client anchor the
+        queue onto another tenant's project).
+        """
+        if self.instance:
+            return  # update path: the guard reads instance.project_id
+
+        request = self.context.get("request")
+        request_data = getattr(request, "data", None) or {}
+        project_id = request_data.get("project_id")
+        if not project_id:
+            return
+
+        organization, _workspace = self._request_org_workspace()
+        try:
+            project = Project.objects.get(
+                id=project_id,
+                organization=organization,
+                deleted=False,
+            )
+        except (Project.DoesNotExist, ValueError, TypeError) as exc:
+            raise serializers.ValidationError(
+                {"project_id": "Project not found in your organization."}
+            ) from exc
+        self.context["_resolved_project"] = project
+        attrs["project"] = project
 
     def _viewer_membership(self, obj, user):
         if not user:
@@ -469,20 +512,11 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         annotator_ids = validated_data.pop("annotator_ids", [])
         annotator_roles = validated_data.pop("annotator_roles", {})
 
-        # ``project`` is read-only (set by the view on save), but the
-        # cross-project evaluator guard in ``validate_custom_eval_config`` needs
-        # the queue's project during validation.  Resolve it from the request
-        # body so the guard can reject evaluators from other projects on create.
-        request = self.context.get("request")
-        project_id = None
-        if request:
-            project_id = getattr(request, "data", {}).get("project_id")
-        if project_id:
-            from tracer.models.project import Project
-
-            validated_data["project"] = Project.objects.filter(
-                id=project_id, deleted=False
-            ).first() or validated_data.get("project")
+        # ``project`` is read-only on the serializer; on create the org-scoped
+        # resolution happens in ``_resolve_and_stash_project`` (validate phase),
+        # which also stashes the instance so the same-project evaluator guard
+        # and this write use one validated ``Project``.
+        validated_data.setdefault("project", self.context.get("_resolved_project"))
 
         queue = AnnotationQueue(**validated_data)
         queue.save()

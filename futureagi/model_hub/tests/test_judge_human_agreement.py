@@ -30,7 +30,7 @@ from model_hub.utils.annotation_queue_helpers import (
     _normalize_eval_output,
     _normalize_human_score_value,
 )
-from tracer.models.observation_span import EvalEntryStatus
+from tracer.models.observation_span import EvalEntryStatus, EvalTargetType
 
 
 class TestNormalizeEvalOutput(unittest.TestCase):
@@ -51,24 +51,63 @@ class TestNormalizeEvalOutput(unittest.TestCase):
             _normalize_eval_output({"output_str": "toxic"}, "deterministic") == "toxic"
         )
 
-    def test_deterministic_fallbacks_to_str_list(self):
+    def test_deterministic_str_list_single_unwraps(self):
+        """The choices engine dual-writes the selected choice into
+        ``output_str_list`` and a JSON payload into ``output_str``. The list
+        wins — its single element IS the choice, directly comparable with a
+        human categorical value."""
         assert (
             _normalize_eval_output(
-                {"output_str": None, "output_str_list": ["A"]},
+                {
+                    "output_str": '{"score": 0.8, "choice": "toxic"}',
+                    "output_str_list": ["toxic"],
+                },
                 "deterministic",
             )
-            == "['A']"
+            == "toxic"
         )
 
-    def test_deterministic_str_list_is_sorted(self):
-        """str_list items are sorted before str() conversion so that
-        order differences don't cause false disagreements."""
+    def test_deterministic_str_list_multi_sorts(self):
         assert (
             _normalize_eval_output(
-                {"output_str": None, "output_str_list": ["B", "A", "C"]},
+                {"output_str_list": ["B", "A", "C"]},
                 "deterministic",
             )
             == "['A', 'B', 'C']"
+        )
+
+    def test_deterministic_json_payload_choice_extracted(self):
+        """When only the JSON payload exists (legacy dual-write shape), the
+        ``choice`` key is extracted instead of comparing the raw JSON string —
+        comparing ``'{"score": 0.8, "choice": "toxic"}'`` against a human
+        ``"toxic"`` would report 0% for every item."""
+        assert (
+            _normalize_eval_output(
+                {
+                    "output_str": '{"score": 0.8, "choice": "toxic"}',
+                    "output_str_list": [],
+                },
+                "deterministic",
+            )
+            == "toxic"
+        )
+
+    def test_deterministic_json_choices_list_extracted(self):
+        assert (
+            _normalize_eval_output(
+                {"output_str": '{"choices": ["B", "A"]}', "output_str_list": []},
+                "deterministic",
+            )
+            == "['A', 'B']"
+        )
+
+    def test_deterministic_malformed_json_passes_through(self):
+        assert (
+            _normalize_eval_output(
+                {"output_str": "{not json", "output_str_list": None},
+                "deterministic",
+            )
+            == "{not json"
         )
 
     def test_pass_fail_none_bool_returns_none(self):
@@ -103,6 +142,11 @@ class TestMajorityValue(unittest.TestCase):
     def test_strict_majority_wins(self):
         # 2 "a" vs 1 "b" → "a" has a strict majority.
         assert _majority_value(["a", "b", "a"]) == "a"
+
+    def test_casing_does_not_manufacture_tie(self):
+        """Annotators type "Pass"/"pass"/"PASS" freely — votes must pool
+        case-insensitively instead of splitting into a three-way tie."""
+        assert _majority_value(["Pass", "pass", "PASS"]) == "Pass"
 
     def test_equivalent_lists_are_not_ties(self):
         """Lists with the same items in a different order are normalised
@@ -305,6 +349,11 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         assert gate.get("skipped_reason__isnull") is True
         assert gate.get("deleted") is False
         assert gate.get("custom_eval_config_id") == "eval-config-1"
+        # Span/trace rows share both FK columns, so the *inner* selection must
+        # gate on target_type too — a missing gate lets the other target's
+        # row win the subquery and then be dropped by the outer filter,
+        # silently losing the comparison.
+        assert gate.get("target_type") == EvalTargetType.SPAN
 
         # The outer filter must wrap the inner one in a Subquery on id.
         outer = [

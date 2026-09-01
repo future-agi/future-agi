@@ -572,6 +572,94 @@ class TestCreateQueue:
             organization=organization,
         ).exists()
 
+    def test_create_rejects_cross_org_project_id(
+        self, auth_client, organization, workspace, user
+    ):
+        """``project_id`` pointing at another organization's project must be
+        rejected with a 400 — the queue's project write is org-scoped, so a
+        bare UUID from another tenant can never anchor the queue (or,
+        combined with a matching eval config, defeat the same-project
+        evaluator guard)."""
+        other_org = Organization.objects.create(
+            name=f"Other Org {uuid.uuid4().hex[:8]}"
+        )
+        other_project = Project.objects.create(
+            name="Foreign Project",
+            organization=other_org,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Cross Org Project Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Cross Org Project Queue",
+                "project_id": str(other_project.id),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AnnotationQueue.objects.filter(
+            name="Cross Org Project Queue",
+            organization=organization,
+        ).exists()
+
+    def test_create_rejects_unknown_project_id(
+        self, auth_client, organization, workspace, user
+    ):
+        """An unknown ``project_id`` must 400, not silently create a
+        project-less queue."""
+        label_id = create_label_for_queue(auth_client, name="Unknown Project Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Unknown Project Queue",
+                "project_id": str(uuid.uuid4()),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AnnotationQueue.objects.filter(
+            name="Unknown Project Queue",
+            organization=organization,
+        ).exists()
+
+    def test_create_with_project_in_org_succeeds(
+        self, auth_client, organization, workspace, user
+    ):
+        """The org-scoped resolution keeps the happy path working: a valid
+        same-org ``project_id`` creates the queue with that project."""
+        project = Project.objects.create(
+            name="Valid Queue Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Valid Project Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Valid Project Queue",
+                "project_id": str(project.id),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        queue = AnnotationQueue.objects.get(
+            name="Valid Project Queue", organization=organization
+        )
+        assert str(queue.project_id) == str(project.id)
+
     def test_create_rejects_cross_org_evaluator_at_field_layer(
         self, auth_client, organization, workspace, user
     ):

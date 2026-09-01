@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 from typing import Any, TypedDict
 
@@ -1848,12 +1849,37 @@ def _normalize_eval_output(row, output_type):
             return None
         return str(round(float(val), 2))
     else:
+        # Deterministic ("choices") evals dual-write: the engine stores the
+        # selected choice in ``output_str_list`` and a JSON payload
+        # (``{"score": …, "choice": …}``, serialized by the choices branch of
+        # ``tracer.utils.eval._dual_write_eval_value``) in ``output_str``. Read
+        # the list first — the raw JSON string is not comparable with a human
+        # choice — then fall back to parsing the JSON's ``choice`` key, then to
+        # the plain string some code paths still write.
+        str_list = row.get("output_str_list")
+        if str_list:
+            if len(str_list) == 1:
+                return str_list[0]
+            return str(sorted(str_list))
         val = row.get("output_str")
         if val is not None:
+            if isinstance(val, str) and val[:1] in ("{", "["):
+                try:
+                    parsed = json.loads(val)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    choice = parsed.get("choice")
+                    if isinstance(choice, str):
+                        return choice
+                    choices = parsed.get("choices")
+                    if isinstance(choices, list) and choices:
+                        return (
+                            choices[0]
+                            if len(choices) == 1
+                            else str(sorted(c for c in choices if isinstance(c, str)))
+                        )
             return val
-        str_list = row.get("output_str_list")
-        if str_list is not None:
-            return str(sorted(str_list))
         return None
 
 
@@ -1863,8 +1889,10 @@ def _majority_value(values):
     than the others).
 
     Normalises each value through ``_normalize_value`` first so dicts,
-    lists and scalars all compare consistently.  Returns the *original*
-    value (not the normalised form) so the caller can pass it through
+    lists and scalars all compare consistently; strings count
+    case-insensitively so ``"Pass"``/``"pass"``/``"PASS"`` votes pool
+    instead of manufacturing a tie.  Returns the *original* value (not the
+    normalised form) so the caller can pass it through
     ``_normalize_value`` for comparison like any other annotation value.
     """
     if not values:
@@ -1875,7 +1903,13 @@ def _majority_value(values):
     if len(values) == 1:
         return values[0]
 
-    normalized = [_normalize_value(v) for v in values]
+    def _vote_key(v):
+        norm = _normalize_value(v)
+        if isinstance(norm, str):
+            return norm.casefold()
+        return norm
+
+    normalized = [_vote_key(v) for v in values]
     top_two = Counter(normalized).most_common(2)
     # If the top two values have the same count there is no true majority.
     if len(top_two) >= 2 and top_two[0][1] == top_two[1][1]:
@@ -1971,11 +2005,18 @@ def _calculate_judge_human_agreement(queue):
     # filtered to the linked config.  ``skipped`` rows carry a
     # ``skipped_reason`` and are excluded from completion metrics elsewhere
     # (see tracer's eval-viewer), so they are excluded here too.
-    def _latest_eval(source_field):
+    # ``target_type`` MUST gate the *inner* subquery too, not just the outer
+    # filter: span- and trace-level rows share the same two FK columns (a
+    # trace row is anchored to the trace's root span), so without it a newer
+    # span-level row would win the inner selection on a trace-sourced item and
+    # then be dropped by the outer target_type filter — silently losing that
+    # comparison (and vice versa for trace rows leaking into span items).
+    def _latest_eval(source_field, target_type):
         return (
             EvalLogger.objects.filter(
                 **{f"{source_field}_id": OuterRef(source_field)},
                 custom_eval_config_id=queue.custom_eval_config_id,
+                target_type=target_type,
                 error=False,
                 status=EvalEntryStatus.COMPLETED,
                 skipped_reason__isnull=True,
@@ -1989,7 +2030,7 @@ def _calculate_judge_human_agreement(queue):
     if span_ids:
         eval_rows += list(
             EvalLogger.objects.filter(
-                id=Subquery(_latest_eval("observation_span")),
+                id=Subquery(_latest_eval("observation_span", EvalTargetType.SPAN)),
                 observation_span_id__in=span_ids,
                 deleted=False,
             ).values(
@@ -2003,7 +2044,7 @@ def _calculate_judge_human_agreement(queue):
     if trace_ids:
         eval_rows += list(
             EvalLogger.objects.filter(
-                id=Subquery(_latest_eval("trace")),
+                id=Subquery(_latest_eval("trace", EvalTargetType.TRACE)),
                 trace_id__in=trace_ids,
                 target_type=EvalTargetType.TRACE,
                 deleted=False,
@@ -2093,7 +2134,14 @@ def _calculate_judge_human_agreement(queue):
                 # count it as a (dis)agreement.
                 total -= 1
                 continue
-            if _normalize_value(eval_val) == human_value:
+            judge_value = _normalize_value(eval_val)
+            # Compare case-insensitively: annotators type "Passed"/"YES"/
+            # "toxic" while the judge emits its own casing — letter case must
+            # not manufacture disagreement.
+            if isinstance(judge_value, str) and isinstance(human_value, str):
+                judge_value = judge_value.casefold()
+                human_value = human_value.casefold()
+            if judge_value == human_value:
                 agree += 1
 
         all_agree += agree

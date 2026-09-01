@@ -5,6 +5,8 @@ They verify that the ORM queries (Subquery, joins, FK traversal) produce
 correct results end-to-end.
 """
 
+from datetime import timedelta
+
 import pytest
 from django.utils import timezone
 
@@ -778,3 +780,155 @@ class TestJudgeHumanAgreementIntegration:
         # Evaluator is linked and data overlaps, but the queue isn't completed
         # → judge-vs-human is suppressed (returns None), not a 0% stat.
         assert _calculate_judge_human_agreement(queue) is None
+
+    def test_span_item_ignores_newer_trace_level_eval(self, organization, workspace):
+        """Span- and trace-level eval rows share the same two FK columns (a
+        trace row is anchored to the trace's root span). A newer trace-level
+        row on the item's own span must NOT leak into the span comparison —
+        the inner latest-eval subquery gates on target_type too."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(organization, workspace, project, custom_eval_config=cfg)
+        item = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        # Newer trace-level row (anchored to this span) saying "fail".
+        newer = EvalLogger.objects.create(
+            target_type=EvalTargetType.TRACE,
+            observation_span=span,
+            trace=trace,
+            custom_eval_config=cfg,
+            output_bool=False,
+        )
+        # Older span-level row saying "pass" — the one that must win.
+        older = _make_eval_row(span, trace, cfg, output_bool=True)
+
+        EvalLogger.objects.filter(id=older.id).update(
+            created_at=timezone.now() - timedelta(hours=1)
+        )
+        EvalLogger.objects.filter(id=newer.id).update(created_at=timezone.now())
+
+        Score.objects.create(
+            queue_item=item,
+            label=label,
+            organization=organization,
+            value={"selected": ["pass"]},
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        # The span-level row ("pass") agrees; the newer trace-level row
+        # ("fail") must be ignored — otherwise this would be 0.0.
+        assert result["overall_agreement"] == 1.0
+
+    def test_trace_item_ignores_newer_span_level_eval(self, organization, workspace):
+        """Mirror case: a newer span-level row on the trace's root span must
+        not win the inner subquery for a trace-sourced item — that would
+        select it and then drop it on the outer target_type filter, silently
+        losing the comparison."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        root_span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(organization, workspace, project, custom_eval_config=cfg)
+
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            organization=organization,
+        )
+        label = _make_label(organization, workspace)
+
+        # Newer span-level row on the root span saying "fail".
+        newer = _make_eval_row(root_span, trace, cfg, output_bool=False)
+        # Older trace-level row saying "pass" — the one that must win.
+        older = EvalLogger.objects.create(
+            target_type=EvalTargetType.TRACE,
+            observation_span=root_span,
+            trace=trace,
+            custom_eval_config=cfg,
+            output_bool=True,
+        )
+
+        EvalLogger.objects.filter(id=older.id).update(
+            created_at=timezone.now() - timedelta(hours=1)
+        )
+        EvalLogger.objects.filter(id=newer.id).update(created_at=timezone.now())
+
+        Score.objects.create(
+            queue_item=item,
+            label=label,
+            organization=organization,
+            value={"selected": ["pass"]},
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        # The trace-level row ("pass") agrees; if the newer span-level row
+        # had won the subquery, the comparison would be silently dropped
+        # (overall None) or mismatched (0.0).
+        assert result["overall_agreement"] == 1.0
+        assert result["total_comparisons"] == 1
+
+    def test_deterministic_json_payload_compares_against_human_choice(
+        self, organization, workspace
+    ):
+        """The deterministic engine dual-writes a JSON payload
+        ({"score": …, "choice": …}) into output_str and the selected choice
+        into output_str_list. The list must win — comparing the raw JSON
+        string against a human "toxic" would report 0% for every item."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(
+            organization, workspace, output_type_normalized="deterministic"
+        )
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(organization, workspace, project, custom_eval_config=cfg)
+        item = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        _make_eval_row(
+            span,
+            trace,
+            cfg,
+            output_str='{"score": 0.8, "choice": "toxic"}',
+            output_str_list=["toxic"],
+        )
+        Score.objects.create(
+            queue_item=item,
+            label=label,
+            organization=organization,
+            value={"selected": ["toxic"]},
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        assert result["overall_agreement"] == 1.0
+
+    def test_casing_difference_does_not_manufacture_disagreement(
+        self, organization, workspace
+    ):
+        """Annotators type "Pass"; the judge emits "pass" (or vice versa).
+        Letter case must not report a false disagreement."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(organization, workspace, project, custom_eval_config=cfg)
+        item = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        _make_eval_row(span, trace, cfg, output_bool=True)
+        Score.objects.create(
+            queue_item=item,
+            label=label,
+            organization=organization,
+            value={"selected": ["PASS"]},
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        assert result["overall_agreement"] == 1.0
