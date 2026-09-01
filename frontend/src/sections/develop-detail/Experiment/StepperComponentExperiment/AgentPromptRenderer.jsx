@@ -122,14 +122,14 @@ const AgentPromptRenderer = ({
 
   const variableMapping = useWatch({
     control,
-    name: `${fieldPrefix}.variableMapping`,
+    name: `${fieldPrefix}.configuration.variableMapping`,
   });
 
   // Seed the mapping with the exact-name match, so a dataset whose columns
   // already line up with the variables keeps working without any picking.
   useEffect(() => {
     if (!variableNames.length) return;
-    const current = getValues(`${fieldPrefix}.variableMapping`) || {};
+    const current = getValues(`${fieldPrefix}.configuration.variableMapping`) || {};
     const next = { ...current };
     let changed = false;
     variableNames.forEach((name) => {
@@ -143,7 +143,7 @@ const AgentPromptRenderer = ({
       }
     });
     if (changed) {
-      setValue(`${fieldPrefix}.variableMapping`, next, {
+      setValue(`${fieldPrefix}.configuration.variableMapping`, next, {
         shouldValidate: false,
       });
     }
@@ -523,7 +523,7 @@ const AgentPromptRenderer = ({
                   field={name}
                   allColumns={allColumns || []}
                   control={control}
-                  fieldName={`${fieldPrefix}.variableMapping.${name}`}
+                  fieldName={`${fieldPrefix}.configuration.variableMapping.${name}`}
                   placeholder="Map to column"
                   fullWidth
                 />

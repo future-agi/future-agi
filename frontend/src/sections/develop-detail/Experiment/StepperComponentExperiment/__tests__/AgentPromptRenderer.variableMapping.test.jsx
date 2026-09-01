@@ -79,7 +79,11 @@ vi.mock("src/sections/develop-detail/Common/FieldSelection", () => ({
 function Harness({ allColumns, onState }) {
   const { control, setValue, getValues, watch, unregister } = useForm({
     defaultValues: {
-      config: { promptVersion: "v1", model: [], variableMapping: {} },
+      config: {
+        promptVersion: "v1",
+        model: [],
+        configuration: { variableMapping: {} },
+      },
     },
   });
   control.setValue = setValue;
@@ -122,7 +126,7 @@ describe("AgentPromptRenderer variable mapping", () => {
     ]);
 
     await waitFor(() => {
-      expect(state.getValues("config.variableMapping")).toEqual({
+      expect(state.getValues("config.configuration.variableMapping")).toEqual({
         question: "col_question",
       });
       expect(state.getValues("config.unmappedVariables")).toBe(0);
@@ -137,7 +141,7 @@ describe("AgentPromptRenderer variable mapping", () => {
     await waitFor(() => {
       expect(state.getValues("config.unmappedVariables")).toBe(1);
     });
-    expect(state.getValues("config.variableMapping")).toEqual({});
+    expect(state.getValues("config.configuration.variableMapping")).toEqual({});
     expect(
       screen.getByText(/1 variables mapped to dataset columns/),
     ).toBeTruthy();
@@ -156,7 +160,7 @@ describe("AgentPromptRenderer variable mapping", () => {
     await user.click(screen.getByText("map question to Question"));
 
     await waitFor(() => {
-      expect(state.getValues("config.variableMapping")).toEqual({
+      expect(state.getValues("config.configuration.variableMapping")).toEqual({
         question: "col_question",
       });
       expect(state.getValues("config.unmappedVariables")).toBe(0);

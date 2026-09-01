@@ -311,6 +311,10 @@ export const getNewExperimentValidationSchema = (
                 .object({
                   toolChoice: z.string().default("auto"),
                   tools: z.array(z.any()),
+                  // Maps each prompt/agent variable to the dataset column that
+                  // feeds it, keyed by variable name. Lives here so it reaches
+                  // populate_placeholders through prompt_config.configuration.
+                  variableMapping: z.record(z.string()).optional().default({}),
                 })
                 .optional(),
               outputFormat: z.enum(["string", "json"]).optional(),
@@ -320,10 +324,6 @@ export const getNewExperimentValidationSchema = (
               isDraft: z.boolean().optional().default(false),
               versionLabel: z.string().optional(),
               name: z.string().optional(),
-              // Maps each prompt/agent variable to the dataset column that
-              // feeds it, keyed by variable name. Seeded from an exact-name
-              // match so datasets that already line up need no picking.
-              variableMapping: z.record(z.string()).optional().default({}),
               unmappedVariables: z
                 .number()
                 .default(0)
