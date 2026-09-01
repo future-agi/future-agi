@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
     "FI_API_KEY",
@@ -18,10 +17,12 @@ RUNNER_RESERVED_ENVIRONMENT = {
 
 
 class SecretReferenceSerializer(serializers.Serializer):
-    manager = serializers.ChoiceField(choices=("platform-vault",))
+    manager = serializers.ChoiceField(choices=("platform-vault", "platform-config"))
     key = serializers.CharField(max_length=255)
     version = serializers.CharField(max_length=255, required=False, allow_null=True)
-    purpose = serializers.ChoiceField(choices=("target_provider", "source_checkout"))
+    purpose = serializers.ChoiceField(
+        choices=("target_provider", "simulator_provider", "source_checkout")
+    )
 
 
 class HarnessSourceSerializer(serializers.Serializer):
@@ -101,6 +102,14 @@ class HarnessAgentSerializer(serializers.Serializer):
             if not alias or not alias.replace("_", "").isalnum():
                 raise serializers.ValidationError(
                     f"invalid environment-variable alias: {alias!r}"
+                )
+            if alias.startswith("SIMULATOR_"):
+                raise serializers.ValidationError(
+                    "SIMULATOR_ aliases are reserved for platform-managed credentials"
+                )
+            if reference["manager"] != "platform-vault":
+                raise serializers.ValidationError(
+                    "agent secret_refs only accept manager platform-vault"
                 )
             if reference["purpose"] != "target_provider":
                 raise serializers.ValidationError(
@@ -212,7 +221,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer()
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=10)
+    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
@@ -266,6 +275,7 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
         max_length=128, required=False, allow_blank=False
     )
 
+
 class HarnessSourceUploadResponseSerializer(serializers.Serializer):
     source_id = serializers.UUIDField()
     name = serializers.CharField()
@@ -287,7 +297,9 @@ class HarnessSecretValuesSerializer(serializers.Serializer):
 
     def validate_environment_values(self, values):
         if len(values) > 100:
-            raise serializers.ValidationError("at most 100 values may be stored at once")
+            raise serializers.ValidationError(
+                "at most 100 values may be stored at once"
+            )
         invalid = [
             name
             for name in values
@@ -310,6 +322,7 @@ class HarnessSecretValuesResponseSerializer(serializers.Serializer):
 
 
 # ── Read DTO response serializers ───────────────────────────────────────
+
 
 class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
@@ -353,7 +366,9 @@ class HarnessScenarioSerializer(serializers.Serializer):
     scenario_key = serializers.CharField()
     scenario_id = serializers.UUIDField()
     name = serializers.CharField(allow_blank=True)
-    instruction = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    instruction = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
     use_case = serializers.CharField(allow_null=True, allow_blank=True, required=False)
     call_execution_id = serializers.UUIDField(allow_null=True, required=False)
     status = serializers.CharField(allow_null=True, required=False)
@@ -367,6 +382,7 @@ class HarnessPlatformSerializer(serializers.Serializer):
 
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
+
     job = HarnessJobInfoSerializer()
     status = HarnessJobStatusSerializer()
     events = HarnessJobEventSerializer(many=True)

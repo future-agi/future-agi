@@ -84,8 +84,8 @@ class HostedHarnessJob(BaseModel):
                 name="uniq_harness_job_org_idempotency",
             ),
             models.CheckConstraint(
-                condition=models.Q(scenario_count__gte=1, scenario_count__lte=10),
-                name="harness_job_scenario_count_1_10",
+                condition=models.Q(scenario_count__gte=1, scenario_count__lte=200),
+                name="harness_job_scenario_count_1_200",
             ),
         ]
         indexes = [

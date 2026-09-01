@@ -115,6 +115,35 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
 
+  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
+  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
+  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
+  // plot therefore gets a negative top and is drawn above the canvas, where the
+  // widget card's `overflow: hidden` slices it. On these cards that is most of the
+  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
+  // (the chart's ResizeObserver then loses its height constraint and the canvas
+  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
+  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
+  // after it, even a frame later. Watching the attribute is what reliably catches
+  // the write, whenever Apex makes it.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const clampTooltips = () => {
+      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
+        const top = Number.parseFloat(tip.style.top);
+        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
+      });
+    };
+    const mo = new MutationObserver(clampTooltips);
+    mo.observe(el, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["style"],
+    });
+    return () => mo.disconnect();
+  }, []);
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -1148,7 +1177,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       {legendNames.length > 1 && (
         <ChartLegend
           items={legendNames}
-          colors={COLORS}
+          colors={chartSeries.map((s) => colorFor(s.name))}
           onHoverSeries={handleLegendHover}
           onLeaveSeries={handleLegendLeave}
         />

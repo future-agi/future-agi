@@ -38,6 +38,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 
 // ── Configured Eval Card ──
@@ -76,7 +77,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",

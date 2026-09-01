@@ -108,6 +108,7 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     registration = MagicMock()
     call = registration.call_execution
     call.call_metadata = {}
+    call.error_message = "chat_target_failed: old attempt could not connect"
     body = {
         "status": "errored",
         "call": {
@@ -123,7 +124,9 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     with patch(
         "simulate.services.hosted_harness_ingestion."
         "HostedHarnessArtifact.no_workspace_objects"
-    ) as artifacts:
+    ) as artifacts, patch(
+        "simulate.services.hosted_harness_ingestion.transaction.on_commit"
+    ):
         artifacts.filter.return_value.order_by.return_value.last.return_value = None
         _apply_receipt_to_call(registration, body)
 
@@ -131,6 +134,7 @@ def test_receipt_projects_actual_call_end_time_and_duration():
     assert call.ended_at == "2026-08-27T10:01:22Z"
     assert call.completed_at == "2026-08-27T10:01:22Z"
     assert call.duration_seconds == 82
+    assert call.error_message == ""
     call.save.assert_called_once()
 
 

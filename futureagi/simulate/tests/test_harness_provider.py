@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from simulate.models import RunTest
+from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services.harness_provider import (
     DaytonaHarnessProvider,
     SandboxHarnessProvider,
@@ -66,6 +67,63 @@ def _v1_payload(**overrides):
 
 def test_default_provider_is_daytona():
     assert isinstance(get_harness_provider(), DaytonaHarnessProvider)
+
+
+def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
+    accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
+    assert accepted.is_valid(), accepted.errors
+
+    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    assert not rejected.is_valid()
+    assert "scenario_count" in rejected.errors
+
+
+def test_customer_cannot_submit_platform_simulator_secret_purpose():
+    payload = _v1_payload()
+    payload["agent"]["secret_refs"] = {
+        "DEEPGRAM_API_KEY": {
+            "manager": "platform-vault",
+            "key": "DEEPGRAM_API_KEY",
+            "purpose": "simulator_provider",
+        }
+    }
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "target_provider" in str(serializer.errors)
+
+
+def test_customer_cannot_submit_platform_config_secret_manager():
+    payload = _v1_payload()
+    payload["agent"]["secret_refs"] = {
+        "DEEPGRAM_API_KEY": {
+            "manager": "platform-config",
+            "key": "DEEPGRAM_API_KEY",
+            "purpose": "target_provider",
+        }
+    }
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "platform-vault" in str(serializer.errors)
+
+
+def test_customer_cannot_use_reserved_simulator_alias_for_agent_secret():
+    payload = _v1_payload()
+    payload["agent"]["secret_refs"] = {
+        "SIMULATOR_DEEPGRAM_API_KEY": {
+            "manager": "platform-vault",
+            "key": "customer-secret",
+            "purpose": "target_provider",
+        }
+    }
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "reserved" in str(serializer.errors)
 
 
 def test_harness_create_cors_preflight_allows_idempotency_key():

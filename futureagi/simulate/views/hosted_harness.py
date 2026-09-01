@@ -160,6 +160,9 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     @swagger_auto_schema(
         method="put",
         request_body=openapi.Schema(type=openapi.TYPE_STRING, format="binary"),
+        # Raw binary body, so size and digest are checked in the handler rather
+        # than by serializer binding.
+        runtime_request_validation=True,
         responses={
             200: HarnessArtifactUploadResponseSerializer,
             201: HarnessArtifactUploadResponseSerializer,

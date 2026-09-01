@@ -9,7 +9,6 @@ rows (``observation_span_id IS NULL``) and picks the latest run when the
 same ``(span, eval_config)`` repeats.
 """
 
-import uuid
 from datetime import timedelta
 
 import pytest  # noqa: E402
@@ -18,89 +17,24 @@ from django.utils import timezone
 # Break the import cycle (see test_eval_logger_schema.py for the
 # canonical comment).
 import model_hub.tasks  # noqa: F401
-from model_hub.models.evals_metric import EvalTemplate  # noqa: E402
-from tracer.models.custom_eval_config import CustomEvalConfig  # noqa: E402
-from tracer.models.eval_task import (  # noqa: E402
-    EvalTask,
-    EvalTaskStatus,
-    RunType,
-)
 from tracer.models.observation_span import (  # noqa: E402
     EvalLogger,
     EvalTargetType,
     ObservationSpan,
 )
 
+from tracer.tests.eval_task_factories import (  # noqa: E402
+    make_config as _config,
+    make_fresh_span as _fresh_span,
+    make_row as _row,
+    make_task as _task,
+    make_template as _template,
+)
+
 USAGE_URL = "/tracer/eval-task/get_usage/"
 
 
 # ── Test scaffolding ───────────────────────────────────────────────────
-
-
-def _template(*, organization, workspace, output_type_normalized, name=None):
-    return EvalTemplate.objects.create(
-        name=name or f"Template ({output_type_normalized})",
-        description="",
-        organization=organization,
-        workspace=workspace,
-        output_type_normalized=output_type_normalized,
-        config={
-            "output": {
-                "pass_fail": "Pass/Fail",
-                "percentage": "score",
-                "deterministic": "choices",
-            }[output_type_normalized]
-        },
-    )
-
-
-def _config(*, project, template, name):
-    return CustomEvalConfig.objects.create(
-        name=name,
-        project=project,
-        eval_template=template,
-        config={},
-        mapping={},
-        filters={},
-    )
-
-
-def _task(*, project, name="Agg task"):
-    return EvalTask.objects.create(
-        project=project,
-        name=name,
-        filters={},
-        sampling_rate=100,
-        run_type=RunType.CONTINUOUS,
-        status=EvalTaskStatus.PENDING,
-        spans_limit=100,
-    )
-
-
-def _row(*, span, cfg, task, **kwargs):
-    return EvalLogger.objects.create(
-        target_type=EvalTargetType.SPAN,
-        observation_span=span,
-        trace=span.trace,
-        custom_eval_config=cfg,
-        eval_task_id=str(task.id),
-        **kwargs,
-    )
-
-
-def _fresh_span(base):
-    """A new span sharing base's trace/project — one eval row per span, so
-    live rows don't collide on the eval_logger_live_span_uniq
-    (task, span, cfg) partial unique constraint."""
-    return ObservationSpan.objects.create(
-        id=f"span_{uuid.uuid4().hex[:16]}",
-        project=base.project,
-        trace=base.trace,
-        name="agg span",
-        observation_type="llm",
-        start_time=base.start_time,
-        end_time=base.end_time,
-    )
 
 
 # ── eval_aggregation ───────────────────────────────────────────────────

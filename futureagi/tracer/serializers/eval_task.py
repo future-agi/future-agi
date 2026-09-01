@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tracer.constants.eval_task_usage import DEFAULT_USAGE_PERIOD, UsagePeriod
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
@@ -17,14 +18,61 @@ from tracer.serializers.filters import (
 )
 
 
-class PaginationQuerySerializer(serializers.Serializer):
-    """Shared query-params validator for eval-log endpoints."""
+class PageSizeQuerySerializer(serializers.Serializer):
+    """``page_size`` and its clamp, for endpoints that page.
 
-    page = serializers.IntegerField(required=False, default=0, min_value=0)
+    Split out from ``PaginationQuerySerializer`` so the usage contract can
+    reuse the clamp without also re-declaring ``page`` — that one is owned by
+    ``ExtendedPageNumberPagination``.
+    """
+
     page_size = serializers.IntegerField(required=False, default=25, min_value=1)
 
     def validate_page_size(self, value):
         return min(value, 100)
+
+
+class PaginationQuerySerializer(PageSizeQuerySerializer):
+    """Shared query-params validator for eval-log endpoints."""
+
+    page = serializers.IntegerField(required=False, default=0, min_value=0)
+
+
+class EvalTaskUsageQuerySerializer(PageSizeQuerySerializer, StrictInputSerializer):
+    """Query contract for ``EvalTaskView.get_usage``."""
+
+    eval_task_id = serializers.UUIDField(required=True)
+    period = serializers.ChoiceField(
+        choices=[(p.value, p.value) for p in UsagePeriod.selectable()],
+        required=False,
+        default=DEFAULT_USAGE_PERIOD.value,
+    )
+    eval_id = serializers.UUIDField(required=False)
+    start_date = serializers.DateTimeField(required=False)
+    end_date = serializers.DateTimeField(required=False)
+    eval_aggregation = serializers.BooleanField(required=False, default=False)
+    span_aggregation = serializers.BooleanField(required=False, default=False)
+    # `page` is owned by ExtendedPageNumberPagination; `page_size` and its
+    # clamp come from PageSizeQuerySerializer.
+
+    def validate(self, attrs):
+        start_date = attrs.get("start_date")
+        end_date = attrs.get("end_date")
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                "start_date must not be after end_date."
+            )
+        # A lone bound is meaningful to the aggregation modes, which filter
+        # open-ended. The chart/logs path only reads the pair, so accepting one
+        # there would drop it silently and read as a filter that does nothing.
+        if bool(start_date) != bool(end_date) and not (
+            attrs.get("eval_aggregation") or attrs.get("span_aggregation")
+        ):
+            raise serializers.ValidationError(
+                "start_date and end_date must be sent together unless "
+                "eval_aggregation or span_aggregation is set."
+            )
+        return attrs
 
 
 class EvalTaskListQuerySerializer(StrictInputSerializer):
