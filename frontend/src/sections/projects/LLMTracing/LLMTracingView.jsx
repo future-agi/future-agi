@@ -3684,6 +3684,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     : primarySpanValidatedFilters
                 }
                 extraFilters={extraFilters}
+                filterCombinator={filterCombinator}
                 metricFilters={metricFilters}
                 dateFilter={
                   selectedTab === "trace"
@@ -3720,6 +3721,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       : compareSpansValidatedFilters
                   }
                   extraFilters={compareExtraFilters}
+                  filterCombinator={compareFilterCombinator}
                   metricFilters={metricFilters}
                   dateFilter={
                     selectedTab === "trace"
@@ -4013,6 +4015,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 extraFilters,
                 compareExtraFilters,
               )}
+              // The grid honors AND/OR, so the panel shows the separator and
+              // re-seeds from whichever graph the filter panel is editing.
+              filterCombinator={
+                filterTarget === "compare"
+                  ? compareFilterCombinator
+                  : filterCombinator
+              }
               isFilterOpen={isPrimaryFilterOpen}
               externalFilterAnchor={externalFilterAnchor}
               filterTarget={filterTarget}

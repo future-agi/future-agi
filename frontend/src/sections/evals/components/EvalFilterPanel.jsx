@@ -223,11 +223,13 @@ function parseNaturalLanguage(query) {
 // Completed clauses render as colored inline chips in the same input.
 // Backspace removes the last token. Fully keyboard-driven.
 // ---------------------------------------------------------------------------
-function QueryInput({ onApply, initialTokens = [] }) {
+function QueryInput({ onApply, initialTokens = [], showCombinator = true, initialCombinator = "and" }) {
   // Each token: { field, operator, value } — a complete filter
   const [tokens, setTokens] = useState(initialTokens);
   // AND/OR between every pair of chips. One value for the whole builder.
-  const [combinator, setCombinator] = useState("and");
+  // Seeded from the panel so a re-opened popover shows the operator that is
+  // actually in effect instead of snapping back to AND.
+  const [combinator, setCombinator] = useState(initialCombinator);
   // Partial state for the clause being built
   const [partialField, setPartialField] = useState(null);
   const [partialOp, setPartialOp] = useState(null);
@@ -273,10 +275,11 @@ function QueryInput({ onApply, initialTokens = [] }) {
   }, [options, inputValue]);
 
   const toggleCombinator = useCallback(() => {
+    if (!showCombinator) return;
     const next = combinator === "and" ? "or" : "and";
     setCombinator(next);
     onApply(tokens, next);
-  }, [combinator, tokens, onApply]);
+  }, [combinator, tokens, onApply, showCombinator]);
 
   const commitFilter = useCallback(
     (field, op, value) => {
@@ -480,7 +483,7 @@ function QueryInput({ onApply, initialTokens = [] }) {
               <>
                 {/* Completed filter chips */}
                 {tokens.flatMap((t, i) => [
-                  i > 0 ? (
+                  i > 0 && showCombinator ? (
                     <Box
                       key={`combinator-${i}`}
                       component="button"
@@ -580,6 +583,8 @@ function QueryInput({ onApply, initialTokens = [] }) {
 QueryInput.propTypes = {
   onApply: PropTypes.func.isRequired,
   initialTokens: PropTypes.array,
+  showCombinator: PropTypes.bool,
+  initialCombinator: PropTypes.oneOf(["and", "or"]),
 };
 
 // ---------------------------------------------------------------------------
@@ -825,6 +830,12 @@ const EvalFilterPanel = ({
   onApply,
   currentFilters,
   lockedFilters,
+  // False hides the AND/OR separator (surfaces whose data path is AND-only,
+  // e.g. the dataset-scoped EvalPicker that filters client-side).
+  showQueryCombinator = true,
+  // The combinator currently in effect downstream, so a re-opened panel
+  // shows the operator that is actually applied instead of resetting to AND.
+  currentCombinator = "and",
 }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
@@ -902,7 +913,7 @@ const EvalFilterPanel = ({
   const [rows, setRows] = useState(buildInitialRows);
   // AND/OR combinator last chosen in the Query tab. Kept so the debounced
   // auto-apply below re-sends the same value instead of resetting to "and".
-  const combinatorRef = useRef("and");
+  const combinatorRef = useRef(currentCombinator);
 
   // Re-initialize rows when the panel opens. We intentionally only watch
   // `open` here — re-running on every `currentFilters` change would fight
@@ -911,6 +922,10 @@ const EvalFilterPanel = ({
   useEffect(() => {
     if (!open) return;
     setRows(buildInitialRows());
+    // Re-seed the combinator from what is actually in effect downstream so
+    // the re-opened panel shows and re-sends the same operator (#F3: a ref
+    // alone survives close/open and would silently re-apply a stale OR).
+    combinatorRef.current = currentCombinator === "or" ? "or" : "and";
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -1192,6 +1207,8 @@ const EvalFilterPanel = ({
             <QueryInput
               onApply={handleApplyFromNlp}
               initialTokens={rows.filter((r) => r.value)}
+              showCombinator={showQueryCombinator}
+              initialCombinator={combinatorRef.current}
             />
           </>
         )}
@@ -1207,6 +1224,8 @@ EvalFilterPanel.propTypes = {
   onApply: PropTypes.func.isRequired,
   currentFilters: PropTypes.object,
   lockedFilters: PropTypes.object,
+  showQueryCombinator: PropTypes.bool,
+  currentCombinator: PropTypes.oneOf(["and", "or"]),
 };
 
 export default EvalFilterPanel;

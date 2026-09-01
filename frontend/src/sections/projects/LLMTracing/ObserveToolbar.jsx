@@ -57,6 +57,10 @@ const ObserveToolbar = ({
   onClearCompareExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // AND/OR combinator currently in effect for the Query tab's filters.
+  // Undefined hides the separator (surfaces with AND-only data paths);
+  // "and"/"or" shows it and re-seeds the panel on reopen.
+  filterCombinator,
   // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
   // prepends the matching id filter(s) to its property picker.
   tab,
@@ -649,6 +653,7 @@ ObserveToolbar.propTypes = {
   onClearExtraFilters: PropTypes.func,
   onClearCompareExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  filterCombinator: PropTypes.oneOf(["and", "or"]),
   tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,

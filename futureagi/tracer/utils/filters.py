@@ -1443,6 +1443,14 @@ class FilterEngine:
                 if len(avg_filter) > 1:
                     column_id = avg_filter[0]
                     metric_val = avg_filter[1]
+                    # NOTE: `having` bypasses `filter_combinator` on purpose
+                    # for now. The having clause is a single per-metric
+                    # predicate emitted as one string; OR-ing it against the
+                    # `conditions` list is not defined (having applies after
+                    # aggregation, conditions in the WHERE of the final
+                    # SELECT). Only wire `filter_combinator` into a caller of
+                    # this function after giving the mixed WHERE/HAVING
+                    # semantics a product decision — see #2226 follow-up.
                     having = f"""having COALESCE(
                                 (jsonb_extract_path_text(jsonb_object_agg(
                                     'metric_' || COALESCE(em.custom_eval_config_id, sls.custom_eval_config_id),

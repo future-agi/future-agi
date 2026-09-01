@@ -675,11 +675,14 @@ const QueryInput = forwardRef(function QueryInput(
     hasMoreValues = false,
     getOperators: getOperatorsProp,
     showCombinator = false,
+    initialCombinator = "and",
   },
   ref,
 ) {
   const [tokens, setTokens] = useState(initialTokens);
-  const [combinator, setCombinator] = useState("and");
+  // Seeded by the parent so a re-opened panel shows the operator actually in
+  // effect downstream instead of snapping back to AND.
+  const [combinator, setCombinator] = useState(initialCombinator);
   const [partialField, setPartialField] = useState(null);
   const [partialOp, setPartialOp] = useState(null);
   const [partialValueTypes, setPartialValueTypes] = useState([]);
@@ -1720,6 +1723,7 @@ QueryInput.propTypes = {
   hasMoreValues: PropTypes.bool,
   getOperators: PropTypes.func,
   showCombinator: PropTypes.bool,
+  initialCombinator: PropTypes.oneOf(["and", "or"]),
 };
 
 // Collapse rows into the `{field: [values]}` shape callers receive. Rows with

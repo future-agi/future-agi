@@ -459,11 +459,138 @@ class TestCrossEngineEquivalence:
         # Django ORM connectors.
         assert orm_and.connector == Q.AND
         assert orm_or.connector == Q.OR
-        # ClickHouse: AND has no wrapping parens and no top-level OR; OR is one
-        # parenthesised group joining every leaf.
+        # ClickHouse: AND has no wrapping parens; OR is one parenthesised
+        # group joining every leaf. Each leaf is a `trace_id IN (SELECT …)`
+        # subquery that carries its own internal ` AND ` joiners plus the
+        # root-span guard (`parent_span_id IS NULL OR parent_span_id = ''`),
+        # all of which are builder semantics rather than combinator
+        # connectors — so assert on the LEAF-BOUNDARY joiners only: the
+        # connectors that appear between `)` of one leaf and the next leaf.
+        n_leaves = self._ch_leaf_count(ch_and)
+        assert n_leaves == 3
         assert not ch_and.startswith("(")
-        assert " OR " not in ch_and
+        # AND mode: every leaf-boundary connector is AND (n_leaves - 1).
+        assert ch_and.count(") AND trace_id IN (SELECT") == n_leaves - 1
+        assert ") OR trace_id IN (SELECT" not in ch_and
+        # OR mode: exactly one parenthesised group, every leaf-boundary
+        # connector is OR.
         assert ch_or.startswith("(")
         assert ch_or.endswith(")")
-        assert " AND " not in ch_or
-        assert ch_or.count(" OR ") == self._ch_leaf_count(ch_or) - 1
+        assert ch_or.count(") OR trace_id IN (SELECT") == n_leaves - 1
+        assert ") AND trace_id IN (SELECT" not in ch_or
+
+
+# ---------------------------------------------------------------------------
+# Graph (chart) builders — same parenthesisation contract as the list builders
+# ---------------------------------------------------------------------------
+#
+# The Observe charts hit get_graph_methods -> fetch_*_graph_ch, whose builders
+# stitch translate()'s fragment into `... AND {extra_where}`. A bare OR there
+# would leak outside the project scope exactly like the list builders would,
+# so the parenthesisation contract is pinned per builder. Note the OR group is
+# built once from translate() in the time-series path (guard against a caller
+# passing or-combinator while the builder drops it back to AND).
+
+
+class TestGraphBuilderCombinator:
+    """Graph (chart) builders thread filter_combinator into translate().
+
+    The Observe charts hit get_graph_methods -> fetch_*_graph_ch. These
+    builders compose translate()'s fragment into `... AND {extra_where}`, so
+    a bare OR there would leak outside the project scope exactly like in the
+    list builders. Pinned at the translate() boundary (same level as
+    TestClickHouseCombinator) so the assertions stay independent of how each
+    builder embeds the fragment.
+    """
+
+    def _two_filters(self):
+        return [
+            _system_metric("avg_cost", "greater_than", 10),
+            _system_metric("avg_latency", "less_than", 5000),
+        ]
+
+    def test_time_series_translates_or_group(self):
+        from tracer.services.clickhouse.query_builders.time_series import (
+            TimeSeriesQueryBuilder,
+        )
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="00000000-0000-0000-0000-000000000001",
+            filters=self._two_filters(),
+            interval="day",
+            filter_combinator="or",
+        )
+        query, _params = builder.build()
+        # Post-rebase the raw path filters the spans table in place; in OR
+        # mode the two leaves join inside one parenthesised group:
+        # AND (cost > … OR latency_ms < …).
+        assert " AND (cost > %(col_1)s OR latency_ms < %(col_2)s)" in query
+        # AND mode joins the same leaves with bare ANDs instead.
+        and_builder = TimeSeriesQueryBuilder(
+            project_id="00000000-0000-0000-0000-000000000001",
+            filters=self._two_filters(),
+            interval="day",
+        )
+        and_query, _ = and_builder.build()
+        assert " AND cost > %(col_1)s" in and_query
+        assert " AND latency_ms < %(col_2)s" in and_query
+        assert ") OR " not in and_query.replace(
+            "parent_span_id IS NULL OR parent_span_id = ''", ""
+        )
+
+    def test_time_series_default_matches_explicit_and(self):
+        from tracer.services.clickhouse.query_builders.time_series import (
+            TimeSeriesQueryBuilder,
+        )
+
+        default_query, _ = TimeSeriesQueryBuilder(
+            project_id="00000000-0000-0000-0000-000000000001",
+            filters=self._two_filters(),
+            interval="day",
+        ).build()
+        explicit_query, _ = TimeSeriesQueryBuilder(
+            project_id="00000000-0000-0000-0000-000000000001",
+            filters=self._two_filters(),
+            interval="day",
+            filter_combinator="and",
+        ).build()
+        assert default_query == explicit_query
+        assert ") OR trace_id IN" not in default_query
+
+    def test_eval_metrics_or_parenthesised(self):
+        from tracer.services.clickhouse.query_builders.eval_metrics import (
+            EvalMetricsQueryBuilder,
+        )
+
+        builder = EvalMetricsQueryBuilder(
+            custom_eval_config_id="00000000-0000-0000-0000-0000000000ee",
+            project_id="00000000-0000-0000-0000-000000000001",
+            filters=self._two_filters(),
+            interval="day",
+            filter_combinator="or",
+            use_preaggregated=False,
+        )
+        query, _params = builder.build()
+        # The filters compile to a trace_id IN subquery whose WHERE carries
+        # the parenthesised OR group.
+        assert " AND (trace_id IN (SELECT" in query
+        assert ") OR trace_id IN (SELECT" in query
+
+    def test_annotation_graph_or_parenthesised(self):
+        from tracer.services.clickhouse.query_builders.annotation_graph import (
+            AnnotationGraphQueryBuilder,
+        )
+
+        builder = AnnotationGraphQueryBuilder(
+            project_id="00000000-0000-0000-0000-000000000001",
+            annotation_label_id="00000000-0000-0000-0000-0000000000aa",
+            annotation_name="label",
+            filters=self._two_filters(),
+            interval="day",
+            filter_combinator="or",
+            start_date=None,
+            end_date=None,
+        )
+        query, _params = builder.build()
+        assert " AND (trace_id IN (SELECT" in query
+        assert ") OR trace_id IN (SELECT" in query

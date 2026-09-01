@@ -1104,9 +1104,22 @@ class MetricSortParamListQueryParamField(serializers.CharField):
         return MetricSortParamListField().run_validation(sort_params)
 
 
+def filter_combinator_field(**kwargs):
+    """One operator for the whole filter list: ``and`` (default) or ``or``.
+
+    Sits alongside ``filters`` in the request contract. Absent means ``and``,
+    which keeps every existing caller byte-for-byte unchanged.
+    """
+    kwargs.setdefault("choices", ["and", "or"])
+    kwargs.setdefault("default", "and")
+    kwargs.setdefault("required", False)
+    return serializers.ChoiceField(**kwargs)
+
+
 class ObserveGraphDataRequestSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = BoundedFilterListField(required=False, default=list)
+    filter_combinator = filter_combinator_field()
     interval = serializers.ChoiceField(
         choices=["hour", "day", "week", "month"],
         required=False,
@@ -1400,18 +1413,6 @@ def session_bounded_filter_list_query_param_field(
     **kwargs: Any,
 ) -> SessionBoundedFilterListQueryParamField:
     return SessionBoundedFilterListQueryParamField(**kwargs)
-
-
-def filter_combinator_field(**kwargs):
-    """One operator for the whole filter list: ``and`` (default) or ``or``.
-
-    Sits alongside ``filters`` in the request contract. Absent means ``and``,
-    which keeps every existing caller byte-for-byte unchanged.
-    """
-    kwargs.setdefault("choices", ["and", "or"])
-    kwargs.setdefault("default", "and")
-    kwargs.setdefault("required", False)
-    return serializers.ChoiceField(**kwargs)
 
 
 def eval_task_filters_field(**kwargs):

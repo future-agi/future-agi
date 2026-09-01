@@ -1772,6 +1772,7 @@ def read_exact_system_graph(
     interval: str,
     metric_id: str,
     observe_type: str,
+    filter_combinator: str = "and",
 ) -> dict[str, Any]:
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
@@ -1784,6 +1785,7 @@ def read_exact_system_graph(
             observe_type=observe_type,
             start_date=start_date,
             end_date=end_date,
+            filter_combinator=filter_combinator,
         )
         metrics = builder.format_result([], [])
         return _finalize_exact_graph_payload(
@@ -1809,6 +1811,7 @@ def read_exact_system_graph(
         start_date=start_date,
         end_date=end_date,
         annotation_label_ids=annotation_label_ids,
+        filter_combinator=filter_combinator,
     )
     exact_filter_plan = compile_exact_graph_row_predicates(
         filters,
@@ -2136,6 +2139,7 @@ def read_exact_eval_graph(
     observe_type: str,
     all_series: bool = False,
     aggregation_context: str = "trace",
+    filter_combinator: str = "and",
 ) -> dict[str, Any] | list[dict[str, Any]]:
     started = monotonic()
     aggregation_context = str(aggregation_context or "trace").strip().lower()
@@ -2199,6 +2203,7 @@ def read_exact_eval_graph(
         # selector. Passing them to the generic trace builder as well would
         # reinterpret aggregate/message fields as raw span attributes.
         filters=[] if aggregation_context in {"session", "user"} else filters,
+        filter_combinator=filter_combinator,
         observe_type=observe_type,
         session_trace_membership_sql=session_membership_sql,
         session_trace_membership_params=session_membership_params,
@@ -2419,6 +2424,7 @@ def read_exact_annotation_graph(
     req_data_config: dict[str, Any],
     observe_type: str,
     aggregation_context: str = "trace",
+    filter_combinator: str = "and",
 ) -> dict[str, Any]:
     started = monotonic()
 

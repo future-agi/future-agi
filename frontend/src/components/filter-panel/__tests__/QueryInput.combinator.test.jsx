@@ -31,16 +31,17 @@ function renderInput({
   tokens = TWO_TOKENS,
   onApply = vi.fn(),
   showCombinator = true,
+  initialCombinator,
 } = {}) {
-  return render(
-    <QueryInput
-      filterFields={FILTER_FIELDS}
-      fieldMap={FIELD_MAP}
-      onApply={onApply}
-      initialTokens={tokens}
-      showCombinator={showCombinator}
-    />,
-  );
+  const props = {
+    filterFields: FILTER_FIELDS,
+    fieldMap: FIELD_MAP,
+    onApply,
+    initialTokens: tokens,
+    showCombinator,
+  };
+  if (initialCombinator) props.initialCombinator = initialCombinator;
+  return render(<QueryInput {...props} />);
 }
 
 describe("QueryInput AND/OR combinator (#2226)", () => {
@@ -137,5 +138,32 @@ describe("QueryInput AND/OR combinator (#2226)", () => {
     // Both completed tokens still render as chips alongside the separator.
     expect(screen.getByText(/Status/)).toBeInTheDocument();
     expect(screen.getByText(/Model/)).toBeInTheDocument();
+  });
+
+  it("seeds from initialCombinator so a re-opened panel shows the applied operator", () => {
+    // A panel reopened after the user picked OR must render OR — otherwise
+    // the UI shows AND while the grid keeps filtering by OR.
+    renderInput({ initialCombinator: "or" });
+    expect(
+      screen.getByRole("button", { name: "Combine filters with OR" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Combine filters with AND" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("toggling from a seeded OR state applies 'and' again", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    renderInput({ onApply, initialCombinator: "or" });
+
+    await user.click(
+      screen.getByRole("button", { name: "Combine filters with OR" }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Combine filters with AND" }),
+    ).toBeInTheDocument();
+    expect(onApply).toHaveBeenCalledWith(TWO_TOKENS, "and");
   });
 });

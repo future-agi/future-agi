@@ -3014,6 +3014,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 body["filters"],
             )
             filters = graph_execution_filters(filters)
+            filter_combinator = body.get("filter_combinator", "and")
             _property = body["property"]
             interval = body["interval"]
             req_data_config = body["req_data_config"]
@@ -3069,6 +3070,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         metric_id=metric_id,
                         observe_type="span",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -3086,6 +3088,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="span",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -3103,6 +3106,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="span",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)

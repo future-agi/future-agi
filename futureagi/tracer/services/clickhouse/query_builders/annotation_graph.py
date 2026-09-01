@@ -58,6 +58,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
         output_type: str = "float",
         value: Any = None,
         filters: list[dict] | None = None,
+        filter_combinator: str = "and",
         observe_type: str = "trace",
         **kwargs: Any,
     ) -> None:
@@ -68,6 +69,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
         self.output_type = output_type
         self.value = value
         self.filters = filters or []
+        self.filter_combinator = filter_combinator
         self.observe_type = observe_type
 
         # Graph endpoints historically default to a compact 7-day window.
@@ -163,7 +165,9 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             query_mode=query_mode,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         self.params.update(extra_params)
         extra_clause = f"AND {extra_where}" if extra_where else ""
         return f"""
