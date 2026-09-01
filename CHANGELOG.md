@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.33.0](https://github.com/future-agi/future-agi/compare/v1.32.0...v1.33.0) (2026-09-01)
+
+
+### Features
+
+* consolidate property catalog release and observe fixes ([2486591](https://github.com/future-agi/future-agi/commit/24865916e3e904ff9e19758253631400e6f6aca4))
+
+
+### Bug Fixes
+
+* **api:** refresh property catalog contract ([02e73fb](https://github.com/future-agi/future-agi/commit/02e73fbe92d3992d2b9d50fe0772eef07cb61b36))
+* **api:** refresh property catalog contract ([de99ecb](https://github.com/future-agi/future-agi/commit/de99ecb35376a0de45694bd62dfd417fc9ae2202))
+* **dashboards:** accelerate exact filtered queries ([d6c3664](https://github.com/future-agi/future-agi/commit/d6c3664fbf7c075efd22b9c6da97fde4ad88d667))
+* **dashboards:** preserve catalog search loading state ([d99c6c9](https://github.com/future-agi/future-agi/commit/d99c6c98155da9a481c72dbe95f0b841ba9cc50f))
+* filter + show Total Tokens column on the Sessions grid ([#2389](https://github.com/future-agi/future-agi/issues/2389)) ([0c96213](https://github.com/future-agi/future-agi/commit/0c96213e31ad6c910638c2f5ba1d8cc38fed0f8f))
+* **filters:** normalize picker option values ([46d2c4f](https://github.com/future-agi/future-agi/commit/46d2c4f0df5aa851f56bd6241aafa8677dd9b6eb))
+* harden property catalog observe and continuation flows ([63d410d](https://github.com/future-agi/future-agi/commit/63d410dcc7bcc6a88ef910453f5c866eac469374))
+* **observe:** accelerate exact value filters ([b1ab435](https://github.com/future-agi/future-agi/commit/b1ab435fe40b2e6ac0ec5bf4ea1955119a4c3385))
+* **observe:** execute exact analytics reads inline ([404e57e](https://github.com/future-agi/future-agi/commit/404e57e4edfe828864abca3e48f1f8ee403f7acb))
+* **observe:** index exact unicode attribute filters ([480becd](https://github.com/future-agi/future-agi/commit/480becd0d98d38c402d3d94094405e3efd0b61ea))
+* **observe:** route exact text filters through indexed anchor ([f05253d](https://github.com/future-agi/future-agi/commit/f05253dabfaf3ffec5ec1989191e280635706e39))
+* **observe:** show filter loading without delay ([6bb5fcc](https://github.com/future-agi/future-agi/commit/6bb5fccf434403350181e7e21e5732d540ddf71e))
+* **tracer:** bound optional witness fallback ([17b8cb1](https://github.com/future-agi/future-agi/commit/17b8cb1617af3f5a68c2bba6d8abdb186de6ecd5))
+* **tracing:** honor authenticated project workspace scope ([08738a0](https://github.com/future-agi/future-agi/commit/08738a03a8fcbee8de70fa9293979a9f8916642c))
+
 ## [1.32.0](https://github.com/future-agi/future-agi/compare/v1.31.0...v1.32.0) (2026-08-31)
 
 
