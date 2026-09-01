@@ -109,14 +109,19 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash"
     ).strip()
     location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
-    backend = (
+    derived_backend = (
         "vertex-gemini"
         if provider.lower() in {"google", "vertex", "vertex-gemini", "vertex_gemini"}
         else provider
     )
+    # Authoring and simulation are separate trust/runtime lanes.  Let deployment config select
+    # the ALK stage-loop independently instead of forcing it to use the simulated caller's
+    # provider and model.  This also keeps the customer request unable to influence either one.
+    backend = str(os.environ.get("ALK_HARNESS") or derived_backend).strip()
+    authoring_model = str(os.environ.get("ALK_HARNESS_MODEL") or model).strip()
     values = {
         "ALK_HARNESS": backend,
-        "ALK_HARNESS_MODEL": model,
+        "ALK_HARNESS_MODEL": authoring_model,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
         "GOOGLE_GENAI_USE_VERTEXAI": str(

@@ -50,6 +50,8 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-2.5-flash")
+    monkeypatch.delenv("ALK_HARNESS", raising=False)
+    monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "must-not-be-copied")
 
@@ -63,6 +65,25 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["ALK_HARNESS"] == "vertex-gemini"
     assert credential_bytes == credentials.read_bytes()
     assert not any(name.startswith("LIVEKIT_") for name in values)
+
+
+def test_platform_authoring_backend_is_independent_from_simulated_caller(
+    tmp_path, monkeypatch
+):
+    credentials = tmp_path / "vertex.json"
+    credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+    monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
+    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
+
+    values, _credential_bytes = _platform_simulator_material()
+
+    assert values["ALK_HARNESS"] == "claude"
+    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
+    assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
+    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.1-flash-lite"
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():

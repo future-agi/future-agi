@@ -59,6 +59,11 @@ x-backend-env: &backend-env
   ALK_HOSTED_SANDBOX_TTL_SECONDS: ${ALK_HOSTED_SANDBOX_TTL_SECONDS:-7200}
   ALK_HOSTED_WEBRTC_EGRESS_CIDRS: ${ALK_HOSTED_WEBRTC_EGRESS_CIDRS:-}
   ALK_HOSTED_BUNDLE_DIR: ${ALK_HOSTED_BUNDLE_DIR:-}
+  # Environment authoring is independent from the simulated caller. Hosted
+  # jobs may use Claude to understand/build the target while keeping the
+  # platform-owned caller on Vertex Gemini.
+  ALK_HARNESS: ${ALK_HARNESS:-}
+  ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-}
   DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
   DAYTONA_API_URL: ${DAYTONA_API_URL:-}
   DAYTONA_TARGET: ${DAYTONA_TARGET:-}
