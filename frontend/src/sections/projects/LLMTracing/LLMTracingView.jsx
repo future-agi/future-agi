@@ -3947,7 +3947,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     margin: theme.spacing(0),
                     px: theme.spacing(1.875),
                   }}
-                  label="Primary Graph"
+                  label="Primary"
                   value="primary"
                 />
                 <Tab
@@ -3955,7 +3955,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     margin: theme.spacing(0),
                     px: theme.spacing(1.875),
                   }}
-                  label="Comparison Graph"
+                  label="Comparison"
                   value="compare"
                 />
               </Tabs>
