@@ -135,6 +135,25 @@ def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
     }
 
 
+def test_platform_livekit_is_available_only_as_simulator_configuration(
+    settings, monkeypatch
+):
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {
+        "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
+        "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
+        "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
+    }
+    monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "platform-key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-secret")
+
+    assert resolve_platform_simulator_secrets() == {
+        "SIMULATOR_LIVEKIT_URL": "wss://platform-livekit.example",
+        "SIMULATOR_LIVEKIT_API_KEY": "platform-key",
+        "SIMULATOR_LIVEKIT_API_SECRET": "platform-secret",
+    }
+
+
 def test_platform_simulator_refs_are_ephemeral_value_free_and_do_not_mutate_payload():
     payload = _payload()
     original = json.loads(json.dumps(payload))
