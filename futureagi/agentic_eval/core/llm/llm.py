@@ -1275,7 +1275,7 @@ class LLM:
         payload.pop("thinking", None)
         original_max_tokens = payload.get("max_tokens")
 
-        vertex_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+        vertex_cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
         openai_cfg = ModelConfigs.OPENAI_GPT_5_1
 
         base_messages = payload.get("messages", messages)
@@ -1479,6 +1479,14 @@ class LLM:
                     "content": self._build_protect_flash_prompt(prompt=inp),
                 }
             ]
+
+        # Some Vertex models are served only from a specific endpoint; without this litellm
+        # defaults to us-central1. A customer key that carries its own location still wins,
+        # since that branch overwrites this later.
+        if "vertex_location" not in payload:
+            location = ModelConfigs.get_vertex_location(_model)
+            if location:
+                payload["vertex_location"] = location
 
         return payload
 
@@ -1715,7 +1723,7 @@ class LLM:
         payload.pop("thinking", None)
         original_max_tokens = payload.get("max_tokens")
 
-        vertex_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+        vertex_cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
         openai_cfg = ModelConfigs.OPENAI_GPT_5_1
 
         base_messages = payload.get("messages", messages)
