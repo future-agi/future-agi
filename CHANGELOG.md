@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.30.0](https://github.com/future-agi/future-agi/compare/v1.29.1...v1.30.0) (2026-08-25)
+
+
+### Features
+
+* automating internal ticketing ([5e02f38](https://github.com/future-agi/future-agi/commit/5e02f38b9841ac3e079447e0341f91ba84621171))
+* **gateway:** export caller metadata, body fields and headers as span attributes ([d9f36f2](https://github.com/future-agi/future-agi/commit/d9f36f256d7ba7ab89dfd059446fc43551d8fb88))
+* **gateway:** support Anthropic server tools on the OpenAI-format endpoint ([3b42204](https://github.com/future-agi/future-agi/commit/3b42204c0abea18b5bb3f36b2a6ef3f287ff3745))
+
+
+### Bug Fixes
+
+* **gateway:** resolve provider endpoint paths through one builder ([8d4cba1](https://github.com/future-agi/future-agi/commit/8d4cba1894e6f313b15954cfdd784bf57f230ae1))
+* key reasoning toggle by source_id, not sourceId ([#2321](https://github.com/future-agi/future-agi/issues/2321)) ([6ff2732](https://github.com/future-agi/future-agi/commit/6ff27322b49be7574a99aea4bfd443f6317d7c46))
+* mock get_user_organization in post-registration tests ([937f4fb](https://github.com/future-agi/future-agi/commit/937f4fba643cea54d5057a79303f6ade73c79043))
+* restore demo data seeding on new user signup ([f2d1e5a](https://github.com/future-agi/future-agi/commit/f2d1e5a208918ad50652e15044e06bb9e7ffae2e))
+* restore demo data seeding on new user signup ([941ffff](https://github.com/future-agi/future-agi/commit/941ffff150c635d67953b424026ec3f60a1f445c))
+
 ## [1.29.1](https://github.com/future-agi/future-agi/compare/v1.29.0...v1.29.1) (2026-08-24)
 
 

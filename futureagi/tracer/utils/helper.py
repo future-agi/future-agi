@@ -1,7 +1,7 @@
 import json
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, TypedDict, Union
 
 import pandas as pd
@@ -768,6 +768,11 @@ def format_datetime_to_iso(val):
     """Convert a single datetime value to an ISO 8601 UTC string with 'Z' suffix."""
     if not val:
         return None
+    if val.tzinfo is None:
+        val = val.replace(tzinfo=UTC)
+    else:
+        val = val.astimezone(UTC)
+    return val.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def flatten_dict(
@@ -794,9 +799,6 @@ def flatten_dict(
         else:
             items.append((new_key, v))
     return dict(items)
-    # Use strftime to produce a consistent UTC format, avoiding double-offset
-    # when val is already timezone-aware (e.g. "2024-01-01T00:00:00+00:00Z").
-    return val.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def format_datetime_fields_to_iso(rows, fields):
