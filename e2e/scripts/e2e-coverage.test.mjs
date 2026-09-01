@@ -949,6 +949,56 @@ test("renderHuman marks pinned hits under a passing EXEMPT as informational", ()
   assert.doesNotMatch(update, /informational/);
 });
 
+test("renderHuman names the behaviour files behind an UNDETERMINED verdict", () => {
+  const base = {
+    classification: "UNDETERMINED",
+    autoReason: null,
+    areas: ["observe"],
+    hits: [],
+    newSurfaceSignals: [],
+    areasWithoutFlows: [],
+    marker: null,
+    verdict: "needs-marker",
+    explanation: "behaviour files changed with no recognised signal",
+  };
+  const file = (path, cls) => ({ path, cls, area: "observe" });
+
+  // "behaviour files changed" is unactionable on a large diff unless the files
+  // are named; exempt classes must not be listed as the reason.
+  const one = renderHuman({
+    ...base,
+    files: [
+      file("frontend/src/components/traceDetail/SpanDetailPane.jsx", "B2"),
+      file("README.md", "E1"),
+    ],
+  }).join("\n");
+  assert.match(
+    one,
+    /Why: 1 behaviour file — frontend\/src\/components\/traceDetail\/SpanDetailPane\.jsx \(B2\)/,
+  );
+  assert.doesNotMatch(one, /README\.md/);
+
+  // Long lists are capped so the line stays readable, with the remainder counted.
+  const many = renderHuman({
+    ...base,
+    files: Array.from({ length: 7 }, (_, i) =>
+      file(`frontend/src/sections/observe/f${i}.jsx`, "B2"),
+    ),
+  }).join("\n");
+  assert.match(many, /Why: 7 behaviour files —/);
+  assert.match(many, /\+2 more/);
+
+  // Only UNDETERMINED needs the explanation; the others already say why.
+  const exempt = renderHuman({
+    ...base,
+    classification: "EXEMPT",
+    autoReason: "docs",
+    verdict: "pass",
+    files: [file("README.md", "E1")],
+  }).join("\n");
+  assert.doesNotMatch(exempt, /Why:/);
+});
+
 for (const n of [2265, 2182, 1976, 2321, 2358, 2300]) {
   test(`fixture PR #${n} classifies as recorded`, async () => {
     const fx = JSON.parse(
