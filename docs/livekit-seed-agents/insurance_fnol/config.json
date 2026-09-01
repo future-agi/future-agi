@@ -1,0 +1,219 @@
+{
+  "id": "insurance_fnol",
+  "display_name": "Insurance — FNOL & Claims Intake",
+  "channel": "voice",
+  "direction": "inbound",
+  "languages": ["en", "es"],
+  "description": "Inbound insurance intake agent: takes First Notice of Loss (FNOL), answers claim-status and general policy questions, and routes anything requiring a coverage determination or advice to a licensed human. Modeled on Retell (Matic), Bland, Fin, and Cognigy's pre-trained insurance agent. This is an UNLICENSED intake role — it never quotes, binds, confirms coverage, or advises (role-boundary insight from the FutureAGI insurance eval pack).",
+  "runtime": {
+    "type": "pipeline",
+    "llm": { "provider": "openai", "model": "gpt-4o", "temperature": 0.3 },
+    "stt": { "provider": "deepgram", "model": "nova-2", "language": "multi" },
+    "tts": { "provider": "cartesia", "voice": "warm-professional" },
+    "vad": { "provider": "silero" },
+    "allow_interruptions": true
+  },
+  "session_state": {
+    "policyholder_name": "str",
+    "policy_number": "str",
+    "verified": "bool=false",
+    "intent": "str=none",
+    "loss_fields": "dict=none",
+    "claim_id": "str=none",
+    "outcome": "str=none"
+  },
+  "workflow": {
+    "entry_agent": "identify",
+    "agents": [
+      {
+        "id": "identify",
+        "title": "Identify & Route",
+        "first_message": "Thanks for calling claims. I can help you report a new claim, check a claim's status, or answer a question about your policy. To start, may I have your policy number?",
+        "instructions": "Greet the caller and identify them by policy number, then verify one identity factor with verify_policyholder. FIRST, if the caller describes an active emergency, injuries needing attention, or a fire/gas/hazard in progress, call advise_emergency immediately before anything else. Once verified, determine intent and hand off: reporting something that happened → fnol; asking about an existing claim → claim_status; a general 'what does my policy cover / how does X work' question → policy_qa. Never quote a premium, confirm or deny coverage, or give advice — if they ask for any of those, hand to escalate_to_licensed_agent.",
+        "tools": ["verify_policyholder", "advise_emergency"],
+        "handoffs": [
+          { "to": "fnol", "when": "caller is reporting a new loss/incident" },
+          { "to": "claim_status", "when": "caller asks about an existing claim" },
+          { "to": "policy_qa", "when": "caller asks a general policy question" }
+        ],
+        "terminal": false
+      },
+      {
+        "id": "fnol",
+        "title": "First Notice of Loss capture",
+        "instructions": "Take a First Notice of Loss. Collect the required fields one at a time, warmly and without rushing: date & time of loss, location, loss type (auto | property | other), a plain description of what happened, whether anyone was injured, other parties/vehicles involved, and whether police/fire were called (and a report number if so). Loop until all required fields are captured. Then call create_fnol and read back the claim number and next steps, and call send_document_upload_link so they can add photos/documents. Do NOT assess fault, estimate payout, or say whether it's covered — if pressed, hand to escalate_to_licensed_agent. If injuries, a fatality, suspected liability, or a likely total loss are involved, hand to triage.",
+        "tools": ["create_fnol", "send_document_upload_link"],
+        "handoffs": [
+          { "to": "triage", "when": "injuries, fatality, liability, or total-loss indicators are present" }
+        ],
+        "terminal": true
+      },
+      {
+        "id": "triage",
+        "title": "Severity triage → licensed adjuster",
+        "instructions": "This claim has high-severity indicators. Confirm the key facts briefly, reassure the claimant, and hand off to a licensed adjuster via escalate_to_licensed_agent with a summary. Do not make any coverage or liability statements.",
+        "tools": [],
+        "handoffs": [],
+        "terminal": true
+      },
+      {
+        "id": "claim_status",
+        "title": "Claim status",
+        "instructions": "Look up the claim with get_claim_status and read the current status, the assigned adjuster if any, and the next step in plain language. Offer to send the details by SMS/email via send_claim_confirmation. If the caller disputes the status or wants a decision explained, hand to escalate_to_licensed_agent.",
+        "tools": ["get_claim_status", "send_claim_confirmation"],
+        "handoffs": [],
+        "terminal": true
+      },
+      {
+        "id": "policy_qa",
+        "title": "Policy Q&A (bounded)",
+        "instructions": "Answer general, factual questions about how the policy or claims process works using search_policy_kb, and cite the source. HARD BOUNDARY: never state whether a specific situation is covered, never quote or estimate a premium, never advise the caller what to do. The moment a question requires a coverage determination or advice, say a licensed representative will help and call escalate_to_licensed_agent.",
+        "tools": ["search_policy_kb"],
+        "handoffs": [],
+        "terminal": true
+      }
+    ],
+    "global_handlers": [
+      { "id": "licensed", "tool": "escalate_to_licensed_agent", "when": "caller needs a coverage determination, a quote, advice, or a human", "then": "handoff:end" },
+      { "id": "emergency", "tool": "advise_emergency", "when": "active emergency, injury needing care, or hazard in progress", "then": "end:EMERGENCY_REDIRECT" },
+      { "id": "callback", "tool": "schedule_adjuster_callback", "when": "caller wants a scheduled call from an adjuster", "then": "end:CALLBACK" }
+    ]
+  },
+  "tools": [
+    {
+      "name": "verify_policyholder",
+      "description": "Verify the caller against the policy by matching ONE factor (dob | zip | last4_ssn). Required before reading any policy/claim details.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "policy_number": { "type": "string" },
+          "answer": { "type": "string", "description": "the identity value provided" },
+          "factor": { "type": "string", "enum": ["dob", "zip", "last4_ssn"] }
+        },
+        "required": ["policy_number", "answer", "factor"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/insurance/verify_policyholder" },
+      "mock": { "verified": true, "policyholder_name": "Sam Rivera" },
+      "sets": { "verified": "$.verified", "policyholder_name": "$.policyholder_name" },
+      "errors": ["policy not found", "unknown factor"]
+    },
+    {
+      "name": "create_fnol",
+      "description": "Create a First Notice of Loss from the captured fields and return a claim number.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "loss_datetime": { "type": "string" },
+          "location": { "type": "string" },
+          "loss_type": { "type": "string", "enum": ["auto", "property", "other"] },
+          "description": { "type": "string" },
+          "injuries": { "type": "boolean" },
+          "other_parties": { "type": "string" },
+          "police_report": { "type": "string" }
+        },
+        "required": ["loss_datetime", "location", "loss_type", "description", "injuries"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/insurance/fnol" },
+      "mock": { "claim_id": "CLM-77213", "next_steps": "An adjuster will contact you within 1 business day." },
+      "sets": { "claim_id": "$.claim_id" },
+      "errors": ["missing required loss fields"]
+    },
+    {
+      "name": "get_claim_status",
+      "description": "Look up an existing claim's status, assigned adjuster, and next step.",
+      "parameters": {
+        "type": "object",
+        "properties": { "claim_id": { "type": "string" } },
+        "required": ["claim_id"]
+      },
+      "execution": { "type": "webhook", "method": "GET", "url": "{{FAI_TOOL_BASE}}/insurance/claim_status" },
+      "mock": { "status": "Under review", "adjuster": "T. Okafor", "next_steps": "Estimate scheduled for Friday." },
+      "errors": ["claim not found"]
+    },
+    {
+      "name": "send_document_upload_link",
+      "description": "Send a secure link for the claimant to upload photos/documents for the claim.",
+      "parameters": {
+        "type": "object",
+        "properties": { "channel": { "type": "string", "enum": ["sms", "email"], "default": "sms" } },
+        "required": []
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/insurance/upload_link" },
+      "mock": { "sent": true, "link_id": "UP-5521" },
+      "errors": ["no contact channel on file"]
+    },
+    {
+      "name": "send_claim_confirmation",
+      "description": "Send the claim details / status summary by SMS or email.",
+      "parameters": {
+        "type": "object",
+        "properties": { "channel": { "type": "string", "enum": ["sms", "email"], "default": "sms" } },
+        "required": []
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/insurance/confirmation" },
+      "mock": { "sent": true },
+      "errors": []
+    },
+    {
+      "name": "search_policy_kb",
+      "description": "Answer a general, factual policy/process question from the knowledge base. Returns an answer with citations. Never use this to make a coverage determination.",
+      "parameters": {
+        "type": "object",
+        "properties": { "query": { "type": "string" } },
+        "required": ["query"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/insurance/policy_kb" },
+      "mock": { "answer": "Comprehensive coverage generally applies to non-collision damage such as theft, fire, or hail.", "citations": ["policy_guide.pdf#p12"] },
+      "errors": ["no relevant policy content found"]
+    },
+    {
+      "name": "schedule_adjuster_callback",
+      "description": "Schedule a callback from a licensed adjuster.",
+      "parameters": {
+        "type": "object",
+        "properties": { "when": { "type": "string", "description": "ISO datetime" } },
+        "required": ["when"]
+      },
+      "execution": { "type": "webhook", "method": "POST", "url": "{{FAI_TOOL_BASE}}/insurance/callback" },
+      "mock": { "ok": true },
+      "errors": []
+    },
+    {
+      "name": "advise_emergency",
+      "description": "Tell the caller to contact emergency services (911) for an active emergency, and end safely.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution": { "type": "mock" },
+      "mock": { "advised": true },
+      "errors": []
+    },
+    {
+      "name": "escalate_to_licensed_agent",
+      "description": "Warm-transfer to a licensed insurance representative with a summary. Use for any coverage determination, quote, advice request, dispute, or human request.",
+      "parameters": {
+        "type": "object",
+        "properties": { "reason": { "type": "string" } },
+        "required": ["reason"]
+      },
+      "execution": { "type": "transfer", "target": "{{LICENSED_AGENT_SIP}}", "pass_summary": true },
+      "mock": { "transferred": true },
+      "errors": []
+    }
+  ],
+  "guardrails": {
+    "deterministic": [
+      "No policy or claim details are read until verify_policyholder returns verified == true.",
+      "Coverage determinations, premium quotes, and advice are never produced by this agent — those intents route to escalate_to_licensed_agent (the unlicensed-intake boundary).",
+      "Emergency indicators trigger advise_emergency before any other flow."
+    ],
+    "content": [
+      "Never confirm or deny that a specific loss is covered.",
+      "Never quote, estimate, or imply a premium or payout amount.",
+      "Never advise the claimant what to do about coverage; empathize and capture facts only."
+    ],
+    "notes": "Unlicensed intake role. If a deployment authorizes the agent to state rated figures, the boundary above must be revisited with compliance (see insurance eval-pack assumption A2). PHI handled under applicable privacy rules."
+  },
+  "dispositions": [
+    "FNOL_CREATED", "CLAIM_STATUS_GIVEN", "POLICY_Q_ANSWERED", "DOC_LINK_SENT",
+    "ESCALATED_LICENSED", "EMERGENCY_REDIRECT", "CALLBACK", "WRONG_POLICY", "REFUSED_VERIFY"
+  ]
+}

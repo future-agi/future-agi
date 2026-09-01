@@ -1,0 +1,6 @@
+livekit-agents>=0.11
+livekit-plugins-openai
+livekit-plugins-deepgram
+livekit-plugins-cartesia
+livekit-plugins-silero
+pyyaml
