@@ -26,6 +26,11 @@ function StatusIcon({ status }) {
   if (status === "error") {
     return <Iconify icon="mdi:close" width={14} sx={{ color: "error.main" }} />;
   }
+  if (status === "retried") {
+    return (
+      <Iconify icon="mdi:refresh" width={14} sx={{ color: "text.disabled" }} />
+    );
+  }
   return null;
 }
 
@@ -51,7 +56,10 @@ export default function ToolCallCard({ toolCall }) {
 
   const isRunning = status === "running";
   const isError = status === "error";
-  const isCompleted = status === "completed";
+  // A step the agent recovered from on a later call. It is a real step and
+  // stays readable, but it is not a failure and must not read as one.
+  const isRetried = status === "retried";
+  const isCompleted = status === "completed" || isRetried;
 
   return (
     <Box
