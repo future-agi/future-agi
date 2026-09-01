@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -71,6 +72,80 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _DIRECT_IMAGE_WITH_ADJUSTMENTS = "direct-image-adjustments-v1"
+_SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
+_SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
+
+
+def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
+    """Return control-process-only simulator config and optional Vertex ADC bytes.
+
+    These values come from platform deployment configuration, never the customer request.  The
+    returned map is uploaded on its own channel and consumed by ALK's hosted entrypoint; it is not
+    added to ``secrets.json`` and therefore cannot acquire the ``target_provider`` purpose or be
+    injected into an untrusted agent process.
+    """
+    source_path = str(
+        os.environ.get("ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS")
+        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        or ""
+    ).strip()
+    credential_bytes: bytes | None = None
+    project = str(os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
+    if source_path:
+        try:
+            credential_bytes = Path(source_path).read_bytes()
+            document = json.loads(credential_bytes)
+            if not project and isinstance(document, dict):
+                project = str(document.get("project_id") or "").strip()
+        except (OSError, ValueError, TypeError) as exc:
+            raise HostedHarnessError(
+                "simulator_credentials_invalid",
+                "the platform simulator Vertex credential could not be loaded",
+                status_code=503,
+            ) from exc
+
+    provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
+    model = str(
+        os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash"
+    ).strip()
+    location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
+    backend = (
+        "vertex-gemini"
+        if provider.lower() in {"google", "vertex", "vertex-gemini", "vertex_gemini"}
+        else provider
+    )
+    values = {
+        "ALK_HARNESS": backend,
+        "ALK_HARNESS_MODEL": model,
+        "ALK_VERTEX_LOCATION": location,
+        "GOOGLE_CLOUD_LOCATION": location,
+        "GOOGLE_GENAI_USE_VERTEXAI": str(
+            os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") or "True"
+        ),
+        "SIMULATOR_LLM_PROVIDER": provider,
+        "SIMULATOR_LLM_MODEL": model,
+    }
+    for name in (
+        "CARTESIA_API_KEY",
+        "DEEPGRAM_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "SIMULATOR_STT_MODEL",
+        "SIMULATOR_STT_PROVIDER",
+        "SIMULATOR_TTS_MODEL",
+        "SIMULATOR_TTS_PROVIDER",
+    ):
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            values[name] = value
+    if project:
+        values["GOOGLE_CLOUD_PROJECT"] = project
+    if credential_bytes is not None:
+        values["GOOGLE_APPLICATION_CREDENTIALS"] = (
+            _SIMULATOR_VERTEX_CREDENTIALS_PATH
+        )
+    return values, credential_bytes
 
 
 def _scenario_delta(instruction: str) -> int | None:
@@ -627,14 +702,8 @@ class DaytonaHostedGateway:
 
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
-        secrets_map = PlatformSecretResolver().resolve(job)
-        sa_json = str(secrets_map.get("GOOGLE_APPLICATION_CREDENTIALS_JSON") or "")
-        project_id = ""
-        if sa_json:
-            try:
-                project_id = str(json.loads(sa_json).get("project_id") or "")
-            except (ValueError, TypeError):
-                project_id = ""
+        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
         # Authoring reaches only the source host and the authoring model provider (Vertex/Claude).
         # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes the
@@ -663,6 +732,7 @@ class DaytonaHostedGateway:
             )
         )[:20]
         authoring_env = {
+            **simulator_env,
             "CLAUDE_CODE_USE_VERTEX": "1",
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
@@ -671,7 +741,7 @@ class DaytonaHostedGateway:
             "GOOGLE_CLOUD_LOCATION": getattr(
                 settings, "ALK_HOSTED_AUTHORING_GEMINI_LOCATION", "us-central1"
             ),
-            "GOOGLE_APPLICATION_CREDENTIALS": "/run/futureagi/vertex-sa.json",
+            "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
         }
         if project_id:
             authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
@@ -722,9 +792,10 @@ class DaytonaHostedGateway:
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
                 "/work/job.json",
             )
-            if sa_json:
+            if simulator_vertex_credentials is not None:
                 sandbox.fs.upload_file(
-                    sa_json.encode(), "/run/futureagi/vertex-sa.json"
+                    simulator_vertex_credentials,
+                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
                 )
             prepared = sandbox.process.exec(
                 "tar -xzf /work/source.tar.gz -C /work && rm /work/source.tar.gz && "
@@ -866,6 +937,7 @@ class DaytonaHostedGateway:
         # Bundle authoring is performed inside the sandbox. The platform sends source plus any
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
+        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
         dispatch_payload = prepare_dispatch_payload(payload, secrets_map)
         capability = register_attempt(
             job.id,
@@ -902,6 +974,7 @@ class DaytonaHostedGateway:
         platform_host = urlparse(endpoint_base_url).hostname
         allowed_domains = set(getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []))
         allowed_domains.update(_provider_egress_domains(secrets_map))
+        allowed_domains.update(_provider_egress_domains(simulator_env))
         allowed_domains.update(payload["security"]["allowed_egress_domains"])
         if platform_host:
             allowed_domains.add(platform_host)
@@ -972,6 +1045,17 @@ class DaytonaHostedGateway:
             )
             sandbox.fs.upload_file(
                 json.dumps(
+                    simulator_env, sort_keys=True, separators=(",", ":")
+                ).encode(),
+                _SIMULATOR_SECRETS_PATH,
+            )
+            if simulator_vertex_credentials is not None:
+                sandbox.fs.upload_file(
+                    simulator_vertex_credentials,
+                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+                )
+            sandbox.fs.upload_file(
+                json.dumps(
                     capability.document, sort_keys=True, separators=(",", ":")
                 ).encode(),
                 "/run/futureagi/capabilities.json",
@@ -1003,7 +1087,13 @@ class DaytonaHostedGateway:
                 "chown -R svc-control:svc-control /work/source && "
                 "chmod -R a-w /work/source && "
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
-                "/run/futureagi/capabilities.json",
+                "/run/futureagi/capabilities.json "
+                f"{_SIMULATOR_SECRETS_PATH} "
+                + (
+                    _SIMULATOR_VERTEX_CREDENTIALS_PATH
+                    if simulator_vertex_credentials is not None
+                    else ""
+                ),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -1014,11 +1104,33 @@ class DaytonaHostedGateway:
                     retryable=True,
                 )
             sandbox.process.create_session(_ENTRYPOINT_SESSION)
+            # The fallback authoring command precedes hosted_entrypoint, so provide only the
+            # non-secret Vertex selectors and the protected credential-file path here.  API keys
+            # remain exclusively in simulator-secrets.json and are loaded (then deleted) by ALK.
+            authoring_exports = {
+                name: value
+                for name, value in simulator_env.items()
+                if name
+                in {
+                    "ALK_HARNESS",
+                    "ALK_HARNESS_MODEL",
+                    "ALK_VERTEX_LOCATION",
+                    "GOOGLE_APPLICATION_CREDENTIALS",
+                    "GOOGLE_CLOUD_LOCATION",
+                    "GOOGLE_CLOUD_PROJECT",
+                    "GOOGLE_GENAI_USE_VERTEXAI",
+                }
+            }
+            export_command = " ".join(
+                f"{name}={shlex.quote(value)}"
+                for name, value in sorted(authoring_exports.items())
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SessionExecuteRequest(
                     command=(
-                        "if [ ! -f /work/authoring/contract.json ]; then "
+                        (f"export {export_command} && " if export_command else "")
+                        + "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
                         f"--adjustments {_ADJUSTMENTS_PATH}; "

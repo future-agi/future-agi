@@ -773,6 +773,11 @@ def _apply_receipt_to_call(
 
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
+    # The same CallExecution row is intentionally reused across user-triggered reruns so the old
+    # result remains visible until its replacement receipt arrives.  Once that receipt lands it
+    # is authoritative for this row: never leave an earlier attempt's transport failure attached
+    # to a later completed call.
+    call.error_message = ""
     if body.get("failure"):
         call.error_message = body["failure"]["message"]
     # A sealed voice call stores its transcript, but the hosted path never
