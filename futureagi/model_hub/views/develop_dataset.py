@@ -279,6 +279,10 @@ from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.document_link import (
+    document_link_failure_message,
+    resolve_document_cell_input,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
     calculate_column_average,
@@ -5512,23 +5516,28 @@ class UpdateCellValueView(APIView):
                     return self._gm.bad_request(str(e))
 
             elif column_data_type == DataTypeChoices.DOCUMENT.value:
+                converted = None
                 try:
                     logger.info("Got DOCUMENT FILE")
-                    name = new_value
-                    new_value = self._convert_file_to_base64(request)
+                    original_value = new_value
+                    converted = self._convert_file_to_base64(request)
                     logger.info("GOT DOCUMENT BASE64")
 
-                    # Handle empty document value
-                    if not new_value or (
-                        isinstance(new_value, str) and new_value.strip() == ""
-                    ):
+                    action, payload = resolve_document_cell_input(
+                        original_value, converted
+                    )
+                    if action == "reject":
+                        # Refuse without touching the existing document.
+                        return self._gm.bad_request(payload)
+
+                    if action == "clear":
                         cell.value = None
                         cell.value_infos = json.dumps({})
                         cell.status = CellStatus.PASS.value
                     else:
                         doc_key = f"documents/{dataset_id}/{uuid.uuid4()}"
                         doc_url = upload_document_to_s3(
-                            new_value,
+                            payload,
                             bucket_name="fi-customer-data-dev",
                             object_key=doc_key,
                         )
@@ -5538,13 +5547,22 @@ class UpdateCellValueView(APIView):
                         if not isinstance(value_infos, dict):
                             value_infos = {}
                         value_infos["document_url"] = doc_url
-                        value_infos["document_name"] = name[:400]
+                        name = original_value
+                        value_infos["document_name"] = (
+                            str(name)[:400] if name else ""
+                        )
                         cell.value_infos = json.dumps(value_infos)
                         cell.status = CellStatus.PASS.value
                         cell.value = doc_url
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
+                    is_link = isinstance(converted, str) and converted.startswith(
+                        ("http://", "https://")
+                    )
+                    if is_link:
+                        # A failed link must not wipe the document already in the cell.
+                        return self._gm.bad_request(document_link_failure_message(e))
                     cell.value = None
                     cell.status = CellStatus.ERROR.value
                     cell.value_infos = json.dumps({"reason": str(e)})
