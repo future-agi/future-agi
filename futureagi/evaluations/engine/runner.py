@@ -21,7 +21,7 @@ import structlog
 
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from evaluations.engine.formatting import extract_raw_result, format_eval_value
-from evaluations.engine.instance import create_eval_instance
+from evaluations.engine.instance import create_eval_instance, resolve_version_for_run
 from evaluations.engine.params import prepare_run_params
 from evaluations.engine.registry import get_eval_class
 
@@ -111,6 +111,11 @@ def run_eval(request: EvalRequest) -> EvalResult:
     eval_class = get_eval_class(eval_type_id)
 
     # 2. Create instance
+    # Resolve once and reuse: the instance is built from this version, so the
+    # result has to be scored against it too.
+    resolved_version = resolve_version_for_run(
+        eval_template, request.version_number, request.organization_id
+    )
     config = dict(request.config_overrides)
     eval_instance, criteria = create_eval_instance(
         eval_class=eval_class,
@@ -123,6 +128,7 @@ def run_eval(request: EvalRequest) -> EvalResult:
         workspace_id=request.workspace_id,
         version_number=request.version_number,
         is_futureagi=is_futureagi,
+        resolved_version=resolved_version,
     )
 
     # Use criteria from request if provided, else from instance creation
@@ -171,7 +177,7 @@ def run_eval(request: EvalRequest) -> EvalResult:
     response["end_time"] = end_time
     response["duration"] = end_time - start_time
 
-    value = format_eval_value(response, eval_template)
+    value = format_eval_value(response, eval_template, resolved_version)
 
     logger.info(
         "eval_executed",

@@ -871,43 +871,37 @@ class EvaluationRunner:
         if not format_output:
             self._initialize_eval_metric()
 
-    def _pinned_criteria(self):
+    def _active_version(self):
+        """The version this run executes: the resolved one, else the pin.
+
+        One accessor so config-dict resolution, column-level resolution and
+        result formatting cannot answer differently for the same run.
+        """
         resolved = getattr(self, "_resolved_version", None)
         if resolved is None and getattr(self, "user_eval_metric", None):
             resolved = getattr(self.user_eval_metric, "pinned_version", None)
-        if resolved and resolved.criteria:
-            return resolved.criteria
-        snap = getattr(resolved, "config_snapshot", None) if resolved else None
-        if isinstance(snap, dict) and snap.get("rule_prompt"):
-            return snap["rule_prompt"]
-        return self.eval_template.criteria if self.eval_template else None
+        return resolved
+
+    def _pinned_attr(self, name, snapshot_aliases=()):
+        """Column-level field via the shared version-overlay primitive."""
+        from evaluations.engine.instance import pinned_attr
+
+        return pinned_attr(
+            self.eval_template, self._active_version(), name, snapshot_aliases
+        )
+
+    def _pinned_criteria(self):
+        # A version snapshot records the prompt as `rule_prompt`.
+        return self._pinned_attr("criteria", ("rule_prompt",))
 
     def _pinned_choice_scores(self):
-        resolved = getattr(self, "_resolved_version", None)
-        if resolved is None and getattr(self, "user_eval_metric", None):
-            resolved = getattr(self.user_eval_metric, "pinned_version", None)
-        snap = getattr(resolved, "config_snapshot", None) if resolved else None
-        if isinstance(snap, dict) and "choice_scores" in snap:
-            return snap["choice_scores"]
-        return self.eval_template.choice_scores if self.eval_template else None
+        return self._pinned_attr("choice_scores")
 
     def _pinned_multi_choice(self):
-        resolved = getattr(self, "_resolved_version", None)
-        if resolved is None and getattr(self, "user_eval_metric", None):
-            resolved = getattr(self.user_eval_metric, "pinned_version", None)
-        snap = getattr(resolved, "config_snapshot", None) if resolved else None
-        if isinstance(snap, dict) and "multi_choice" in snap:
-            return snap["multi_choice"]
-        return self.eval_template.multi_choice if self.eval_template else None
+        return self._pinned_attr("multi_choice")
 
     def _pinned_choices(self):
-        resolved = getattr(self, "_resolved_version", None)
-        if resolved is None and getattr(self, "user_eval_metric", None):
-            resolved = getattr(self.user_eval_metric, "pinned_version", None)
-        snap = getattr(resolved, "config_snapshot", None) if resolved else None
-        if isinstance(snap, dict) and "choices" in snap:
-            return snap["choices"]
-        return self.eval_template.choices if self.eval_template else None
+        return self._pinned_attr("choices")
 
     def get_few_shot_examples(self, mapping, required_field=None):
         """
@@ -1005,9 +999,9 @@ class EvaluationRunner:
         """Return template config with the resolved version snapshot applied.
 
         The overlay covers the config *dict*. Model-level attributes
-        (`choice_scores`, `choices`, `criteria`, `multi_choice`) are
-        resolved via `_pinned_*()` helpers which read from the snapshot
-        first, falling back to the live template.
+        (`choice_scores`, `choices`, `criteria`, `multi_choice`) go through
+        `_pinned_attr()`, which shares `pinned_attr()` with the engine so
+        both resolve the same version the same way.
 
         Memoized on `self` — invariant across rows within a single run,
         invalidated automatically when `self.eval_template` or
@@ -1022,10 +1016,7 @@ class EvaluationRunner:
         ):
             return cached
 
-        template_config = getattr(self.eval_template, "config", None) or {}
-        effective_config = (
-            dict(template_config) if isinstance(template_config, dict) else {}
-        )
+        from evaluations.engine.instance import effective_template_config
 
         resolved_version = getattr(self, "_resolved_version", None)
         if (
@@ -1048,12 +1039,12 @@ class EvaluationRunner:
                     version_number=self.version_number,
                     exc_info=True,
                 )
-        if resolved_version is None and getattr(self, "user_eval_metric", None):
-            resolved_version = getattr(self.user_eval_metric, "pinned_version", None)
+        if resolved_version is None:
+            resolved_version = self._active_version()
 
-        snapshot = getattr(resolved_version, "config_snapshot", None)
-        if isinstance(snapshot, dict):
-            effective_config.update(snapshot)
+        effective_config = effective_template_config(
+            self.eval_template, resolved_version
+        )
 
         # Refresh the cache key in case _resolved_version got populated above.
         self._effective_config_cache_key = (
@@ -2019,11 +2010,16 @@ class EvaluationRunner:
                     eval_template.workspace.id if eval_template.workspace else None
                 )
 
-        # Non-dataset callers: delegate to the extracted pure function
+        # Non-dataset callers: delegate to the extracted pure function.
+        # The version goes with it — the evaluator was built from that
+        # version's choices, so its answer has to be scored against that
+        # version's choice_scores rather than the live template's.
         if row is None:
             from evaluations.engine.formatting import format_eval_value
 
-            return format_eval_value(result_data, self.eval_template)
+            return format_eval_value(
+                result_data, self.eval_template, self._active_version()
+            )
         output_type = result_data.get("output")
         # If choice_scores exist, force choices processing
         if (

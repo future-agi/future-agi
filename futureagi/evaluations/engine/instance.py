@@ -13,6 +13,11 @@ from evaluations.constants import FUTUREAGI_EVAL_TYPES
 
 logger = structlog.get_logger(__name__)
 
+# Distinguishes "caller did not resolve a version" from "caller resolved one
+# and there isn't any". Without it a caller that legitimately resolved to None
+# would trigger a second, redundant lookup that could answer differently.
+_UNRESOLVED = object()
+
 
 # Per-evaluator allow-list for per-binding ``run_config`` overrides. Caps
 # the runtime-tunable surface — both evaluators accept ``**kwargs`` so
@@ -84,14 +89,53 @@ def resolve_version(eval_template, version_number=None, organization=None):
                 )
                 .first()
             )
+            if resolved is None:
+                # The version exists but belongs to another organization, or
+                # was hard-deleted. Falling through to the template default
+                # would run different text than the caller pinned, so say so
+                # rather than degrading in silence.
+                logger.warning(
+                    "eval_version_not_visible_for_org",
+                    eval_template_id=str(getattr(eval_template, "id", "")),
+                    version_number=version_number,
+                    organization_id=str(getattr(organization, "id", ""))
+                    if organization
+                    else None,
+                )
         else:
             resolved = EvalTemplateVersion.objects.get_default(eval_template)
 
         return resolved
 
     except Exception:
-        logger.debug("version_resolution_skipped")
+        # A resolution failure must not kill the run — the caller falls back
+        # to the live template — but it silently changes which prompt is
+        # scored, so it is a warning with a stack trace, not a debug line.
+        logger.warning(
+            "eval_version_resolution_failed",
+            eval_template_id=str(getattr(eval_template, "id", "")),
+            version_number=version_number,
+            exc_info=True,
+        )
         return None
+
+
+def resolve_version_for_run(eval_template, version_number=None, organization_id=None):
+    """Resolve the version a run will execute, from an organization *id*.
+
+    The single place that turns (template, version_number, org id) into a
+    version. Callers that need the version for more than instance creation —
+    scoring, usage stamping — resolve here once and pass the result into
+    ``create_eval_instance`` and ``format_eval_value`` so all three agree.
+    """
+    org = None
+    if organization_id:
+        from accounts.models.organization import Organization
+
+        org = Organization.objects.filter(id=organization_id).first()
+    elif getattr(eval_template, "organization", None):
+        org = eval_template.organization
+    return resolve_version(eval_template, version_number, org)
 
 
 def effective_template_config(eval_template, resolved_version=None):
@@ -109,12 +153,16 @@ def effective_template_config(eval_template, resolved_version=None):
     return base
 
 
-def pinned_attr(eval_template, resolved_version, name):
+def pinned_attr(eval_template, resolved_version, name, snapshot_aliases=()):
     """Column-level field, preferring the pinned version.
 
-    Order: the version's own column -> the version's config_snapshot ->
-    the live template. Empty string and None both count as "not carried by
-    this version" so pre-snapshot rows fall through to the template.
+    Order: the version's own column -> the version's config_snapshot (under
+    ``name``, then each of ``snapshot_aliases``) -> the live template. Empty
+    string and None both count as "not carried by this version" so
+    pre-snapshot rows fall through to the template.
+
+    ``snapshot_aliases`` covers fields the snapshot stores under a different
+    key than the column: ``criteria`` is written as ``rule_prompt``.
     """
     if resolved_version is not None:
         value = getattr(resolved_version, name, None)
@@ -122,9 +170,10 @@ def pinned_attr(eval_template, resolved_version, name):
             return value
         snapshot = getattr(resolved_version, "config_snapshot", None)
         if isinstance(snapshot, dict):
-            value = snapshot.get(name)
-            if value is not None and value != "":
-                return value
+            for key in (name, *snapshot_aliases):
+                value = snapshot.get(key)
+                if value is not None and value != "":
+                    return value
     return getattr(eval_template, name, None)
 
 
@@ -510,6 +559,13 @@ def _audit_value(value, limit=120):
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+def _debug_logging_enabled():
+    """Whether a debug record from this module would actually be emitted."""
+    import logging
+
+    return logging.getLogger(__name__).isEnabledFor(logging.DEBUG)
+
+
 def log_version_application(
     eval_template, resolved_version, version_number, config, runtime_config=None
 ):
@@ -517,7 +573,14 @@ def log_version_application(
 
     Classifies every audited field as version / run_config / template /
     derived so a pinned run can be checked without re-reading the code.
+
+    The classification runs per evaluator instantiation, which on a dataset
+    run is once per row, and it only ever feeds a debug line. Skip the work
+    entirely when debug logging is off.
     """
+    if not _debug_logging_enabled():
+        return
+
     try:
         live = getattr(eval_template, "config", None) or {}
         snapshot = (
@@ -586,12 +649,14 @@ def create_eval_instance(
     workspace_id=None,
     version_number=None,
     is_futureagi=False,
+    resolved_version=_UNRESOLVED,
 ):
     """
     Create an evaluator instance ready to call .run().
 
     This is the single entry point for evaluator instantiation. It:
-    1. Resolves the template version
+    1. Resolves the template version (or reuses one the caller already
+       resolved, so scoring and instantiation cannot disagree)
     2. Prepares the eval config based on eval_type_id
     3. Applies version overrides
     4. Handles function eval params normalization
@@ -609,16 +674,13 @@ def create_eval_instance(
     if config is None:
         config = {}
 
-    # Resolve version
-    org = None
-    if organization_id:
-        from accounts.models.organization import Organization
-
-        org = Organization.objects.filter(id=organization_id).first()
-    elif eval_template.organization:
-        org = eval_template.organization
-
-    resolved_version = resolve_version(eval_template, version_number, org)
+    # Resolve version. A caller that already resolved it (to score and stamp
+    # usage against the same version) passes it in; ``None`` from such a
+    # caller means "no version", not "not resolved yet".
+    if resolved_version is _UNRESOLVED:
+        resolved_version = resolve_version_for_run(
+            eval_template, version_number, organization_id
+        )
     template_config = effective_template_config(eval_template, resolved_version)
 
     # Prepare config based on eval type
