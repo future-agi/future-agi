@@ -19657,6 +19657,7 @@ export const ModelHubEvalTemplatesCompositeListResponse = zod.object({
   "tags": zod.array(zod.string().min(1)).optional(),
   "created_at": zod.string().optional(),
   "updated_at": zod.string().optional(),
+  "version_id": zod.string().uuid().optional(),
   "version_number": zod.number().optional()
 })
 })
@@ -19734,6 +19735,7 @@ export const ModelHubEvalTemplatesCompositePartialUpdateResponse = zod.object({
   "tags": zod.array(zod.string().min(1)).optional(),
   "created_at": zod.string().optional(),
   "updated_at": zod.string().optional(),
+  "version_id": zod.string().uuid().optional(),
   "version_number": zod.number().optional()
 })
 })
