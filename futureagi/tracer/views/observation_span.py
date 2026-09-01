@@ -1499,8 +1499,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # subquery matched) and the most recent target_type per config
             # (the S/T column glyph). Bounded to the viewed window and to
             # non-deleted rows so it doesn't scan an org's full eval history.
-            from datetime import datetime, timedelta
-
             window_days = SpanListQueryBuilder.window_days_covering(filters)
             row_cutoff = datetime.utcnow() - timedelta(days=window_days)
             target_rows = list(
