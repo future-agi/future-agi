@@ -44,7 +44,7 @@ Before review: `make check-all` (backend) or `yarn check-all` (frontend). Full w
 
 ## Conventions
 
-- **Python:** Black (line 88), isort (Black profile), mypy on new code. Obey `futureagi/pyproject.toml` and `futureagi/.pre-commit-config.yaml`.
+- **Python:** Ruff + Black (line 88), isort (Black profile), mypy on new code. Obey `futureagi/pyproject.toml` and `futureagi/.pre-commit-config.yaml`.
 - **JS / TS:** ESLint (Airbnb) + Prettier. Obey the frontend configs.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`).
 - **Branches:** `type/short-description` from `dev` (see [BRANCH_NAMING_CONVENTION.md](BRANCH_NAMING_CONVENTION.md)).

@@ -68,7 +68,7 @@ commands:
   check_all: make check-all / yarn check-all
 
 conventions:
-  python: Black (line 88), isort (Black profile), mypy on new code
+  python: Ruff + Black (line 88), isort (Black profile), mypy on new code
   js_ts: ESLint (Airbnb) + Prettier
   commits: Conventional Commits
   pr_base: dev
