@@ -26,6 +26,7 @@ from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.eval_version_pinning import (
+    InvalidPinnedVersion,
     is_versioned_template,
     resolve_pin_for_new_binding,
 )
@@ -522,8 +523,11 @@ class CreateRunTestView(APIView):
                                     pinned_version=resolve_pin_for_new_binding(
                                         eval_template,
                                         eval_config_data.get("pinned_version_id"),
+                                        strict=True,
                                     ),
                                 )
+                            except InvalidPinnedVersion as e:
+                                return self._gm.bad_request(str(e))
                             except EvalTemplate.DoesNotExist:
                                 # Skip if template doesn't exist
                                 continue
@@ -4556,6 +4560,7 @@ class AddEvalConfigView(APIView):
                         pinned_version=resolve_pin_for_new_binding(
                             eval_template,
                             eval_config_data.get("pinned_version_id"),
+                            strict=True,
                         ),
                     )
 
@@ -4563,6 +4568,10 @@ class AddEvalConfigView(APIView):
                     existing_names.add(eval_name)
                     created_eval_configs.append(simulate_eval)
 
+                except InvalidPinnedVersion as e:
+                    # Same answer the update path gives for a bad pin, rather
+                    # than a per-item warning the caller has to go looking for.
+                    return self._gm.bad_request(str(e))
                 except Exception as e:
                     errors.append(f"Error creating evaluation config: {str(e)}")
                     continue
@@ -4983,9 +4992,15 @@ class UpdateEvalConfigView(APIView):
             # is validated against the new template's schema.
             if new_template:
                 eval_config.eval_template = new_template
-                # A pin belongs to the template it came from; carrying it across
-                # a switch would run a version of the wrong eval.
-                eval_config.pinned_version = None
+                # A pin belongs to the template it came from, so the old one
+                # goes. Re-pin the new template's default rather than leaving
+                # the binding unpinned: every create path pins a default, and
+                # an unpinned binding silently follows whatever the default
+                # becomes later. An explicit pinned_version_id in the same
+                # request overrides this below.
+                eval_config.pinned_version = resolve_pin_for_new_binding(
+                    new_template
+                )
 
             # Version creation lives in the frontend, which saves a new
             # EvalTemplateVersion on config change and sends its id here.

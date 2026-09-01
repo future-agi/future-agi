@@ -5,7 +5,7 @@ default happens to be at run time, so editing a custom eval retroactively
 changes what past simulations ran. Pin each one to the version that would
 run today, which freezes current behaviour rather than altering it.
 
-User-owned templates only — system evals carry no version and must stay
+User-owned templates only. System evals carry no version and must stay
 NULL. Idempotent: the pinned_version__isnull filter makes a re-run a no-op.
 Reverse is a no-op.
 """
@@ -64,7 +64,7 @@ def backfill(apps, schema_editor):
             )
         version = resolved_by_template[template_id]
         if version is None:
-            # Template has no versions at all — leave NULL so runtime keeps
+            # Template has no versions at all, so leave NULL and let runtime keep
             # falling back to the live template.
             no_versions += 1
             continue
@@ -81,7 +81,7 @@ def backfill(apps, schema_editor):
         SimulateEvalConfig.objects.bulk_update(batch, ["pinned_version"])
 
     print(
-        f"[0080] SimulateEvalConfig pin backfill — "
+        f"[0080] SimulateEvalConfig pin backfill: "
         f"pinned={pinned} skipped_no_versions={no_versions}"
     )
 

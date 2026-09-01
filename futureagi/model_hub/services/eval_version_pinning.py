@@ -15,6 +15,15 @@ from model_hub.utils.prompt_migration import config_to_prompt_messages
 logger = structlog.get_logger(__name__)
 
 
+class InvalidPinnedVersion(ValueError):
+    """An explicit pinned_version_id that does not belong to the template.
+
+    Raised only when the caller opts into strict mode. Create and update
+    both reject it, so a client cannot get a silently-different pin from
+    one surface than the other.
+    """
+
+
 def is_versioned_template(eval_template):
     """Whether this template carries versions.
 
@@ -32,13 +41,18 @@ def is_versioned_template(eval_template):
     )
 
 
-def resolve_pin_for_new_binding(eval_template, pinned_version_id=None):
+def resolve_pin_for_new_binding(eval_template, pinned_version_id=None, strict=False):
     """Version to store on a binding being created or edited.
 
     Write path: pinned_version_id arrives on a request and is untrusted, so
-    it is looked up and must belong to this template. Falls back to the
-    template default. Returns None for system templates, so an explicit
-    pinned_version_id is ignored there.
+    it is looked up and must belong to this template. Returns None for system
+    templates, so an explicit pinned_version_id is ignored there.
+
+    ``strict`` decides what an explicit id that does not belong to this
+    template means. The update path rejects it, so the create paths pass
+    ``strict=True`` and raise ``InvalidPinnedVersion`` rather than quietly
+    substituting the default and pinning something the caller never asked
+    for. Omitting the id always falls back to the default.
     """
     if not is_versioned_template(eval_template):
         logger.debug(
@@ -58,6 +72,11 @@ def resolve_pin_for_new_binding(eval_template, pinned_version_id=None):
             deleted=False,
         ).first()
 
+    if selected is None and pinned_version_id and strict:
+        raise InvalidPinnedVersion(
+            "Selected version does not belong to this eval template."
+        )
+
     outcome = "explicit"
     if selected is None:
         selected = EvalTemplateVersion.objects.get_default(eval_template)
@@ -74,19 +93,25 @@ def resolve_pin_for_new_binding(eval_template, pinned_version_id=None):
     return selected
 
 
-def resolve_version_for_binding(eval_template, pinned_version):
+def resolve_version_for_binding(eval_template, pinned_version, require_versioned=True):
     """Version that will actually run for a binding.
+
+    The single implementation of the pin rule, for every binding model.
+    ``EvalTemplateVersion.objects.resolve_for_metric`` is a thin adapter over
+    this one — UserEvalMetric names its template FK `template` and
+    SimulateEvalConfig names it `eval_template`, and that naming difference
+    was the only reason there were two of these.
 
     Read path: pinned_version is the already-loaded FK, so this issues no
     query and is safe inside the per-eval runner loop. A live pin wins; a
-    soft-deleted one falls back to the template default. Returns None for
-    system templates, leaving the engine on its own get_default() path.
+    soft-deleted one falls back to the template default.
 
-    Mirrors EvalTemplateVersion.objects.resolve_for_metric, which cannot be
-    reused directly because SimulateEvalConfig names its FK `eval_template`
-    rather than `template`.
+    ``require_versioned`` returns None for system templates, leaving the
+    engine on its own get_default() path. The dataset adapter passes False
+    to keep its long-standing behaviour of resolving a default regardless of
+    owner.
     """
-    if not is_versioned_template(eval_template):
+    if require_versioned and not is_versioned_template(eval_template):
         logger.debug(
             "eval_pin_resolved",
             eval_template_id=str(getattr(eval_template, "id", "")),

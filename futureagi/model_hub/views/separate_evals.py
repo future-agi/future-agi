@@ -2954,10 +2954,47 @@ class EvalTemplateVersionCreateView(APIView):
             # record an edit that was never written back to the template.
             effective_config = dict(template.config or {})
             if req.config_snapshot:
+                # The wire format is snake_case. A camelCase key means the
+                # client sent an un-normalized payload, and letting it through
+                # would store `passThreshold` next to `pass_threshold` in the
+                # snapshot, where nothing reads it. Drop it, but say which
+                # ones — silently discarding half an edit is how a version
+                # ends up not matching what the user typed.
+                dropped = [k for k in req.config_snapshot if k != k.lower()]
+                if dropped:
+                    logger.warning(
+                        "version_snapshot_keys_dropped",
+                        eval_template_id=str(template_id),
+                        keys=sorted(dropped),
+                    )
                 for k, v in req.config_snapshot.items():
                     if k != k.lower():
                         continue
                     effective_config[k] = v
+            # Column-level snapshot fields default to the *live template*
+            # inside create_version. A binding-scoped edit deliberately does
+            # not PATCH the template first, so without this the minted version
+            # would carry the caller's new prompt next to the template's old
+            # threshold / choice_scores / output type — and `pinned_attr`
+            # prefers the column over the snapshot, so the stale value is the
+            # one that runs. Derive them from what the caller actually sent.
+            column_overrides = {}
+            if req.config_snapshot:
+                snap = req.config_snapshot
+                if "output" in snap:
+                    from model_hub.utils.eval_list import _OUTPUT_TYPE_MAP
+
+                    column_overrides["output_type_normalized"] = _OUTPUT_TYPE_MAP.get(
+                        snap.get("output"), template.output_type_normalized
+                    )
+                for key in ("pass_threshold", "choice_scores"):
+                    if key in snap:
+                        column_overrides[key] = snap[key]
+                if "error_localizer_enabled" in snap:
+                    column_overrides["error_localizer_enabled"] = bool(
+                        snap["error_localizer_enabled"]
+                    )
+
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -2968,6 +3005,7 @@ class EvalTemplateVersionCreateView(APIView):
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
                 set_as_default=req.set_as_default,
+                **column_overrides,
             )
 
             # Only set as default if this is the first version (no existing
@@ -4029,6 +4067,10 @@ class CompositeEvalDetailView(APIView):
                 user=request.user,
                 organization=organization,
                 workspace=workspace,
+                # A binding-scoped edit pins its own version. Promoting it to
+                # the template default would move every other consumer of this
+                # composite onto weights they never asked for.
+                set_as_default=not req.skip_template_update,
             )
             # Mirror the snapshot: report what this call recorded, not the
             # template links it deliberately left alone.

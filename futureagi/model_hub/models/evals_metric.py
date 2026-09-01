@@ -647,17 +647,27 @@ class EvalTemplateVersionManager(models.Manager):
     def resolve_for_metric(self, user_eval_metric):
         """Version that will actually run for a UserEvalMetric.
 
-        Single authoritative home for the pin rule used by every stamping
-        site (playground, dataset single/batch, EvaluationRunner): a live
-        pinned version wins; a soft-deleted pin falls back to the template
-        default; no pin means the template default. Returns None only when
-        the template has no versions at all.
+        Adapter over ``resolve_version_for_binding``, which is the single
+        implementation of the pin rule for every binding model: a live pinned
+        version wins; a soft-deleted pin falls back to the template default;
+        no pin means the template default. Returns None only when the
+        template has no versions at all.
+
+        ``require_versioned=False`` keeps the long-standing dataset behaviour
+        of resolving a default regardless of template owner.
         """
-        if getattr(user_eval_metric, "pinned_version_id", None):
-            pinned = user_eval_metric.pinned_version
-            if pinned and not getattr(pinned, "deleted", False):
-                return pinned
-        return self.get_default(user_eval_metric.template)
+        from model_hub.services.eval_version_pinning import (
+            resolve_version_for_binding,
+        )
+
+        pinned = (
+            user_eval_metric.pinned_version
+            if getattr(user_eval_metric, "pinned_version_id", None)
+            else None
+        )
+        return resolve_version_for_binding(
+            user_eval_metric.template, pinned, require_versioned=False
+        )
 
 
 class EvalTemplateVersion(ModelBaseModel):

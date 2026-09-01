@@ -413,6 +413,7 @@ class CompositeUpdateRequest(BaseModel):
     composite_child_axis: str | None = None
     skip_template_update: bool = False
 
+
 class CompositeExecuteRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/composite/execute/"""
 

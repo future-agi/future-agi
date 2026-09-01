@@ -17,7 +17,10 @@ from rest_framework.views import APIView
 from accounts.utils import get_request_organization
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
-from model_hub.services.eval_version_pinning import resolve_pin_for_new_binding
+from model_hub.services.eval_version_pinning import (
+    InvalidPinnedVersion,
+    resolve_pin_for_new_binding,
+)
 from simulate.models import RunTest, Scenarios, SimulateEvalConfig
 from simulate.serializers.prompt_simulation import (
     ExecutePromptSimulationRequestSerializer,
@@ -266,8 +269,11 @@ class PromptSimulationListCreateView(APIView):
                                     pinned_version=resolve_pin_for_new_binding(
                                         eval_template,
                                         eval_config_data.get("pinned_version_id"),
+                                        strict=True,
                                     ),
                                 )
+                            except InvalidPinnedVersion as e:
+                                return self.gm.bad_request(str(e))
                             except EvalTemplate.DoesNotExist:
                                 continue
 
