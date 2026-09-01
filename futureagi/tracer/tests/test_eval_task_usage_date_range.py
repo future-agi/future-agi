@@ -1,32 +1,31 @@
-"""
-Custom date-range filtering and the all-time fallback on
-``EvalTaskView.get_usage`` — see ``tracer/views/eval_task.py`` and
-``tracer/services/eval_tasks/usage.py``.
+"""Exact custom date-range filtering for ``EvalTaskView.get_usage``.
 
-A window that excludes every run widens to all-time so the user is not left
-staring at an empty chart. That fallback resets *both* bounds: leaving
-``end_date`` pinned to an empty custom window that sits before the runs would
-make ``start_date > end_date``, and the zero-fill loop would emit nothing.
+Empty windows stay empty and keep the requested bounds. The endpoint must not
+turn an interactive period read into a hidden all-time history scan.
 """
 
-from datetime import datetime, timedelta, timezone as utc
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-import pytest  # noqa: E402
+import pytest
 from django.utils import timezone
 
 # Break the import cycle (see test_eval_logger_schema.py for the
 # canonical comment).
 import model_hub.tasks  # noqa: F401
-from tracer.constants.eval_task_usage import (  # noqa: E402
-    MAX_USAGE_CHART_BUCKETS,
-)
-
-from tracer.tests.eval_task_factories import (  # noqa: E402
+from tracer.tests.eval_task_factories import (
     make_config as _config,
+)
+from tracer.tests.eval_task_factories import (
     make_fresh_span as _fresh_span,
+)
+from tracer.tests.eval_task_factories import (
     make_row as _row,
+)
+from tracer.tests.eval_task_factories import (
     make_task as _task,
+)
+from tracer.tests.eval_task_factories import (
     make_template as _template,
 )
 
@@ -114,52 +113,49 @@ class TestCustomDateRange:
         assert _chart_calls(result) == 1
         assert result["period_used"] == "custom"
 
-    def test_range_before_first_run_falls_back_with_non_empty_chart(
+    def test_range_before_first_run_stays_exact_and_empty(
         self, auth_client, task_with_two_runs
     ):
-        """The regression this fixes: a window entirely *before* the runs
-        used to reset start_date but leave end_date in the empty window, so
-        start_date > end_date and the chart came back empty."""
         task, _ = task_with_two_runs
         result = _result(
             _get(auth_client, task, start_date=_iso(-100), end_date=_iso(-50))
         )
         assert result["period_requested"] == "custom"
-        assert result["period_used"] == "all"
-        assert result["stats"]["runs_period"] == 2
-        assert result["chart"], "fallback must still produce chart buckets"
-        assert _chart_calls(result) == 2
+        assert result["period_used"] == "custom"
+        assert result["stats"]["total_runs"] == 2
+        assert result["stats"]["runs_period"] == 0
+        assert result["logs"]["count"] == 0
+        assert _chart_calls(result) == 0
 
-    def test_range_after_last_run_falls_back_with_non_empty_chart(
+    def test_range_after_last_run_stays_exact_and_empty(
         self, auth_client, task_with_two_runs
     ):
         task, _ = task_with_two_runs
-        result = _result(
-            _get(auth_client, task, start_date=_iso(1), end_date=_iso(5))
-        )
-        assert result["period_used"] == "all"
-        assert result["chart"]
-        assert _chart_calls(result) == 2
+        result = _result(_get(auth_client, task, start_date=_iso(1), end_date=_iso(5)))
+        assert result["period_requested"] == "custom"
+        assert result["period_used"] == "custom"
+        assert result["stats"]["runs_period"] == 0
+        assert result["logs"]["count"] == 0
+        assert _chart_calls(result) == 0
 
-    def test_fallback_window_covers_the_actual_run_span(
+    def test_empty_range_does_not_publish_a_widened_window(
         self, auth_client, task_with_two_runs
     ):
-        """``start_date_used`` / ``end_date_used`` report the widened window
-        so the frontend can label the chart with the range really charted."""
         task, _ = task_with_two_runs
         result = _result(
             _get(auth_client, task, start_date=_iso(-100), end_date=_iso(-50))
         )
-        now = timezone.now()
-        start_used = timezone.datetime.fromisoformat(result["start_date_used"])
-        end_used = timezone.datetime.fromisoformat(result["end_date_used"])
-        # Earliest run is 10 days old, latest is 1 day old.
-        assert timedelta(days=9) < now - start_used < timedelta(days=11)
-        assert timedelta(hours=12) < now - end_used < timedelta(days=2)
-        assert start_used < end_used
+        assert result["period_used"] == "custom"
+        assert "start_date_used" not in result
+        assert "end_date_used" not in result
 
     def test_eval_filter_applies_alongside_custom_range(
-        self, auth_client, task_with_two_runs, project, organization, workspace,
+        self,
+        auth_client,
+        task_with_two_runs,
+        project,
+        organization,
+        workspace,
         observation_span,
     ):
         task, cfg = task_with_two_runs
@@ -194,13 +190,13 @@ class TestCustomDateRange:
         assert result["logs"]["results"][0]["eval_id"] == str(other_cfg.id)
 
 
-# ── Predefined periods / fallback ──────────────────────────────────────
+# ── Predefined period bounds ───────────────────────────────────────────
 
 
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.django_db
-class TestPeriodFallback:
+class TestPeriodBounds:
     def test_period_containing_runs_is_reported_unchanged(
         self, auth_client, task_with_two_runs
     ):
@@ -211,24 +207,22 @@ class TestPeriodFallback:
         assert result["stats"]["runs_period"] == 2
         assert _chart_calls(result) == 2
 
-    def test_period_excluding_all_runs_falls_back_to_all(
+    def test_period_excluding_all_runs_stays_exact_and_empty(
         self, auth_client, task_with_two_runs
     ):
         task, _ = task_with_two_runs
         # Both runs are older than 30 minutes.
         result = _result(_get(auth_client, task, period="30m"))
         assert result["period_requested"] == "30m"
-        assert result["period_used"] == "all"
-        assert result["stats"]["runs_period"] == 2
-        assert result["chart"]
-        assert _chart_calls(result) == 2
+        assert result["period_used"] == "30m"
+        assert result["stats"]["total_runs"] == 2
+        assert result["stats"]["runs_period"] == 0
+        assert result["logs"]["count"] == 0
+        assert _chart_calls(result) == 0
 
-    def test_short_period_fallback_does_not_explode_bucket_count(
+    def test_short_empty_period_keeps_a_bounded_bucket_count(
         self, auth_client, task_with_two_runs
     ):
-        """Bucket width comes from the resolved window, not the requested
-        period — a "30m" request that widens to a 10-day window must not
-        zero-fill 10 days at 5-minute resolution."""
         task, _ = task_with_two_runs
         result = _result(_get(auth_client, task, period="30m"))
         assert len(result["chart"]) < 50
@@ -241,7 +235,6 @@ class TestPeriodFallback:
         assert result["stats"]["runs_period"] == 0
         assert result["stats"]["pass_rate"] == 0
         assert result["logs"]["count"] == 0
-        # Nothing to widen to, so no fallback.
         assert result["period_used"] == "30d"
 
 
@@ -262,9 +255,7 @@ class TestUsageQueryContract:
         task, _ = task_with_two_runs
         assert _get(auth_client, task, bogus_param="1").status_code == 400
 
-    def test_period_outside_the_enum_is_rejected(
-        self, auth_client, task_with_two_runs
-    ):
+    def test_period_outside_the_enum_is_rejected(self, auth_client, task_with_two_runs):
         task, _ = task_with_two_runs
         # "custom" and "all" are response-only labels, never accepted as input.
         assert _get(auth_client, task, period="custom").status_code == 400
@@ -273,9 +264,7 @@ class TestUsageQueryContract:
 
     def test_reversed_range_is_rejected(self, auth_client, task_with_two_runs):
         task, _ = task_with_two_runs
-        response = _get(
-            auth_client, task, start_date=_iso(0), end_date=_iso(-10)
-        )
+        response = _get(auth_client, task, start_date=_iso(0), end_date=_iso(-10))
         assert response.status_code == 400
 
     def test_single_bound_still_allowed_for_aggregation_mode(
@@ -329,7 +318,7 @@ class TestBucketAlignment:
         observation_span,
         frozen_hour,
     ):
-        frozen = datetime(2026, 1, 15, frozen_hour, 37, 11, tzinfo=utc.utc)
+        frozen = datetime(2026, 1, 15, frozen_hour, 37, 11, tzinfo=UTC)
         assert frozen.hour % 6 != 0, "an aligned hour would hide the bug"
 
         template = _template(organization=organization, workspace=workspace)
@@ -355,40 +344,3 @@ class TestBucketAlignment:
 
         assert result["period_used"] == "7d"
         assert _chart_calls(result) == 2
-
-    def test_wide_custom_range_counts_every_run(
-        self, auth_client, project, organization, workspace, observation_span
-    ):
-        """A range wide enough to trip the bucket cap.
-
-        ~2400 days over MAX_USAGE_CHART_BUCKETS derives a 2305-minute width,
-        which is not a divisor of a day. Flooring the data to midnight while
-        stepping the zero-fill by 2305 minutes would leave only the first
-        bucket matching, so the chart would drop both runs while the stats
-        still counted them.
-        """
-        template = _template(organization=organization, workspace=workspace)
-        cfg = _config(project=project, template=template, name="Toxicity")
-        task = _task(project=project)
-        now = timezone.now()
-        for age in (100, 900):
-            _row(
-                span=_fresh_span(observation_span),
-                cfg=cfg,
-                task=task,
-                created_at=now - timedelta(days=age),
-                output_bool=True,
-            )
-
-        result = _result(
-            _get(
-                auth_client,
-                task,
-                start_date=(now - timedelta(days=2400)).isoformat(),
-                end_date=now.isoformat(),
-            )
-        )
-
-        assert result["stats"]["runs_period"] == 2
-        assert _chart_calls(result) == 2
-        assert len(result["chart"]) <= MAX_USAGE_CHART_BUCKETS + 1

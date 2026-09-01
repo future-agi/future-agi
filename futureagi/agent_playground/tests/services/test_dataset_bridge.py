@@ -339,6 +339,8 @@ class TestSyncDatasetColumns:
 
         Column.all_objects.filter(id=col.id).update(deleted=True, deleted_at=now)
         Cell.all_objects.filter(id=cell.id).update(deleted=True, deleted_at=now)
+        previous_column_updated_at = col.updated_at
+        previous_cell_updated_at = cell.updated_at
 
         with patch(
             self.EXPOSED_PORTS_PATH,
@@ -349,10 +351,13 @@ class TestSyncDatasetColumns:
         col.refresh_from_db()
         assert col.deleted is False
         assert col.deleted_at is None
+        assert col.updated_at > previous_column_updated_at
 
         cell.refresh_from_db()
         assert cell.deleted is False
         assert cell.deleted_at is None
+        assert cell.updated_at > previous_cell_updated_at
+        assert col.updated_at == cell.updated_at
 
     def test_restored_column_re_added_to_column_order(
         self, graph, graph_version, dataset, graph_dataset

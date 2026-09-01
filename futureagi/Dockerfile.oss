@@ -53,6 +53,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=300 \
     UV_TIMEOUT=900 \
+    NLTK_DATA=/usr/local/share/nltk_data \
     PROJECT_ROOT=/app/backend
 
 RUN groupadd --gid 1000 appuser && \
@@ -82,6 +83,7 @@ WORKDIR $PROJECT_ROOT
 RUN mkdir -p media logs static && chown -R appuser:appuser /app
 
 COPY . .
+RUN python bin/install_nltk_data.py
 RUN chmod +x entrypoint.sh
 
 EXPOSE 80 5555 50051

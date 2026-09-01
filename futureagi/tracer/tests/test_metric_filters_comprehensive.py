@@ -80,16 +80,29 @@ class TestCHMetricFilters:
         assert params == {}
 
     def test_has_eval_false_no_condition(self):
-        where, _ = self._builder().translate([_has_eval_filter(False)])
-        assert where == ""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        where, _ = ClickHouseFilterBuilder(
+            candidate_ids_param="candidate_trace_ids"
+        ).translate([_has_eval_filter(False)])
+        assert "trace_id NOT IN" in where
+        assert "toString(eval_scan.trace_id) IN %(candidate_trace_ids)s" in where
 
     def test_has_eval_string_true(self):
         where, _ = self._builder().translate([_has_eval_filter("true")])
         assert "tracer_eval_logger" in where
 
     def test_has_eval_string_false(self):
-        where, _ = self._builder().translate([_has_eval_filter("false")])
-        assert where == ""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        where, _ = ClickHouseFilterBuilder(
+            candidate_ids_param="candidate_trace_ids"
+        ).translate([_has_eval_filter("false")])
+        assert "trace_id NOT IN" in where
 
     def test_has_eval_string_True_capital(self):
         where, _ = self._builder().translate([_has_eval_filter("True")])
@@ -122,7 +135,7 @@ class TestCHMetricFilters:
 
     def test_errors_filter_generates_status_condition(self):
         where, params = self._builder().translate([_errors_filter()])
-        assert "lower(status)" in where
+        assert "lowerUTF8(toString(status))" in where
         assert "error" in params.values()
 
     # --- combinations ---
@@ -227,7 +240,7 @@ class TestCHMetricFilters:
     def test_has_eval_true_excludes_null_trace_ids(self):
         """has_eval subquery should exclude NULL trace_ids."""
         where, _ = self._builder().translate([_has_eval_filter(True)])
-        assert "trace_id IS NOT NULL" in where
+        assert "NOT isNull(eval_scan.trace_id)" in where
 
     # --- Type safety (String vs UUID) ---
 
@@ -246,7 +259,7 @@ class TestCHMetricFilters:
         """Subquery must use toString(trace_id) because spans.trace_id is String
         but tracer_eval_logger.trace_id is UUID."""
         where, _ = self._builder().translate([_has_eval_filter(True)])
-        assert "toString(el.trace_id)" in where
+        assert "toString(latest_eval.trace_id)" in where
 
 
 # ============================================================================

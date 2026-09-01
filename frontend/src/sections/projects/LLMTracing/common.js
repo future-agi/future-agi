@@ -207,9 +207,12 @@ const NUMBER_FILTER_FIELDS = [
 const DATE_FILTER_FIELDS = ["Last Used", "First Used", "Start Time"];
 
 export const applyQuickFilters =
-  (setFilters, openQuickFilter, setFilterOpen) =>
+  (setFilters, openQuickFilter, _setFilterOpen) =>
   ({ col, value, filterAnchor }) => {
     let filter = null;
+    const registryId =
+      col?.propertyId || col?.property_id || col?.registryId || undefined;
+    const registryIdentity = registryId ? { registryId } : {};
 
     // Early return for number fields with popup
     if (NUMBER_FILTER_FIELDS.includes(col.name)) {
@@ -218,6 +221,7 @@ export const applyQuickFilters =
         value,
         filter: {
           column_id: col.id,
+          ...registryIdentity,
           // The popover renders "Where <display_name> is"; without it the
           // heading reads "Where value is".
           display_name: col.name,
@@ -267,6 +271,7 @@ export const applyQuickFilters =
 
       filter = {
         column_id: col.id,
+        ...registryIdentity,
         filter_config: {
           filter_type: filter_type,
           filter_op: "equals",
@@ -288,6 +293,7 @@ export const applyQuickFilters =
       if (DATE_FILTER_FIELDS.includes(col.name)) {
         filter = {
           column_id: _.snakeCase(col.id),
+          ...registryIdentity,
           filter_config: {
             filter_type: "datetime",
             filter_op: "equals",
@@ -334,6 +340,7 @@ export const applyQuickFilters =
         value,
         filter: {
           column_id: col.id,
+          ...registryIdentity,
           // Eval ids are UUIDs, so the chip has no label without this.
           display_name: col.name,
           filter_config: {
@@ -352,6 +359,7 @@ export const applyQuickFilters =
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
         column_id: col.id,
+        ...registryIdentity,
         // Annotation ids are UUIDs, so both the chip and the number popover
         // have nothing to show without this. On the base filter rather than the
         // NUMERIC branch so every label type gets it.
@@ -457,6 +465,7 @@ export const applyQuickFilters =
 
       const extraFilter = buildApiFilterFromPanelRow({
         field,
+        registryId,
         fieldName,
         fieldType: filter.filter_config?.filter_type,
         apiColType,
@@ -950,7 +959,10 @@ export const FILTER_FOR_HAS_EVAL = {
 
 // Strip UI-only keys per UI_FILTER_ITEM_KEYS in src/api/contracts/filter-contract.js.
 export const toBackendFilters = (filters) =>
-  (filters || []).map(({ id, _meta, col_type, ...rest }) => rest);
+  (filters || []).map(({ id, registryId, _meta, col_type, ...rest }) => ({
+    ...rest,
+    ...(registryId && !rest.property_id ? { property_id: registryId } : {}),
+  }));
 
 export const FILTER_FOR_ERRORS = {
   column_id: "status",

@@ -21,6 +21,12 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	}
 
 	rss := traces.ResourceSpans()
+	if rss.Len() == 0 {
+		return 0, nil
+	}
+	if result.OrgID == "" || result.WorkspaceID == "" {
+		return 0, fmt.Errorf("stamp: authenticated organization/workspace scope is incomplete")
+	}
 
 	// Fail-fast: every ResourceSpan must carry project_name.
 	var missing []int
@@ -53,7 +59,7 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	for i := 0; i < rss.Len(); i++ {
 		attrs := rss.At(i).Resource().Attributes()
 		projectName := getStrAttr(attrs, "project_name")
-		projectID, ok := result.GetProject(projectName)
+		projectID, ok := result.GetProjectInWorkspace(result.WorkspaceID, projectName)
 		if !ok || projectID == "" {
 			unresolvable[projectName] = struct{}{}
 			continue

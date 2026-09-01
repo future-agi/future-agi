@@ -205,7 +205,7 @@ def check_valid_metrics(metric_type, ai_model_id):
         LIMIT 10
 
     """
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     prompt_template = False
     context = False
@@ -250,7 +250,7 @@ def check_data_valid_for_model(model_type, ai_model_id, conversation):
         LIMIT 10
 
     """
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     if node_ids:
         variables = False

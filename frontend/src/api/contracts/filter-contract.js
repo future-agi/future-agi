@@ -5,6 +5,7 @@ import {
   LIST_FILTER_OPS,
   NO_VALUE_FILTER_OPS,
   RANGE_FILTER_OPS,
+  STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS,
 } from "./filter-contract.generated";
 
 const LIST_OP_SET = new Set(LIST_FILTER_OPS);
@@ -17,22 +18,70 @@ const MULTI_VALUE_TYPES = new Set([
   "thumbs",
   "annotator",
 ]);
+
+// Keep exact typed attribute strings aligned with the retained-value contract.
+// The backend independently enforces the same byte ceiling; this client-side
+// guard prevents an oversized saved/manual value from becoming a query body.
+export const FILTER_STRING_MAX_UTF8_BYTES = 4 * 1024;
+export const TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES = 16 * 1024;
+
+export const getUtf8ByteLength = (value) =>
+  new TextEncoder().encode(String(value ?? "")).byteLength;
+
+export const truncateUtf8String = (value, maxUtf8Bytes) => {
+  const text = String(value ?? "");
+  if (getUtf8ByteLength(text) <= maxUtf8Bytes) return text;
+
+  let result = "";
+  let byteLength = 0;
+  for (const character of text) {
+    const characterBytes = getUtf8ByteLength(character);
+    if (byteLength + characterBytes > maxUtf8Bytes) break;
+    result += character;
+    byteLength += characterBytes;
+  }
+  return result;
+};
+
+const assertBoundedTypedAttributeStrings = (
+  filterValue,
+  attributeValueTypes,
+) => {
+  if (!Array.isArray(filterValue) || !Array.isArray(attributeValueTypes)) {
+    return;
+  }
+  filterValue.forEach((value, index) => {
+    if (
+      attributeValueTypes[index] === "string" &&
+      typeof value === "string" &&
+      getUtf8ByteLength(value) > TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES
+    ) {
+      throw new Error(
+        `SPAN_ATTRIBUTE string filter values must be at most ${TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES} UTF-8 bytes.`,
+      );
+    }
+  });
+};
 const API_FILTER_ITEM_KEYS = new Set([
   "column_id",
+  "property_id",
   "display_name",
   "source",
   "output_type",
   "filter_config",
 ]);
-const UI_FILTER_ITEM_KEYS = new Set(["id", "_meta", "col_type"]);
+const UI_FILTER_ITEM_KEYS = new Set(["id", "registryId", "_meta", "col_type"]);
 const API_FILTER_CONFIG_KEYS = new Set([
   "filter_type",
   "filter_op",
   "filter_value",
   "col_type",
+  "attribute_value_types",
 ]);
 const STORED_FILTER_ITEM_KEY_ALIASES = {
   columnId: "column_id",
+  propertyId: "property_id",
+  registryId: "property_id",
   displayName: "display_name",
   outputType: "output_type",
   filterConfig: "filter_config",
@@ -42,6 +91,7 @@ const STORED_FILTER_CONFIG_KEY_ALIASES = {
   filterType: "filter_type",
   filterOp: "filter_op",
   filterValue: "filter_value",
+  attributeValueTypes: "attribute_value_types",
 };
 const STORED_FILTER_OPERATOR_ALIASES = {
   is: "equals",
@@ -53,9 +103,17 @@ const STORED_FILTER_OPERATOR_ALIASES = {
   not_in_between: "not_between",
 };
 
-export const normalizeFilterType = (rawType) => {
+export const normalizeFilterType = (rawType, value) => {
   if (!rawType) return "text";
   const type = String(rawType).toLowerCase();
+  if (
+    type === "json" &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    return "map";
+  }
   return FIELD_TYPE_ALIASES[type] || type;
 };
 
@@ -71,7 +129,7 @@ export const normalizeFilterOperator = (
   operator,
   { filterType, value } = {},
 ) => {
-  const canonicalType = normalizeFilterType(filterType);
+  const canonicalType = normalizeFilterType(filterType, value);
   let op = operator || "equals";
 
   if (
@@ -86,11 +144,14 @@ export const normalizeFilterOperator = (
 
 export const isAllowedFilterOperator = (filterType, operator) => {
   const canonicalType = normalizeFilterType(filterType);
-  return Boolean(FILTER_TYPE_ALLOWED_OPS[canonicalType]?.includes(operator));
+  const operators =
+    FILTER_TYPE_ALLOWED_OPS[canonicalType] ||
+    STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS[canonicalType];
+  return Boolean(operators?.includes(operator));
 };
 
 export const coerceFilterValue = (value, filterOp, filterType) => {
-  const canonicalType = normalizeFilterType(filterType);
+  const canonicalType = normalizeFilterType(filterType, value);
   if (NO_VALUE_OP_SET.has(filterOp)) return null;
 
   if (canonicalType === "array" && ARRAY_VALUE_OP_SET.has(filterOp)) {
@@ -135,13 +196,30 @@ export const coerceFilterValue = (value, filterOp, filterType) => {
 };
 
 export const buildApiFilterFromPanelRow = (row) => {
-  const filterType = normalizeFilterType(row?.fieldType);
+  const filterType = normalizeFilterType(row?.fieldType, row?.value);
   const filterOp = normalizeFilterOperator(row?.operator, {
     filterType,
     value: row?.value,
   });
   const filterValue = coerceFilterValue(row?.value, filterOp, filterType);
   const apiColType = normalizeColumnType(row?.apiColType || row?.fieldCategory);
+  const attributeValueTypes = (() => {
+    if (
+      apiColType !== "SPAN_ATTRIBUTE" ||
+      !LIST_OP_SET.has(filterOp) ||
+      !Array.isArray(filterValue) ||
+      !Array.isArray(row?.valueTypes) ||
+      row.valueTypes.length !== filterValue.length
+    ) {
+      return undefined;
+    }
+    const normalized = row.valueTypes.map((value) =>
+      ["string", "number", "boolean"].includes(value) ? value : null,
+    );
+    return normalized.some(Boolean) ? normalized : undefined;
+  })();
+
+  assertBoundedTypedAttributeStrings(filterValue, attributeValueTypes);
 
   if (!isAllowedFilterOperator(filterType, filterOp)) {
     throw new Error(
@@ -151,12 +229,16 @@ export const buildApiFilterFromPanelRow = (row) => {
 
   return {
     column_id: row?.field,
+    ...(row?.registryId && { property_id: row.registryId }),
     ...(row?.fieldName && { display_name: row.fieldName }),
     filter_config: {
       filter_type: filterType,
       filter_op: filterOp,
       filter_value: filterValue,
       ...(apiColType && { col_type: apiColType }),
+      ...(attributeValueTypes && {
+        attribute_value_types: attributeValueTypes,
+      }),
     },
   };
 };
@@ -200,7 +282,10 @@ export const serializeFilterForApi = (filter) => {
     );
   }
 
-  const filterType = normalizeFilterType(config.filter_type);
+  const filterType = normalizeFilterType(
+    config.filter_type,
+    config.filter_value,
+  );
   const filterOp = normalizeFilterOperator(config.filter_op, {
     filterType,
     value: config.filter_value,
@@ -216,6 +301,25 @@ export const serializeFilterForApi = (filter) => {
     filterOp,
     filterType,
   );
+  const attributeValueTypes = config.attribute_value_types;
+  if (attributeValueTypes !== undefined) {
+    if (
+      normalizeColumnType(config.col_type) !== "SPAN_ATTRIBUTE" ||
+      !LIST_OP_SET.has(filterOp) ||
+      !Array.isArray(filterValue) ||
+      !Array.isArray(attributeValueTypes) ||
+      attributeValueTypes.length !== filterValue.length ||
+      attributeValueTypes.some(
+        (value) =>
+          value !== null && !["string", "number", "boolean"].includes(value),
+      )
+    ) {
+      throw new Error(
+        "attribute_value_types must align with a SPAN_ATTRIBUTE list filter.",
+      );
+    }
+  }
+  assertBoundedTypedAttributeStrings(filterValue, attributeValueTypes);
   if (
     filterOp !== "is_null" &&
     filterOp !== "is_not_null" &&
@@ -230,6 +334,7 @@ export const serializeFilterForApi = (filter) => {
 
   return {
     column_id: columnId,
+    ...(filter.property_id && { property_id: filter.property_id }),
     ...(filter.display_name && { display_name: filter.display_name }),
     ...(filter.source && { source: filter.source }),
     ...(filter.output_type && { output_type: filter.output_type }),
@@ -239,6 +344,9 @@ export const serializeFilterForApi = (filter) => {
       filter_value: filterValue,
       ...(config.col_type && {
         col_type: normalizeColumnType(config.col_type),
+      }),
+      ...(attributeValueTypes !== undefined && {
+        attribute_value_types: attributeValueTypes,
       }),
     },
   };
