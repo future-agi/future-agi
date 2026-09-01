@@ -592,6 +592,44 @@ class TestResendInviteAPIView:
             status.HTTP_400_BAD_REQUEST,
         ]
 
+    def test_resend_invite_refreshes_pending_invite_expiration(
+        self, auth_client, inactive_user, organization, monkeypatch
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        import accounts.views.workspace_management as wm
+        from accounts.models.organization_invite import (
+            InviteStatus,
+            OrganizationInvite,
+        )
+        from tfc.constants.levels import Level
+
+        monkeypatch.setattr(wm, "email_helper", lambda *a, **k: None)
+
+        invite = OrganizationInvite.objects.create(
+            organization=organization,
+            target_email=inactive_user.email,
+            level=Level.MEMBER,
+            invited_by=inactive_user.invited_by,
+            status=InviteStatus.PENDING,
+        )
+        expired_at = timezone.now() - timedelta(days=8)
+        OrganizationInvite.objects.filter(id=invite.id).update(created_at=expired_at)
+
+        response = auth_client.post(
+            "/accounts/user/resend-invite/",
+            {"user_id": str(inactive_user.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        invite.refresh_from_db()
+        assert invite.status == InviteStatus.PENDING
+        assert invite.created_at > expired_at
+        assert invite.is_expired is False
+
     def test_resend_invite_as_member_forbidden(self, member_client, inactive_user):
         """Member cannot resend invites."""
         response = member_client.post(

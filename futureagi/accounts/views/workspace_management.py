@@ -28,6 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.models.auth_token import AuthToken, AuthTokenType
+from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
@@ -1349,6 +1350,14 @@ class ResendInviteAPIView(APIView):
             new_password = generate_password()
             target_user.set_password(new_password)
             target_user.save()
+
+            pending_invite = OrganizationInvite.objects.filter(
+                organization=organization,
+                target_email=target_user.email,
+                status=InviteStatus.PENDING,
+            ).first()
+            if pending_invite:
+                pending_invite.refresh_expiration()
 
             # Send invitation email with workspace context
             try:
