@@ -43,6 +43,7 @@ const PersonaBehavioralSetting = ({
               options={PersonalityOptions}
               multiple={multiple}
               showClearButton={showClearButton}
+              required
             />
             <FormSearchSelectFieldControl
               control={control}
@@ -55,6 +56,7 @@ const PersonaBehavioralSetting = ({
               multiple={multiple}
               checkbox
               selectAll
+              required
             />
             <ShowComponent condition={type === AGENT_TYPES.VOICE}>
               <FormSearchSelectFieldControl
@@ -68,6 +70,7 @@ const PersonaBehavioralSetting = ({
                 multiple={multiple}
                 checkbox
                 selectAll
+                required
               />
             </ShowComponent>
           </Box>
