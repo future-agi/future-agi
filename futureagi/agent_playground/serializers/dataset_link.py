@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from model_hub.models.develop_dataset import Column
+from tfc.temporal.agent_playground.types import MAX_CONCURRENT_NODES_ERROR
 
 
 class ColumnSerializer(serializers.ModelSerializer):
@@ -59,6 +60,16 @@ class ExecuteRequestSerializer(serializers.Serializer):
     task_queue = serializers.CharField(
         required=False,
         default="tasks_l",
+    )
+    max_concurrent_nodes = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        error_messages={
+            "min_value": MAX_CONCURRENT_NODES_ERROR,
+            "invalid": MAX_CONCURRENT_NODES_ERROR,
+        },
+        help_text="Optional override for how many nodes may run at the same time. "
+        "If omitted, the agent's stored value is used (default 10).",
     )
 
     def validate_row_ids(self, value):
