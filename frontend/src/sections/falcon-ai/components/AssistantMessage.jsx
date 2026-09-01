@@ -5,8 +5,9 @@ import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
+import { groupBlocks } from "../helpers/toolTrail";
 import TextBlock from "./TextBlock";
-import ToolCallCard from "./ToolCallCard";
+import ThinkingTrail from "./ThinkingTrail";
 import CompletionCard from "./CompletionCard";
 
 export default function AssistantMessage({ message, onFeedback }) {
@@ -20,6 +21,7 @@ export default function AssistantMessage({ message, onFeedback }) {
   const isThisStreaming = isStreaming && streamingMessageId === message.id;
   const isEmpty =
     !message.content && toolCalls.length === 0 && !hasBlocks && !message.error;
+  const hasRunningTool = toolCalls.some((tc) => tc.status === "running");
 
   return (
     <Box
@@ -78,12 +80,18 @@ export default function AssistantMessage({ message, onFeedback }) {
 
         {/* Content blocks — sequential rendering */}
         {hasBlocks ? (
-          blocks.map((block) => {
+          groupBlocks(blocks).map((block) => {
             if (block.type === "text" && block.content) {
               return <TextBlock key={block.id} content={block.content} />;
             }
-            if (block.type === "tool_call") {
-              return <ToolCallCard key={block.id} toolCall={block.toolCall} />;
+            if (block.type === "trail") {
+              return (
+                <ThinkingTrail
+                  key={block.id}
+                  toolCalls={block.toolCalls}
+                  isStreaming={isThisStreaming}
+                />
+              );
             }
             if (block.type === "completion_card" && block.card) {
               return <CompletionCard key={block.id} card={block.card} />;
@@ -92,9 +100,12 @@ export default function AssistantMessage({ message, onFeedback }) {
           })
         ) : (
           <>
-            {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.call_id} toolCall={tc} />
-            ))}
+            {toolCalls.length > 0 && (
+              <ThinkingTrail
+                toolCalls={toolCalls}
+                isStreaming={isThisStreaming}
+              />
+            )}
             <TextBlock content={message.content} />
           </>
         )}
@@ -117,8 +128,10 @@ export default function AssistantMessage({ message, onFeedback }) {
           <CompletionCard card={message.completion_card} />
         )}
 
-        {/* Persistent loading indicator while streaming — shows between tool calls and during LLM thinking */}
-        {isThisStreaming && !isEmpty && (
+        {/* Persistent loading indicator while streaming — shows between tool
+            calls and during LLM thinking. The trail carries its own live line,
+            so the dots stay out of the way while a tool is running. */}
+        {isThisStreaming && !isEmpty && !hasRunningTool && (
           <Box
             sx={{
               display: "flex",

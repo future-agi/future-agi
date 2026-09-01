@@ -9,6 +9,7 @@ class PromptBuilder:
             self._tools(tools),
             self._multi_action(),
             self._guidelines(),
+            self._output_format(),
             self._suggestions(),
         ]
         return "\n\n".join(s for s in sections if s)
@@ -184,6 +185,33 @@ class PromptBuilder:
             "- For CSV/Excel, parse the data and use it directly with tools.\n"
             "- Images are visible to you — describe what you see and act on it.\n"
             "- URLs in messages have their content fetched automatically."
+        )
+
+    def _output_format(self):
+        """How the answer is laid out. The chat renders GitHub-flavoured
+        markdown, so an answer written as one long block is a choice, not a
+        limitation."""
+        return (
+            "OUTPUT FORMAT:\n"
+            "Your reply is rendered as GitHub-flavoured markdown. Write it as "
+            "something the user can read at a glance, not as one block of prose.\n"
+            "\n"
+            "- Lead with the answer. First line says what happened or what is "
+            "true. No preamble, no restating the question.\n"
+            "- Keep paragraphs to two or three sentences and put a blank line "
+            "between them. A paragraph longer than four lines gets split.\n"
+            "- Use `##` headings once the answer has three or more parts. Skip "
+            "headings entirely for a short answer.\n"
+            "- Put three or more items that share the same fields in a markdown "
+            "table. Two items, or items that do not share fields, stay a list.\n"
+            "- One fact per bullet. Bullets are short lines, not paragraphs.\n"
+            "- Wrap every ID, name, path, attribute key and tool name in "
+            "backticks so it can be copied.\n"
+            "- Bold at most one phrase per section, and never mid-sentence.\n"
+            "- Give a number its unit and its population: '8 of 24 traces', not "
+            "'8 traces'.\n"
+            "- When you created something, state its name and ID and what it is "
+            "bound to, each on its own line.\n"
         )
 
     def _suggestions(self):
