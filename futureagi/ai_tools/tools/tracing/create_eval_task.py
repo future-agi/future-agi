@@ -50,8 +50,11 @@ class CreateEvalTaskInput(PydanticBaseModel):
     filters: Optional[dict] = Field(
         default=None,
         description=(
-            "Optional filters to narrow which spans to evaluate. "
-            "Example: {'span_type': 'llm', 'model': 'gpt-4o'}"
+            "Optional filters to narrow which spans to evaluate. Only the keys "
+            "the eval dispatcher reads are accepted; anything else is rejected. "
+            "Span type is `observation_type`, not `span_type`. "
+            "Example: {'observation_type': ['llm'], 'date_range': "
+            "['2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z']}"
         ),
     )
 
@@ -114,8 +117,20 @@ class CreateEvalTaskTool(BaseTool):
                 error_code="NOT_FOUND",
             )
 
-        # Build filters
-        filters = params.filters or {}
+        # Build filters. Route them through the same strict field the eval-task
+        # API uses, so an unknown key is rejected here instead of being stored
+        # and then silently dropped by parsing_evaltask_filters at run time.
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        from tracer.serializers.filters import eval_task_filters_field
+
+        try:
+            filters = eval_task_filters_field().run_validation(params.filters or {})
+        except DRFValidationError as exc:
+            return ToolResult.error(
+                f"Invalid filters: {exc.detail}",
+                error_code="VALIDATION_ERROR",
+            )
         filters["project_id"] = str(params.project_id)
 
         # Create eval task
@@ -155,7 +170,12 @@ class CreateEvalTaskTool(BaseTool):
                 ("Run Type", params.run_type),
                 ("Evals", ", ".join(eval_names)),
                 ("Sampling Rate", f"{params.sampling_rate}%"),
-                ("Spans Limit", str(params.spans_limit)),
+                (
+                    "Spans Limit",
+                    str(params.spans_limit)
+                    if params.run_type == "historical"
+                    else "n/a for a continuous run",
+                ),
                 ("Status", eval_task.status),
                 ("Created", format_datetime(eval_task.created_at)),
             ]

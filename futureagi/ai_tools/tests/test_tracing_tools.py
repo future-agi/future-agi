@@ -319,3 +319,167 @@ class TestDeleteProjectTool:
         )
 
         assert result.is_error
+
+
+# ---------------------------------------------------------------------------
+# Eval config + eval task creation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def span_attributes(monkeypatch):
+    """Pin the project's attribute union so mapping behaviour is deterministic."""
+    from tracer.utils.sql_queries import SQL_query_handler
+
+    attrs = ["llm.input_messages", "llm.output_messages"]
+    monkeypatch.setattr(
+        SQL_query_handler,
+        "get_span_attributes_for_project",
+        staticmethod(lambda project_id: attrs),
+    )
+    return attrs
+
+
+class TestCreateCustomEvalConfigMapping:
+    def _template(self, tool_context, required):
+        from ai_tools.tests.fixtures import make_eval_template
+
+        return make_eval_template(
+            tool_context,
+            name=f"tmpl-{uuid.uuid4().hex[:6]}",
+            config={"required_keys": required},
+        )
+
+    def test_unmatchable_required_key_is_not_silently_guessed(
+        self, tool_context, project, span_attributes
+    ):
+        """`grading_rubric` has no counterpart, so nothing may be created."""
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        template = self._template(tool_context, ["grading_rubric"])
+
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project.id),
+                "eval_template_id": str(template.id),
+                "name": "rubric-eval",
+            },
+            tool_context,
+        )
+
+        assert result.is_error
+        assert "grading_rubric" in result.content
+        assert not CustomEvalConfig.objects.filter(
+            project=project, name="rubric-eval"
+        ).exists()
+
+    def test_supplied_mapping_must_cover_every_required_key(
+        self, tool_context, project, span_attributes
+    ):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        template = self._template(tool_context, ["input", "output"])
+
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project.id),
+                "eval_template_id": str(template.id),
+                "name": "half-mapped",
+                "mapping": {"input": "llm.input_messages"},
+            },
+            tool_context,
+        )
+
+        assert result.is_error
+        assert "output" in result.content
+        assert not CustomEvalConfig.objects.filter(
+            project=project, name="half-mapped"
+        ).exists()
+
+    def test_complete_mapping_creates_the_config(
+        self, tool_context, project, span_attributes
+    ):
+        template = self._template(tool_context, ["input", "output"])
+
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project.id),
+                "eval_template_id": str(template.id),
+                "name": "fully-mapped",
+                "mapping": {
+                    "input": "llm.input_messages",
+                    "output": "llm.output_messages",
+                },
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["mapping"] == {
+            "input": "llm.input_messages",
+            "output": "llm.output_messages",
+        }
+
+
+class TestCreateEvalTaskFilters:
+    @pytest.fixture
+    def eval_config(self, tool_context, project):
+        from ai_tools.tests.fixtures import make_eval_template
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        return CustomEvalConfig.objects.create(
+            eval_template=make_eval_template(
+                tool_context, name=f"tmpl-{uuid.uuid4().hex[:6]}"
+            ),
+            name="cfg",
+            project=project,
+            model="turing_large",
+            mapping={"input": "llm.input_messages"},
+            config={},
+        )
+
+    def test_key_the_dispatcher_cannot_read_is_rejected(
+        self, tool_context, project, eval_config
+    ):
+        """`span_type` is not a dispatcher key; it must not reach the task."""
+        from tracer.models.eval_task import EvalTask
+
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": str(project.id),
+                "name": "wrongly-scoped",
+                "eval_config_ids": [str(eval_config.id)],
+                "filters": {"span_type": "llm"},
+            },
+            tool_context,
+        )
+
+        assert result.is_error
+        assert not EvalTask.objects.filter(
+            project=project, name="wrongly-scoped"
+        ).exists()
+
+    def test_observation_type_filter_reaches_the_task(
+        self, tool_context, project, eval_config
+    ):
+        from tracer.models.eval_task import EvalTask
+
+        result = run_tool(
+            "create_eval_task",
+            {
+                "project_id": str(project.id),
+                "name": "llm-only",
+                "eval_config_ids": [str(eval_config.id)],
+                "filters": {"observation_type": ["llm"]},
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        task = EvalTask.objects.get(id=result.data["id"])
+        assert task.filters["observation_type"] == ["llm"]
+        assert task.filters["project_id"] == str(project.id)
