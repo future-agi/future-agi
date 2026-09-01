@@ -235,6 +235,48 @@ class TestEvalTemplateListAPI:
         # Should find at least the user template (system templates may not have org)
         assert result["total"] >= 1
 
+    def test_list_internal_error_is_sanitized_500(self, auth_client, monkeypatch):
+        private_error = "private eval-list query and stack"
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError(private_error)
+
+        monkeypatch.setattr(
+            "model_hub.utils.eval_list.build_eval_list_queryset",
+            fail,
+        )
+
+        response = auth_client.post(self.url, {}, format="json")
+
+        assert response.status_code == 500
+        rendered = response.content.decode()
+        assert "Evaluations could not be loaded" in rendered
+        assert private_error not in rendered
+
+    def test_list_charts_internal_error_is_sanitized_500(
+        self, auth_client, monkeypatch
+    ):
+        private_error = "private eval-chart query and stack"
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError(private_error)
+
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals.read_eval_list_charts",
+            fail,
+        )
+
+        response = auth_client.post(
+            "/model-hub/eval-templates/list-charts/",
+            {"template_ids": []},
+            format="json",
+        )
+
+        assert response.status_code == 500
+        rendered = response.content.decode()
+        assert "Evaluation charts could not be loaded" in rendered
+        assert private_error not in rendered
+
     def test_list_response_shape(self, auth_client, user_eval_template):
         """Verify each item has all required fields.
 

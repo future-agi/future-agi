@@ -17,9 +17,6 @@ deserializes `attributes_extra`. Each test asserts:
 """
 from __future__ import annotations
 
-import datetime as dt
-from datetime import timezone
-
 import pytest
 
 # Acceptable failure modes for the TypeFragility contract: any of these
@@ -180,6 +177,13 @@ class TestProcessVapiLogs:
         result = mod.ObservabilityService._process_vapi_logs(log)
         assert result["cost_breakdown"] is None
 
+    def test_zero_cost_is_preserved(self):
+        mod = _import_provider_module()
+        result = mod.ObservabilityService._process_vapi_logs(
+            _vapi_basic_call(cost=0)
+        )
+        assert result["cost_cents"] == 0
+
     def test_zero_duration_messages_dont_crash_div_by_zero(self):
         """Boundary: total_talk == 0 → talk_ratio is None (avoid div/0)."""
         mod = _import_provider_module()
@@ -192,12 +196,23 @@ class TestProcessVapiLogs:
         result = mod.ObservabilityService._process_vapi_logs(log)
         assert result["talk_ratio"] is None  # total_talk == 0 → None
 
-    def test_inbound_call_type_classified_correctly(self):
+    @pytest.mark.parametrize(
+        ("raw_type", "expected"),
+        [
+            ("inboundPhoneCall", "inbound"),
+            ("outboundPhoneCall", "outbound"),
+            ("unknownPhoneCall", "outbound"),
+            (None, "outbound"),
+        ],
+    )
+    def test_call_type_matches_vapi_inbound_else_outbound_contract(
+        self, raw_type, expected
+    ):
         mod = _import_provider_module()
         result = mod.ObservabilityService._process_vapi_logs(
-            _vapi_basic_call(type="inboundPhoneCall")
+            _vapi_basic_call(type=raw_type)
         )
-        assert result["call_type"] == "inbound"
+        assert result["call_type"] == expected
 
     def test_started_at_missing_falls_back_to_created_at(self):
         """Real-data variant: queued/scheduled calls lack startedAt; consumer
@@ -224,6 +239,7 @@ def _retell_basic_call(**overrides):
         # ms-epoch ints
         "start_timestamp": 1773816575000,
         "end_timestamp":   1773816665000,
+        "duration_ms": 90000,
         "to_number": "+15555550100",
         "from_number": "+15555550000",
         "recording_url": "https://retell/rec.wav",
@@ -282,6 +298,32 @@ class TestProcessRetellLogs:
         assert result["status"] == "completed"
         assert result["duration_seconds"] == 90  # (end - start)/1000
         assert result["cost_cents"] == pytest.approx(5.7)
+
+    @pytest.mark.parametrize("direction", ["inbound", "outbound"])
+    def test_call_type_preserves_retell_direction(self, direction):
+        mod = _import_provider_module()
+        result = mod.ObservabilityService._process_retell_logs(
+            _retell_basic_call(direction=direction)
+        )
+        assert result["call_type"] == direction
+
+    def test_duration_uses_provider_duration_ms_when_timestamps_conflict(self):
+        mod = _import_provider_module()
+        result = mod.ObservabilityService._process_retell_logs(
+            _retell_basic_call(
+                duration_ms=7000,
+                start_timestamp=1773816575000,
+                end_timestamp=1773816580000,
+            )
+        )
+        assert result["duration_seconds"] == 7
+
+    def test_duration_is_missing_without_provider_duration_ms(self):
+        mod = _import_provider_module()
+        result = mod.ObservabilityService._process_retell_logs(
+            _retell_basic_call(duration_ms=None)
+        )
+        assert result["duration_seconds"] is None
 
     def test_messages_use_word_start_end_for_timing(self):
         """The crash site: words[0].start and words[-1].end are pulled
@@ -351,6 +393,7 @@ class TestProcessRetellLogs:
         log = _retell_basic_call(
             start_timestamp=None,
             end_timestamp=None,
+            duration_ms=None,
             transcript_with_tool_calls=[],
         )
         result = mod.ObservabilityService._process_retell_logs(log)

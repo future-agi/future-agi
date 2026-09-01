@@ -10,6 +10,20 @@ const attrRow = (filterOp, filterValue) => ({
 });
 
 describe("buildApiFilterArray — task live-preview wire builder", () => {
+  it("keeps property_id beside the native preview column", () => {
+    const out = buildApiFilterArray([
+      {
+        ...attrRow("equals", "enterprise"),
+        registryId: "custom_attribute:customer_tier",
+      },
+    ]);
+
+    expect(out[0]).toMatchObject({
+      column_id: "customer_tier",
+      property_id: "custom_attribute:customer_tier",
+    });
+  });
+
   it("does not merge same-column rows — two not_contains stay two entries", () => {
     const out = buildApiFilterArray([
       attrRow("not_contains", "enterprise"),
@@ -17,9 +31,9 @@ describe("buildApiFilterArray — task live-preview wire builder", () => {
     ]);
 
     expect(out).toHaveLength(2);
-    expect(
-      out.every((f) => f.filter_config.filter_op === "not_contains"),
-    ).toBe(true);
+    expect(out.every((f) => f.filter_config.filter_op === "not_contains")).toBe(
+      true,
+    );
     expect(out.map((f) => f.filter_config.filter_value)).toEqual([
       "enterprise",
       "startup",
@@ -66,15 +80,24 @@ describe("buildApiFilterArray — task live-preview wire builder", () => {
     expect(out[0].filter_config.filter_value).toEqual(["enterprise"]);
   });
 
-  it("emits an empty-string filter_value for null-ops", () => {
+  it("emits the canonical null filter_value for null-ops", () => {
     const out = buildApiFilterArray([attrRow("is_null", undefined)]);
 
     expect(out[0].filter_config.filter_op).toBe("is_null");
-    expect(out[0].filter_config.filter_value).toBe("");
+    expect(out[0].filter_config.filter_value).toBeNull();
   });
 
   it("keeps a range op as a two-element array (no scalar coercion)", () => {
-    const out = buildApiFilterArray([attrRow("between", [10, 20])]);
+    const out = buildApiFilterArray([
+      {
+        ...attrRow("between", [10, 20]),
+        filterConfig: {
+          filterType: "number",
+          filterOp: "between",
+          filterValue: [10, 20],
+        },
+      },
+    ]);
 
     expect(out[0].filter_config.filter_op).toBe("between");
     expect(out[0].filter_config.filter_value).toEqual([10, 20]);

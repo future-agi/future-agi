@@ -214,6 +214,9 @@ axiosInstance.interceptors.response.use(
     const customError = {
       ...errData,
       statusCode: error.response?.status,
+      // Keep Axios' transport classification without overwriting a semantic
+      // API error code from the response body (for example snapshot_changed).
+      transportCode: error.code,
     };
 
     return Promise.reject(customError);
@@ -1515,6 +1518,10 @@ export const endpoints = {
       apiPath("/simulate/run-tests/{run_test_id}/executions/", {
         run_test_id: id,
       }),
+    previewExecutions: (id) =>
+      apiPath("/simulate/run-tests/{run_test_id}/preview-executions/", {
+        run_test_id: id,
+      }),
     detailScenarios: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/scenarios/", {
         run_test_id: id,
@@ -1580,6 +1587,10 @@ export const endpoints = {
       }),
   },
   testExecutions: {
+    previewCalls: (id) =>
+      apiPath("/simulate/test-executions/{test_execution_id}/preview-calls/", {
+        test_execution_id: id,
+      }),
     callDetail: (id) =>
       apiPath("/simulate/call-executions/{call_execution_id}/", {
         call_execution_id: id,

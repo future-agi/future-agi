@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { act, render, screen, fireEvent } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
 
@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
     name: "My Dash",
     widgets: undefined,
   }, // set to null to simulate 404
+  widgetChartProps: null,
+  dashboardId: "dash-1",
   // Permission state the useCanEditDashboard mock returns; per-test controllable
   // so we can drive both the writer and viewer (read-only) paths.
   canEdit: {
@@ -55,7 +57,7 @@ vi.mock("src/hooks/useDashboards", () => ({
 
 vi.mock("react-router-dom", async (orig) => ({
   ...(await orig()),
-  useParams: () => ({ dashboardId: "dash-1" }),
+  useParams: () => ({ dashboardId: h.dashboardId }),
   useNavigate: () => vi.fn(),
 }));
 
@@ -64,7 +66,10 @@ vi.mock("../hooks/useCanEditDashboard", () => ({
 }));
 
 vi.mock("../WidgetChart", () => ({
-  default: () => <div data-testid="widget-chart" />,
+  default: (props) => {
+    h.widgetChartProps = props;
+    return <div data-testid="widget-chart" />;
+  },
 }));
 
 vi.mock("src/components/snackbar", () => ({
@@ -76,6 +81,10 @@ const openWidgetDeleteDialog = () => {
   // The widget menu item is labelled just "Delete" (dashboard's is "Delete Dashboard").
   fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 };
+
+beforeEach(() => {
+  h.dashboardId = "dash-1";
+});
 
 describe("DashboardDetailView — delete confirmation", () => {
   beforeEach(() => {
@@ -163,6 +172,102 @@ describe("DashboardDetailView — time filter bar visibility", () => {
     render(<DashboardDetailView />);
     expect(screen.getByText(presetLabel)).toBeInTheDocument();
     expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — exact aggregation refresh", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
+    h.widgetChartProps = null;
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        position: 0,
+        width: 12,
+        query_config: { metrics: [{ name: "Tokens" }] },
+      },
+    ];
+  });
+
+  it("refreshes widgets on demand and shows the last exact completion time", () => {
+    render(<DashboardDetailView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByRole("button", { name: "Refreshing" })).toBeDisabled();
+    expect(h.widgetChartProps.refreshRequestId).toBe(1);
+
+    act(() => {
+      h.widgetChartProps.onQuerySettled({
+        dashboardId: "dash-1",
+        widgetId: "w-1",
+        refreshRequestId: 1,
+        manualRefresh: true,
+        exact: true,
+        updatedAt: new Date(2026, 7, 3, 12, 34),
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(
+      screen.getByText("Last updated Aug 3, 2026, 12:34 PM"),
+    ).toBeInTheDocument();
+  });
+
+  it("unlocks manual refresh without reporting completion when polling pauses", () => {
+    render(<DashboardDetailView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(screen.getByRole("button", { name: "Refreshing" })).toBeDisabled();
+
+    act(() => {
+      h.widgetChartProps.onQuerySettled({
+        dashboardId: "dash-1",
+        widgetId: "w-1",
+        refreshRequestId: 1,
+        manualRefresh: true,
+        exact: false,
+        pollingPaused: true,
+        updatedAt: null,
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
+  });
+
+  it("clears completion state on dashboard navigation and ignores stale callbacks", () => {
+    const view = render(<DashboardDetailView />);
+    const staleCallback = h.widgetChartProps.onQuerySettled;
+
+    act(() => {
+      staleCallback({
+        dashboardId: "dash-1",
+        widgetId: "w-1",
+        refreshRequestId: 0,
+        manualRefresh: false,
+        exact: true,
+        updatedAt: "2026-08-03T12:34:00Z",
+      });
+    });
+    expect(screen.getByText(/Last updated/i)).toBeInTheDocument();
+
+    h.dashboardId = "dash-2";
+    view.rerender(<DashboardDetailView />);
+    expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
+
+    act(() => {
+      staleCallback({
+        dashboardId: "dash-1",
+        widgetId: "w-1",
+        refreshRequestId: 0,
+        manualRefresh: false,
+        exact: true,
+        updatedAt: "2026-08-04T12:34:00Z",
+      });
+    });
+    expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
   });
 });
 
