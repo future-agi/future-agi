@@ -647,7 +647,7 @@ def _process_mapping(
                 resolved_value = value
                 break
 
-        if resolved_value is _MISSING and attribute in _SPAN_PUBLIC_FIELDS:
+        if resolved_value is _MISSING and attribute in SPAN_PUBLIC_FIELDS:
             model_val = getattr(span, attribute, _MISSING)
             if model_val is not _MISSING:
                 resolved_value = model_val
@@ -2658,7 +2658,7 @@ _SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
 # ``_resolve_attr(span_attrs, …)`` because they live on the Django model,
 # not in the JSON bag.  This allow-list mirrors the pattern used by
 # ``_TRACE_PUBLIC_FIELDS`` above.
-_SPAN_PUBLIC_FIELDS = frozenset(
+SPAN_PUBLIC_FIELDS = frozenset(
     {
         "latency_ms",
         "prompt_tokens",
@@ -2686,6 +2686,18 @@ _task_filter_witnesses: ContextVar[tuple[dict, ...]] = ContextVar(
 _trace_span_memo: ContextVar[dict[str, list] | None] = ContextVar(
     "eval_trace_span_memo", default=None
 )
+
+
+def with_span_body_fields(keys) -> list[str]:
+    """Every attribute path an eval mapping may bind to on a span.
+
+    The project's own ``span_attributes`` keys plus the model fields
+    ``_process_mapping`` already resolves. Creation surfaces pass their own key
+    inventory through this so they offer exactly what the runner can resolve.
+    ``input`` and ``output`` carry the span body and were offered by neither,
+    which left a project whose content lives there with no valid mapping to pick.
+    """
+    return sorted(set(keys) | SPAN_PUBLIC_FIELDS)
 
 
 def _resolve_span_path(span: ObservationSpan, path: str):
@@ -2724,7 +2736,7 @@ def _resolve_span_path(span: ObservationSpan, path: str):
     if result is not _MISSING:
         return result
 
-    if head in _SPAN_PUBLIC_FIELDS and not rest:
+    if head in SPAN_PUBLIC_FIELDS and not rest:
         value = getattr(span, head, _MISSING)
         if value is not _MISSING:
             return value
@@ -3099,7 +3111,7 @@ _heavy_span_ids: ContextVar[frozenset[str] | None] = ContextVar(
 def _is_heavy_span_tail(tail: str) -> bool:
     """True iff ``tail`` is NOT a bare public field — i.e. lives in the
     heavy JSON bag and won't be present in a lean span."""
-    return tail not in _SPAN_PUBLIC_FIELDS
+    return tail not in SPAN_PUBLIC_FIELDS
 
 
 def _selector_index(sel: str, n: int) -> int | None:

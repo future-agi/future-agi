@@ -4,7 +4,7 @@ import pytest
 
 from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_project, make_trace
+from ai_tools.tests.fixtures import make_eval_template, make_project, make_trace
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -319,3 +319,141 @@ class TestDeleteProjectTool:
         )
 
         assert result.is_error
+
+
+# ---------------------------------------------------------------------------
+# create_custom_eval_config: what a mapping is allowed to bind to
+# ---------------------------------------------------------------------------
+
+
+class TestEvalConfigMapping:
+    """A config may bind to anything the eval runner can resolve, and the
+    auto-mapper never guesses a binding it cannot defend."""
+
+    @pytest.fixture
+    def project_with_spans(self, tool_context):
+        from tracer.models.observation_span import ObservationSpan
+
+        project = make_project(tool_context, name="mapping-project")
+        trace = make_trace(tool_context, project=project)
+        for i in range(3):
+            ObservationSpan.objects.create(
+                id=f"span-{uuid.uuid4().hex[:8]}",
+                project=project,
+                trace=trace,
+                name="support.turn.0",
+                observation_type="chain",
+                input={"value": "where is my booking"},
+                output={"value": "it departs at 09:40"},
+                span_attributes={
+                    f"llm.input_messages.{i}.message.role": "user",
+                    f"llm.input_messages.{i}.message.content": "where is my booking",
+                    "input.mime_type": "application/json",
+                },
+            )
+        return project
+
+    @pytest.fixture
+    def template(self, tool_context):
+        return make_eval_template(
+            tool_context,
+            name="turn-quality",
+            config={"required_keys": ["input", "output"], "custom_eval": True},
+        )
+
+    def test_auto_map_binds_the_span_body(
+        self, tool_context, project_with_spans, template
+    ):
+        """The whole bug in one assertion: the content lives on the span body,
+        so that is what the mapping has to name."""
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project_with_spans.id),
+                "eval_template_id": str(template.id),
+                "name": "turn-quality-config",
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+        assert result.data["mapping"] == {"input": "input", "output": "output"}
+
+    def test_explicit_body_mapping_is_accepted(
+        self, tool_context, project_with_spans, template
+    ):
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project_with_spans.id),
+                "eval_template_id": str(template.id),
+                "name": "explicit-config",
+                "mapping": {"input": "input", "output": "output"},
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+
+    def test_unmappable_required_key_fails_closed(
+        self, tool_context, project_with_spans
+    ):
+        """A key with no defensible candidate is named back to the caller
+        rather than bound to whatever shares a substring with it."""
+        tmpl = make_eval_template(
+            tool_context,
+            name="needs-a-transcript",
+            config={"required_keys": ["transcript"], "custom_eval": True},
+        )
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project_with_spans.id),
+                "eval_template_id": str(tmpl.id),
+                "name": "transcript-config",
+            },
+            tool_context,
+        )
+        assert result.is_error
+        assert "transcript" in result.content
+
+
+class TestEvalConfigAutoMapRanking:
+    """Pure ranking, no database: the candidate list arrives from an unordered
+    SQL DISTINCT, so order must not decide the answer."""
+
+    CANDIDATES = [
+        "eval.input",
+        "input.mime_type",
+        "raw.input",
+        "llm.input_messages.0.message.role",
+        "llm.input_messages.0.message.content",
+        "llm.input_messages.4.message.role",
+        "input",
+        "output",
+        "fi.llm.output",
+    ]
+
+    def test_same_answer_whatever_the_order(self):
+        import random
+
+        from ai_tools.tools.tracing.create_custom_eval_config import _auto_map_keys
+
+        answers = set()
+        for _ in range(25):
+            shuffled = self.CANDIDATES[:]
+            random.shuffle(shuffled)
+            answers.add(
+                tuple(sorted(_auto_map_keys(["input", "output"], [], shuffled).items()))
+            )
+        assert answers == {(("input", "input"), ("output", "output"))}
+
+    def test_a_role_never_wins_over_content(self):
+        from ai_tools.tools.tracing.create_custom_eval_config import _auto_map_keys
+
+        no_body = [c for c in self.CANDIDATES if c not in ("input", "output")]
+        mapping = _auto_map_keys(["input"], [], no_body)
+        assert mapping["input"] == "raw.input"
+
+    def test_no_candidate_leaves_the_key_unmapped(self):
+        from ai_tools.tools.tracing.create_custom_eval_config import _auto_map_keys
+
+        assert _auto_map_keys(["transcript"], [], ["cost", "latency_ms"]) == {}
