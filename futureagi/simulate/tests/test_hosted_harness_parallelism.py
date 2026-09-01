@@ -303,8 +303,13 @@ def test_register_attempt_clamps_w_gt_1_when_flag_off(organization):
     job, _ = create_hosted_job(
         organization, _payload(parallelism=4), idempotency_key="clamp-off"
     )
-    register_attempt(job.id, endpoint_base_url="https://platform.example")
+    capability = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    )
     job.refresh_from_db()
+    # register_attempt is the single admission source of truth: it RETURNS the
+    # admitted W so the gateway never re-derives it.
+    assert capability.admitted_parallelism == 1
     assert job.payload["metadata"]["parallelism_clamped"] == {"requested": 4}
     # Requested value preserved for an honest later re-evaluation.
     assert job.payload["runtime"]["parallelism"] == 4
@@ -320,12 +325,14 @@ def test_register_attempt_admits_when_flag_on_and_digest_listed(organization):
     job, _ = create_hosted_job(
         organization, _payload(parallelism=4), idempotency_key="admit"
     )
-    register_attempt(
+    capability = register_attempt(
         job.id,
         endpoint_base_url="https://platform.example",
         snapshot_digest="sha256:good",
     )
     job.refresh_from_db()
+    # Admitted at the requested W and RETURNED for the gateway to apply.
+    assert capability.admitted_parallelism == 4
     assert "parallelism_clamped" not in job.payload["metadata"]
 
 

@@ -32,7 +32,6 @@ from simulate.models import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
-    clamp_parallelism,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -1624,19 +1623,15 @@ class DaytonaHostedGateway:
             snapshot_digest=registered_snapshot_digest,
         )
         attempt = capability.attempt
-        # register_attempt is the authoritative W>1 admission gate: it records the
-        # clamp on job metadata but does not touch the ephemeral guest job.json.
-        # Force the guest's runtime.parallelism to the ADMITTED value under the SAME
-        # shared guard (same flag + registered digest + dockerfile carve-out +
-        # fail-closed) so a disabled/unlisted or otherwise clamped job launches the
-        # guest at the admitted W, not the requested W. The stored requested value on
+        # register_attempt is the authoritative W>1 admission gate AND the single
+        # source of truth for the admitted value: it records the clamp on job
+        # metadata and RETURNS the admitted W on the capability. Apply that returned
+        # value to the ephemeral guest job.json (never re-deriving the guard here) so
+        # a disabled/unlisted or otherwise clamped job launches the guest at the
+        # admitted W, not the requested W. The stored requested value on
         # job.payload.runtime.parallelism is preserved so a later rerun re-evaluates.
-        admitted_parallelism, _clamped = clamp_parallelism(
-            dispatch_payload["runtime"].get("parallelism"),
-            registered_snapshot_digest,
-        )
         dispatch_runtime = dict(dispatch_payload["runtime"])
-        dispatch_runtime["parallelism"] = admitted_parallelism
+        dispatch_runtime["parallelism"] = capability.admitted_parallelism
         dispatch_payload["runtime"] = dispatch_runtime
         # Record provenance digests on the attempt.
         if commit_sha:

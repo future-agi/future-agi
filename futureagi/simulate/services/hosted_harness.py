@@ -63,6 +63,7 @@ class AttemptCapability:
     token: str
     fence: str
     document: dict[str, Any]
+    admitted_parallelism: int
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -193,8 +194,8 @@ def create_hosted_job(
 
 def _apply_parallelism_admission(
     job: HostedHarnessJob, snapshot_digest: str | None
-) -> None:
-    """Record the W>1 admission decision on the job under the shared guard.
+) -> int:
+    """Decide + record the W>1 admission under the shared guard; return admitted W.
 
     Reads the requested parallelism from ``job.payload.runtime.parallelism`` (the
     immutable stored intent) and, when the shared guard denies W>1, records
@@ -202,10 +203,14 @@ def _apply_parallelism_admission(
     see it. When the request is admitted (W<=1, or W>1 that qualifies), any stale
     clamp marker from a prior attempt is cleared so a rerun that now qualifies
     drops the notice. The requested value itself is never rewritten.
+
+    Returns the ADMITTED parallelism so ``register_attempt`` can surface it as the
+    single admission source of truth — the gateway applies this returned value to
+    the ephemeral guest job.json rather than independently re-running the guard.
     """
     runtime = job.payload.get("runtime") or {}
     requested = runtime.get("parallelism") or 1
-    _admitted, clamped = clamp_parallelism(requested, snapshot_digest)
+    admitted, clamped = clamp_parallelism(requested, snapshot_digest)
     metadata = dict(job.payload.get("metadata") or {})
     changed = False
     if clamped:
@@ -221,6 +226,7 @@ def _apply_parallelism_admission(
         payload["metadata"] = metadata
         job.payload = payload
         job.save(update_fields=["payload", "updated_at"])
+    return admitted
 
 
 def register_attempt(
@@ -244,8 +250,10 @@ def register_attempt(
         # the job metadata; the job's stored REQUESTED value
         # (job.payload.runtime.parallelism) is preserved so a later rerun
         # re-evaluates honestly against the then-current flag/digest. A saved W=4
-        # job therefore reruns at W=1 when the flag/digest no longer qualify.
-        _apply_parallelism_admission(job, snapshot_digest)
+        # job therefore reruns at W=1 when the flag/digest no longer qualify. The
+        # admitted value is returned on the capability so the gateway applies it
+        # verbatim (single source of truth) instead of re-deriving the guard.
+        admitted_parallelism = _apply_parallelism_admission(job, snapshot_digest)
         previous_number = job.current_attempt_number
         attempt_number = previous_number + 1
         if previous_number:
@@ -320,7 +328,11 @@ def register_attempt(
         },
     }
     return AttemptCapability(
-        attempt=attempt, token=token, fence=fence, document=document
+        attempt=attempt,
+        token=token,
+        fence=fence,
+        document=document,
+        admitted_parallelism=admitted_parallelism,
     )
 
 
