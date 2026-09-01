@@ -217,12 +217,14 @@ describe("DashboardDetailView — RBAC gating", () => {
 // Controlled stubs for the recovery hook so we can drive the resolve states.
 const recovery = vi.hoisted(() => ({
   isResolving: false,
+  isSwitching: false,
   resolveAttempted: false,
 }));
 
 vi.mock("src/hooks/use_cross_workspace_recovery", () => ({
   useCrossWorkspaceRecovery: () => ({
     isResolving: recovery.isResolving,
+    isSwitching: recovery.isSwitching,
     resolveAttempted: recovery.resolveAttempted,
   }),
 }));
@@ -231,6 +233,7 @@ describe("DashboardDetailView — cross-workspace recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     recovery.isResolving = false;
+    recovery.isSwitching = false;
     h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
     // Simulate a 404 — the primary fetch failed, triggering the resolve path.
     h.dashboardData = null;
@@ -238,6 +241,16 @@ describe("DashboardDetailView — cross-workspace recovery", () => {
 
   it("shows 'Looking for this dashboard…' when resolving", () => {
     recovery.isResolving = true;
+
+    render(<DashboardDetailView />);
+    expect(screen.getByText(/Looking for this dashboard/i)).toBeInTheDocument();
+  });
+
+  it("keeps showing the resolving state while the workspace switch is in flight", () => {
+    // Between the resolve response and the hard reload there is a window
+    // where neither fetch nor resolve is pending — the switch POST must keep
+    // the loading state up so "not found" never flashes.
+    recovery.isSwitching = true;
 
     render(<DashboardDetailView />);
     expect(screen.getByText(/Looking for this dashboard/i)).toBeInTheDocument();

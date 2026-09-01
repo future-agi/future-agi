@@ -324,6 +324,17 @@ export function WorkspaceProvider({ children }) {
       } catch {
         // best effort
       }
+      // sessionStorage is treated as untrusted input — only navigate to
+      // same-origin URLs (defense in depth against open-redirect).
+      let isSameOrigin = false;
+      try {
+        isSameOrigin =
+          new URL(redirectUrl, window.location.origin).origin ===
+          window.location.origin;
+      } catch {
+        isSameOrigin = false;
+      }
+      if (!isSameOrigin) return;
       // Defer to next tick so React finishes the initial render first
       const timer = setTimeout(() => {
         window.location.replace(redirectUrl);

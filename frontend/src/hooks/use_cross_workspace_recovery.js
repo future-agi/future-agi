@@ -8,15 +8,13 @@ import { useResolveDashboardWorkspace } from "./useDashboards";
  *
  * Usage — in any component that fetches a dashboard:
  *
- *   const { isResolving, resolveAttempted } = useCrossWorkspaceRecovery({
- *     dashboardId,
- *     isError,
- *     error,
- *     isLoading,
- *   });
+ *   const { isResolving, isSwitching, resolveAttempted } =
+ *     useCrossWorkspaceRecovery({ dashboardId, isError, error, isLoading });
  *
- * When `isResolving` is true the caller should show a loading indicator with
- * a "Looking for this dashboard…" message.
+ * While `isResolving` or `isSwitching` is true the caller should show a
+ * loading indicator with a "Looking for this dashboard…" message — the hard
+ * reload happens at the end of the switch, so the loading state must cover
+ * both stages to avoid flashing a "not found" message in between.
  */
 export function useCrossWorkspaceRecovery({
   dashboardId,
@@ -26,6 +24,7 @@ export function useCrossWorkspaceRecovery({
 }) {
   const { switchWorkspace, currentWorkspaceId } = useWorkspace();
   const [resolveAttempted, setResolveAttempted] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
 
   const {
     data: resolvedWorkspace,
@@ -37,6 +36,7 @@ export function useCrossWorkspaceRecovery({
   // different dashboard URL gives a fresh resolve attempt.
   useEffect(() => {
     setResolveAttempted(false);
+    setIsSwitching(false);
   }, [dashboardId]);
 
   // Only trigger the resolve call when the primary fetch 404s in the current
@@ -74,11 +74,17 @@ export function useCrossWorkspaceRecovery({
       resolvedWorkspace?.workspace_id &&
       resolvedWorkspace.workspace_id !== currentWorkspaceId
     ) {
-      void switchWorkspace(
+      setIsSwitching(true);
+      switchWorkspace(
         resolvedWorkspace.workspace_id,
         currentWorkspaceId,
         window.location.href,
-      );
+      ).catch(() => {
+        // switchWorkspace already surfaced the error via snackbar. Drop back
+        // to the not-found state instead of spinning forever; the effect's
+        // deps haven't changed, so it won't retry in a loop.
+        setIsSwitching(false);
+      });
     }
   }, [
     resolveAttempted,
@@ -87,5 +93,5 @@ export function useCrossWorkspaceRecovery({
     currentWorkspaceId,
   ]);
 
-  return { isResolving, resolveAttempted };
+  return { isResolving, isSwitching, resolveAttempted };
 }

@@ -1093,6 +1093,7 @@ export default function WidgetEditorView() {
   // belongs to a different workspace than the one the user is currently in.
   const {
     isResolving: isResolvingWorkspace,
+    isSwitching: isSwitchingWorkspace,
     resolveAttempted: resolveAttemptedWorkspace,
   } = useCrossWorkspaceRecovery({
     dashboardId,
@@ -2831,8 +2832,9 @@ export default function WidgetEditorView() {
   }, []);
 
   // Show a loading indicator while the dashboard is resolving across workspaces.
-  // (The initial fetch loading and the resolve stage are both covered here.)
-  if (isDashboardLoading || isResolvingWorkspace) {
+  // (The initial fetch, the resolve stage, and the workspace-switch POST are
+  // all covered here — isSwitchingWorkspace holds the state until the reload.)
+  if (isDashboardLoading || isResolvingWorkspace || isSwitchingWorkspace) {
     return (
       <Box
         sx={{

@@ -35,6 +35,7 @@ import {
   useDeleteWidget,
   useReorderWidgets,
   useDuplicateWidget,
+  useDashboardDetail,
   useResolveDashboardWorkspace,
 } from "../useDashboards";
 
@@ -178,6 +179,54 @@ describe("useDashboards widget mutations", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: DASHBOARD_LIST_KEY,
     });
+  });
+});
+
+describe("useDashboardDetail retry policy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not retry a 404 so cross-workspace recovery starts immediately", async () => {
+    mocks.get.mockRejectedValue({ statusCode: 404, result: "not found" });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: 1, // global default would retry once
+          retryDelay: 0, // don't let TanStack's backoff leak into other tests
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useDashboardDetail("dash-1"), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // One attempt — the per-query retry fn declines to retry definite 404s.
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient failures once", async () => {
+    mocks.get
+      .mockRejectedValueOnce({ statusCode: 503 })
+      .mockRejectedValueOnce({ statusCode: 503 });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: 1, retryDelay: 0 },
+      },
+    });
+
+    const { result } = renderHook(() => useDashboardDetail("dash-1"), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(mocks.get).toHaveBeenCalledTimes(2);
   });
 });
 

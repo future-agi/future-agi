@@ -685,12 +685,13 @@ export default function DashboardDetailView() {
 
   // Auto-resolve and switch workspace when a dashboard 404s because it
   // belongs to a different workspace than the one the user is currently in.
-  const { isResolving, resolveAttempted } = useCrossWorkspaceRecovery({
-    dashboardId,
-    isError,
-    error,
-    isLoading,
-  });
+  const { isResolving, isSwitching, resolveAttempted } =
+    useCrossWorkspaceRecovery({
+      dashboardId,
+      isError,
+      error,
+      isLoading,
+    });
   const updateDashboard = useUpdateDashboard();
   const updateWidget = useUpdateWidget();
   const deleteWidget = useDeleteWidget();
@@ -1074,8 +1075,10 @@ export default function DashboardDetailView() {
     return <LoadingScreen sx={{ height: "60vh" }} />;
   }
 
-  // Looking for the dashboard in another workspace that the user belongs to
-  if (isResolving) {
+  // Looking for the dashboard in another workspace that the user belongs to.
+  // isSwitching keeps this up through the workspace-switch POST until the
+  // hard reload — otherwise "not found" flashes for the round-trip.
+  if (isResolving || isSwitching) {
     return (
       <Box
         sx={{
