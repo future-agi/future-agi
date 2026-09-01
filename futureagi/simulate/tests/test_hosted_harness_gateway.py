@@ -17,9 +17,12 @@ from simulate.services.hosted_harness import (
 )
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
+    _SIMULATOR_SECRETS_PATH,
+    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
     DaytonaHostedGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
+    _platform_simulator_material,
     _provider_egress_domains,
     _validate_resolved_egress_domains,
     attach_platform_simulator_secret_refs,
@@ -34,6 +37,32 @@ from simulate.services.hosted_harness_gateway import (
 def _isolate_platform_simulator_environment(settings):
     """Tests opt in explicitly instead of reading the developer machine's provider keys."""
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+
+def test_platform_simulator_material_uses_deployment_credentials_only(
+    tmp_path, monkeypatch
+):
+    credentials = tmp_path / "vertex.json"
+    credentials.write_text(
+        json.dumps({"project_id": "platform-simulator-project"}), encoding="utf-8"
+    )
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
+    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "must-not-be-copied")
+
+    values, credential_bytes = _platform_simulator_material()
+
+    assert values["GOOGLE_CLOUD_PROJECT"] == "platform-simulator-project"
+    assert values["GOOGLE_APPLICATION_CREDENTIALS"] == (
+        _SIMULATOR_VERTEX_CREDENTIALS_PATH
+    )
+    assert values["DEEPGRAM_API_KEY"] == "platform-deepgram-secret"
+    assert values["ALK_HARNESS"] == "vertex-gemini"
+    assert credential_bytes == credentials.read_bytes()
+    assert not any(name.startswith("LIVEKIT_") for name in values)
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -405,9 +434,17 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-2.5-flash",
+        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
+        "GOOGLE_CLOUD_LOCATION": "global",
+    }
     monkeypatch.setattr(
-        "simulate.services.hosted_harness_gateway.resolve_platform_simulator_secrets",
-        lambda: {"SIMULATOR_DEEPGRAM_API_KEY": "platform-deepgram"},
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
     )
 
     attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
@@ -418,20 +455,19 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/work/source.tar.gz",
         "/work/job.json",
         "/run/futureagi/secrets.json",
+        _SIMULATOR_SECRETS_PATH,
+        _SIMULATOR_VERTEX_CREDENTIALS_PATH,
         "/run/futureagi/capabilities.json",
         "/run/futureagi/entrypoint-command-id",
     }
     assert client.sandbox.process.sessions == ["alk-harness"]
-    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
-    assert dispatched["agent"]["secret_refs"]["SIMULATOR_DEEPGRAM_API_KEY"] == {
-        "key": "SIMULATOR_DEEPGRAM_API_KEY",
-        "manager": "platform-config",
-        "purpose": "simulator_provider",
-    }
-    injected = json.loads(client.sandbox.fs.uploads["/run/futureagi/secrets.json"])
-    assert injected["SIMULATOR_DEEPGRAM_API_KEY"] == "platform-deepgram"
-    job.refresh_from_db()
-    assert "SIMULATOR_DEEPGRAM_API_KEY" not in job.payload["agent"]["secret_refs"]
+    assert json.loads(client.sandbox.fs.uploads["/run/futureagi/secrets.json"]) == {}
+    assert json.loads(client.sandbox.fs.uploads[_SIMULATOR_SECRETS_PATH]) == (
+        simulator_values
+    )
+    assert b"platform-simulator-deepgram" not in (
+        client.sandbox.process.session_request.command.encode()
+    )
     assert "--adjustments /run/futureagi/adjustments.jsonl" in (
         client.sandbox.process.session_request.command
     )
@@ -450,9 +486,13 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     # itself enforces the boundary.
     assert client.params.network_block_all is False
     assert set(client.params.domain_allow_list.split(",")) == {
+        "aiplatform.googleapis.com",
         "agent.example.com",
+        "global-aiplatform.googleapis.com",
         "ingest.example.com",
+        "oauth2.googleapis.com",
         "platform.example.com",
+        "us-east5-aiplatform.googleapis.com",
     }
 
 
@@ -600,7 +640,9 @@ def test_daytona_adjustment_accepts_natural_language_number(
 
 
 @pytest.mark.django_db
-def test_daytona_livekit_launch_uses_coturn_domain_allowlist(organization, settings):
+def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
+    organization, settings, monkeypatch
+):
     payload = _payload()
     payload["agent"]["connector"] = "livekit"
     payload["source"] = {
@@ -620,6 +662,10 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(organization, setti
         "ingest.example.com",
         "coturn.turn-eu.futureagi.com",
     ]
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: ({}, None),
+    )
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
 

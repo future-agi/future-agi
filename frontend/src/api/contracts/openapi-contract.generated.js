@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 997,
+  "endpointCount": 998,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -27314,6 +27314,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
+          "200": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/HarnessJobRead"
+            }
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -27322,14 +27328,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "post": {
         "operationId": "simulate_api_harness-jobs_create",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/HarnessJobCreate"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/HarnessJobCreate"
+          "202": {
+            "$ref": "#/definitions/HarnessJobRead"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -27387,6 +27393,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/simulate/api/harness-jobs/secret-values/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_secret_values",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessSecretValues"
+        },
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessSecretValues"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/simulate/api/harness-jobs/sources/": {
       "post": {
         "operationId": "simulate_api_harness-jobs_source_upload",
@@ -27412,6 +27437,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
+          "200": {
+            "$ref": "#/definitions/HarnessJobRead"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -27441,14 +27469,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "post": {
         "operationId": "simulate_api_harness-jobs_cancel",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/HarnessJobAction"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/HarnessJobAction"
+          "200": {
+            "$ref": "#/definitions/HarnessJobRead"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -27478,7 +27506,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": {
       "put": {
         "operationId": "simulate_api_harness_attempts_artifact_upload",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "type": "string",
@@ -31461,7 +31489,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/get_usage/": {
       "get": {
         "operationId": "tracer_eval-task_get_usage",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
@@ -31475,6 +31503,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 25
+            }
+          },
+          "eval_task_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "period": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "1d",
+                "7d",
+                "30d",
+                "90d",
+                "180d",
+                "365d"
+              ],
+              "default": "30d"
+            }
+          },
+          "eval_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "eval_aggregation": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "span_aggregation": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -43607,7 +43702,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 25,
+          "maximum": 5,
           "minimum": 1,
           "x-nullable": true
         }
@@ -43766,7 +43861,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 25,
+          "maximum": 5,
           "minimum": 1,
           "x-nullable": true
         }
@@ -44801,7 +44896,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 25,
+          "maximum": 5,
           "minimum": 1
         },
         "commit_message": {
@@ -54723,6 +54818,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "maxItems": 2,
               "description": "Inclusive start/end ISO timestamps."
             },
+            "date_preset": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "today",
+                "yesterday",
+                "7d",
+                "30d",
+                "3m",
+                "6m",
+                "12m",
+                "custom"
+              ],
+              "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+            },
             "created_at": {
               "type": "string",
               "description": "Lower-bound ISO timestamp for legacy task filters."
@@ -55044,6 +55155,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "minItems": 2,
               "maxItems": 2,
               "description": "Inclusive start/end ISO timestamps."
+            },
+            "date_preset": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "today",
+                "yesterday",
+                "7d",
+                "30d",
+                "3m",
+                "6m",
+                "12m",
+                "custom"
+              ],
+              "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
             },
             "created_at": {
               "type": "string",
@@ -58567,6 +58694,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "HarnessJobRead": {
+      "required": [
+        "job",
+        "status",
+        "events",
+        "stage_outputs",
+        "scenarios",
+        "receipts",
+        "platform"
+      ],
+      "type": "object",
+      "properties": {
+        "job": {
+          "$ref": "#/definitions/HarnessJobInfo"
+        },
+        "status": {
+          "$ref": "#/definitions/HarnessJobStatus"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessJobEvent"
+          }
+        },
+        "stage_outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessStageOutput"
+          }
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HarnessScenario"
+          }
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "platform": {
+          "$ref": "#/definitions/HarnessPlatform"
+        }
+      }
+    },
     "HarnessManifest": {
       "required": [
         "schema_version",
@@ -58883,6 +59057,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Size",
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "HarnessSecretValues": {
+      "required": [
+        "environment_values"
+      ],
+      "type": "object",
+      "properties": {
+        "environment_values": {
+          "title": "Environment values",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 65536,
+            "minLength": 1
+          }
         }
       }
     },
@@ -85402,6 +85593,265 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "private"
           ],
           "default": "public"
+        }
+      }
+    },
+    "HarnessJobEvent": {
+      "required": [
+        "event_id",
+        "sequence",
+        "stage",
+        "type",
+        "payload",
+        "emitted_at"
+      ],
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "title": "Event id",
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "minLength": 1
+        },
+        "payload": {
+          "title": "Payload",
+          "type": "object",
+          "x-nullable": true
+        },
+        "emitted_at": {
+          "title": "Emitted at",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "HarnessJobInfo": {
+      "required": [
+        "job_id",
+        "run_id",
+        "source",
+        "metadata",
+        "run_test_id",
+        "test_execution_id"
+      ],
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "title": "Job id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "run_id": {
+          "title": "Run id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "source": {
+          "title": "Source",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
+        },
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        }
+      }
+    },
+    "HarnessJobStatus": {
+      "required": [
+        "state",
+        "stage",
+        "updated_at",
+        "attempt",
+        "completed_scenarios",
+        "failed_scenarios",
+        "total_scenarios",
+        "deadline_at",
+        "failure"
+      ],
+      "type": "object",
+      "properties": {
+        "state": {
+          "title": "State",
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "minLength": 1
+        },
+        "updated_at": {
+          "title": "Updated at",
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "completed_scenarios": {
+          "title": "Completed scenarios",
+          "type": "integer"
+        },
+        "failed_scenarios": {
+          "title": "Failed scenarios",
+          "type": "integer"
+        },
+        "total_scenarios": {
+          "title": "Total scenarios",
+          "type": "integer"
+        },
+        "deadline_at": {
+          "title": "Deadline at",
+          "type": "string",
+          "minLength": 1
+        },
+        "failure": {
+          "title": "Failure",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "HarnessPlatform": {
+      "required": [
+        "run_test_id",
+        "test_execution_id",
+        "url"
+      ],
+      "type": "object",
+      "properties": {
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "url": {
+          "title": "Url",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        }
+      }
+    },
+    "HarnessScenario": {
+      "required": [
+        "scenario_key",
+        "scenario_id",
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "scenario_key": {
+          "title": "Scenario key",
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "instruction": {
+          "title": "Instruction",
+          "type": "string",
+          "x-nullable": true
+        },
+        "use_case": {
+          "title": "Use case",
+          "type": "string",
+          "x-nullable": true
+        },
+        "call_execution_id": {
+          "title": "Call execution id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        }
+      }
+    },
+    "HarnessStageOutput": {
+      "required": [
+        "id",
+        "title",
+        "summary",
+        "kind",
+        "data"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "title": "Data",
+          "type": "object"
         }
       }
     },

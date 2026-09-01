@@ -284,7 +284,6 @@ const LinkedTracesContent = () => {
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setIsFilterDrawerOpen}
       />
     </Box>
   );

@@ -19,6 +19,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_mapping import require_mapping_paths
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
@@ -558,6 +559,15 @@ class EvalSkippedMissingAttribute(ValueError):
         )
 
 
+def _require_mapping_paths(mapping, target):
+    """Guard the mapping before any walker touches it.
+
+    The heavy-id scan reads the raw values first, so a per-value check inside
+    the resolve loop never sees them.
+    """
+    require_mapping_paths(mapping, target)
+
+
 def _process_mapping(
     mapping: dict | None, span: ObservationSpan, eval_template_id: int
 ) -> dict:
@@ -579,6 +589,7 @@ def _process_mapping(
 
     if not mapping:
         return {}
+    _require_mapping_paths(mapping, f"span {span.id}")
 
     parsed_mapping = {}
     # Use accessor for backward compatibility (span_attributes || eval_attributes)
@@ -610,7 +621,9 @@ def _process_mapping(
         # shorthands (``recording_url``, ``transcript``, …) resolve to
         # one of several provider-specific attribute names via the
         # ``_ATTRIBUTE_ALIASES`` table above — first hit wins.
-        candidates = [attribute, f"{attribute}.value"]
+        # A cleared value on a required key: _resolve_attr would reach
+        # ``None.split(".")``. Falls through to the miss branch, as trace does.
+        candidates = [attribute, f"{attribute}.value"] if attribute else []
         for alias in _ATTRIBUTE_ALIASES.get(attribute, []):
             candidates.append(alias)
             candidates.append(f"{alias}.value")
@@ -633,6 +646,7 @@ def _process_mapping(
         # so non-voice spans are unaffected. See _walk_raw_log.
         if (
             resolved_value is _MISSING
+            and attribute
             and span.observation_type == ObservationType.CONVERSATION
         ):
             raw_log = span_attrs.get("raw_log")
@@ -2836,6 +2850,7 @@ def _process_trace_mapping(
     """
     if not mapping:
         return {}
+    _require_mapping_paths(mapping, f"trace {trace.id}")
 
     parsed: dict = {}
     is_user_custom_eval = False
@@ -2997,6 +3012,8 @@ def resolve_trace_mapping_lean_first(mapping: dict | None, trace, template_id) -
     """
     from tracer.services.clickhouse.v2.eval_loader import _read_source
 
+    _require_mapping_paths(mapping, f"trace {trace.id}")
+
     if _read_source() != "clickhouse":
         return _process_trace_mapping(mapping, trace, template_id)
 
@@ -3112,6 +3129,8 @@ def resolve_session_mapping_lean_first(
     """
     from tracer.services.clickhouse.v2.eval_loader import _read_source
 
+    _require_mapping_paths(mapping, f"session {trace_session.id}")
+
     if _read_source() != "clickhouse":
         return _process_session_mapping(mapping, trace_session, template_id)
 
@@ -3133,6 +3152,7 @@ def _process_session_mapping(
     """Resolve a saved mapping against a TraceSession."""
     if not mapping:
         return {}
+    _require_mapping_paths(mapping, f"session {trace_session.id}")
 
     parsed: dict = {}
     is_user_custom_eval = False

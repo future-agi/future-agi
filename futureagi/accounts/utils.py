@@ -616,6 +616,16 @@ def _run_post_registration(user_id, generated_password):
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
 
+        org = get_user_organization(user)
+        if org:
+            from accounts.user_onboard import (
+                create_demo_traces_and_spans,
+                upload_demo_dataset,
+            )
+
+            upload_demo_dataset(org.id, str(user.id))
+            create_demo_traces_and_spans(str(org.id))
+
 
 def existing_member_access_will_change(
     existing_user, organization, org_level, workspace_access

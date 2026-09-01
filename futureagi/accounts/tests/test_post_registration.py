@@ -43,6 +43,7 @@ class TestProcessPostRegistration:
 class TestRunPostRegistration:
     """Tests for _run_post_registration implementation function."""
 
+    @patch("accounts.utils.get_user_organization", return_value=None)
     @patch("accounts.utils.send_slack_notification")
     @patch("accounts.utils.send_hubspot_notification")
     @patch("accounts.utils.send_signup_email")
@@ -54,6 +55,7 @@ class TestRunPostRegistration:
         mock_send_email,
         mock_hubspot,
         mock_slack,
+        mock_get_org,
     ):
         """Test that all post-registration steps are executed."""
         from accounts.utils import _run_post_registration
@@ -102,6 +104,7 @@ class TestRunPostRegistration:
         with pytest.raises(Exception, match="SMTP error"):
             _run_post_registration("user-123", "password")
 
+    @patch("accounts.utils.get_user_organization", return_value=None)
     @patch("accounts.utils.send_signup_email")
     @patch("accounts.models.User.objects.get")
     @patch.dict("os.environ", {"ENV_TYPE": "local"})
@@ -109,6 +112,7 @@ class TestRunPostRegistration:
         self,
         mock_user_get,
         mock_send_email,
+        mock_get_org,
     ):
         """Test that hubspot/slack notifications are skipped in local env."""
         from accounts.utils import _run_post_registration

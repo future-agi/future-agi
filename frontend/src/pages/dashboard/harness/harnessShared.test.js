@@ -756,3 +756,42 @@ describe("scenarioOutcome", () => {
     expect(outcome.subGoals).toEqual([]);
   });
 });
+
+// Shapes taken from a real hosted run: the scenario errored before it ran, so every check
+// is unjudged and the receipt's failure is the only account of what happened.
+describe("scenarioOutcome — an errored scenario", () => {
+  const run = {
+    scenarios: [{ scenario_key: "noor-books-uberx", status: "errored" }],
+    receipts: [
+      {
+        scenario_key: "noor-books-uberx",
+        scenario_attempt: 1,
+        status: "errored",
+        call: null,
+        failure: {
+          domain: "environment",
+          code: "world_unavailable",
+          stage: "running",
+          message: "target agent never joined the room: Target agent did not become ready",
+        },
+        sub_goals: [
+          { name: "address_confirmed", held: null, judged: false, reason: null },
+          { name: "otp_verified", held: null, judged: false, reason: null },
+        ],
+      },
+    ],
+  };
+
+  it("carries the failure that explains the run", () => {
+    const outcome = scenarioOutcome("noor-books-uberx", 1, run);
+    expect(outcome.status).toBe("errored");
+    expect(outcome.failure.code).toBe("world_unavailable");
+    expect(outcome.failure.message).toMatch(/never joined the room/);
+  });
+
+  it("survives a null call", () => {
+    const outcome = scenarioOutcome("noor-books-uberx", 1, run);
+    expect(outcome.turns).toBeNull();
+    expect(callSummary(outcome)).toBe("");
+  });
+});

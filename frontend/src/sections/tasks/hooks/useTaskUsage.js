@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+import { DEFAULT_USAGE_PERIOD } from "../constants";
+
 /**
  * Task usage hooks — mirrors useEvalUsage but hits the eval-task endpoint
  * (`GET /tracer/eval-task/get_usage/`). The response shape is intentionally
@@ -12,22 +14,38 @@ import axios, { endpoints } from "src/utils/axios";
  * every page change.
  */
 
-const buildParams = ({ evalTaskId, period, evalId }) => {
+const buildParams = ({ evalTaskId, period, evalId, startDate, endDate }) => {
   const params = { eval_task_id: evalTaskId, period };
   if (evalId) params.eval_id = evalId;
+  // The backend only treats the range as custom when both bounds are set.
+  if (startDate && endDate) {
+    params.start_date = startDate;
+    params.end_date = endDate;
+  }
   return params;
 };
 
 /**
  * Fetch chart + stats + configured-evals list. Independent of pagination.
  */
-export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
+export function useTaskUsageChart(
+  evalTaskId,
+  { period = DEFAULT_USAGE_PERIOD, evalId, startDate, endDate } = {},
+) {
   return useQuery({
-    queryKey: ["tasks", "usage-chart", evalTaskId, period, evalId || null],
+    queryKey: [
+      "tasks",
+      "usage-chart",
+      evalTaskId,
+      period,
+      evalId || null,
+      startDate || null,
+      endDate || null,
+    ],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
-          ...buildParams({ evalTaskId, period, evalId }),
+          ...buildParams({ evalTaskId, period, evalId, startDate, endDate }),
           // The chart hook ignores the paginated `logs` block; we still
           // need to send valid pagination params or the BE serializer
           // 400s. page is 1-indexed (DRF PageNumberPagination).
@@ -45,6 +63,10 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
         // runs and the backend fell back to "all time".
         periodUsed: result.period_used,
         periodRequested: result.period_requested,
+        // Window actually charted — differs from the requested range
+        // after that fallback.
+        startDateUsed: result.start_date_used,
+        endDateUsed: result.end_date_used,
       };
     },
     enabled: !!evalTaskId,
@@ -58,7 +80,14 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
  */
 export function useTaskUsageLogs(
   evalTaskId,
-  { page = 0, pageSize = 25, period = "30d", evalId } = {},
+  {
+    page = 0,
+    pageSize = 25,
+    period = DEFAULT_USAGE_PERIOD,
+    evalId,
+    startDate,
+    endDate,
+  } = {},
 ) {
   return useQuery({
     queryKey: [
@@ -69,11 +98,13 @@ export function useTaskUsageLogs(
       evalId || null,
       page,
       pageSize,
+      startDate || null,
+      endDate || null,
     ],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
-          ...buildParams({ evalTaskId, period, evalId }),
+          ...buildParams({ evalTaskId, period, evalId, startDate, endDate }),
           page: page + 1,
           page_size: pageSize,
         },

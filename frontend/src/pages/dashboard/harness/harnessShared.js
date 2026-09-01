@@ -433,9 +433,12 @@ export const scenarioOutcome = (scenarioKey, scenarioAttempt, run) => {
     status: settled,
     turns: call.turns ?? null,
     durationMs: call.duration_ms ?? null,
-    // `held` is the verdict and carries a reason whenever it is false; `judged` only says
-    // whether a model was the one to decide, so it is not part of the outcome.
+    // A scenario that errored before it ran reports every check as `held: null` — never
+    // judged, which is not the same as failed. Only `false` is a verdict against the agent.
     subGoals: receipt?.sub_goals || [],
+    // An errored receipt carries the only account of what went wrong, and its checks are
+    // all unjudged, so without this the row has nothing true to say.
+    failure: receipt?.failure || null,
   };
 };
 
