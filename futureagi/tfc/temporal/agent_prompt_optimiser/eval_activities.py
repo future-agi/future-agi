@@ -118,6 +118,11 @@ def serialize_scenario(
 # ----- Proxy Objects for Evaluation -----
 
 
+# Distinguishes "not looked up yet" from "looked up and there is none", so a
+# miss is cached rather than re-queried on every attribute access.
+_UNFETCHED = object()
+
+
 class EvalConfigProxy:
     """Proxy object that mimics SimulateEvalConfig from serialized data."""
 
@@ -130,7 +135,7 @@ class EvalConfigProxy:
         self.error_localizer = serialized["error_localizer"]
         self.kb_id = serialized["kb_id"]
         self.pinned_version_id = serialized.get("pinned_version_id")
-        self._pinned_version = None
+        self._pinned_version = _UNFETCHED
 
         if serialized.get("eval_template"):
             self.eval_template = EvalTemplateProxy(serialized["eval_template"])
@@ -142,13 +147,23 @@ class EvalConfigProxy:
         """The pinned EvalTemplateVersion, fetched on first use.
 
         The activity runs in a Django context, so the FK is re-read here
-        rather than serialized whole. Deliberately not exposed on
-        EvalTemplateProxy: SimulationEvaluator._resolve_eval_template_for_runner
-        returns the proxy verbatim when it carries an `owner` attribute, and
-        the engine needs the real EvalTemplate for its column-level fields.
+        rather than serialized whole.
+
+        The pin lives on this proxy rather than on EvalTemplateProxy, which
+        deliberately carries neither `owner` nor `organization`. That is what
+        keeps SimulationEvaluator._resolve_eval_template_for_runner from
+        early-returning the proxy: it falls through to the DB and loads the
+        real EvalTemplate, which the engine needs for its column-level fields.
         """
-        if self._pinned_version is not None or not self.pinned_version_id:
+        if self._pinned_version is not _UNFETCHED:
             return self._pinned_version
+        if not self.pinned_version_id:
+            self._pinned_version = None
+            return None
+        # Cache the miss too. Without the sentinel a lookup that answers None
+        # — a deleted or cross-org version — re-queries on every access, once
+        # per eval per scenario.
+        self._pinned_version = None
         try:
             from model_hub.models.evals_metric import EvalTemplateVersion
 

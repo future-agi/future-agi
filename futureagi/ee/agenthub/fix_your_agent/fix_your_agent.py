@@ -1439,24 +1439,36 @@ class FixYourAgent:
                     else:
                         flat_config = raw_config
 
-                    # Create EvalTemplate instance (not saved to DB)
-                    eval_template = EvalTemplate(
-                        id=eval_data.get("eval_template_id"),
-                        name=eval_data.get("eval_template_name"),
-                        description=eval_data.get("description"),
-                        criteria=eval_data.get("criteria"),
-                        eval_tags=eval_data.get("eval_tags", []),
-                        config=eval_data.get("template_config")
+                    # Create EvalTemplate instance (not saved to DB).
+                    # `owner` matters beyond bookkeeping: the field defaults to
+                    # `system`, and a system template is never versioned, so
+                    # omitting it makes the binding's pin resolve to None and
+                    # the run silently scores the live template.
+                    shell_kwargs = {
+                        "id": eval_data.get("eval_template_id"),
+                        "name": eval_data.get("eval_template_name"),
+                        "description": eval_data.get("description"),
+                        "criteria": eval_data.get("criteria"),
+                        "eval_tags": eval_data.get("eval_tags", []),
+                        "config": eval_data.get("template_config")
                         or {
                             "output": eval_data.get("output_type"),
                             "required_keys": eval_data.get("required_keys"),
                             "eval_type_id": eval_data.get("eval_type_id"),
                         },
-                        model=eval_data.get("model"),
-                        output_type_normalized=eval_data.get("output_type_normalized"),
-                        choice_scores=eval_data.get("choice_scores"),
-                        pass_threshold=eval_data.get("pass_threshold"),
-                    )
+                        "model": eval_data.get("model"),
+                        "output_type_normalized": eval_data.get(
+                            "output_type_normalized"
+                        ),
+                        "choice_scores": eval_data.get("choice_scores"),
+                        "pass_threshold": eval_data.get("pass_threshold"),
+                    }
+                    # Legacy payloads omit these; leave the model defaults in
+                    # place rather than writing None over them.
+                    for _key in ("owner", "multi_choice", "choices"):
+                        if eval_data.get(_key) is not None:
+                            shell_kwargs[_key] = eval_data[_key]
+                    eval_template = EvalTemplate(**shell_kwargs)
 
                     # Create SimulateEvalConfig instance (not saved to DB)
                     config = SimulateEvalConfig(
@@ -1466,6 +1478,7 @@ class FixYourAgent:
                         config=flat_config,
                         model=eval_data.get("model"),
                         eval_template=eval_template,
+                        pinned_version_id=eval_data.get("pinned_version_id"),
                     )
                     eval_configs.append(config)
                 except Exception as e:

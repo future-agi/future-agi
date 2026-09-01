@@ -969,6 +969,15 @@ def _build_evaluation_data(
         "result": eval_result,
         "eval_type_id": template.config.get("eval_type_id"),
         "template_config": template.config,
+        "owner": template.owner,
+        "output_type_normalized": template.output_type_normalized,
+        "choice_scores": template.choice_scores,
+        "pass_threshold": template.pass_threshold,
+        "multi_choice": template.multi_choice,
+        "choices": template.choices,
+        "pinned_version_id": (
+            str(config.pinned_version_id) if config.pinned_version_id else None
+        ),
     }
 
 

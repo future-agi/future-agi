@@ -1,10 +1,16 @@
 """Composite eval execution for the simulation runners.
 
 Both runners call run_eval_func, which needs a concrete evaluator class. A
-composite parent has none — its children do — so composites are executed
+composite parent has none, its children do, so composites are executed
 through the shared composite helper instead. Kept in one module so the two
 runners cannot drift on it.
 """
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+
 def run_composite_eval(
     eval_template,
     eval_config,
@@ -18,9 +24,10 @@ def run_composite_eval(
     """Execute a composite eval and return a run_eval_func-shaped result.
 
     Composite parents carry no eval_type_id, so run_eval_func cannot build an
-    evaluator for them — children are executed and aggregated instead. Child
-    weights come from the pinned version's snapshot, which is where a
-    simulation binding records them (there is no per-binding overrides column).
+    evaluator for them; children are executed and aggregated instead. Child
+    weights, per-child config and per-child pins all come from the pinned
+    version's snapshot, which is where a simulation binding records them
+    (there is no per-binding overrides column).
     """
     from model_hub.models.evals_metric import CompositeEvalChild
     from simulate.utils.eval_summary import derive_kpi_output_type
@@ -43,11 +50,17 @@ def run_composite_eval(
         else None
     )
     if isinstance(snapshot_children, list):
-        weight_overrides = {
-            str(c["child_id"]): c["weight"]
+        by_child = {
+            str(c["child_id"]): c
             for c in snapshot_children
-            if isinstance(c, dict) and c.get("child_id") and c.get("weight") is not None
+            if isinstance(c, dict) and c.get("child_id")
+        }
+        weight_overrides = {
+            cid: c["weight"]
+            for cid, c in by_child.items()
+            if c.get("weight") is not None
         } or None
+        _apply_snapshot_to_links(child_links, by_child)
 
     binding_config = eval_config.config or {}
     runtime_config = {k: v for k, v in binding_config.items() if k != "mapping"}
@@ -85,3 +98,53 @@ def run_composite_eval(
             "children": [cr.model_dump() for cr in outcome.child_results],
         },
     }
+
+
+def _apply_snapshot_to_links(child_links, snapshot_by_child):
+    """Overlay the parent version's per-child config and pins onto the links.
+
+    The snapshot records each child's `config` and `pinned_version_id`
+    alongside its weight, which is the whole point of versioning a composite
+    per binding: two simulations can pin different child prompts off the same
+    template. Only the weight was being applied, so the other two silently ran
+    whatever the shared template links currently hold.
+
+    The links are in-memory instances that are never saved, so mutating them
+    is the overlay.
+    """
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    wanted_version_ids = {
+        snap["pinned_version_id"]
+        for link in child_links
+        for snap in [snapshot_by_child.get(str(link.child_id))]
+        if snap and snap.get("pinned_version_id")
+    }
+    versions_by_id = (
+        {
+            str(v.id): v
+            for v in EvalTemplateVersion.objects.filter(
+                id__in=wanted_version_ids, deleted=False
+            )
+        }
+        if wanted_version_ids
+        else {}
+    )
+
+    for link in child_links:
+        snap = snapshot_by_child.get(str(link.child_id))
+        if not snap:
+            continue
+        if isinstance(snap.get("config"), dict) and snap["config"]:
+            link.config = snap["config"]
+        pinned_id = snap.get("pinned_version_id")
+        if pinned_id:
+            version = versions_by_id.get(str(pinned_id))
+            if version is not None:
+                link.pinned_version = version
+            else:
+                logger.warning(
+                    "composite_child_pin_missing",
+                    child_id=str(link.child_id),
+                    pinned_version_id=str(pinned_id),
+                )

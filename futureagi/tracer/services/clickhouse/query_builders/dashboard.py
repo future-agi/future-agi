@@ -195,6 +195,7 @@ def _eval_source_bucket_expr(exclude: str) -> str:
         ("composite_eval", "(composite)"),
         ("composite_eval_adhoc", "(composite)"),
         ("composite_eval_dataset", "(composite)"),
+        ("composite_eval_simulate", "(composite)"),
     ]
     excluded_self = {
         "project": {"tracer"},
