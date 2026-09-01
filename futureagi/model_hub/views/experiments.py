@@ -1018,9 +1018,38 @@ class DatasetExperimentsView(APIView):
             )
 
             def get_column_averages(column):
-                avg_score = calculate_column_average(column)
-                avg_score = avg_score.get("average", None)
-                return {str(column.id): avg_score}
+                stats = calculate_column_average(column) or {}
+                return {
+                    str(column.id): {
+                        "average": stats.get("average"),
+                        "min": stats.get("min"),
+                        "max": stats.get("max"),
+                        "median": stats.get("median"),
+                    }
+                }
+
+            def summary_score_fields(column_id, *, include=True):
+                if not include:
+                    return {
+                        "average_score": None,
+                        "min_score": None,
+                        "max_score": None,
+                        "median_score": None,
+                    }
+                stats = col_avgs.get(str(column_id)) or {}
+                if not isinstance(stats, dict):
+                    return {
+                        "average_score": stats,
+                        "min_score": None,
+                        "max_score": None,
+                        "median_score": None,
+                    }
+                return {
+                    "average_score": stats.get("average"),
+                    "min_score": stats.get("min"),
+                    "max_score": stats.get("max"),
+                    "median_score": stats.get("median"),
+                }
 
             futures = []
             col_avgs = {}
@@ -1167,7 +1196,7 @@ class DatasetExperimentsView(APIView):
                                 else "Dataset"
                             ),
                         },
-                        "average_score": col_avgs.get(str(column.id)),
+                        **summary_score_fields(column.id),
                         "dataset_id": str(query_dataset.id),
                         "choices_map": choices_map,
                         "is_base_column": (
@@ -1379,8 +1408,8 @@ class DatasetExperimentsView(APIView):
                         ),
                         "status": col_status,
                         "group": group,
-                        "average_score": (
-                            col_avgs.get(str(column.id)) if column_config_only else None
+                        **summary_score_fields(
+                            column.id, include=bool(column_config_only)
                         ),
                         "dataset_id": str(exp_dataset.id),
                         "choices_map": choices_map,

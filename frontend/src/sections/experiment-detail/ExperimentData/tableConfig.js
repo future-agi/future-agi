@@ -4,6 +4,7 @@ import CustomExperimentColumnHeader from "./CustomExperimentColumnHeader";
 import CustomCellRender from "src/sections/common/DevelopCellRenderer/CustomCellRender";
 import CustomDevelopGroupCellHeader from "src/sections/common/DevelopCellRenderer/CustomDevelopGroupCellHeader";
 import CustomDevelopDetailColumn from "src/sections/common/CustomDevelopDetailColumn";
+import ExperimentColumnSummaryCell from "./ExperimentColumnSummaryCell";
 
 export const ExperimentDataDefaultColDef = {
   lockVisible: true,
@@ -22,6 +23,15 @@ export const ExperimentDataDefaultColDef = {
 
 const DEFAULT_MIN_WIDTH = 300;
 
+const experimentValueGetter = (eachCol, colDataType) => (v) => {
+  const cell = v.data?.[eachCol.id];
+  if (cell?.isColumnSummary) {
+    return cell.average;
+  }
+  const rawValue = cell?.cell_value ?? cell?.cellValue;
+  return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
+};
+
 export const getEachColumnDef = (
   eachCol,
   getWaveSurferInstance,
@@ -35,11 +45,7 @@ export const getEachColumnDef = (
   return {
     field: eachCol.id,
     headerName: eachCol.name,
-    valueGetter: (v) => {
-      const cell = v.data?.[eachCol.id];
-      const rawValue = cell?.cell_value ?? cell?.cellValue;
-      return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
-    },
+    valueGetter: experimentValueGetter(eachCol, colDataType),
     cellDataType: AGGridCellDataType[colDataType],
     dataType: colDataType,
     originType: colOriginType || "evaluation",
@@ -62,6 +68,12 @@ export const getEachColumnDef = (
     },
     // mainMenuItems: getMainMenuItems,
     cellRenderer: CustomCellRender,
+    cellRendererSelector: (params) => {
+      if (params.node?.rowPinned === "bottom") {
+        return { component: ExperimentColumnSummaryCell };
+      }
+      return undefined;
+    },
     resizable: true,
     cellRendererParams: {
       originOfColumn: "experiment", // Pass originOfColumn dynamically to enable rerun at cell level for only experiment originType

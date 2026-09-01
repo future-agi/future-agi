@@ -26,6 +26,7 @@ import logger from "src/utils/logger";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import useWavesurferCache from "src/hooks/use-wavesurfer-cache";
 import { toExcelLetters, shouldShowDiffModeButton } from "./Common";
+import { buildExperimentPinnedSummaryRow } from "./columnSummary";
 
 import {
   useConfigureEvalStore,
@@ -44,7 +45,10 @@ import { enqueueSnackbar } from "notistack";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
 import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import RenderCellRunningOptions from "./RenderCellRunningOptions";
-import { useRerunColumnInExperimentStoreShallow } from "./states";
+import {
+  useColumnSummaryStore,
+  useRerunColumnInExperimentStoreShallow,
+} from "./states";
 import { useGetExperimentDetails } from "src/hooks/useGetExperimentDetails";
 // Constants
 // const RefreshStatus = ["Running", "NotStarted", "ExperimentEvaluation"]; // Status values that trigger refresh
@@ -160,6 +164,7 @@ function ExperimentDataView() {
     isRefreshingColumns.current = null;
     // to show default loading
     setColumnDefs(defaultColumnDefs);
+    useColumnSummaryStore.getState().resetColumnSummaries();
   }, [experimentId]);
 
   const { data: columnConfigData, refetch: refetchExperimentColumns } =
@@ -214,15 +219,9 @@ function ExperimentDataView() {
       }
 
       // Check if any rows actually changed
-      const prevMap = new Map(
-        prev.map((row) => [row.data?.row_id, row]),
-      );
+      const prevMap = new Map(prev.map((row) => [row.data?.row_id, row]));
       const hasChanges = newRows.some(
-        (newRow) =>
-          !isEqual(
-            prevMap.get(newRow.data?.row_id),
-            newRow,
-          ),
+        (newRow) => !isEqual(prevMap.get(newRow.data?.row_id), newRow),
       );
 
       return hasChanges ? mergedArray : prev;
@@ -288,7 +287,6 @@ function ExperimentDataView() {
           );
         }
       }
-
 
       for (const groupId in columnsByGroup) {
         const cols = columnsByGroup[groupId] ?? [];
@@ -414,30 +412,9 @@ function ExperimentDataView() {
       // Update rows with proper replacement to avoid duplicates
       // setAllRows(rows);
 
-      // Calculate averages for bottom pinned row
-      const filteredColumns = columnMap.flatMap((col) =>
-        col.children
-          ? col.children.filter((child) => {
-              const avg = child?.col?.average_score ?? child?.col?.averageScore;
-              return avg !== null && avg !== undefined;
-            })
-          : (() => {
-                const avg = col?.col?.average_score ?? col?.col?.averageScore;
-                return avg !== null && avg !== undefined;
-              })()
-            ? [col]
-            : [],
-      );
-
-      const pinnedRow = {};
-      filteredColumns.forEach((col) => {
-        if (col.field) {
-          const avgValue = `${(col.col.average_score ?? col.col.averageScore).toFixed(2)}%`;
-          pinnedRow[col.field] = `Average: ${avgValue}`;
-        }
-      });
-
-      setPinnedBottomRowData([pinnedRow]);
+      // Pinned summary row: average by default; the cell lets the user
+      // switch to max / min / median per column.
+      setPinnedBottomRowData(buildExperimentPinnedSummaryRow(columnMap));
 
       const averages = Object.entries(
         data?.result?.metadata?.averageScore || {},
