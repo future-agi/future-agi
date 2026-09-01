@@ -404,7 +404,6 @@ describe("WidgetPieCharts — nothing to draw in any metric", () => {
   });
 });
 
-
 // Regression guard for TH-7679. The legend used to be handed the raw palette and
 // index it positionally (COLORS[i]), while the lines were coloured by a hash of
 // the series name — so swatch and line agreed only by coincidence. Both must now
@@ -473,11 +472,7 @@ describe("WidgetChart — legend swatches match the plotted line colours", () =>
       screen.getByTestId("apex-line").getAttribute("data-colors"),
     );
 
-    expect(items).toEqual([
-      "Latency (p95)",
-      "Latency (p99)",
-      "Latency (p50)",
-    ]);
+    expect(items).toEqual(["Latency (p95)", "Latency (p99)", "Latency (p50)"]);
     items.forEach((_, i) => {
       expect(legendColors[i]).toBe(lineColors[i]);
     });
@@ -574,5 +569,89 @@ describe("WidgetChart — auto-scaled y-axis (TH-7680)", () => {
   it("auto-scales regardless of the toggle when no bounds are typed", () => {
     renderWith({ left_y: { out_of_bounds: "hidden" } });
     expect(yaxisOf().max).toBe(7500);
+  });
+
+  // A band sitting well above zero cannot be zero-anchored without wasting more
+  // space than it saves, and handing it to ApexCharts draws it on a 190-290
+  // axis off the coarse {1,2,5,10} ladder. Fit the band where it sits instead.
+  it("fits a band that sits well above zero, rather than leaving it to ApexCharts", () => {
+    h.query.data = queryResult([at(0, 190), at(1, 250), at(2, 210)]);
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+    expect(yaxisOf()).toMatchObject({ min: 180, max: 255 });
+  });
+});
+
+// TH-7680 follow-up: the dual-axis branch is chosen from the series that are
+// actually drawn. Hiding the only right-assigned series from the legend must
+// drop back to the single-axis branch, or the left axis quietly switches
+// scaling mode — same data, different axis, from a legend click.
+describe("WidgetChart — dual axis follows the visible series (TH-7680)", () => {
+  const at = (hour, value) => ({
+    timestamp: `2026-07-09T${String(hour).padStart(2, "0")}:00:00Z`,
+    value,
+  });
+
+  const metric = (aggregation, values) => ({
+    name: "Latency",
+    aggregation,
+    series: [{ name: "total", data: values.map((v, i) => at(i, v)) }],
+  });
+
+  const dualWidget = (visibleSeries) => ({
+    id: "w-1",
+    query_config: {
+      metrics: [
+        { name: "Latency", aggregation: "avg" },
+        { name: "Latency", aggregation: "p95" },
+      ],
+    },
+    chart_config: {
+      chart_type: "line",
+      axis_config: { right_y: { visible: true }, series_axis: { 1: "right" } },
+      ...(visibleSeries ? { visible_series: visibleSeries } : {}),
+    },
+  });
+
+  const yaxisOf = () =>
+    JSON.parse(screen.getByTestId("apex-line").getAttribute("data-yaxis"));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = null;
+    // Left peaks at 7043, right is a narrow 41-51 band.
+    h.query.data = {
+      data: {
+        result: {
+          metrics: [
+            metric("avg", [219, 7043, 1500]),
+            metric("p95", [41, 45, 51]),
+          ],
+        },
+      },
+    };
+  });
+
+  it("gives each side its own scale while both are visible", () => {
+    render(<WidgetChart widget={dualWidget()} globalDateRange={null} />);
+    const yaxis = yaxisOf();
+    expect(Array.isArray(yaxis)).toBe(true);
+    expect(yaxis[0].max).not.toBe(yaxis[1].max);
+    // The narrow right band must still fit inside its own axis.
+    expect(yaxis[1].max).toBeGreaterThanOrEqual(51);
+  });
+
+  it("returns to single-axis scaling when the right series is hidden", () => {
+    render(
+      <WidgetChart
+        widget={dualWidget(["|avg|total"])}
+        globalDateRange={null}
+      />,
+    );
+    const yaxis = yaxisOf();
+    expect(Array.isArray(yaxis)).toBe(false);
+    // Identical to the plain single-axis widget on the same data.
+    expect(yaxis).toMatchObject({ min: 0, max: 7500 });
   });
 });

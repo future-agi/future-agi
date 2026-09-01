@@ -16,7 +16,7 @@ import {
   getUnitRendering,
   getYAxisRangeWarning,
   getVisibleIndices,
-  resolveAxisBounds,
+  resolveWidgetAxisPlan,
   groupPieSeries,
   makeSeriesKey,
   resolveSavedSelection,
@@ -985,14 +985,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
     yaxis: (() => {
       const leftCfg = axisConfig?.leftY || {};
       const rightCfg = axisConfig?.rightY || {};
-      const sa = axisConfig?.seriesAxis || {};
-      const hasRightAxis =
-        rightCfg.visible && Object.values(sa).some((s) => s === "right");
+      // Shared with WidgetEditorView so the saved widget and the editor preview
+      // cannot scale differently — see resolveWidgetAxisPlan.
+      const { hasRightAxis, sideOf, bounds } = resolveWidgetAxisPlan(
+        chartSeries,
+        chartSeriesIndices,
+        axisConfig,
+        { stacked: isStacked },
+      );
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";
-        const { min, max } = resolveAxisBounds(chartSeries, leftCfg, {
-          stacked: isStacked,
-        });
+        const { min, max } = bounds.left;
         return {
           show: leftCfg.visible !== false,
           tickAmount: 5,
@@ -1019,29 +1022,15 @@ export default function WidgetChart({ widget, globalDateRange }) {
       // side. ApexCharts binds yaxis[i] to series[i] and scales each entry on
       // its own, so without this a small series sharing an axis is stretched
       // to fill the plot and cannot be read off the axis beside it.
-      const sideOf = (i) => (sa[chartSeriesIndices[i]] === "right" ? "right" : "left");
-      const seriesOn = (side) => chartSeries.filter((__, i) => sideOf(i) === side);
-      const boundsFor = {
-        left: resolveAxisBounds(seriesOn("left"), leftCfg, {
-          stacked: isStacked,
-          fit: true,
-        }),
-        right: resolveAxisBounds(seriesOn("right"), rightCfg, {
-          stacked: isStacked,
-          fit: true,
-        }),
-      };
       return chartSeries.map((_, i) => {
         const side = sideOf(i);
         const cfg = side === "right" ? rightCfg : leftCfg;
-        const { min, max } = boundsFor[side];
+        const { min, max } = bounds[side];
         return {
           show:
             i === 0 ||
             (side === "right" &&
-              !chartSeries
-                .slice(0, i)
-                .some((__, j) => sideOf(j) === "right")),
+              !chartSeries.slice(0, i).some((__, j) => sideOf(j) === "right")),
           opposite: side === "right",
           tickAmount: 5,
           forceNiceScale: cfg.outOfBounds !== "hidden",

@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   fromAxisConfigPayload,
@@ -7,8 +9,10 @@ import {
   isAdditiveAggregation,
   getYAxisRangeWarning,
   getAutoYAxisBounds,
+  getFittedYAxisBounds,
   getVisibleIndices,
   resolveAxisBounds,
+  resolveWidgetAxisPlan,
   parseBound,
   makeSeriesKey,
   resolveSavedSelection,
@@ -619,7 +623,10 @@ describe("getAutoYAxisBounds", () => {
     expect(getAutoYAxisBounds([{ data: pts(0, 0, 0) }], opts)).toBeNull();
     expect(getAutoYAxisBounds([{ data: pts(-5, 100) }], opts)).toBeNull();
     expect(
-      getAutoYAxisBounds([{ data: pts(0, 100) }], { ...opts, logarithmic: true }),
+      getAutoYAxisBounds([{ data: pts(0, 100) }], {
+        ...opts,
+        logarithmic: true,
+      }),
     ).toBeNull();
   });
 });
@@ -678,8 +685,171 @@ describe("resolveAxisBounds", () => {
     expect(min).toBeLessThanOrEqual(190);
   });
 
-  it("declines a narrow band without fit, leaving single-axis behaviour alone", () => {
+  // Single-axis takes the same fitted path. Zero-anchoring still wins where the
+  // data runs to the floor; this is the case it declines, which used to fall to
+  // ApexCharts' coarse ladder and a 190-290 axis for a 190-250 series.
+  it("fits a narrow band on a single axis too", () => {
     const small = [{ data: pts2(190, 250, 210) }];
-    expect(resolveAxisBounds(small, {}).max).toBeUndefined();
+    expect(resolveAxisBounds(small, {}, { fit: true })).toEqual({
+      min: 180,
+      max: 255,
+    });
   });
+
+  it("is unchanged for data that runs to the floor", () => {
+    expect(resolveAxisBounds(series, {}, { fit: true })).toEqual({
+      min: 0,
+      max: 7500,
+    });
+  });
+});
+
+describe("getFittedYAxisBounds", () => {
+  const pts = (...ys) => [{ data: ys.map((y, i) => ({ x: i, y })) }];
+
+  // A single example cannot pin this: the axis max is measured from a floor
+  // that has already been snapped down onto the step grid, so whether the peak
+  // still fits depends on where the span lands on the step ladder. Assert the
+  // invariant over a table of spans instead.
+  it.each([
+    [41, 51],
+    [99.9, 100.9],
+    [190, 250],
+    [179, 479],
+    [0.0001, 0.00013],
+    [1.001, 1.009],
+    [7043, 7100],
+    [1000001, 1000009],
+    [42, 43],
+    [500, 501.5],
+  ])("keeps every point inside the axis for [%s, %s]", (floor, peak) => {
+    const { min, max } = getFittedYAxisBounds(
+      pts(floor, (floor + peak) / 2, peak),
+    );
+    expect(max).toBeGreaterThanOrEqual(peak);
+    expect(min).toBeLessThanOrEqual(floor);
+  });
+
+  it("never clips the peak across every integer band up to 200", () => {
+    const clipped = [];
+    for (let floor = 0; floor <= 200; floor += 1) {
+      for (let peak = floor + 1; peak <= 200; peak += 1) {
+        const bounds = getFittedYAxisBounds(pts(floor, peak));
+        if (!bounds) continue;
+        if (bounds.max < peak || bounds.min > floor)
+          clipped.push([floor, peak]);
+      }
+    }
+    expect(clipped).toEqual([]);
+  });
+
+  it("leaves the round ladder alone where it already fits", () => {
+    expect(getFittedYAxisBounds(pts(190, 210, 250))).toEqual({
+      min: 180,
+      max: 255,
+    });
+  });
+
+  it("fits a band that dips below zero, where zero-anchoring cannot", () => {
+    const { min, max } = getFittedYAxisBounds(pts(-5, 12, 30));
+    expect(min).toBeLessThanOrEqual(-5);
+    expect(max).toBeGreaterThanOrEqual(30);
+  });
+
+  // The carve-outs: no band to fit, so ApexCharts keeps its own scaling.
+  it("returns null on a logarithmic side", () => {
+    expect(
+      getFittedYAxisBounds(pts(41, 45, 51), { logarithmic: true }),
+    ).toBeNull();
+  });
+
+  it("returns null with fewer than two points", () => {
+    expect(getFittedYAxisBounds(pts(42))).toBeNull();
+    expect(getFittedYAxisBounds([])).toBeNull();
+  });
+
+  it("returns null when every point is the same value", () => {
+    expect(getFittedYAxisBounds(pts(7, 7, 7))).toBeNull();
+  });
+});
+
+describe("resolveWidgetAxisPlan", () => {
+  const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+  const latency = { name: "Latency (avg)", data: pts(219, 7043, 1500) };
+  const tokens = { name: "Tokens (avg)", data: pts(41, 45, 51) };
+  const dualConfig = {
+    leftY: {},
+    rightY: { visible: true },
+    seriesAxis: { 1: "right" },
+  };
+
+  it("gives each side its own bounds when both are drawn", () => {
+    const plan = resolveWidgetAxisPlan([latency, tokens], [0, 1], dualConfig);
+    expect(plan.hasRightAxis).toBe(true);
+    expect(plan.sideOf(0)).toBe("left");
+    expect(plan.sideOf(1)).toBe("right");
+    expect(plan.bounds.left).toEqual({ min: 0, max: 7500 });
+    expect(plan.bounds.right).toEqual({ min: 40, max: 52.5 });
+  });
+
+  // The whole point of reading the visible series: with the right-hand series
+  // hidden there is no right axis on screen, so the left one must be scaled the
+  // way a widget that never had a right axis would scale it.
+  it("falls back to single-axis scaling when the right series is hidden", () => {
+    const hidden = resolveWidgetAxisPlan([latency], [0], dualConfig);
+    const neverHadOne = resolveWidgetAxisPlan([latency], [0], { leftY: {} });
+
+    expect(hidden.hasRightAxis).toBe(false);
+    expect(hidden.bounds.right).toBeUndefined();
+    expect(hidden.bounds.left).toEqual(neverHadOne.bounds.left);
+  });
+
+  it("reads seriesAxis by the original index, not the filtered one", () => {
+    // Only the second series is visible, and it is the right-assigned one.
+    const plan = resolveWidgetAxisPlan([tokens], [1], dualConfig);
+    expect(plan.hasRightAxis).toBe(true);
+    expect(plan.sideOf(0)).toBe("right");
+  });
+
+  it("stays single-axis when the right axis is switched off", () => {
+    const plan = resolveWidgetAxisPlan([latency, tokens], [0, 1], {
+      leftY: {},
+      rightY: { visible: false },
+      seriesAxis: { 1: "right" },
+    });
+    expect(plan.hasRightAxis).toBe(false);
+    expect(plan.sideOf(1)).toBe("left");
+  });
+
+  it("survives an empty config", () => {
+    const plan = resolveWidgetAxisPlan([latency], [0]);
+    expect(plan.hasRightAxis).toBe(false);
+    expect(plan.bounds.left).toEqual({ min: 0, max: 7500 });
+  });
+});
+
+// The saved widget and the editor preview render the same widget through two
+// separate files. They used to derive their axis bounds separately, and a fix
+// applied to one silently missed the other. Both now go through
+// resolveWidgetAxisPlan; this fails the moment either grows its own copy.
+describe("the saved widget and the editor preview share one axis plan", () => {
+  // Resolve from the vitest root, which is `frontend/` however it was invoked.
+  const read = (name) => {
+    const rel = join("src", "sections", "dashboards", name);
+    const path = [
+      join(process.cwd(), rel),
+      join(process.cwd(), "frontend", rel),
+    ].find(existsSync);
+    expect(path, `could not locate ${name}`).toBeDefined();
+    return readFileSync(path, "utf8");
+  };
+
+  it.each(["WidgetChart.jsx", "WidgetEditorView.jsx"])(
+    "%s resolves its y-axis through resolveWidgetAxisPlan, not on its own",
+    (file) => {
+      const src = read(file);
+      expect(src).toContain("resolveWidgetAxisPlan(");
+      expect(src).not.toContain("resolveAxisBounds(");
+    },
+  );
 });

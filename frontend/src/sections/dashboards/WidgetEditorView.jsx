@@ -89,7 +89,7 @@ import {
   getUnitRendering,
   getYAxisRangeWarning,
   getVisibleIndices,
-  resolveAxisBounds,
+  resolveWidgetAxisPlan,
   makeSeriesKey,
   resolveSavedSelection,
   toAxisConfigPayload,
@@ -2554,14 +2554,15 @@ export default function WidgetEditorView() {
             },
           },
       yaxis: (() => {
-        const hasRightAxis =
-          axisConfig.rightY.visible &&
-          Object.values(axisConfig.seriesAxis).some((s) => s === "right");
+        // Shared with WidgetChart.jsx so the preview matches the saved widget.
+        const { hasRightAxis, sideOf, bounds } = resolveWidgetAxisPlan(
+          chartSeries,
+          chartSeriesIndices,
+          axisConfig,
+          { stacked: isStacked },
+        );
         if (!hasRightAxis) {
-          // Shared with WidgetChart.jsx so the preview matches the saved widget.
-          const { min, max } = resolveAxisBounds(chartSeries, axisConfig.leftY, {
-            stacked: isStacked,
-          });
+          const { min, max } = bounds.left;
           return {
             show: axisConfig.leftY.visible,
             tickAmount: 5,
@@ -2585,28 +2586,11 @@ export default function WidgetEditorView() {
             },
           };
         }
-        // Dual axis
-        // One shared {min,max} per side — see WidgetChart.jsx.
-        const sideOf = (i) =>
-          axisConfig.seriesAxis[chartSeriesIndices[i]] === "right"
-            ? "right"
-            : "left";
-        const seriesOn = (side) =>
-          chartSeries.filter((__, i) => sideOf(i) === side);
-        const boundsFor = {
-          left: resolveAxisBounds(seriesOn("left"), axisConfig.leftY, {
-            stacked: isStacked,
-            fit: true,
-          }),
-          right: resolveAxisBounds(seriesOn("right"), axisConfig.rightY, {
-            stacked: isStacked,
-            fit: true,
-          }),
-        };
+        // Dual axis: one shared {min,max} per side — see WidgetChart.jsx.
         return chartSeries.map((_, i) => {
           const side = sideOf(i);
           const cfg = side === "right" ? axisConfig.rightY : axisConfig.leftY;
-          const { min, max } = boundsFor[side];
+          const { min, max } = bounds[side];
           return {
             show:
               i === 0 ||

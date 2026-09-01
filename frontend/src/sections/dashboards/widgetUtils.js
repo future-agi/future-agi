@@ -245,12 +245,19 @@ export const seriesHasDataPoints = (series = []) =>
 /**
  * Bounds that fit the data, never null unless there is genuinely nothing to
  * scale. Prefers the zero-anchored result; where that is declined (a narrow
- * band well above zero) it fits the band instead, snapping the floor onto the
- * step grid so tick labels stay round.
+ * band well above zero, or one that dips below it) it fits the band instead,
+ * snapping the floor onto the step grid so tick labels stay round.
  *
- * Dual-axis needs this: every entry on a side must carry the same explicit
- * bounds or ApexCharts scales each series on its own, which draws a small
- * series as though it filled the plot.
+ * Every axis goes through this. Dual-axis is the case that *requires* it —
+ * every entry on a side must carry the same explicit bounds or ApexCharts
+ * scales each series on its own, which draws a small series as though it
+ * filled the plot. Single-axis wants it for the narrow-band case, where the
+ * alternative is ApexCharts' coarse {1,2,5,10} step ladder and the dead space
+ * that comes with it.
+ *
+ * Null still comes back where there is no band to fit: a logarithmic side,
+ * one with fewer than two finite points, or one whose points are all equal.
+ * Those keep ApexCharts' own scaling, so the invariant above is not absolute.
  */
 export const getFittedYAxisBounds = (
   series = [],
@@ -265,13 +272,23 @@ export const getFittedYAxisBounds = (
   if (zeroAnchored) return zeroAnchored;
 
   const extent = getSeriesExtent(series, { stacked });
-  if (!extent || extent.min < 0) return null;
+  if (!extent) return null;
   const span = extent.max - extent.min;
   if (span <= 0) return null;
 
-  const step = niceCeil(span / tickAmount);
-  const min = normalize(Math.floor(extent.min / step) * step);
-  return { min, max: normalize(min + step * tickAmount) };
+  // Flooring the min onto the step grid consumes up to a full step, and the
+  // max is measured from that lowered floor — so a step sized off the raw span
+  // alone can land below the peak, which ApexCharts then clips. Grow the step
+  // until the floored grid still reaches the peak.
+  let step = niceCeil(span / tickAmount);
+  let min = Math.floor(extent.min / step) * step;
+  while (min + step * tickAmount < extent.max) {
+    step = niceCeil(
+      step + (extent.max - (min + step * tickAmount)) / tickAmount,
+    );
+    min = Math.floor(extent.min / step) * step;
+  }
+  return { min: normalize(min), max: normalize(min + step * tickAmount) };
 };
 
 /**
@@ -302,9 +319,64 @@ export const resolveAxisBounds = (
   const widen = cfg.outOfBounds !== "hidden" && extent;
   const typedMin = parseBound(cfg.min);
   const typedMax = parseBound(cfg.max);
-  const userMin = widen && typedMin > extent.min ? null : typedMin;
-  const userMax = widen && typedMax < extent.max ? null : typedMax;
+  const userMin =
+    widen && typedMin != null && typedMin > extent.min ? null : typedMin;
+  const userMax =
+    widen && typedMax != null && typedMax < extent.max ? null : typedMax;
   return { min: userMin ?? auto?.min, max: userMax ?? auto?.max };
+};
+
+/**
+ * The y-axis plan for one widget: whether a right axis is actually drawn, which
+ * side each drawn series belongs to, and the bounds for each side.
+ *
+ * The saved widget (WidgetChart) and the editor preview (WidgetEditorView) both
+ * build their `yaxis` from this, so the two cannot disagree about scaling. They
+ * used to derive it separately, and a fix applied to one could silently miss
+ * the other.
+ *
+ * `chartSeries` is the visible series, `chartSeriesIndices` their original
+ * indices — `axisConfig.seriesAxis` is keyed by the unfiltered index, so
+ * anything reading it from the filtered list must map back through them.
+ */
+export const resolveWidgetAxisPlan = (
+  chartSeries = [],
+  chartSeriesIndices = [],
+  axisConfig = {},
+  { stacked = false } = {},
+) => {
+  const leftCfg = axisConfig?.leftY || {};
+  const rightCfg = axisConfig?.rightY || {};
+  const seriesAxis = axisConfig?.seriesAxis || {};
+
+  // Read off the *visible* series. Hiding the only right-assigned series must
+  // drop the chart back to single-axis, or the left axis keeps being scaled by
+  // dual-axis rules for an axis that is no longer on screen.
+  const hasRightAxis =
+    !!rightCfg.visible &&
+    chartSeriesIndices.some((idx) => seriesAxis[idx] === "right");
+
+  const sideOf = (i) =>
+    hasRightAxis && seriesAxis[chartSeriesIndices[i]] === "right"
+      ? "right"
+      : "left";
+
+  // fit on both paths. Zero-anchoring still wins wherever the data runs to the
+  // floor; fitting only adds the case it declines — a band well above zero,
+  // which otherwise falls to ApexCharts' coarse {1,2,5,10} step ladder.
+  const opts = { stacked, fit: true };
+  const on = (side) => chartSeries.filter((__, i) => sideOf(i) === side);
+
+  return {
+    hasRightAxis,
+    sideOf,
+    bounds: hasRightAxis
+      ? {
+          left: resolveAxisBounds(on("left"), leftCfg, opts),
+          right: resolveAxisBounds(on("right"), rightCfg, opts),
+        }
+      : { left: resolveAxisBounds(chartSeries, leftCfg, opts) },
+  };
 };
 
 export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
@@ -407,10 +479,11 @@ export const getSeriesExtent = (series = [], { stacked = false } = {}) => {
  * Derives the step first and multiplies up (max = step * tickAmount) so tick
  * labels stay round, rather than rounding the max onto a coarse ladder.
  *
- * Returns null — meaning "keep current behaviour" — whenever zero-anchoring
- * would be wrong or unsafe, most importantly for a narrow band sitting well
- * above zero (40M-60M), where ApexCharts already picks a non-zero floor and
- * forcing 0 would waste *more* space than it saves.
+ * Returns null whenever zero-anchoring would be wrong or unsafe, most
+ * importantly for a narrow band sitting well above zero (40M-60M), where
+ * forcing 0 would waste *more* space than it saves. Null is a deferral, not a
+ * verdict: callers pass it to getFittedYAxisBounds, which fits the band where
+ * it actually sits.
  */
 export const getAutoYAxisBounds = (
   series = [],
