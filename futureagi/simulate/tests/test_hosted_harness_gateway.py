@@ -25,10 +25,18 @@ from simulate.services.hosted_harness_gateway import (
     _platform_simulator_material,
     _provider_egress_domains,
     _validate_resolved_egress_domains,
+    attach_platform_simulator_secret_refs,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
+    resolve_platform_simulator_secrets,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_platform_simulator_environment(settings):
+    """Tests opt in explicitly instead of reading the developer machine's provider keys."""
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
 
 
 def test_platform_simulator_material_uses_deployment_credentials_only(
@@ -42,6 +50,8 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-2.5-flash")
+    monkeypatch.delenv("ALK_HARNESS", raising=False)
+    monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "must-not-be-copied")
 
@@ -55,6 +65,25 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["ALK_HARNESS"] == "vertex-gemini"
     assert credential_bytes == credentials.read_bytes()
     assert not any(name.startswith("LIVEKIT_") for name in values)
+
+
+def test_platform_authoring_backend_is_independent_from_simulated_caller(
+    tmp_path, monkeypatch
+):
+    credentials = tmp_path / "vertex.json"
+    credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+    monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
+    monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
+
+    values, _credential_bytes = _platform_simulator_material()
+
+    assert values["ALK_HARNESS"] == "claude"
+    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
+    assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
+    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.1-flash-lite"
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -71,6 +100,46 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
         "us-central1-aiplatform.googleapis.com",
         "us-east5-aiplatform.googleapis.com",
     }
+
+
+def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
+    settings, monkeypatch, tmp_path
+):
+    adc = tmp_path / "vertex.json"
+    adc.write_text('{"project_id":"futureagi"}', encoding="utf-8")
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {
+        "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
+        "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+        ),
+    }
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(adc))
+
+    resolved = resolve_platform_simulator_secrets()
+
+    assert resolved == {
+        "SIMULATOR_DEEPGRAM_API_KEY": "platform-deepgram",
+        "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": '{"project_id":"futureagi"}',
+    }
+
+
+def test_platform_simulator_refs_are_ephemeral_value_free_and_do_not_mutate_payload():
+    payload = _payload()
+    original = json.loads(json.dumps(payload))
+
+    dispatched = attach_platform_simulator_secret_refs(
+        payload,
+        {"SIMULATOR_DEEPGRAM_API_KEY": "must-never-appear"},
+    )
+
+    assert payload == original
+    assert dispatched["agent"]["secret_refs"]["SIMULATOR_DEEPGRAM_API_KEY"] == {
+        "manager": "platform-config",
+        "key": "SIMULATOR_DEEPGRAM_API_KEY",
+        "purpose": "simulator_provider",
+    }
+    assert "must-never-appear" not in json.dumps(dispatched)
 
 
 def test_resolved_egress_rejects_daytona_domain_overflow():
@@ -204,9 +273,7 @@ def test_unified_progress_freezes_authoring_for_saved_reruns(organization):
     ) as store:
         DaytonaHostedGateway._sync_authoring_progress(attempt, sandbox)
 
-    store.assert_called_once_with(
-        job, b"frozen-authoring", advance_lifecycle=False
-    )
+    store.assert_called_once_with(job, b"frozen-authoring", advance_lifecycle=False)
 
 
 def test_voice_authoring_resolves_auto_connector_with_livekit_credentials(tmp_path):

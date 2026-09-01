@@ -109,14 +109,19 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-2.5-flash"
     ).strip()
     location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
-    backend = (
+    derived_backend = (
         "vertex-gemini"
         if provider.lower() in {"google", "vertex", "vertex-gemini", "vertex_gemini"}
         else provider
     )
+    # Authoring and simulation are separate trust/runtime lanes.  Let deployment config select
+    # the ALK stage-loop independently instead of forcing it to use the simulated caller's
+    # provider and model.  This also keeps the customer request unable to influence either one.
+    backend = str(os.environ.get("ALK_HARNESS") or derived_backend).strip()
+    authoring_model = str(os.environ.get("ALK_HARNESS_MODEL") or model).strip()
     values = {
         "ALK_HARNESS": backend,
-        "ALK_HARNESS_MODEL": model,
+        "ALK_HARNESS_MODEL": authoring_model,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
         "GOOGLE_GENAI_USE_VERTEXAI": str(
@@ -461,6 +466,53 @@ class PlatformSecretResolver:
         return resolved
 
 
+def resolve_platform_simulator_secrets() -> dict[str, str]:
+    """Resolve Future AGI-owned simulator credentials from process configuration.
+
+    This deliberately has no job/request argument: callers cannot select, replace, or observe
+    these values through the hosted API. The namespaced aliases prevent an agent's own provider
+    key from colliding with the simulator provider key for the same vendor.
+    """
+    resolved: dict[str, str] = {}
+    configured = getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {})
+    for alias, env_name in configured.items():
+        value = str(os.getenv(str(env_name), "") or "")
+        if value:
+            resolved[str(alias)] = value
+
+    adc_alias = "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON"
+    if adc_alias in configured and not resolved.get(adc_alias):
+        adc_path = str(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "") or "")
+        if adc_path:
+            try:
+                resolved[adc_alias] = Path(adc_path).read_text(encoding="utf-8")
+            except OSError as exc:
+                raise HostedHarnessError(
+                    "simulator_credentials_unavailable",
+                    "configured platform Google credentials cannot be read",
+                    status_code=500,
+                ) from exc
+    return resolved
+
+
+def attach_platform_simulator_secret_refs(
+    payload: dict[str, Any], simulator_secrets: dict[str, str]
+) -> dict[str, Any]:
+    """Add value-free, internal refs only to the ephemeral sandbox job document."""
+    dispatched = dict(payload)
+    agent = dict(dispatched.get("agent") or {})
+    refs = dict(agent.get("secret_refs") or {})
+    for alias in simulator_secrets:
+        refs[alias] = {
+            "manager": "platform-config",
+            "key": alias,
+            "purpose": "simulator_provider",
+        }
+    agent["secret_refs"] = refs
+    dispatched["agent"] = agent
+    return dispatched
+
+
 _MAX_EGRESS_DOMAINS = 20
 # RFC 1918 / loopback / link-local prefixes that must never appear in egress.
 _PRIVATE_HOST_PATTERNS = re.compile(
@@ -504,7 +556,7 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
     requested egress. In particular, Vertex service-account credentials cannot work unless the
     OAuth token endpoint and regional Vertex endpoint are reachable.
     """
-    aliases = {name.upper() for name in secrets_map}
+    aliases = {name.upper().removeprefix("SIMULATOR_") for name in secrets_map}
     domains: set[str] = set()
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -517,7 +569,12 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
                 "aiplatform.googleapis.com",
             }
         )
-        for name in ("GOOGLE_CLOUD_LOCATION", "CLOUD_ML_REGION"):
+        for name in (
+            "GOOGLE_CLOUD_LOCATION",
+            "CLOUD_ML_REGION",
+            "SIMULATOR_GOOGLE_CLOUD_LOCATION",
+            "SIMULATOR_CLOUD_ML_REGION",
+        ):
             region = str(secrets_map.get(name) or "").strip().lower()
             if _GOOGLE_REGION.fullmatch(region):
                 domains.add(f"{region}-aiplatform.googleapis.com")
@@ -1387,9 +1444,7 @@ class DaytonaHostedGateway:
             environment = _json(
                 "/work/authoring/environment-bundle/environment-plan.json"
             )
-        authored_bundle = _json(
-            "/work/authoring/environment-bundle/manifest.json"
-        )
+        authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
         bundle = _json("/work/bundle/manifest.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
@@ -1565,9 +1620,9 @@ class DaytonaHostedGateway:
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
         )
         attempts_in_cycle = attempt.attempt_number - cycle_start + 1
-        return domain in retry.get("retryable_domains", []) and attempts_in_cycle < retry.get(
-            "max_infrastructure_attempts", 1
-        )
+        return domain in retry.get(
+            "retryable_domains", []
+        ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
