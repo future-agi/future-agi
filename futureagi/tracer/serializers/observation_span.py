@@ -17,6 +17,7 @@ from tracer.serializers.filters import (
     BOUNDED_PAGE_NUMBER_HELP_TEXT,
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
+    filter_combinator_field,
     filter_list_query_param_field,
 )
 from tracer.services.clickhouse.attribute_reads import validate_attribute_key
@@ -278,6 +279,7 @@ class SpanObserveListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = bounded_filter_list_query_param_field(required=False, default=list)
+    filter_combinator = filter_combinator_field()
     page_number = serializers.IntegerField(
         required=False,
         default=0,

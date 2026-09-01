@@ -241,12 +241,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         bounded_global_span_witnesses: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        filter_combinator: str = "and",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
+        self.filter_combinator = filter_combinator
         self.sort_params = sort_params or []
         self._eval_config_ids_known = eval_config_ids is not None
         self.eval_config_ids = eval_config_ids or []
@@ -4584,7 +4586,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # %(start_date)s before translate(). See filters.py.
             span_date_scope=True,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         self.params.update(extra_params)
         datetime_predicate, datetime_params = (
             BaseQueryBuilder.bounded_datetime_exclusion_sql(
@@ -4747,7 +4751,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # %(start_date)s before translate(). See filters.py.
             span_date_scope=True,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         self.params.update(extra_params)
         datetime_predicate, datetime_params = (
             BaseQueryBuilder.bounded_datetime_exclusion_sql(
@@ -4963,7 +4969,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # %(start_date)s before translate(). See filters.py.
             span_date_scope=True,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         # Merge params -- reuse the same start/end dates
         params = dict(self.params)
         params.update(extra_params)

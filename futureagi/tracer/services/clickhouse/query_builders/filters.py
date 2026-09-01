@@ -1091,7 +1091,9 @@ class ClickHouseFilterBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def translate(self, filters: list[dict]) -> tuple[str, dict[str, Any]]:
+    def translate(
+        self, filters: list[dict], filter_combinator: str = "and"
+    ) -> tuple[str, dict[str, Any]]:
         """Translate a filter list to ClickHouse WHERE clause fragments.
 
         Returns only the filter conditions **without** the ``WHERE`` keyword.
@@ -1174,7 +1176,15 @@ class ClickHouseFilterBuilder:
             if condition:
                 conditions.append(condition)
 
-        where = " AND ".join(conditions) if conditions else ""
+        if conditions:
+            if filter_combinator == "or":
+                # Parenthesise: callers compose this fragment as ``... AND {where}``,
+                # so a bare OR would leak outside the surrounding scope.
+                where = "(" + " OR ".join(conditions) + ")"
+            else:
+                where = " AND ".join(conditions)
+        else:
+            where = ""
         return where, self._params
 
     def translate_sort(

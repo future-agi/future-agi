@@ -1063,6 +1063,7 @@ def fetch_system_metric_graph_ch(
     interval: str,
     metric_id: str,
     observe_type: str = "trace",
+    filter_combinator: str = "and",
     timeout_ms: int = GRAPH_QUERY_TIMEOUT_MS,
     refresh: bool = False,
     organization_id: str | None = None,
@@ -1115,6 +1116,7 @@ def fetch_system_metric_graph_ch(
             interval=interval,
             metric_id=str(metric_id or ""),
             observe_type=normalized_observe_type,
+            filter_combinator=filter_combinator,
         )
         response.update(
             {
@@ -1586,6 +1588,7 @@ def fetch_eval_graph_ch(
     interval: str,
     req_data_config: dict[str, Any],
     observe_type: str = "trace",
+    filter_combinator: str = "and",
     timeout_ms: int = GRAPH_QUERY_TIMEOUT_MS,
     refresh: bool = False,
     aggregation_context: str = "trace",
@@ -1618,6 +1621,7 @@ def fetch_eval_graph_ch(
             req_data_config=req_data_config,
             observe_type=normalized_observe_type,
             aggregation_context=normalized_aggregation_context,
+            filter_combinator=filter_combinator,
         )
     except ExactGraphReadError as exc:
         return degraded_graph_response(
@@ -1892,6 +1896,7 @@ def fetch_annotation_graph_ch(
     interval: str,
     req_data_config: dict[str, Any],
     observe_type: str,
+    filter_combinator: str = "and",
     timeout_ms: int = GRAPH_QUERY_TIMEOUT_MS,
     refresh: bool = False,
     aggregation_context: str = "trace",
@@ -1927,6 +1932,7 @@ def fetch_annotation_graph_ch(
             req_data_config=req_data_config,
             observe_type=normalized_observe_type,
             aggregation_context=normalized_aggregation_context,
+            filter_combinator=filter_combinator,
         )
     except ExactGraphReadError as exc:
         return degraded_graph_response(label_id, exc, provenance="exact_snapshot")

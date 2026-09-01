@@ -2769,6 +2769,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 body["filters"],
             )
             filters = graph_execution_filters(filters)
+            filter_combinator = body.get("filter_combinator", "and")
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             try:
@@ -2827,6 +2828,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         metric_id=metric_id,
                         observe_type="trace",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -2844,6 +2846,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="trace",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -2861,6 +2864,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="trace",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -4492,6 +4496,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Too many custom attribute keys were requested.",
                 code="invalid",
             )
+        filter_combinator = validated_data.get("filter_combinator", "and")
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
         cursor_token = validated_data.get("cursor")
@@ -4639,6 +4644,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
             annotation_label_ids_by_project=annotation_label_ids_by_project,
+            filter_combinator=filter_combinator,
         )
         requires_cursor = builder.requires_cursor_for_long_filtered_read()
         if requires_cursor and not cursor_supported:
@@ -6535,6 +6541,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 PAGE_DEPTH_EXCEEDED_MESSAGE,
                 code=PAGE_DEPTH_EXCEEDED_CODE,
             )
+        filter_combinator = query_params.get("filter_combinator", "and")
 
         # Get project_id from project_version
         project_version = ProjectVersion.objects.get(
@@ -6575,6 +6582,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
             project_version_id=str(project_version_id),
+            filter_combinator=filter_combinator,
         )
 
         # Phase 1: Get paginated traces. Project-version-scoped task/eval

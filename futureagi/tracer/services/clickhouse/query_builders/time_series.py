@@ -43,6 +43,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         filters: Frontend filter list (may be empty).
         interval: Time bucket interval (``"hour"``, ``"day"``, ``"week"``,
             ``"month"``).
+        filter_combinator: ``"and"`` (default) or ``"or"`` — how multiple
+            filters combine. Kept in sync with the trace/span list builders.
         system_metric_filters: Additional keyword filters (currently unused;
             reserved for future per-model breakdowns).
     """
@@ -63,6 +65,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         project_id: str,
         filters: list[dict] | None = None,
         interval: str = "hour",
+        filter_combinator: str = "and",
         system_metric_filters: dict[str, Any] | None = None,
         exact_snapshot: bool = False,
         observe_type: str = "span",
@@ -74,6 +77,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
         self.interval = interval
+        self.filter_combinator = filter_combinator
         self.system_metric_filters = system_metric_filters or {}
         self.exact_snapshot = bool(exact_snapshot)
         self.observe_type = str(observe_type or "span").strip().lower()
@@ -130,7 +134,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 span_date_scope=True,
                 query_mode=self.observe_type,
             )
-            extra_where, extra_params = filter_builder.translate(self.filters)
+            extra_where, extra_params = filter_builder.translate(
+                self.filters, filter_combinator=self.filter_combinator
+            )
         self.params.update(extra_params)
 
         if self.exact_snapshot:

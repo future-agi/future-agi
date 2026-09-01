@@ -1759,6 +1759,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # helpers below. Query construction is always SpanListQueryBuilderV2.
 
         filters = list(validated_data.get("filters", []) or [])
+        filter_combinator = validated_data.get("filter_combinator", "and")
         attested_filters = list(filters)
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
@@ -1897,6 +1898,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
+            filter_combinator=filter_combinator,
             page_number=page_number,
             page_size=page_size,
             eval_config_ids=eval_config_ids,
@@ -3012,6 +3014,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 body["filters"],
             )
             filters = graph_execution_filters(filters)
+            filter_combinator = body.get("filter_combinator", "and")
             _property = body["property"]
             interval = body["interval"]
             req_data_config = body["req_data_config"]
@@ -3067,6 +3070,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         metric_id=metric_id,
                         observe_type="span",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -3084,6 +3088,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="span",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)
@@ -3101,6 +3106,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="span",
+                        filter_combinator=filter_combinator,
                         refresh=refresh,
                         organization_id=(
                             str(project.organization_id)

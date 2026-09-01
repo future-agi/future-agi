@@ -57,6 +57,10 @@ const ObserveToolbar = ({
   onClearCompareExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // AND/OR combinator currently in effect for the Query tab's filters.
+  // Undefined hides the separator (surfaces with AND-only data paths);
+  // "and"/"or" shows it and re-seeds the panel on reopen.
+  filterCombinator,
   // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
   // prepends the matching id filter(s) to its property picker.
   tab,
@@ -455,28 +459,33 @@ const ObserveToolbar = ({
             attributeSource={attributeSource}
             projectId={projectId}
             allowWorkspaceScope={allowWorkspaceScope}
-            onApply={(newFilters) => {
+            // Only the trace/span surfaces have an OR-capable grid behind
+            // them; sessions/users keep the panel AND-only (no separator).
+            {...(filterCombinator !== undefined
+              ? { showCombinator: true, currentCombinator: filterCombinator }
+              : {})}
+            onApply={(newFilters, combinator) => {
               setPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
                 if (filterTarget === "compare") {
                   if (onClearCompareExtraFilters) {
                     onClearCompareExtraFilters();
                   } else {
-                    onApplyCompareExtraFilters?.([]);
+                    onApplyCompareExtraFilters?.([], "and");
                   }
                 } else if (onClearExtraFilters) {
                   onClearExtraFilters();
                 } else {
-                  onApplyExtraFilters?.([]);
+                  onApplyExtraFilters?.([], "and");
                 }
                 return;
               }
               const apiFilters = newFilters.map(buildApiFilterFromPanelRow);
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
-                onApplyCompareExtraFilters(apiFilters);
+                onApplyCompareExtraFilters(apiFilters, combinator);
               } else {
-                onApplyExtraFilters?.(apiFilters);
+                onApplyExtraFilters?.(apiFilters, combinator);
               }
             }}
           />
@@ -644,6 +653,7 @@ ObserveToolbar.propTypes = {
   onClearExtraFilters: PropTypes.func,
   onClearCompareExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  filterCombinator: PropTypes.oneOf(["and", "or"]),
   tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
