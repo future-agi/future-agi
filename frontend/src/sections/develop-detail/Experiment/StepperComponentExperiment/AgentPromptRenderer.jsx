@@ -149,22 +149,26 @@ const AgentPromptRenderer = ({
     }
   }, [variableNames, allColumns, fieldPrefix, getValues, setValue]);
 
-  // Derive variablesInfo from the mapping and store unmapped count in form
-  const prevNotMappedRef = useRef(null);
+  // Derive variablesInfo from the mapping
   const variablesInfo = useMemo(() => {
     const total = variableNames.length;
     const notMapped = variableNames.filter(
       (name) => !variableMapping?.[name],
     ).length;
-
-    if (prevNotMappedRef.current !== notMapped) {
-      prevNotMappedRef.current = notMapped;
-      setValue(`${fieldPrefix}.unmappedVariables`, notMapped, {
-        shouldValidate: false,
-      });
-    }
     return { total, notMapped };
-  }, [variableNames, variableMapping, setValue, fieldPrefix]);
+  }, [variableNames, variableMapping]);
+
+  // Mirror the unmapped count into the form, which is what gates the run.
+  // Kept in an effect rather than in the memo above: writing to the form
+  // while rendering warns about updating a component mid-render.
+  const prevNotMappedRef = useRef(null);
+  useEffect(() => {
+    if (prevNotMappedRef.current === variablesInfo.notMapped) return;
+    prevNotMappedRef.current = variablesInfo.notMapped;
+    setValue(`${fieldPrefix}.unmappedVariables`, variablesInfo.notMapped, {
+      shouldValidate: false,
+    });
+  }, [variablesInfo.notMapped, setValue, fieldPrefix]);
 
   // Set initial prompt version
   useEffect(() => {
