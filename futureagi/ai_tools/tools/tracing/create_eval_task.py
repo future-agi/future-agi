@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -10,6 +11,8 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+
+logger = structlog.get_logger(__name__)
 
 
 class CreateEvalTaskInput(PydanticBaseModel):
@@ -120,6 +123,23 @@ class CreateEvalTaskTool(BaseTool):
         filters = params.filters or {}
         filters["project_id"] = str(params.project_id)
 
+        # Last gate before a paid run: does each config's mapping actually resolve
+        # on the spans this task will read? `create_custom_eval_config` checks that
+        # a mapping value is a known attribute NAME, and the project attribute list
+        # is a union over every span, so a path that only ever appears on one span
+        # type passes that check and then reads empty on the type this task is
+        # scoped to. Nothing downstream catches it: the run just errors every row.
+        blocked = self._configs_that_resolve_on_nothing(project, filters, eval_configs)
+        if blocked:
+            return ToolResult.error(
+                "These eval configs map to attributes that carry no value on the "
+                "spans this task targets, so every row would error:\n"
+                + "\n".join(blocked)
+                + "\n\nRead a target span with `get_span` or `read_trace_span` and "
+                "map to a path you have seen hold content on that span.",
+                error_code="VALIDATION_ERROR",
+            )
+
         # Create eval task
         from django.utils import timezone
 
@@ -182,3 +202,47 @@ class CreateEvalTaskTool(BaseTool):
                 "status": eval_task.status,
             },
         )
+
+    _MAPPING_SAMPLE = 5
+
+    def _configs_that_resolve_on_nothing(self, project, filters, eval_configs):
+        """One line per config whose mapping resolves on none of a small sample.
+
+        Sampled rather than exhaustive: a mapping that reads empty on five spans
+        of the targeted type reads empty on all of them, and a sample keeps this
+        to one query on the create path.
+        """
+        from tracer.models.observation_span import ObservationSpan
+        from tracer.utils.eval import mapping_resolution_coverage
+
+        obs_types = filters.get("observation_type")
+        scope = "spans"
+        try:
+            span_qs = ObservationSpan.objects.filter(project=project)
+            if obs_types:
+                span_qs = span_qs.filter(observation_type__in=obs_types)
+                scope = f"`{'`, `'.join(str(t) for t in obs_types)}` spans"
+            sample = list(span_qs.order_by("-start_time")[: self._MAPPING_SAMPLE])
+        except Exception as e:
+            # Advisory read. A project with nothing to sample already gets no
+            # opinion, and a sample that cannot be taken is the same condition;
+            # neither is a reason to refuse a create the caller is entitled to.
+            logger.warning("eval_task_mapping_sample_unavailable", error=str(e))
+            return []
+        if not sample:
+            return []
+
+        blocked = []
+        for config in eval_configs:
+            if not config.mapping:
+                continue
+            hits = mapping_resolution_coverage(
+                config.mapping, sample, config.eval_template_id
+            )
+            if hits == 0:
+                pairs = ", ".join(f"`{k}` -> `{v}`" for k, v in config.mapping.items())
+                blocked.append(
+                    f"- `{config.name}`: {pairs} resolves on 0 of "
+                    f"{len(sample)} sampled {scope}"
+                )
+        return blocked
