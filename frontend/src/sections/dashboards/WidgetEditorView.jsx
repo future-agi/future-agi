@@ -4165,7 +4165,14 @@ export default function WidgetEditorView() {
     );
   }
 
-  if (!dashboard) {
+  // A definite 404 (after the cross-workspace resolve has run) is the only
+  // case rendered as "not found" here. Transient failures (network / 5xx)
+  // must fall through to the editorLoadState error branch below, which shows
+  // the retry UI instead of claiming the dashboard is missing.
+  if (
+    !dashboard &&
+    (isDashboardError ? dashboardError?.statusCode === 404 : resolveAttemptedWorkspace)
+  ) {
     return (
       <Box
         sx={{

@@ -744,6 +744,7 @@ export default function DashboardDetailView() {
     isLoading,
     isError,
     error,
+    refetch,
   } = useDashboardDetail(dashboardId);
 
   // Auto-resolve and switch workspace when a dashboard 404s because it
@@ -1249,7 +1250,32 @@ export default function DashboardDetailView() {
     );
   }
 
+  // A definite 404 (after the cross-workspace resolve has run) is the only
+  // case rendered as "not found". Transient failures (network / 5xx) must
+  // not masquerade as a missing dashboard — they surface through the global
+  // error toast and a retry via refetch.
   if (!dashboard) {
+    if (isError && error?.statusCode !== 404) {
+      return (
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "60vh",
+            gap: 2,
+          }}
+        >
+          <Typography color="text.secondary">
+            Something went wrong while loading this dashboard.
+          </Typography>
+          <Button variant="outlined" size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </Box>
+      );
+    }
     return (
       <Box
         sx={{

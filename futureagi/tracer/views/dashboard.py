@@ -6657,7 +6657,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         # Verify the requesting user belongs to the same organization.
         # A user in org A should not be able to probe dashboards in org B.
-        org = getattr(request, "organization", None)
+        # Fall back to the user's own organization when the request-scoped
+        # attribute is missing so the boundary is always enforced.
+        from accounts.utils import get_request_organization
+
+        org = getattr(request, "organization", None) or get_request_organization(
+            request
+        )
         if org and workspace.organization_id != org.id:
             return self._gm.not_found("Dashboard not found")
 
@@ -6679,7 +6685,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 has_access = bool(
                     org_role and org_role in RolePermissions.GLOBAL_ACCESS_ROLES
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "resolve_workspace_role_check_failed",
+                    dashboard_id=str(pk),
+                    workspace_id=str(workspace.id),
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
                 has_access = False
 
         if not has_access:
