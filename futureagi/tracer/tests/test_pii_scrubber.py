@@ -1,6 +1,7 @@
 """Tests for tracer.utils.pii_scrubber."""
 
 import json
+import time
 from unittest import mock
 
 import pytest
@@ -13,11 +14,11 @@ def _reset_engines():
 
     pii_scrubber._analyzer = None
     pii_scrubber._anonymizer = None
-    pii_scrubber._INIT_FAILED = False
+    pii_scrubber._INIT_FAILED_AT = None
     yield
     pii_scrubber._analyzer = None
     pii_scrubber._anonymizer = None
-    pii_scrubber._INIT_FAILED = False
+    pii_scrubber._INIT_FAILED_AT = None
 
 
 # ---------------------------------------------------------------------------
@@ -204,3 +205,95 @@ class TestScrubPiiInSpanBatch:
         scrub_pii_in_span_batch(spans, {"proj": True})
         assert spans[0]["attributes"]["fi.span.kind"] == "LLM"
         assert "<EMAIL_ADDRESS>" in spans[0]["attributes"]["fi.input.value"]
+
+
+# ---------------------------------------------------------------------------
+# Init failure → recovery
+# ---------------------------------------------------------------------------
+class TestInitRecovery:
+    def test_failure_sets_timestamp(self):
+        from tracer.utils import pii_scrubber
+
+        with mock.patch.dict(
+            "sys.modules",
+            {"presidio_analyzer": None, "presidio_anonymizer": None},
+        ):
+            assert pii_scrubber._ensure_engines() is False
+        assert pii_scrubber._INIT_FAILED_AT is not None
+
+    def test_no_retry_during_cooldown(self):
+        from tracer.utils import pii_scrubber
+
+        pii_scrubber._INIT_FAILED_AT = time.monotonic()
+        init_call = mock.patch(
+            "tracer.utils.pii_scrubber.AnalyzerEngine",
+            side_effect=ImportError,
+        )
+        with init_call as m:
+            assert pii_scrubber._ensure_engines() is False
+            m.assert_not_called()
+
+    def test_retry_after_cooldown(self):
+        from tracer.utils import pii_scrubber
+
+        pii_scrubber._INIT_FAILED_AT = time.monotonic() - pii_scrubber._RETRY_INTERVAL - 1
+        pii_scrubber._analyzer = mock.MagicMock()
+        pii_scrubber._anonymizer = mock.MagicMock()
+        assert pii_scrubber._ensure_engines() is True
+
+    def test_repeated_failures_keep_retrying(self):
+        from tracer.utils import pii_scrubber
+
+        pii_scrubber._analyzer = None
+        pii_scrubber._anonymizer = None
+        pii_scrubber._INIT_FAILED_AT = None
+
+        for _ in range(3):
+            with mock.patch.dict("sys.modules", {"presidio_analyzer": None}):
+                assert pii_scrubber._ensure_engines() is False
+            assert pii_scrubber._INIT_FAILED_AT is not None
+            pii_scrubber._INIT_FAILED_AT = (
+                time.monotonic() - pii_scrubber._RETRY_INTERVAL - 1
+            )
+
+        pii_scrubber._analyzer = mock.MagicMock()
+        pii_scrubber._anonymizer = mock.MagicMock()
+        assert pii_scrubber._ensure_engines() is True
+
+    def test_scrubbing_resumes_after_recovery(self):
+        from tracer.utils import pii_scrubber
+        from tracer.utils.pii_scrubber import scrub_pii_in_string
+
+        pii_scrubber._analyzer = mock.MagicMock()
+        pii_scrubber._anonymizer = mock.MagicMock()
+        pii_scrubber._INIT_FAILED_AT = None
+
+        pii_scrubber._analyzer.analyze.return_value = [mock.MagicMock()]
+        pii_scrubber._anonymizer.anonymize.return_value = mock.MagicMock(
+            text="<EMAIL_ADDRESS>"
+        )
+
+        result = scrub_pii_in_string("Contact test@example.com")
+        assert result == "<EMAIL_ADDRESS>"
+
+    def test_repeated_calls_dont_corrupt_state(self):
+        from tracer.utils import pii_scrubber
+
+        pii_scrubber._analyzer = None
+        pii_scrubber._anonymizer = None
+        pii_scrubber._INIT_FAILED_AT = None
+
+        def slow_init():
+            time.sleep(0.01)
+            pii_scrubber._analyzer = mock.MagicMock()
+            pii_scrubber._anonymizer = mock.MagicMock()
+            return True
+
+        with mock.patch.object(pii_scrubber, "_ensure_engines", side_effect=slow_init):
+            results = []
+            for _ in range(5):
+                results.append(pii_scrubber._ensure_engines())
+
+        assert all(r is True for r in results)
+        assert pii_scrubber._analyzer is not None
+        assert pii_scrubber._anonymizer is not None
