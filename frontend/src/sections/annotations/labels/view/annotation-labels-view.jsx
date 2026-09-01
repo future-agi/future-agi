@@ -231,7 +231,7 @@ export default function AnnotationLabelsView() {
             value={filters.archived ? "archived" : "active"}
             onChange={handleArchiveViewChange}
             sx={{
-              height: 36,
+              height: 30,
               "& .MuiToggleButton-root": {
                 px: 1.25,
                 borderRadius: "4px",
