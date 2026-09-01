@@ -296,7 +296,6 @@ describe("useDashboardDetail retry policy", () => {
   });
 });
 
-describe("useResolveDashboardWorkspace", () => {
 describe("useDashboardMetricsPaginated", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1876,6 +1875,11 @@ describe("useDatasetColumnValues exact failure semantics", () => {
     vi.clearAllMocks();
   });
 
+describe("useResolveDashboardWorkspace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("does not auto-fetch (enabled: false) and returns null data by default", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -1915,7 +1919,8 @@ describe("useDatasetColumnValues exact failure semantics", () => {
       workspace_id: "ws-1",
       workspace_name: "Test WS",
     });
-  });
+});
+
 });
   it("sends the stable dataset-column identity and normalizes exact options", async () => {
     mocks.get.mockResolvedValue({
