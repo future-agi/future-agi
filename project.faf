@@ -1,0 +1,98 @@
+# project.faf — IANA application/vnd.faf+yaml
+# Structured project context for future-agi/future-agi. AGENTS.md is authored from this file.
+# Faithful distillation of README.md, CONTRIBUTING.md, TESTING.md, INSTALLATION.md, pyproject.toml,
+# frontend/package.json, the two go.mod files, and docker-compose.yml — no new claims, no policy.
+# Not a replacement for README / CONTRIBUTING / TESTING — those stay the human source of truth.
+# Slots that genuinely do not apply to a repo this shape are marked `slotignored`.
+
+faf_version: "3.0"
+
+project:
+  name: future-agi
+  goal: >
+    Open-source, end-to-end platform for evaluating, observing and improving LLM and
+    AI-agent applications — tracing, evals, simulations, guardrails, an OpenAI-compatible
+    gateway and optimization, on one platform and one feedback loop from first prototype
+    to live deployment. Self-hostable (Apache-2.0) or managed Future AGI Cloud.
+  main_language: Python
+  type: fullstack
+
+human_context:
+  who: Contributors and teams building, evaluating and operating LLM / AI-agent applications
+  what: >
+    An open-source AI evaluation and observability platform — OpenTelemetry tracing,
+    LLM-as-judge and code evaluators, agent simulation, real-time guardrails and an
+    OpenAI-compatible gateway — across a Django + React + Go codebase.
+  why: >
+    Most AI agents fail in production and teams end up stitching together evals,
+    observability and guardrails that never close the loop. Future AGI collapses all of
+    it into one platform and one feedback loop, so agents self-improve instead of only
+    being monitored.
+  where: >
+    Self-hosted via Docker Compose (`./bin/install`; backend http://localhost:8000,
+    frontend http://localhost:3031) or managed Future AGI Cloud (app.futureagi.com).
+    Apache-2.0, source at github.com/future-agi/future-agi.
+  when: >
+    Nightly releases for early testing; Docker images tagged roughly every two weeks and
+    SDK minor versions as features land (SemVer). Stable release forthcoming.
+  how: >
+    Django backend under `futureagi/` (tracer, agentic_eval, simulate, accounts,
+    model_hub, mcp_server), React + Vite frontend under `frontend/`, Go gateway under
+    `agentcc-gateway/` and OTLP→ClickHouse collector under `fi-collector/`. Bring the
+    stack up with `./bin/install` or `docker compose up -d`.
+
+stack:
+  frontend: React 18 + Vite 5 (JavaScript, ESM) — frontend/
+  css_framework: Emotion (CSS-in-JS, via MUI)
+  ui_library: MUI v5 (@mui/material, @mui/lab, @mui/x-data-grid, @mui/x-date-pickers), AG Grid
+  state_management: TanStack Query v5 (server state) + Zustand v5 (client state); react-hook-form
+  backend: Django 5.1 + Django REST Framework (Python >=3.11) — futureagi/; Granian ASGI server; Celery + Temporal workers
+  api_type: REST (Django REST Framework); OpenAI-compatible HTTP at the gateway; OTLP ingest for traces
+  runtime: Docker / Docker Compose (backend :8000, frontend :3031)
+  database: PostgreSQL (primary) · ClickHouse (spans / traces) · Redis (cache + broker) · Temporal (workflows) · Kafka (property-catalog pipeline)
+  connection: Django ORM + psycopg; clickhouse-connect / clickhouse-driver for ClickHouse
+  hosting: Self-hostable via Docker Compose, or managed Future AGI Cloud
+  build: Vite (frontend) · Make + Docker (backend) · Go toolchain (agentcc-gateway, fi-collector) · release-please for versioning
+  cicd: GitHub Actions — per-branch frontend workflows (feature / develop / main) + e2e-ci.yml Playwright on dev/main
+  monorepo_tool: slotignored
+  package_manager: yarn (repo root + frontend/) · uv / pip (futureagi/, pyproject.toml) · Go modules (agentcc-gateway/, fi-collector/)
+  workspaces: slotignored
+  admin: Django admin
+  cache: Redis
+  search: ChromaDB / Qdrant / Weaviate client libraries (vector stores for eval + RAG)
+  storage: MinIO (S3-compatible object storage)
+
+monorepo:
+  packages_count: "4 deployable services (futureagi, frontend, agentcc-gateway, fi-collector)"
+  build_orchestrator: slotignored
+  versioning_strategy: release-please, SemVer, per-service
+  shared_configs: slotignored
+  remote_cache: slotignored
+
+tech_stack:
+  - Python
+  - Django
+  - JavaScript
+  - React
+  - Vite
+  - Go
+  - PostgreSQL
+  - ClickHouse
+  - Redis
+  - OpenTelemetry
+  - Docker
+  - Temporal
+
+key_files:
+  - README.md
+  - CONTRIBUTING.md
+  - TESTING.md
+  - INSTALLATION.md
+  - BRANCH_NAMING_CONVENTION.md
+  - docker-compose.yml
+  - futureagi/pyproject.toml
+  - futureagi/Makefile
+  - frontend/package.json
+  - agentcc-gateway/go.mod
+  - fi-collector/go.mod
+  - .agents/skills/
