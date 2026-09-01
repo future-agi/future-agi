@@ -35935,6 +35935,7 @@ export const TracerEvalTaskListResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskListResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskListResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36005,6 +36006,7 @@ export const TracerEvalTaskCreateBody = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskCreateBodyFiltersDateRangeMin).max(tracerEvalTaskCreateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36090,6 +36092,7 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36170,6 +36173,7 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36222,9 +36226,23 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
 })
 
 
+export const tracerEvalTaskGetUsageQueryPageSizeDefault = 25;
+
+export const tracerEvalTaskGetUsageQueryPeriodDefault = `30d`;
+export const tracerEvalTaskGetUsageQueryEvalAggregationDefault = false;
+export const tracerEvalTaskGetUsageQuerySpanAggregationDefault = false;
+
 export const TracerEvalTaskGetUsageQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
-  "limit": zod.number().optional().describe('Number of results to return per page.')
+  "limit": zod.number().optional().describe('Number of results to return per page.'),
+  "page_size": zod.number().min(1).default(tracerEvalTaskGetUsageQueryPageSizeDefault),
+  "eval_task_id": zod.string().uuid(),
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(tracerEvalTaskGetUsageQueryPeriodDefault),
+  "eval_id": zod.string().uuid().optional(),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional(),
+  "eval_aggregation": zod.boolean().default(tracerEvalTaskGetUsageQueryEvalAggregationDefault),
+  "span_aggregation": zod.boolean().default(tracerEvalTaskGetUsageQuerySpanAggregationDefault)
 })
 
 export const tracerEvalTaskGetUsageResponseResultsItemNameMax = 255;
@@ -36250,6 +36268,7 @@ export const TracerEvalTaskGetUsageResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36345,6 +36364,7 @@ export const TracerEvalTaskListEvalTasksResponseItem = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskListEvalTasksResponseFiltersDateRangeMin).max(tracerEvalTaskListEvalTasksResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36440,6 +36460,7 @@ export const TracerEvalTaskListEvalTasksWithProjectNameResponseItem = zod.object
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMin).max(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36566,6 +36587,7 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36642,6 +36664,7 @@ export const TracerEvalTaskReadResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskReadResponseFiltersDateRangeMin).max(tracerEvalTaskReadResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36715,6 +36738,7 @@ export const TracerEvalTaskUpdateBody = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateBodyFiltersDateRangeMin).max(tracerEvalTaskUpdateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36781,6 +36805,7 @@ export const TracerEvalTaskUpdateResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateResponseFiltersDateRangeMin).max(tracerEvalTaskUpdateResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36854,6 +36879,7 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPartialUpdateBodyFiltersDateRangeMin).max(tracerEvalTaskPartialUpdateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
@@ -36920,6 +36946,7 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPartialUpdateResponseFiltersDateRangeMin).max(tracerEvalTaskPartialUpdateResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
+  "date_preset": zod.enum(['30m', '6h', 'today', 'yesterday', '7d', '30d', '3m', '6m', '12m', 'custom']).optional().describe('Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
   "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
   "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),

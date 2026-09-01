@@ -5,7 +5,6 @@ import string
 
 import requests
 import structlog
-from disposable_email_domains import blocklist as DISPOSABLE_EMAIL_DOMAINS
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
@@ -15,6 +14,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
+from accounts.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
 from accounts.models.organization import Organization
 from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
@@ -615,6 +615,16 @@ def _run_post_registration(user_id, generated_password):
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
+
+        org = get_user_organization(user)
+        if org:
+            from accounts.user_onboard import (
+                create_demo_traces_and_spans,
+                upload_demo_dataset,
+            )
+
+            upload_demo_dataset(org.id, str(user.id))
+            create_demo_traces_and_spans(str(org.id))
 
 
 def existing_member_access_will_change(

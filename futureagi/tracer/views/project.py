@@ -53,7 +53,11 @@ from tracer.utils.constants import (
     PROTOTYPE_CODEBLOCK,
 )
 from tracer.utils.graphs_optimized import get_all_system_metrics
-from tracer.utils.helper import get_default_project_version_config, get_sort_query
+from tracer.utils.helper import (
+    get_default_project_session_config,
+    get_default_project_version_config,
+    get_sort_query,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -370,7 +374,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not project:
                 return self._gm.bad_request("Project not found")
 
+            # Merge in default columns missing from the stored config (empty
+            # config, or one seeded before newer columns existed) so their
+            # visibility can be persisted instead of silently dropped.
+            defaults = get_default_project_session_config()
             config = project.session_config or []
+            existing_ids = {item.get("id") for item in config}
+            config = config + [d for d in defaults if d["id"] not in existing_ids]
 
             for key, value in visibility.items():
                 config_entry = next(
@@ -380,7 +390,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     config_entry["is_visible"] = value
 
             project.session_config = config
-            project.save()
+            project.save(update_fields=["session_config"])
 
             return self._gm.success_response({"project_id": project.id})
         except Exception as e:

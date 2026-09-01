@@ -57,7 +57,7 @@ const SESSION_BULK_ACTIONS = [
 
 // Session-specific
 import SessionGrid from "./Session-grid";
-import { initialVisibility } from "./common";
+import { initialVisibility, resolveColumnVisibility } from "./common";
 import { REPLAY_MODULES } from "./ReplaySessions/configurations";
 import {
   useReplaySessionsStoreShallow,
@@ -98,6 +98,12 @@ const BASE_SESSION_FILTER_FIELDS = [
   { id: "user_id", name: "User ID", category: "system", type: "string" },
   { id: "duration", name: "Duration", category: "system", type: "number" },
   { id: "total_cost", name: "Total Cost", category: "system", type: "number" },
+  {
+    id: "total_tokens",
+    name: "Total Tokens",
+    category: "system",
+    type: "number",
+  },
   {
     id: "total_traces_count",
     name: "Total Traces",
@@ -926,7 +932,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const displayColumns = useMemo(() => {
     return sessionColumns.map((col) => ({
       ...col,
-      isVisible: updateObj[col.id] ?? true,
+      isVisible: resolveColumnVisibility(col, updateObj),
     }));
   }, [sessionColumns, updateObj]);
 

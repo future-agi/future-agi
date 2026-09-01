@@ -31368,7 +31368,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/get_usage/": {
       "get": {
         "operationId": "tracer_eval-task_get_usage",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
@@ -31382,6 +31382,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": false,
             "schema": {
               "type": "integer"
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 25
+            }
+          },
+          "eval_task_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "period": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "1d",
+                "7d",
+                "30d",
+                "90d",
+                "180d",
+                "365d"
+              ],
+              "default": "30d"
+            }
+          },
+          "eval_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "eval_aggregation": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "span_aggregation": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -54581,6 +54648,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "maxItems": 2,
               "description": "Inclusive start/end ISO timestamps."
             },
+            "date_preset": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "today",
+                "yesterday",
+                "7d",
+                "30d",
+                "3m",
+                "6m",
+                "12m",
+                "custom"
+              ],
+              "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+            },
             "created_at": {
               "type": "string",
               "description": "Lower-bound ISO timestamp for legacy task filters."
@@ -54902,6 +54985,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "minItems": 2,
               "maxItems": 2,
               "description": "Inclusive start/end ISO timestamps."
+            },
+            "date_preset": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "today",
+                "yesterday",
+                "7d",
+                "30d",
+                "3m",
+                "6m",
+                "12m",
+                "custom"
+              ],
+              "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
             },
             "created_at": {
               "type": "string",

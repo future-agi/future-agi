@@ -71,7 +71,7 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 
 		// Non-blocking connectivity check for local providers.
 		if IsLocalProvider(pcfg) {
-			go connectivityCheck(name, pcfg.BaseURL)
+			go connectivityCheck(name, pcfg.BaseURL, pcfg.EffectiveAPIPathPrefix())
 		}
 	}
 
@@ -355,10 +355,13 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
-	resp, err := client.Get(baseURL + "/v1/models")
+	// Built the same way the provider builds its own URLs, or a provider that
+	// serves no /v1 would be probed at a path it does not have.
+	modelsURL := config.JoinEndpoint(baseURL, cfg.EffectiveAPIPathPrefix(), "/v1/models")
+	resp, err := client.Get(modelsURL)
 	if err != nil {
 		slog.Warn("auto-discover: failed to reach provider",
-			"provider", name, "url", baseURL+"/v1/models", "error", err)
+			"provider", name, "url", modelsURL, "error", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -396,9 +399,9 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 
 // connectivityCheck performs a non-blocking health check against a provider.
 // Runs in a goroutine; logs result but never blocks startup.
-func connectivityCheck(name, baseURL string) {
+func connectivityCheck(name, baseURL, pathPrefix string) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	url := strings.TrimRight(baseURL, "/") + "/v1/models"
+	url := config.JoinEndpoint(baseURL, pathPrefix, "/v1/models")
 	resp, err := client.Get(url)
 	if err != nil {
 		slog.Warn("connectivity check: provider unreachable (may start later)",

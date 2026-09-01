@@ -29,7 +29,10 @@ import {
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
 import { devTracing, prodTracing } from "./newrelic";
-import { CURRENT_ENVIRONMENT } from "./config-global";
+import {
+  CURRENT_ENVIRONMENT,
+  REACT_QUERY_DEVTOOLS_ENABLED,
+} from "./config-global";
 import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
@@ -60,7 +63,8 @@ const _extractParts = (result) => {
   return String(result);
 };
 
-const extractErrorMessage = (result) => _extractParts(result) || "Something went wrong";
+const extractErrorMessage = (result) =>
+  _extractParts(result) || "Something went wrong";
 
 const handleError = (error, variable, context, mutation) => {
   if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
@@ -214,7 +218,9 @@ export default function App() {
           </WorkspaceProvider>
         </OrganizationProvider>
       </AuthProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      {REACT_QUERY_DEVTOOLS_ENABLED && (
+        <ReactQueryDevtools initialIsOpen={false} />
+      )}
     </QueryClientProvider>
   );
 }

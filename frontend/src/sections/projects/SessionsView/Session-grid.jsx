@@ -15,7 +15,11 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import TracesDrawer from "../TracesDrawer/TracesDrawer";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { getSessionListColumnDef } from "./common";
+import {
+  getSessionListColumnDef,
+  initialVisibility,
+  mergeNonCustomColumns,
+} from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -277,21 +281,13 @@ const SessionGrid = React.forwardRef(
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  let finalNonCustom;
-                  if (idSetChanged) {
-                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
-                    const seen = new Set();
-                    const kept = currentNonCustom
-                      .filter((cc) => newById.has(cc.id))
-                      .map((cc) => {
-                        seen.add(cc.id);
-                        return newById.get(cc.id);
-                      });
-                    const added = newCols.filter((nc) => !seen.has(nc.id));
-                    finalNonCustom = [...kept, ...added];
-                  } else {
-                    finalNonCustom = currentNonCustom;
-                  }
+                  const finalNonCustom = idSetChanged
+                    ? mergeNonCustomColumns(
+                        currentNonCustom,
+                        newCols,
+                        updateObjRef.current,
+                      )
+                    : currentNonCustom;
                   setColumns(
                     allCustom.length > 0
                       ? [...finalNonCustom, ...allCustom]
@@ -322,7 +318,22 @@ const SessionGrid = React.forwardRef(
                 const columnConfig = (newCols || []).find(
                   (config) => config.id === column.field,
                 );
-                return columnConfig ? columnConfig.isVisible : true;
+                const backendVisible = columnConfig
+                  ? columnConfig.isVisible
+                  : true;
+
+                const isDefaultColumn = Object.hasOwn(
+                  initialVisibility,
+                  column.field,
+                );
+                if (
+                  !isDefaultColumn &&
+                  !backendVisible &&
+                  updateObjRef.current?.[column.field] === true
+                ) {
+                  return true;
+                }
+                return backendVisible;
               });
 
               setFilteredColumnDefs(filteredColumns);

@@ -255,3 +255,73 @@ describe("DashboardDetailView — cross-workspace recovery", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("DashboardDetailView — widget description (TH-7678)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
+    // Reset the 404 state the cross-workspace recovery suite leaves behind.
+    h.dashboardData = { id: "dash-1", name: "My Dash" };
+  });
+
+  it("renders the description on the widget card", () => {
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "Total tokens consumed per day",
+        position: 0,
+        width: 12,
+      },
+    ];
+    render(<DashboardDetailView />);
+    expect(screen.getByText("Tokens")).toBeInTheDocument();
+    expect(
+      screen.getByText("Total tokens consumed per day"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the description for a read-only viewer too", () => {
+    h.canEdit = { ...VIEWER };
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "Total tokens consumed per day",
+        position: 0,
+        width: 12,
+      },
+    ];
+    render(<DashboardDetailView />);
+    expect(
+      screen.getByText("Total tokens consumed per day"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no description line when the widget has none", () => {
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    const { container } = render(<DashboardDetailView />);
+    // The card header holds the title row and nothing else.
+    const header = container.querySelector(
+      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+    );
+    expect(header.children).toHaveLength(1);
+  });
+
+  it("treats a whitespace-only description as no description", () => {
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "   ",
+        position: 0,
+        width: 12,
+      },
+    ];
+    const { container } = render(<DashboardDetailView />);
+    const header = container.querySelector(
+      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+    );
+    expect(header.children).toHaveLength(1);
+  });
+});

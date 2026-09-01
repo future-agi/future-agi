@@ -204,6 +204,45 @@ def test_apply_eval_group_dataset_propagates_shared_params(
 
 
 @pytest.mark.django_db
+def test_apply_eval_group_rejects_a_non_path_mapping_with_400(
+    auth_client, user, workspace, rag_function_template, dataset_for_eval
+):
+    """A non-path mapping value is a client error, not a server error.
+
+    The view maps ValueError to 400 and everything else to a 500 whose body is
+    the stringified exception, so raising a DRF ValidationError from the gate
+    answered 500 and leaked ErrorDetail(...) to the caller.
+    """
+    dataset, _hypothesis_col, reference_col = dataset_for_eval
+    eval_group = EvalGroup.objects.create(
+        name="dataset_bad_mapping_group",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    eval_group.eval_templates.add(rag_function_template)
+
+    response = auth_client.post(
+        "/model-hub/eval-groups/apply-eval-group/",
+        {
+            "eval_group_id": str(eval_group.id),
+            "page_id": "DATASET",
+            "filters": {"dataset_id": str(dataset.id), "model": "turing_small"},
+            "mapping": {
+                "hypothesis": {"source": "span_attribute", "column_id": "output.value"},
+                "reference": str(reference_col.id),
+            },
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    body = str(response.json())
+    assert "attribute path strings" in body
+    assert "ErrorDetail" not in body
+
+
+@pytest.mark.django_db
 def test_apply_eval_group_prompt_propagates_shared_params(
     auth_client, user, workspace, rag_function_template, prompt_template
 ):

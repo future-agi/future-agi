@@ -60385,7 +60385,7 @@ export type tracerEvalTaskGetUsageResponseError = (tracerEvalTaskGetUsageRespons
 
 export type tracerEvalTaskGetUsageResponse = (tracerEvalTaskGetUsageResponseSuccess | tracerEvalTaskGetUsageResponseError)
 
-export const getTracerEvalTaskGetUsageUrl = (params?: TracerEvalTaskGetUsageParams,) => {
+export const getTracerEvalTaskGetUsageUrl = (params: TracerEvalTaskGetUsageParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -60404,7 +60404,7 @@ export const getTracerEvalTaskGetUsageUrl = (params?: TracerEvalTaskGetUsagePara
   return stringifiedParams.length > 0 ? `/tracer/eval-task/get_usage/?${stringifiedParams}` : `/tracer/eval-task/get_usage/`
 }
 
-export const tracerEvalTaskGetUsage = async (params?: TracerEvalTaskGetUsageParams, options?: RequestInit): Promise<tracerEvalTaskGetUsageResponse> => {
+export const tracerEvalTaskGetUsage = async (params: TracerEvalTaskGetUsageParams, options?: RequestInit): Promise<tracerEvalTaskGetUsageResponse> => {
 
   return apiMutator<tracerEvalTaskGetUsageResponse>(getTracerEvalTaskGetUsageUrl(params),
   {

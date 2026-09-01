@@ -39,6 +39,7 @@ import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { red } from "src/theme/palette";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
   extractAttributeFilters,
   getTaskFilterApiKey,
@@ -88,7 +89,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",

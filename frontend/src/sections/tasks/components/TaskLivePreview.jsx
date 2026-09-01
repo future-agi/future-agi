@@ -28,6 +28,10 @@ import {
   resolvePath,
   sortSpansForMapping,
 } from "src/sections/evals/utils/rowPathWalker";
+import {
+  isMappingPath,
+  mappingPathLabel,
+} from "src/sections/evals/utils/evalMappingPath";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -1086,13 +1090,17 @@ const VariableMappingView = ({
                 >
                   {variables.map((variable) => {
                     const field = mapping[variable];
+                    const label = mappingPathLabel(field);
+                    const isPath = isMappingPath(field);
                     // Tri-state: `missing` warns, `unknown` (session traces
                     // whose spans weren't fetched) stays silent — the BE is
                     // the authoritative resolver at test time.
-                    const hit = spanDetail
-                      ? resolvePath(spanDetail, field)
-                      : { status: "unknown" };
-                    const showWarn = hit.status === "missing" && !!field;
+                    const hit =
+                      spanDetail && isPath
+                        ? resolvePath(spanDetail, field)
+                        : { status: "unknown" };
+                    const showNotInRow = hit.status === "missing" && isPath;
+                    const showWarn = showNotInRow || (!isPath && !!label);
                     return (
                       <Box
                         key={variable}
@@ -1121,8 +1129,8 @@ const VariableMappingView = ({
                           sx={{ color: "text.disabled" }}
                         />
                         <CustomTooltip
-                          title={field || ""}
-                          show={!!field}
+                          title={label}
+                          show={!!label}
                           type="default"
                           placement="top"
                           arrow
@@ -1139,10 +1147,10 @@ const VariableMappingView = ({
                               whiteSpace: "nowrap",
                             }}
                           >
-                            {field || "—"}
+                            {label || "—"}
                           </Typography>
                         </CustomTooltip>
-                        {showWarn && (
+                        {showNotInRow && (
                           <Typography
                             variant="caption"
                             color="warning.main"
