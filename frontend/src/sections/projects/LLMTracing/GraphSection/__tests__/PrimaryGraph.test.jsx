@@ -171,4 +171,77 @@ describe("PrimaryGraph", () => {
     const { id: _id, ...metricFilterWithoutId } = metricFilter;
     expect(postedFilters()).toEqual([metricFilterWithoutId]);
   });
+
+  it("requests the metric catalog scoped to the current project", async () => {
+    renderWithQueryClient(<PrimaryGraph observeIdOverride="project-alpha" />);
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
+
+    expect(axios.get).toHaveBeenCalledWith("/dashboard/metrics/", {
+      params: { project_ids: "project-alpha" },
+    });
+  });
+
+  it("does not serve one project's metric catalog to another", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    const { unmount } = render(
+      <QueryClientProvider client={queryClient}>
+        <PrimaryGraph observeIdOverride="project-alpha" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    unmount();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PrimaryGraph observeIdOverride="project-beta" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+    expect(axios.get).toHaveBeenLastCalledWith("/dashboard/metrics/", {
+      params: { project_ids: "project-beta" },
+    });
+  });
+
+  it("refetches graph data once the catalog resolves the selected metric", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        result: {
+          metrics: [
+            {
+              category: "system_metric",
+              name: "latency",
+              displayName: "Latency",
+              type: "number",
+            },
+            {
+              category: "eval_metric",
+              name: "eval-uuid-1",
+              displayName: "My Eval",
+              type: "number",
+            },
+          ],
+        },
+      },
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-alpha"
+        defaultMetric="eval-uuid-1"
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    await waitFor(() =>
+      expect(axios.post.mock.calls.at(-1)[1].req_data_config).toMatchObject({
+        id: "eval-uuid-1",
+      }),
+    );
+  });
 });

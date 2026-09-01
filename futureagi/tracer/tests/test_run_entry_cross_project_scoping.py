@@ -144,6 +144,49 @@ class TestRunEntryCrossProjectScoping:
         )
         _assert_completed(run_entry(entry), entry)
 
+    def test_every_span_load_in_run_entry_is_scoped_by_the_task_project(
+        self, project, config_project, eval_template, stub_run_eval, stub_cost_log
+    ):
+        """Every CH span point-read under run_entry must carry the task's
+        project_id. An unscoped read (`WHERE id = ...` alone) gets zero
+        primary-key pruning on the prod `spans` table and rides the per-query
+        memory limit — the 2026-08-20 incident where 3/10 task evals died with
+        "Observation span not found" was `_execute_evaluation`'s inner refetch
+        omitting project_id (CH code 241 masked as a missing span)."""
+        from tracer.services.clickhouse.v2 import eval_loader
+
+        config = _borrowed_config(
+            config_project, eval_template, {"input": "input", "output": "output"}
+        )
+        task = _task_with(project, config)
+        trace = Trace.objects.create(project=project, name="t")
+        span = _ch_only_span(project, trace)
+        entry = _make_entry(
+            target_type=EvalTargetType.SPAN,
+            observation_span_id=span.id,
+            trace=trace,
+            custom_eval_config=config,
+            eval_task_id=str(task.id),
+        )
+
+        real_get = eval_loader.get_observation_span
+        seen_project_ids = []
+
+        def recording_get(span_id, **kwargs):
+            seen_project_ids.append(kwargs.get("project_id"))
+            return real_get(span_id, **kwargs)
+
+        eval_loader.get_observation_span = recording_get
+        try:
+            _assert_completed(run_entry(entry), entry)
+        finally:
+            eval_loader.get_observation_span = real_get
+
+        assert seen_project_ids, "run_entry never loaded the span from CH"
+        assert all(str(pid) == str(project.id) for pid in seen_project_ids), (
+            f"unscoped span load(s) during run_entry: {seen_project_ids}"
+        )
+
     def test_session_target_completes_when_config_lives_in_sibling_project(
         self,
         observe_project,

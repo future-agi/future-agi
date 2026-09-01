@@ -58,9 +58,8 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	rc.Metadata["client_ip"] = extractClientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		parseMetadataHeader(meta, rc)
-	}
+	// Caller dimensions, from the x-agentcc-metadata header.
+	applyCallerMetadata(rc, r, nil)
 
 	// Peek key org_id before resolving org config (same as ChatCompletion).
 	h.peekKeyOrgID(rc)

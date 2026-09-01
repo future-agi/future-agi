@@ -122,7 +122,7 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
   };
 });
 vi.mock("src/hooks/useDeploymentMode", () => ({
-  useDeploymentMode: () => ({ isOSS: false }),
+  useDeploymentMode: () => ({ isOSS: false, isCloud: true }),
 }));
 
 vi.mock("notistack", async (importOriginal) => {

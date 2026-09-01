@@ -33,6 +33,8 @@ import { useRunEvalMutation } from "./getEvalsList";
 import { format } from "date-fns";
 import logger from "src/utils/logger";
 import EvaluationMappingFormContent from "./EvaluationMappingFormContent";
+import { sanitizeEvalMapping } from "src/sections/common/EvalPicker/serializeEvalConfig";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 
 function removeElements(array1, array2) {
   return array1.filter((element) => !array2.includes(element));
@@ -145,6 +147,9 @@ const EvaluationMappingFormChild = ({
 }) => {
   const { role } = useAuthContext();
   const theme = useTheme();
+  // The form defaults errorLocalizer to true, so hiding the field is not enough —
+  // the submitted value has to be gated as well.
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
 
   // Get the id for fetching JSON schemas
   const {
@@ -555,7 +560,7 @@ const EvaluationMappingFormChild = ({
             ? false
             : run,
         template_id: selectedEval.id,
-        error_localizer: errorLocalizer,
+        error_localizer: Boolean(errorLocalizer) && errorLocalizerAvailable,
         ...(kbId ? { kb_id: kbId } : {}),
       };
       if (payload.kb_id === "") {
@@ -583,7 +588,7 @@ const EvaluationMappingFormChild = ({
               ...(payload?.kb_id ? { kb_id: payload.kb_id } : {}),
             },
             page_id: EVALUATION_PAGE_ID_MAPPER[module],
-            mapping: payload.config?.mapping,
+            mapping: sanitizeEvalMapping(payload.config?.mapping),
             params: payload.config?.params || {},
             ...(removedEvals?.length > 0 && { deselected_evals: removedEvals }),
           };
@@ -595,7 +600,7 @@ const EvaluationMappingFormChild = ({
             project: id,
             name: payload.name,
             eval_template: payload.template_id,
-            mapping: payload.config?.mapping,
+            mapping: sanitizeEvalMapping(payload.config?.mapping),
             config: {
               ...(payload.config?.config || {}),
               params: payload.config?.params || {},

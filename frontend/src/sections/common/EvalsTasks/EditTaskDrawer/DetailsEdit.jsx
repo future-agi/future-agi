@@ -43,6 +43,7 @@ import {
 import ConfiguredEvaluationType from "src/sections/develop-detail/Common/ConfiguredEvaluationType/ConfiguredEvaluationType";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { sanitizeEvalMapping } from "src/sections/common/EvalPicker/serializeEvalConfig";
 import { useDebounce } from "src/hooks/use-debounce";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { getDefaultTaskValues } from "../common";
@@ -386,7 +387,7 @@ const DetailsEdit = ({
             project: project,
             name: values.name,
             eval_template: values.eval_template,
-            mapping: values.mapping,
+            mapping: sanitizeEvalMapping(values.mapping),
             config: values.config,
             filters: getNewTaskFilters(formValues, observeId, true).filters,
           });

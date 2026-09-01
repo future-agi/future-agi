@@ -2,6 +2,7 @@ import React from "react";
 import SvgColor from "src/components/svg-color";
 import { z } from "zod";
 import CallLogsCellRenderer from "./CallLogs/CallLogsCellRenderer";
+import withVoiceQuickFilter from "./CallLogs/withVoiceQuickFilter";
 import VoiceCostCell from "./CallLogs/VoiceCostCell";
 import VoiceLatencyCell from "./CallLogs/VoiceLatencyCell";
 import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
@@ -673,6 +674,75 @@ const generateAnnotationColumnsFromConfig = (
   );
 };
 
+// Quick-filterable voice columns, keyed by grid field; `id` is the backend
+// filter id. Anything absent either has no backend filter or its displayed
+// value doesn't match what the filter compares against.
+const VOICE_QUICK_FILTER_COLUMNS = {
+  duration_seconds: {
+    id: "duration",
+    name: "Duration",
+    groupBy: "System Metrics",
+  },
+  avg_agent_latency_ms: {
+    id: "avg_agent_latency_ms",
+    name: "Agent latency",
+    groupBy: "System Metrics",
+  },
+  turn_count: {
+    id: "turn_count",
+    name: "Turn count",
+    groupBy: "System Metrics",
+  },
+  agent_talk_percentage: {
+    id: "agent_talk_percentage",
+    name: "% agent talk",
+    groupBy: "System Metrics",
+  },
+  user_interruption_count: {
+    id: "user_interruption_count",
+    name: "User interruptions",
+    groupBy: "System Metrics",
+  },
+  ai_interruption_count: {
+    id: "ai_interruption_count",
+    name: "Agent interruption",
+    groupBy: "System Metrics",
+  },
+  user_wpm: { id: "user_wpm", name: "User WPM", groupBy: "System Metrics" },
+  bot_wpm: { id: "bot_wpm", name: "Agent WPM", groupBy: "System Metrics" },
+  // No `groupBy` on purpose: this one is text, and the `System Metrics` branch
+  // in applyQuickFilters assumes numeric — it would emit
+  // `filter_value: ["customer-ended-call", ""]` into the number popover.
+  ended_reason: { id: "ended_reason", name: "Ended reason" },
+};
+
+// VoiceLatencyCell displays `avg_agent_latency_ms || turnLatencyAverage`, but
+// this column only filters the former — `turnLatencyAverage` is a separate
+// backend column (aliased `response_time`). Suppress the affordance when the
+// number on screen came from the fallback, so a click can never filter a value
+// the row never displayed. Returning null hides the button.
+export const getAgentLatencyFilterValue = (params) => {
+  const value = Number(params?.data?.avg_agent_latency_ms);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const VOICE_QUICK_FILTER_VALUE_GETTERS = {
+  avg_agent_latency_ms: getAgentLatencyFilterValue,
+};
+
+const withQuickFilterIfSupported = (column) => {
+  const sourceColumn = VOICE_QUICK_FILTER_COLUMNS[column.field];
+  if (!sourceColumn || !column.cellRenderer) return column;
+  return {
+    ...column,
+    context: { ...column.context, sourceColumn },
+    cellRenderer: withVoiceQuickFilter(
+      column.cellRenderer,
+      VOICE_QUICK_FILTER_VALUE_GETTERS[column.field],
+    ),
+  };
+};
+
 // Generate AG Grid columns from evalOutputs
 export const getCallLogsColumnDefs = (
   _rows = [],
@@ -862,7 +932,11 @@ export const getCallLogsColumnDefs = (
     }));
   }
 
-  return [...baseColumns, ...evalColumns, ...annotationColumns];
+  return [
+    ...baseColumns.map(withQuickFilterIfSupported),
+    ...evalColumns,
+    ...annotationColumns,
+  ];
 };
 
 export const useAgentsList = () => {

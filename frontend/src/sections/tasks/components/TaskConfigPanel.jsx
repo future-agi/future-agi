@@ -31,6 +31,7 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import TaskFilterBar from "./TaskFilterBar";
 
 const ROW_TYPE_OPTIONS = [
@@ -229,7 +230,7 @@ const ConfiguredEvalCard = ({ evalItem, onEdit, onRemove }) => {
             {mappedKeys.slice(0, 4).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",
@@ -397,10 +398,10 @@ const TaskConfigPanel = ({
         eval_template: tplId,
         name: evalConfig.name,
         model: evalConfig.model || null,
-        mapping: evalConfig.mapping || {},
+        mapping: serialized.mapping,
         config: {
           ...serialized.config,
-          mapping: evalConfig.mapping || {},
+          mapping: serialized.mapping,
         },
         error_localizer: !!evalConfig.errorLocalizerEnabled,
       };
@@ -421,7 +422,7 @@ const TaskConfigPanel = ({
               ...(evalConfig.config || {}),
               ...corePayload.config,
             },
-            mapping: evalConfig.mapping || {},
+            mapping: serialized.mapping,
           };
         } else {
           const { data: resp } = await axios.post(
@@ -437,7 +438,7 @@ const TaskConfigPanel = ({
               ...(evalConfig.config || {}),
               ...corePayload.config,
             },
-            mapping: evalConfig.mapping || {},
+            mapping: serialized.mapping,
           };
         }
       } catch (error) {

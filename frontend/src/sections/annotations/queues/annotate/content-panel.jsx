@@ -101,14 +101,16 @@ export default function ContentPanel({ item }) {
   }
 
   // For trace / observation_span, show the full trace view inline
-  // Voice traces (from simulator projects) get the voice-specific UI
+  // Voice traces (conversation root span) get the voice-specific UI
   if (sourceType === "trace" || sourceType === "observation_span") {
     const traceId = content?.trace_id;
-    const isVoiceProject = content?.project_source === "simulator";
+    const isVoiceTrace =
+      content?.observation_type === "conversation" ||
+      content?.project_source === "simulator";
     const spanId =
       sourceType === "observation_span" ? content?.span_id : undefined;
 
-    if (traceId && sourceType === "trace" && isVoiceProject) {
+    if (traceId && sourceType === "trace" && isVoiceTrace) {
       // Voice calls mount the embedded drawer which manages its own
       // scroll; skip the padding/overflow wrapper the other sources use
       // so the drawer can fill the full content panel height.
@@ -655,11 +657,7 @@ function VoiceCallContent({ traceId }) {
   }
 
   if (!callData) {
-    return (
-      <Typography color="text.secondary">
-        Voice call data not available.
-      </Typography>
-    );
+    return <InlineTraceView traceId={traceId} />;
   }
 
   const drawerData = {
