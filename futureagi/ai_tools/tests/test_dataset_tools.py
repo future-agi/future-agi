@@ -4,7 +4,11 @@ import pytest
 
 from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_dataset, make_dataset_with_rows
+from ai_tools.tests.fixtures import (
+    make_dataset,
+    make_dataset_with_rows,
+    make_eval_template,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -689,3 +693,90 @@ class TestUpdateCellValueTool:
 
         assert not result.is_error
         assert result.data["updated"] == 2
+
+
+class TestSystemEvalTemplateResolution:
+    """A system template carries no organization and no workspace, which is exactly what
+    the default manager filters out. `list_eval_templates` hands those ids to the caller,
+    so every tool that consumes one has to be able to resolve it."""
+
+    @staticmethod
+    def _make_global(template):
+        """A pre_save signal back-fills organization and workspace from the current
+        context, so a system template cannot be created by passing None. A queryset
+        update writes the row without firing it."""
+        from model_hub.models.evals_metric import EvalTemplate
+
+        EvalTemplate.all_objects.filter(id=template.id).update(
+            organization=None, workspace=None
+        )
+        template.refresh_from_db()
+        assert template.organization_id is None and template.workspace_id is None
+        return template
+
+    @pytest.fixture
+    def system_template(self, tool_context):
+        return self._make_global(
+            make_eval_template(
+                tool_context,
+                name="is_concise",
+                config={"required_keys": ["output"]},
+            )
+        )
+
+    def test_listed_template_can_be_added_to_a_dataset_by_id(
+        self, tool_context, writable_dataset, system_template
+    ):
+        listed = registry.get("list_eval_templates").run(
+            {"search": "is_concise"}, tool_context
+        )
+        assert not listed.is_error
+        assert "is_concise" in listed.content
+
+        result = registry.get("add_dataset_eval").run(
+            {
+                "dataset_id": str(writable_dataset.id),
+                "template_id": str(system_template.id),
+                "mapping": {"output": "output"},
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+
+    def test_listed_template_can_be_added_by_name(
+        self, tool_context, writable_dataset, system_template
+    ):
+        result = registry.get("add_dataset_eval").run(
+            {
+                "dataset_id": str(writable_dataset.id),
+                "template_id": "is_concise",
+                "mapping": {"output": "output"},
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+
+    def test_get_eval_template_resolves_a_system_template(
+        self, tool_context, system_template
+    ):
+        result = registry.get("get_eval_template").run(
+            {"eval_template_id": str(system_template.id)}, tool_context
+        )
+        assert not result.is_error, result.content
+        assert "is_concise" in result.content
+
+    def test_another_organizations_template_stays_invisible(self, tool_context):
+        from accounts.models.organization import Organization
+
+        from ai_tools.resolvers import resolve_eval_template
+
+        other = Organization.objects.create(name="Someone Else")
+        theirs = make_eval_template(
+            tool_context, name="their_private_eval", organization=other, workspace=None
+        )
+
+        found, error = resolve_eval_template(
+            str(theirs.id), tool_context.organization
+        )
+        assert found is None
+        assert "not found" in error
