@@ -4,7 +4,11 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
-from model_hub.models.choices import DataTypeChoices, SourceChoices
+from model_hub.models.choices import (
+    CellStatus,
+    DataTypeChoices,
+    SourceChoices,
+)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
     DatasetUpdateCellValueRequestSerializer,
@@ -643,3 +647,114 @@ def test_update_cell_value_reuses_cached_duration_for_same_url(
 
     cell.refresh_from_db()
     assert cell.column_metadata["audio_duration_seconds"] == 9.99
+
+
+@patch("model_hub.views.develop_dataset.upload_audio_to_s3_duration")
+def test_update_cell_value_recomputes_duration_for_different_url(
+    mock_upload, auth_client, audio_col_seed
+):
+    """Replacing the audio recomputes the duration instead of reusing the cached one."""
+    dataset, row, audio_col = audio_col_seed
+
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=audio_col,
+        value="https://bucket/audio/old.mp3",
+        column_metadata={"audio_duration_seconds": 12.5},
+    )
+
+    mock_upload.return_value = (
+        "https://bucket/audio/new.mp3",
+        4.0,
+    )
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": "https://bucket/audio/new.mp3",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+
+    call_kwargs = mock_upload.call_args.kwargs
+    assert call_kwargs["duration_seconds"] is None
+
+    cell.refresh_from_db()
+    assert cell.value == "https://bucket/audio/new.mp3"
+    assert cell.column_metadata["audio_duration_seconds"] == 4.0
+
+
+@patch("model_hub.views.develop_dataset.upload_audio_to_s3_duration")
+def test_update_cell_value_skips_metadata_write_for_falsy_duration(
+    mock_upload, auth_client, audio_col_seed
+):
+    """A 0 duration leaves no audio_duration_seconds key, matching the file-upload path."""
+    dataset, row, audio_col = audio_col_seed
+
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=audio_col,
+        value="",
+        column_metadata={"audio_duration_seconds": 12.5},
+    )
+
+    mock_upload.return_value = (
+        "https://bucket/audio/zero.mp3",
+        0,
+    )
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": "https://bucket/audio/zero.mp3",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+
+    cell.refresh_from_db()
+    assert "audio_duration_seconds" not in (cell.column_metadata or {})
+
+
+@patch("model_hub.views.develop_dataset.upload_audio_to_s3_duration")
+def test_update_cell_value_clears_cell_for_non_string_value(
+    mock_upload, auth_client, audio_col_seed
+):
+    """A non-string new_value with no file upload degrades to an empty cell, not an error."""
+    dataset, row, audio_col = audio_col_seed
+
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=audio_col,
+        value="https://bucket/audio/old.mp3",
+        column_metadata={"audio_duration_seconds": 12.5},
+    )
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": 12345,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+
+    mock_upload.assert_not_called()
+
+    cell.refresh_from_db()
+    assert cell.value is None
+    assert cell.status == CellStatus.PASS.value
+    assert "audio_duration_seconds" not in (cell.column_metadata or {})
