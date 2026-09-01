@@ -13,6 +13,7 @@ Covers the three closers §8 makes blocking:
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -290,6 +291,76 @@ def test_redelivery_and_out_of_order_cannot_raise_effective_or_double_append(
     assert dto["parallelism"]["degrade_reasons"] == ["resource_limited"]  # once
 
 
+@pytest.mark.django_db
+def test_cross_event_invariant_violation_warns_without_rejecting_or_changing_projection(
+    organization, caplog
+):
+    # C4 §8: on a parallelism_degraded event the platform runs a per-attempt
+    # cross-event check of the two invariants — effective STRICTLY DECREASING
+    # across the attempt's accepted degrade events, and <=1 event per reason —
+    # and LOGS a warning on violation. It never rejects and never changes the
+    # projection, which stays min-monotone + append-if-absent.
+    job, _ = create_hosted_job(
+        organization, _payload(parallelism=4), idempotency_key="xevent"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    ingest_event_batch(
+        capability.attempt,
+        [_degrade(capability.attempt, 1, requested=4, effective=2, reason="resource_limited")],
+    )
+    with caplog.at_level(
+        logging.WARNING, logger="simulate.services.hosted_harness_ingestion"
+    ):
+        # (a) non-decreasing effective (3 >= recorded 2), a new reason.
+        result_hi = ingest_event_batch(
+            capability.attempt,
+            [
+                _degrade(
+                    capability.attempt,
+                    2,
+                    requested=4,
+                    effective=3,
+                    reason="world_start_failed",
+                    event_id="event-hi",
+                )
+            ],
+        )
+        # (b) duplicate reason already recorded, strictly-lower effective.
+        result_dup = ingest_event_batch(
+            capability.attempt,
+            [
+                _degrade(
+                    capability.attempt,
+                    3,
+                    requested=4,
+                    effective=1,
+                    reason="resource_limited",
+                    event_id="event-dup",
+                )
+            ],
+        )
+    # Never rejects.
+    assert result_hi["rejected"] == []
+    assert result_dup["rejected"] == []
+    stored_hi = HostedHarnessEvent.no_workspace_objects.get(event_id="event-hi")
+    assert stored_hi.accepted is True
+    # Both violations logged exactly one warning each.
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and r.name == "simulate.services.hosted_harness_ingestion"
+    ]
+    assert len(warnings) == 2
+    # Projection unchanged: min-monotone effective + append-if-absent reasons.
+    dto = serialize_job(job)
+    assert dto["parallelism"]["effective"] == 1  # min(2, 3, 1), never raised
+    assert dto["parallelism"]["degrade_reasons"] == [
+        "resource_limited",
+        "world_start_failed",
+    ]
+
+
 # ── Authoritative admission guard at register_attempt (C4 §4/§5, D23/D24) ────
 
 
@@ -495,6 +566,51 @@ def test_serializer_does_not_scan_at_w1():
     assert serializer.is_valid(), serializer.errors
     assert "parallelism_warnings" not in serializer.validated_data["metadata"]
     assert "parallelism_clamped" not in serializer.validated_data["metadata"]
+
+
+def _create_data_with_secret_refs(environment_values, secret_refs):
+    # github source so the env/secret alias-collision guard (not the remote
+    # "must own credentials" rule) is what governs.
+    return {
+        "schema_version": "futureagi.harness-job.v1",
+        "source": {
+            "kind": "github",
+            "repository": "acme/agent",
+            "visibility": "public",
+            "environment_values": environment_values,
+        },
+        "agent": {"connector": "vapi", "config": {}, "secret_refs": secret_refs},
+        "scenario_count": 1,
+        "runtime": {"parallelism": 1},
+        "security": {"allowed_egress_domains": ["agent.example.com"]},
+        "artifacts": {"level": "full"},
+        "metadata": {},
+    }
+
+
+def _secret_ref(key="provider/token"):
+    return {"manager": "platform-vault", "key": key, "purpose": "target_provider"}
+
+
+def test_serializer_rejects_alias_in_both_env_values_and_secret_refs():
+    # An alias present in BOTH the inline plaintext environment_values (Channel 1)
+    # and agent.secret_refs is rejected at the top-level create serializer.
+    data = _create_data_with_secret_refs(
+        environment_values={"PROVIDER_KEY": "plaintext-value"},
+        secret_refs={"PROVIDER_KEY": _secret_ref()},
+    )
+    serializer = HarnessJobCreateSerializer(data=data)
+    assert not serializer.is_valid()
+    assert "cannot be both uploaded and a secret reference" in str(serializer.errors)
+
+
+def test_serializer_allows_distinct_env_and_secret_aliases():
+    data = _create_data_with_secret_refs(
+        environment_values={"PLAINTEXT_KEY": "plaintext-value"},
+        secret_refs={"PROVIDER_KEY": _secret_ref()},
+    )
+    serializer = HarnessJobCreateSerializer(data=data)
+    assert serializer.is_valid(), serializer.errors
 
 
 # ── serialize_job runtime block + no-degrade default (C4 §6) ────────────────

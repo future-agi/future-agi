@@ -550,13 +550,43 @@ def _store_event(
         # never raise it) and the reason is appended only if absent.
         payload = event["payload"]
         effective = payload["effective"]
+        reason = payload["reason"]
         current = attempt.effective_parallelism
+        reasons = list(attempt.degrade_reasons or [])
+        # C4 §8 per-attempt cross-event invariant check. The two invariants —
+        # effective STRICTLY DECREASING across accepted degrade events, and <=1
+        # event per reason — are WARNING-ONLY: a violation is logged but never
+        # rejects and never changes the projection (still min-monotone below +
+        # append-if-absent), so an out-of-order or duplicate delivery is absorbed.
+        if current is not None and effective >= current:
+            logger.warning(
+                "harness degrade event violates strictly-decreasing effective "
+                "parallelism invariant (C4 §8)",
+                extra={
+                    "job_id": str(attempt.job_id),
+                    "attempt_id": str(attempt.id),
+                    "reason": reason,
+                    "incoming_effective": effective,
+                    "recorded_effective": current,
+                },
+            )
+        if reason in reasons:
+            logger.warning(
+                "harness degrade event repeats a reason already recorded for "
+                "the attempt (C4 §8)",
+                extra={
+                    "job_id": str(attempt.job_id),
+                    "attempt_id": str(attempt.id),
+                    "reason": reason,
+                    "incoming_effective": effective,
+                    "recorded_effective": current,
+                },
+            )
         attempt.effective_parallelism = (
             effective if current is None else min(current, effective)
         )
-        reasons = list(attempt.degrade_reasons or [])
-        if payload["reason"] not in reasons:
-            reasons.append(payload["reason"])
+        if reason not in reasons:
+            reasons.append(reason)
         attempt.degrade_reasons = reasons
         attempt.save(
             update_fields=[

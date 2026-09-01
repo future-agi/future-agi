@@ -79,10 +79,6 @@ class HarnessSourceSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"endpoint": "required for remote sources"}
             )
-        if set(attrs.get("environment_values", {})) & set(attrs.get("secret_refs", {})):
-            raise serializers.ValidationError(
-                "an environment variable cannot be both uploaded and a secret reference"
-            )
         return attrs
 
 
@@ -317,6 +313,14 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                         }
                     }
                 )
+        # An alias may not appear in BOTH the inline plaintext
+        # source.environment_values (Channel 1) and agent.secret_refs — only
+        # here are both operands visible (secret_refs lives on the sibling agent).
+        source_environment = attrs["source"].get("environment_values") or {}
+        if set(source_environment) & set(attrs["agent"]["secret_refs"]):
+            raise serializers.ValidationError(
+                "an environment variable cannot be both uploaded and a secret reference"
+            )
         self._apply_parallelism_belt(attrs, runtime)
         return attrs
 
