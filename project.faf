@@ -1,0 +1,90 @@
+# project.faf — IANA application/vnd.faf+yaml
+# Structured project context. AGENTS.md is authored from this file.
+# Mk4 schema (33 slots). Extra keys (gateway, protocols, how_to_test,
+# conventions, out_of_scope, commands, key_files) are score-neutral.
+# Remaining inapplicable slots are slotignored (N/A for this repo shape).
+# Distilled from CONTRIBUTING.md, TESTING.md, LICENSE, and the repo layout.
+# Not a replacement for README / CONTRIBUTING / TESTING.
+
+faf_version: "3.0"
+
+project:
+  name: future-agi
+  goal: >
+    Open-source, end-to-end platform for evaluating, observing and improving
+    LLM and AI-agent apps — one platform, one loop: simulate -> evaluate ->
+    protect -> monitor -> optimize. Self-hostable (Apache-2.0) or managed Cloud.
+  main_language: Python
+  type: fullstack
+
+human_context:
+  who: Contributors and teams building, evaluating, and operating LLM / AI-agent apps
+  what: An open-source AI evaluation and observability platform (Django + React + Go)
+  why: One platform and one loop — simulate, evaluate, protect, monitor, optimize — instead of stitching separate tools
+  where: Self-hostable via Docker Compose (backend http://localhost:8000, frontend http://localhost:3031) or managed Cloud
+  when: slotignored
+  how: Django backend under futureagi/, React + Vite frontend under frontend/, Go gateway under agentcc-gateway/ and fi-collector/; docker compose up -d from repo root
+
+stack:
+  frontend: React + Vite (JavaScript) — frontend/
+  css_framework: slotignored
+  ui_library: MUI v5 + AG Grid + MUI X Data Grid (frontend/README.md)
+  state_management: TanStack Query (server) + Zustand (client) (frontend/README.md)
+  backend: Django (Python) — futureagi/ (tracer, agentic_eval, simulate, accounts, model_hub, tfc)
+  api_type: Django REST Framework
+  runtime: Docker / docker-compose (backend :8000, frontend :3031)
+  database: Postgres, Redis, ClickHouse, MinIO (Compose / TESTING.md)
+  connection: slotignored
+  hosting: Self-hostable (Docker) or managed Cloud
+  build: Vite (frontend); Make (futureagi/)
+  cicd: GitHub Actions
+  gateway: Go — agentcc-gateway/, fi-collector/
+  protocols: OpenTelemetry-native, OpenAI-compatible HTTP
+  monorepo_tool: slotignored
+  workspaces: slotignored
+  package_manager: yarn (repo root + frontend); uv (futureagi/)
+  admin: slotignored
+  cache: slotignored
+  search: slotignored
+  storage: slotignored
+
+monorepo:
+  packages_count: slotignored
+  build_orchestrator: slotignored
+  versioning_strategy: slotignored
+  shared_configs: slotignored
+  remote_cache: slotignored
+
+how_to_test:
+  backend: cd futureagi && make test
+  frontend: cd frontend && yarn test
+  full: make check-all / yarn check-all   (see TESTING.md)
+
+commands:
+  install: yarn install
+  setup: docker compose up -d
+  backend_test: cd futureagi && make test
+  frontend_test: cd frontend && yarn test
+  check_all: make check-all / yarn check-all
+
+conventions:
+  python: Black (line 88), isort (Black profile), mypy on new code
+  js_ts: ESLint (Airbnb) + Prettier
+  commits: Conventional Commits
+  pr_base: dev
+  branches: type/short-description (feat, fix, chore, docs, refactor, test, perf)
+
+out_of_scope:
+  - Framework instrumentors live in future-agi/traceAI
+  - Evaluator docs live in the docs repo
+  - Not a replacement for README / CONTRIBUTING / TESTING — those stay the human source of truth
+
+key_files:
+  - CONTRIBUTING.md
+  - TESTING.md
+  - BRANCH_NAMING_CONVENTION.md
+  - LICENSE
+  - futureagi/
+  - frontend/
+  - agentcc-gateway/
+  - fi-collector/
