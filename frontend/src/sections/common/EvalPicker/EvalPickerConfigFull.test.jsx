@@ -118,7 +118,10 @@ vi.mock("src/sections/evals/hooks/useEvalVersions", () => ({
 
 vi.mock("src/sections/evals/hooks/useCompositeEval", () => ({
   useCompositeDetail: () => stableCompositeDetail,
+  useUpdateCompositeEval: () => stableCompositeMutation,
 }));
+
+const stableCompositeMutation = { mutateAsync: vi.fn() };
 
 vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
   useCompositeChildrenUnionKeys: () => stableUnionKeys,

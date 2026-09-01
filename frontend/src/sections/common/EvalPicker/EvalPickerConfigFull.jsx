@@ -26,8 +26,8 @@ import React, {
   useRef,
   useState,
 } from "react";
+import isEqual from "lodash/isEqual";
 import { useWatch } from "react-hook-form";
-import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
@@ -47,7 +47,10 @@ import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
 import CodeEvalEditor from "src/sections/evals/components/CodeEvalEditor";
 import OutputTypeConfig from "src/sections/evals/components/OutputTypeConfig";
 import FewShotExamples from "src/sections/evals/components/FewShotExamples";
-import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
+import {
+  useCompositeDetail,
+  useUpdateCompositeEval,
+} from "src/sections/evals/hooks/useCompositeEval";
 import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
@@ -73,6 +76,7 @@ import {
 } from "src/utils/utils";
 import { format } from "date-fns";
 import {
+  OUTPUT_TYPE_CONFIG_MAP,
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
   buildDataInjection,
@@ -80,6 +84,7 @@ import {
   extractCodeEvaluateParams,
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
+  normalizeOutputType,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
 
@@ -120,10 +125,19 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
-const sortedEntries = (obj) =>
-  Object.entries(obj || {})
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b));
+// Drop keys the snapshot builder leaves undefined so they compare equal to a
+// stored snapshot that simply omits them.
+const withoutUndefined = (obj) =>
+  Object.fromEntries(
+    Object.entries(obj || {}).filter(([, v]) => v !== undefined),
+  );
+
+// Deep, order-independent. A shallow sort of the top-level keys only would
+// report a difference whenever a nested object (messages, tools,
+// data_injection) came back with its keys in another order, minting a
+// duplicate version on every Add.
+const snapshotsDiffer = (a, b) =>
+  !isEqual(withoutUndefined(a), withoutUndefined(b));
 
 const buildCompositeWeightsFromSnapshot = (children) => {
   const weights = {};
@@ -277,6 +291,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
   const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
+  // The hook, not a raw axios.patch: it invalidates ["evals","versions",id],
+  // which is the query `versions` reads. Minting a composite version without
+  // that leaves the new version missing from the list this component then
+  // compares against.
+  const updateCompositeEval = useUpdateCompositeEval(templateId);
   const compositeUnionKeys = useCompositeChildrenUnionKeys(
     compositeDetail?.children || [],
   );
@@ -468,66 +487,93 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
+  // ── Version hydration (shared) ──
+  // Every field `buildVersionSnapshot` reads has to be restored here, or
+  // picking a version mints a hybrid: the chosen version's prompt carried on
+  // top of whatever the previously loaded version left in the form. Absent
+  // keys reset to their defaults rather than being skipped, for the same
+  // reason. One implementation, used by both the initial load and the version
+  // dropdown, so the two cannot drift.
+  const applyVersionSnapshot = useCallback(
+    (version, { fallbackModel } = {}) => {
+      const config = version?.config_snapshot || version?.configSnapshot || {};
+      const promptText = config.rule_prompt || version?.criteria || "";
+      const _type =
+        normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
+
+      if (_type === "code") {
+        setInstructions("");
+        setCode(config.code || "");
+      } else {
+        setInstructions(promptText);
+        setCode("");
+      }
+      if (config.messages?.length > 0) {
+        setMessages(config.messages);
+      } else if (_type === "llm" && promptText) {
+        setMessages([{ role: "system", content: promptText }]);
+      }
+
+      setModel(config.model || fallbackModel || "turing_large");
+      // `config.output` is the display form; the form state is normalized.
+      setOutputType(normalizeOutputType(config.output));
+      setPassThreshold(
+        config.pass_threshold != null ? config.pass_threshold : 0.5,
+      );
+      setChoiceScores(config.choice_scores || {});
+      setMultiChoice(!!config.multi_choice);
+      setTemplateFormat(config.template_format || "mustache");
+      setFewShotExamples(
+        Array.isArray(config.few_shot_examples) ? config.few_shot_examples : [],
+      );
+
+      setAgentMode(config.agent_mode || "agent");
+      setUseInternet(!!config.check_internet);
+      const summaryVal =
+        typeof config.summary === "object"
+          ? config.summary?.type
+          : config.summary;
+      setSummaryType(summaryVal || "concise");
+      if (Array.isArray(config.tools)) {
+        setConnectorIds(config.tools);
+      } else if (config.tools && typeof config.tools === "object") {
+        setConnectorIds(
+          Object.entries(config.tools)
+            .filter(([, enabled]) => !!enabled)
+            .map(([name]) => name),
+        );
+      } else {
+        setConnectorIds([]);
+      }
+      setKnowledgeBaseIds(
+        Array.isArray(config.knowledge_bases) ? config.knowledge_bases : [],
+      );
+      if (config.data_injection && typeof config.data_injection === "object") {
+        const opts = Object.entries(config.data_injection)
+          .filter(([, v]) => v)
+          .map(([k]) => k);
+        setContextOptions(opts.length ? opts : ["variables_only"]);
+      } else {
+        setContextOptions(["variables_only"]);
+      }
+      setErrorLocalizerEnabled(!!config.error_localizer_enabled);
+
+      if (Array.isArray(config.children)) {
+        setCompositeChildWeights(
+          buildCompositeWeightsFromSnapshot(config.children),
+        );
+      }
+    },
+    [normalizedFullEval, normalizedEvalData],
+  );
+
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (!selectedVersionId || !versions.length || isDirty) return;
     const version = versions.find((v) => v.id === selectedVersionId);
     if (!version) return;
 
-    const config = version.config_snapshot || version.configSnapshot || {};
-    const promptText = config.rule_prompt || version.criteria || "";
-    const _type =
-      normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-
-    if (_type === "code") {
-      setInstructions("");
-      setCode(config.code || "");
-    } else {
-      setInstructions(promptText);
-      setCode("");
-    }
-    if (config.messages?.length > 0) {
-      setMessages(config.messages);
-    } else if (_type === "llm" && promptText) {
-      setMessages([{ role: "system", content: promptText }]);
-    }
-
-    setModel(config.model || fullEval?.model || "turing_large");
-    if (config.output) setOutputType(config.output);
-    if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
-    if (config.choice_scores) setChoiceScores(config.choice_scores);
-    if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
-    if (config.template_format) setTemplateFormat(config.template_format);
-    if (Array.isArray(config.few_shot_examples))
-      setFewShotExamples(config.few_shot_examples);
-
-    if (config.agent_mode) setAgentMode(config.agent_mode);
-    if (config.check_internet != null) setUseInternet(!!config.check_internet);
-    const summaryVal =
-      typeof config.summary === "object"
-        ? config.summary?.type
-        : config.summary;
-    if (summaryVal) setSummaryType(summaryVal);
-    if (Array.isArray(config.tools)) setConnectorIds(config.tools);
-    else if (config.tools && typeof config.tools === "object")
-      setConnectorIds(Object.keys(config.tools));
-    if (Array.isArray(config.knowledge_bases))
-      setKnowledgeBaseIds(config.knowledge_bases);
-    if (config.data_injection && typeof config.data_injection === "object") {
-      const opts = Object.entries(config.data_injection)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      setContextOptions(opts.length ? opts : ["variables_only"]);
-    }
-    if (config.error_localizer_enabled != null) {
-      setErrorLocalizerEnabled(!!config.error_localizer_enabled);
-    }
-
-    if (Array.isArray(config.children)) {
-      setCompositeChildWeights(
-        buildCompositeWeightsFromSnapshot(config.children),
-      );
-    }
+    applyVersionSnapshot(version, { fallbackModel: fullEval?.model });
 
     if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
     setIsDirty(false);
@@ -538,8 +584,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     versions,
     isDirty,
     fullEval,
-    normalizedFullEval,
-    normalizedEvalData,
+    applyVersionSnapshot,
     isEditMode,
     evalData,
   ]);
@@ -772,111 +817,47 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       const vId = e.target.value;
       setSelectedVersionId(vId || null);
       if (!vId && fullEval) {
-        // Type-aware split — see initial-load effect above.
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        const promptText = getEvalPromptText(fullEval, fullEval.config || {});
-        if (_type === "code") {
-          setInstructions("");
-          setCode(getEvalCode(normalizedFullEval));
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(fullEval.config?.model || fullEval.model || "turing_large");
-        if (fullEval.config?.messages?.length > 0) {
-          setMessages(fullEval.config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        setAgentMode(fullEval.config?.agent_mode || "agent");
-        setSummaryType(fullEval.config?.summary?.type || "concise");
-        if (Array.isArray(fullEval.config?.tools)) {
-          setConnectorIds(fullEval.config.tools);
-        } else if (
-          fullEval.config?.tools &&
-          typeof fullEval.config.tools === "object"
-        ) {
-          setConnectorIds(
-            Object.entries(fullEval.config.tools)
-              .filter(([, enabled]) => !!enabled)
-              .map(([name]) => name),
-          );
-        } else {
-          setConnectorIds([]);
-        }
-        setKnowledgeBaseIds(
-          Array.isArray(fullEval.config?.knowledge_bases)
-            ? fullEval.config.knowledge_bases
-            : [],
-        );
-        setContextOptions(
-          fullEval.config?.data_injection?.full_row ||
-            fullEval.config?.data_injection?.fullRow
-            ? ["full_row"]
-            : ["variables_only"],
-        );
-        setUseInternet(fullEval.config?.check_internet ?? false);
-        setErrorLocalizerEnabled(
-          fullEval.error_localizer_enabled ??
-            fullEval.config?.error_localizer_enabled ??
-            false,
+        // "Current" restores the live template. Route it through the same
+        // hydration as a version so it resets the same field set: a partial
+        // restore here leaves the previously selected version's threshold and
+        // few-shot examples behind, and Add would mint them onto the template.
+        applyVersionSnapshot(
+          {
+            config_snapshot: {
+              ...(fullEval.config || {}),
+              rule_prompt: getEvalPromptText(fullEval, fullEval.config || {}),
+              code: getEvalCode(normalizedFullEval),
+              // The template's column-level fields are authoritative over its
+              // config dict, which can predate them.
+              output:
+                OUTPUT_TYPE_CONFIG_MAP[fullEval.output_type] ||
+                fullEval.config?.output,
+              pass_threshold:
+                fullEval.pass_threshold ?? fullEval.config?.pass_threshold,
+              choice_scores:
+                fullEval.choice_scores || fullEval.config?.choice_scores,
+              multi_choice:
+                fullEval.multi_choice ?? fullEval.config?.multi_choice,
+              error_localizer_enabled:
+                fullEval.error_localizer_enabled ??
+                fullEval.config?.error_localizer_enabled,
+            },
+          },
+          { fallbackModel: fullEval.model },
         );
         setIsDirty(false);
         return;
       }
       const version = versions.find((v) => v.id === vId);
       if (version) {
-        const config = version.config_snapshot || version.configSnapshot || {};
-        const promptText = config.rule_prompt || version.criteria || "";
-        // Type-aware split — version snapshot's `criteria` is the code
-        // text for code evals, the prompt for agent/llm.
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        if (_type === "code") {
-          setInstructions("");
-          setCode(config.code || "");
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(config.model || "turing_large");
-        if (config.messages?.length > 0) {
-          setMessages(config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        setAgentMode(config.agent_mode || "agent");
-        setSummaryType(config.summary?.type || config.summary || "concise");
-        if (Array.isArray(config.tools)) {
-          setConnectorIds(config.tools);
-        } else if (config.tools && typeof config.tools === "object") {
-          setConnectorIds(
-            Object.entries(config.tools)
-              .filter(([, enabled]) => !!enabled)
-              .map(([name]) => name),
-          );
-        } else {
-          setConnectorIds([]);
-        }
-        setKnowledgeBaseIds(
-          Array.isArray(config.knowledge_bases) ? config.knowledge_bases : [],
-        );
-        setContextOptions(
-          config.data_injection?.full_row || config.data_injection?.fullRow
-            ? ["full_row"]
-            : ["variables_only"],
-        );
-        setUseInternet(config.check_internet ?? false);
-        if (Array.isArray(config.children)) {
-          setCompositeChildWeights(
-            buildCompositeWeightsFromSnapshot(config.children),
-          );
-        }
+        // Same hydration the initial load uses: a partial restore here is what
+        // lets the previous version's threshold or few-shot examples survive
+        // into the version that Add then mints.
+        applyVersionSnapshot(version);
         setIsDirty(true);
       }
     },
-    [versions, fullEval, normalizedFullEval, normalizedEvalData],
+    [versions, fullEval, normalizedFullEval, applyVersionSnapshot],
   );
 
   // ── Save as new version (user evals only) ──
@@ -1151,32 +1132,50 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     // from whatever version is currently selected.
     const differsFromSelected =
       !selectedVersion ||
-      JSON.stringify(sortedEntries(selectedVersion.config_snapshot || {})) !==
-        JSON.stringify(sortedEntries(nextSnapshot));
+      snapshotsDiffer(selectedVersion.config_snapshot, nextSnapshot);
+
+    // A composite binding's only editable state is its child weights, so that
+    // is what decides whether a new version is warranted. Without this,
+    // opening a composite, picking a version (which marks the form dirty) and
+    // hitting Add mints an identical version every time.
+    const compositeWeightsDiffer =
+      !selectedVersion ||
+      !isEqual(
+        compositeChildWeights || {},
+        buildCompositeWeightsFromSnapshot(
+          selectedVersion.config_snapshot?.children,
+        ),
+      );
 
     // Composites version through their own detail endpoint — it snapshots the
     // child links, which the single-template versions endpoint knows nothing
-    // about. An empty PATCH mutates nothing and just mints the version.
-    if (isDirty && isComposite && templateId) {
+    // about.
+    if (isDirty && compositeWeightsDiffer && isComposite && templateId) {
       try {
-        const { data } = await axios.patch(
-          endpoints.develop.eval.getCompositeDetail(templateId),
-          {
-            // Version-only: never rewrite the shared template's child links
-            // from a binding-scoped edit.
-            skip_template_update: true,
-            ...(compositeChildWeights &&
-            Object.keys(compositeChildWeights).length
-              ? { child_weights: compositeChildWeights }
-              : {}),
-          },
-        );
-        const compositeVersionId = data?.result?.version_id;
-        if (compositeVersionId) {
-          resolvedVersionId = compositeVersionId;
-          setSelectedVersionId(compositeVersionId);
-          setIsDirty(false);
+        const result = await updateCompositeEval.mutateAsync({
+          // Version-only: never rewrite the shared template's child links
+          // from a binding-scoped edit. The backend reads this to keep the
+          // new version off the template default too.
+          skip_template_update: true,
+          ...(compositeChildWeights && Object.keys(compositeChildWeights).length
+            ? { child_weights: compositeChildWeights }
+            : {}),
+        });
+        const compositeVersionId = result?.version_id;
+        if (!compositeVersionId) {
+          // Falling through here would save the binding pinned to the old
+          // version with the weight edit silently dropped.
+          enqueueSnackbar("Failed to create composite version", {
+            variant: "error",
+          });
+          return;
         }
+        resolvedVersionId = compositeVersionId;
+        setSelectedVersionId(compositeVersionId);
+        setIsDirty(false);
+        enqueueSnackbar(`Version V${result?.version_number || ""} created`, {
+          variant: "success",
+        });
       } catch (err) {
         const message =
           err?.response?.data?.result ||
@@ -1300,6 +1299,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     model,
     sourceMapping,
     evalType,
+    updateCompositeEval,
     outputType,
     selectedVersionId,
     isSystemEval,

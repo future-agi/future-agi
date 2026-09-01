@@ -1,9 +1,31 @@
 import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
 
-const OUTPUT_TYPE_CONFIG_MAP = {
+// The form holds the *normalized* output type ("pass_fail" / "percentage" /
+// "deterministic"); a template or version config stores the *display* form
+// ("Pass/Fail" / "score" / "choices"). Anything that moves a value between the
+// two has to go through these, or a percentage eval silently loads as
+// Pass/Fail.
+export const OUTPUT_TYPE_CONFIG_MAP = {
   pass_fail: "Pass/Fail",
   percentage: "score",
   deterministic: "choices",
+};
+
+export const CONFIG_OUTPUT_TO_NORMALIZED = {
+  "Pass/Fail": "pass_fail",
+  score: "percentage",
+  numeric: "percentage",
+  reason: "percentage",
+  choices: "deterministic",
+};
+
+/** Normalized form of a config `output` value, whichever form it arrives in. */
+export const normalizeOutputType = (value, fallback = "pass_fail") => {
+  if (!value) return fallback;
+  if (CONFIG_OUTPUT_TO_NORMALIZED[value])
+    return CONFIG_OUTPUT_TO_NORMALIZED[value];
+  // Already normalized (the template column stores this form).
+  return OUTPUT_TYPE_CONFIG_MAP[value] ? value : fallback;
 };
 
 const ROW_TYPE_CONTEXT_OPTIONS = {

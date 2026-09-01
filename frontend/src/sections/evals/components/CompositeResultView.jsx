@@ -5,6 +5,7 @@ import CellMarkdown from "src/sections/common/CellMarkdown";
 import {
   getLabel,
   getStatusColor,
+  normalizeCompositeResult,
 } from "src/sections/develop-detail/DataTab/common";
 
 const AGGREGATION_LABELS = {
@@ -26,33 +27,21 @@ const AGGREGATION_LABELS = {
  */
 const CompositeResultView = ({ compositeResult }) => {
   const theme = useTheme();
-  const {
-    aggregation_enabled: aggregationEnabled,
-    aggregation_function: aggregationFunction,
-    aggregate_score: aggregateScore,
-    aggregate_pass: aggregatePass,
-    children = [],
-    summary,
-    total_children: totalChildren,
-    completed_children: completedChildren,
-    failed_children: failedChildren,
-  } = compositeResult || {};
-
   // Every field here comes from a stored JSON payload, so a partial or older
-  // snapshot must degrade rather than throw.
-  const childList = Array.isArray(children) ? children : [];
-  const countBy = (status) =>
-    childList.filter((child) => child?.status === status).length;
-  const totalCount = Number.isFinite(totalChildren)
-    ? totalChildren
-    : childList.length;
-  const completedCount = Number.isFinite(completedChildren)
-    ? completedChildren
-    : countBy("completed");
-  const failedCount = Number.isFinite(failedChildren)
-    ? failedChildren
-    : countBy("failed");
-  const hasAggregateScore = typeof aggregateScore === "number";
+  // snapshot must degrade rather than throw. That guarding lives in
+  // normalizeCompositeResult, where it can be asserted directly.
+  const {
+    aggregationEnabled,
+    aggregationFunction,
+    aggregateScore,
+    aggregatePass,
+    hasAggregateScore,
+    children: childList,
+    summary,
+    totalCount,
+    completedCount,
+    failedCount,
+  } = normalizeCompositeResult(compositeResult);
 
   return (
     <Box sx={{ p: 1.5 }}>
@@ -100,7 +89,7 @@ const CompositeResultView = ({ compositeResult }) => {
             >
               {aggregationEnabled
                 ? "No aggregate score (no children produced a normalized score)"
-                : "Aggregation disabled — individual child results only"}
+                : "Aggregation disabled: individual child results only"}
             </Typography>
           )}
         </Box>
@@ -111,11 +100,7 @@ const CompositeResultView = ({ compositeResult }) => {
             color="default"
           />
           {failedCount > 0 && (
-            <Chip
-              size="small"
-              label={`${failedCount} failed`}
-              color="error"
-            />
+            <Chip size="small" label={`${failedCount} failed`} color="error" />
           )}
         </Stack>
       </Box>
@@ -132,12 +117,12 @@ const CompositeResultView = ({ compositeResult }) => {
       </Typography>
       <Stack spacing={1}>
         {childList.map((child, idx) => {
-          const statusColor = child?.status === "failed" ? "error" : "default";
-          const order = Number.isFinite(child?.order) ? child.order : idx;
-          const hasScore = typeof child?.score === "number";
+          const statusColor = child.status === "failed" ? "error" : "default";
+          const order = Number.isFinite(child.order) ? child.order : idx;
+          const hasScore = typeof child.score === "number";
           return (
             <Box
-              key={child?.child_id ?? idx}
+              key={child.child_id ?? idx}
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
@@ -151,7 +136,7 @@ const CompositeResultView = ({ compositeResult }) => {
                   alignItems: "center",
                   justifyContent: "space-between",
                   gap: 1,
-                  mb: child?.reason || child?.error ? 0.75 : 0,
+                  mb: child.reason || child.error ? 0.75 : 0,
                 }}
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -166,10 +151,9 @@ const CompositeResultView = ({ compositeResult }) => {
                     #{order + 1}
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {child?.child_name || "Child"}
+                    {child.child_name || "Child"}
                   </Typography>
-                  {typeof child?.weight === "number" &&
-                    child.weight !== 1 && (
+                  {typeof child.weight === "number" && child.weight !== 1 && (
                     <Chip
                       size="small"
                       label={`w: ${child.weight}`}
@@ -189,7 +173,7 @@ const CompositeResultView = ({ compositeResult }) => {
                       }}
                     />
                   )}
-                  {child?.output != null && !hasScore && (
+                  {child.output != null && !hasScore && (
                     <Chip
                       size="small"
                       label={getLabel(child.output)}
@@ -198,13 +182,13 @@ const CompositeResultView = ({ compositeResult }) => {
                   )}
                   <Chip
                     size="small"
-                    label={child?.status || "unknown"}
+                    label={child.status || "unknown"}
                     color={statusColor}
                     sx={{ textTransform: "capitalize" }}
                   />
                 </Box>
               </Box>
-              {child?.reason && (
+              {child.reason && (
                 <Box
                   sx={{
                     mt: 0.5,
@@ -214,13 +198,13 @@ const CompositeResultView = ({ compositeResult }) => {
                   <CellMarkdown fontSize={11} text={child.reason} />
                 </Box>
               )}
-              {child?.error && (
+              {child.error && (
                 <Typography
                   variant="caption"
                   color="error"
                   sx={{ display: "block", mt: 0.5 }}
                 >
-                  Error: {String(child.error)}
+                  Error: {child.error}
                 </Typography>
               )}
             </Box>

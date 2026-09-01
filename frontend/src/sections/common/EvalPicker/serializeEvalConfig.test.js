@@ -35,6 +35,30 @@ describe("serializeEvalConfig", () => {
     expect(payload).not.toHaveProperty("knowledge_bases");
   });
 
+  it("sends the selected version as pinned_version_id", () => {
+    expect(
+      serializeEvalConfig({
+        templateId: "template-1",
+        name: "quality_check",
+        versionId: "version-7",
+      }),
+    ).toMatchObject({ pinned_version_id: "version-7" });
+  });
+
+  it("omits pinned_version_id when no version was selected", () => {
+    // System evals never pin, and the backend treats an absent key as
+    // "pin the template default" - sending null would mean "unpin".
+    for (const versionId of [null, undefined, ""]) {
+      expect(
+        serializeEvalConfig({
+          templateId: "template-1",
+          name: "quality_check",
+          versionId,
+        }),
+      ).not.toHaveProperty("pinned_version_id");
+    }
+  });
+
   it("keeps canonical filter lists unchanged", () => {
     const filters = [
       {

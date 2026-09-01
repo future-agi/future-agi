@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { enhanceCol, getColumnConfig, normalizeEvalResult } from "../common";
+import {
+  enhanceCol,
+  getColumnConfig,
+  normalizeCompositeResult,
+  normalizeEvalResult,
+} from "../common";
 
 describe("enhanceCol", () => {
   it("preserves null data_type from snake_case input", () => {
@@ -100,5 +105,76 @@ describe("normalizeEvalResult", () => {
 
     expect(result).toMatchObject({ kind: "choices" });
     expect(result.items).toEqual(["Useless", "Non-Toxic"]);
+  });
+});
+
+describe("normalizeCompositeResult", () => {
+  it("degrades to an empty result rather than throwing on a null payload", () => {
+    expect(normalizeCompositeResult(null)).toMatchObject({
+      children: [],
+      totalCount: 0,
+      completedCount: 0,
+      failedCount: 0,
+      hasAggregateScore: false,
+      summary: "",
+    });
+  });
+
+  it("drops a non-array children field instead of rendering it", () => {
+    expect(normalizeCompositeResult({ children: "boom" }).children).toEqual([]);
+  });
+
+  it("derives counts from the child list when the stored counts are absent", () => {
+    const result = normalizeCompositeResult({
+      children: [
+        { child_id: "a", status: "completed" },
+        { child_id: "b", status: "completed" },
+        { child_id: "c", status: "failed" },
+      ],
+    });
+    expect(result.totalCount).toBe(3);
+    expect(result.completedCount).toBe(2);
+    expect(result.failedCount).toBe(1);
+  });
+
+  it("prefers the stored counts when they are present", () => {
+    const result = normalizeCompositeResult({
+      children: [{ child_id: "a", status: "completed" }],
+      total_children: 4,
+      completed_children: 3,
+      failed_children: 1,
+    });
+    expect(result).toMatchObject({
+      totalCount: 4,
+      completedCount: 3,
+      failedCount: 1,
+    });
+  });
+
+  it("reports a non-numeric aggregate as absent so it is never formatted", () => {
+    expect(normalizeCompositeResult({ aggregate_score: null })).toMatchObject({
+      hasAggregateScore: false,
+    });
+    expect(normalizeCompositeResult({ aggregate_score: "0.5" })).toMatchObject({
+      hasAggregateScore: false,
+    });
+    expect(normalizeCompositeResult({ aggregate_score: 0 })).toMatchObject({
+      hasAggregateScore: true,
+    });
+  });
+
+  it("coerces child reason and error to strings", () => {
+    const [child] = normalizeCompositeResult({
+      children: [{ child_id: "a", reason: { text: "hi" }, error: null }],
+    }).children;
+    expect(typeof child.reason).toBe("string");
+    expect(child.error).toBe("");
+  });
+
+  it("skips non-object entries in the child list", () => {
+    expect(
+      normalizeCompositeResult({ children: [null, "x", { child_id: "a" }] })
+        .children,
+    ).toHaveLength(1);
   });
 });

@@ -966,6 +966,67 @@ export const getLabel = (value) => {
   return v;
 };
 
+/**
+ * Derive the render-ready shape of a stored composite eval payload.
+ *
+ * Composite results are read back out of a JSON blob that may have been
+ * written by an older backend, or by a run where some children failed, so
+ * this degrades rather than throws: a missing or non-array `children` becomes
+ * `[]`, absent counts are derived from the child list, a non-numeric
+ * aggregate is reported as absent rather than formatted, and every text field
+ * a caller renders is a string.
+ *
+ * Pure and exported so the guard can be asserted directly, and so the two
+ * `CompositeResultView` components share one implementation of it.
+ */
+export const normalizeCompositeResult = (compositeResult) => {
+  const {
+    aggregation_enabled: aggregationEnabled,
+    aggregation_function: aggregationFunction,
+    aggregate_score: aggregateScore,
+    aggregate_pass: aggregatePass,
+    children,
+    summary,
+    total_children: totalChildren,
+    completed_children: completedChildren,
+    failed_children: failedChildren,
+  } = compositeResult || {};
+
+  const asText = (value) => {
+    if (value == null || value === "") return "";
+    return typeof value === "string" ? value : JSON.stringify(value);
+  };
+
+  const childList = (Array.isArray(children) ? children : [])
+    .filter((child) => child && typeof child === "object")
+    .map((child) => ({
+      ...child,
+      reason: asText(child.reason),
+      error: asText(child.error),
+    }));
+  const countBy = (status) =>
+    childList.filter((child) => child.status === status).length;
+
+  return {
+    aggregationEnabled: Boolean(aggregationEnabled),
+    aggregationFunction,
+    aggregateScore,
+    aggregatePass: aggregatePass ?? null,
+    hasAggregateScore: typeof aggregateScore === "number",
+    children: childList,
+    summary: asText(summary),
+    totalCount: Number.isFinite(totalChildren)
+      ? totalChildren
+      : childList.length,
+    completedCount: Number.isFinite(completedChildren)
+      ? completedChildren
+      : countBy("completed"),
+    failedCount: Number.isFinite(failedChildren)
+      ? failedChildren
+      : countBy("failed"),
+  };
+};
+
 export const DATASET_TYPES = {
   SYNTHETIC_DATASET: "synthetic_dataset",
 };

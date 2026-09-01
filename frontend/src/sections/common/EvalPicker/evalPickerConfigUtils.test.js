@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  OUTPUT_TYPE_CONFIG_MAP,
   buildCompositeSourceModeProps,
   buildDataInjection,
   contextOptionsForRowType,
   extractCodeEvaluateParams,
   getSourceModeVariables,
+  normalizeOutputType,
 } from "./evalPickerConfigUtils";
 
 describe("contextOptionsForRowType", () => {
@@ -321,5 +323,41 @@ describe("getSourceModeVariables", () => {
         compositeUnionKeys: ["child_input", "child_output"],
       }),
     ).toEqual(["child_input", "child_output"]);
+  });
+});
+
+describe("normalizeOutputType", () => {
+  it("converts the display form a config stores into the form the form holds", () => {
+    expect(normalizeOutputType("Pass/Fail")).toBe("pass_fail");
+    expect(normalizeOutputType("score")).toBe("percentage");
+    expect(normalizeOutputType("choices")).toBe("deterministic");
+  });
+
+  it("maps the legacy score aliases onto percentage", () => {
+    expect(normalizeOutputType("numeric")).toBe("percentage");
+    expect(normalizeOutputType("reason")).toBe("percentage");
+  });
+
+  it("passes an already-normalized value through", () => {
+    // A version snapshot loaded after the template column has been written
+    // arrives normalized; re-mapping it would miss and fall back to Pass/Fail,
+    // quietly turning a percentage eval into a pass/fail one.
+    expect(normalizeOutputType("percentage")).toBe("percentage");
+    expect(normalizeOutputType("deterministic")).toBe("deterministic");
+  });
+
+  it("falls back for missing or unrecognised values", () => {
+    expect(normalizeOutputType(undefined)).toBe("pass_fail");
+    expect(normalizeOutputType("")).toBe("pass_fail");
+    expect(normalizeOutputType("nonsense")).toBe("pass_fail");
+    expect(normalizeOutputType(undefined, "percentage")).toBe("percentage");
+  });
+
+  it("round-trips through the display map", () => {
+    for (const normalized of Object.keys(OUTPUT_TYPE_CONFIG_MAP)) {
+      expect(normalizeOutputType(OUTPUT_TYPE_CONFIG_MAP[normalized])).toBe(
+        normalized,
+      );
+    }
   });
 });
