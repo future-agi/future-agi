@@ -111,6 +111,10 @@ function clearSessionWorkspace() {
     sessionStorage.removeItem(SS_KEY_WORKSPACE_ROLE);
     sessionStorage.removeItem(SS_KEY_WS_LEVEL);
     sessionStorage.removeItem(SS_KEY_WORKSPACE_ORG_ID);
+    // A pending post-switch redirect must not survive logout — the next
+    // session (possibly a different user) would otherwise be yanked to the
+    // previous user's dashboard URL right after its workspace seeds.
+    sessionStorage.removeItem(SS_KEY_POST_SWITCH_REDIRECT);
   } catch {
     // noop
   }
