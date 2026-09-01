@@ -27,14 +27,16 @@ cd frontend && yarn check-all
 
 ## Where things live
 
-- `futureagi/` — Django backend
-- `frontend/` — React + Vite frontend
-- `agentcc-gateway/` — Go, OpenAI-compatible gateway
-- `fi-collector/` — Go, OTLP→ClickHouse collector
-- `e2e/` — Playwright full-stack flows
-- `.agents/skills/` — repo agent skills (writing-e2e-flows, reviewing-prs)
-- `CONTRIBUTING.md`
-- `TESTING.md`
+| Path | Role |
+|------|------|
+| `futureagi/` | Django 5.1 + DRF backend — tracer, agentic_eval, simulate, accounts, model_hub, mcp_server, tfc |
+| `frontend/` | React 18 + Vite 5 (JavaScript, ESM) — MUI v5, TanStack Query, Zustand |
+| `agentcc-gateway/` | Go — OpenAI-compatible LLM gateway |
+| `fi-collector/` | Go — OTLP→ClickHouse span collector |
+| `e2e/` | Playwright full-stack flows (`bin/e2e`) |
+| `.agents/skills/` | Repo agent skills — writing-e2e-flows, reviewing-prs |
+| `CONTRIBUTING.md` | Setup, code style, PR checklist, project layout |
+| `TESTING.md` | Test runners, git hooks, CI matrix, coverage thresholds |
 
 ## Conventions
 
