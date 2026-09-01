@@ -277,7 +277,13 @@ export default function HarnessCreate() {
         ...(connector === "vapi" && providerMode === "connect_only"
           ? { assistant_id: providerTargetId.trim() }
           : {}),
+        ...(connector === "vapi" && providerMode === "provider_import"
+          ? { assistant_id: providerTargetId.trim() }
+          : {}),
         ...(connector === "retell" && providerMode === "connect_only"
+          ? { agent_id: providerTargetId.trim() }
+          : {}),
+        ...(connector === "retell" && providerMode === "provider_import"
           ? { agent_id: providerTargetId.trim() }
           : {}),
         ...(providerMode === "environment_backed" &&
@@ -482,7 +488,8 @@ export default function HarnessCreate() {
     !providerApiKeyName ||
     Boolean(String(environmentValues[providerApiKeyName] || "").trim());
   const providerTargetConfigured =
-    providerMode !== "connect_only" || Boolean(providerTargetId.trim());
+    !["connect_only", "provider_import"].includes(providerMode) ||
+    Boolean(providerTargetId.trim());
   const providerConnectionReady =
     providerApiKeyConfigured && providerTargetConfigured;
   const toggleSecret = (name) =>
@@ -1167,6 +1174,16 @@ export default function HarnessCreate() {
                           }}
                         />
                         <SourceTile
+                          icon="solar:copy-linear"
+                          title="Clone and rewire agent ID"
+                          description="Copy the provider definition, point its HTTP tools at this isolated environment, then delete the copy."
+                          selected={providerMode === "provider_import"}
+                          onSelect={() => {
+                            setProviderMode("provider_import");
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                        />
+                        <SourceTile
                           icon="solar:link-circle-linear"
                           title="Use existing agent ID"
                           description="Connect to the existing provider agent without changing or cloning it."
@@ -1177,7 +1194,7 @@ export default function HarnessCreate() {
                           }}
                         />
                       </Box>
-                      {providerMode === "connect_only" ? (
+                      {["connect_only", "provider_import"].includes(providerMode) ? (
                         <TextField
                           size="small"
                           label={
@@ -1190,7 +1207,11 @@ export default function HarnessCreate() {
                             setProviderTargetId(event.target.value);
                             setPreflightDirty(Boolean(preflight));
                           }}
-                          helperText={`The matching ${connector === "vapi" ? "VAPI_API_KEY" : "RETELL_API_KEY"} must be supplied below.`}
+                          helperText={
+                            providerMode === "provider_import"
+                              ? `ALK clones this target, rewires custom HTTP tools to the uploaded repository environment, and cleans up the clone. Supply the matching ${connector === "vapi" ? "VAPI_API_KEY" : "RETELL_API_KEY"} below.`
+                              : `The matching ${connector === "vapi" ? "VAPI_API_KEY" : "RETELL_API_KEY"} must be supplied below.`
+                          }
                         />
                       ) : (
                         <Alert severity="info" variant="outlined">

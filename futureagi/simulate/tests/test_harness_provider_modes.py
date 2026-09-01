@@ -37,3 +37,48 @@ def test_environment_backed_rejects_existing_target_id():
     )
     assert not serializer.is_valid()
     assert "config" in serializer.errors
+
+
+def test_vapi_provider_import_accepts_source_id_and_safe_routes():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "vapi",
+            "mode": "provider_import",
+            "config": {
+                "assistant_id": "assistant-123",
+                "event_path": "/provider/events",
+                "tool_path": "/provider/tools",
+            },
+            "secret_refs": {},
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+
+
+def test_retell_provider_import_requires_source_id():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "retell",
+            "mode": "provider_import",
+            "config": {},
+            "secret_refs": {},
+        }
+    )
+    assert not serializer.is_valid()
+    assert "config" in serializer.errors
+
+
+def test_provider_import_rejects_route_traversal():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "vapi",
+            "mode": "provider_import",
+            "config": {
+                "assistant_id": "assistant-123",
+                "tool_path": "/provider/../admin",
+            },
+            "secret_refs": {},
+        }
+    )
+    assert not serializer.is_valid()
+    assert "config" in serializer.errors

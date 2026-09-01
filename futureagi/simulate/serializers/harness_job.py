@@ -72,7 +72,7 @@ class HarnessSourceSerializer(serializers.Serializer):
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(choices=("livekit", "vapi", "retell", "auto"))
     mode = serializers.ChoiceField(
-        choices=("connect_only", "environment_backed"),
+        choices=("connect_only", "environment_backed", "provider_import"),
         required=False,
         allow_null=True,
     )
@@ -141,6 +141,22 @@ class HarnessAgentSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"config": "lifecycle_manifest must be repository-relative"}
                 )
+        if mode == "provider_import":
+            target_key = "assistant_id" if connector == "vapi" else "agent_id"
+            if not str(config.get(target_key) or "").strip():
+                raise serializers.ValidationError(
+                    {"config": f"{target_key} is required for provider_import"}
+                )
+            for path_key in ("event_path", "tool_path"):
+                path = str(config.get(path_key) or "")
+                if path and (
+                    not path.startswith("/")
+                    or path.startswith("//")
+                    or ".." in path.split("/")
+                ):
+                    raise serializers.ValidationError(
+                        {"config": f"{path_key} must be an absolute safe URL path"}
+                    )
         return attrs
 
 
