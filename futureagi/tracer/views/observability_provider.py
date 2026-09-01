@@ -201,13 +201,18 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     organization=get_request_organization(request),
                     workspace=getattr(request, "workspace", None),
                     agent_id=agent_id,
+                    masked_value=api_key,
                 )
                 if not api_key:
                     msg = "Could not resolve the api key. Please recheck the same"
                     return self._gm.bad_request(msg)
 
-            # Only VAPI/RETELL support key verification; reject the rest clearly.
-            if provider in (ProviderChoices.VAPI, ProviderChoices.RETELL):
+            # VAPI/RETELL/BLAND support key verification; reject the rest clearly.
+            if provider in (
+                ProviderChoices.VAPI,
+                ProviderChoices.RETELL,
+                ProviderChoices.BLAND,
+            ):
                 status_code = ObservabilityService.verify_api_key(
                     provider=provider,
                     api_key=api_key,
@@ -241,13 +246,18 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     workspace=getattr(request, "workspace", None),
                     agent_id=agent_id,
                     assistant_id=assistant_id,
+                    masked_value=api_key,
                 )
                 if not api_key:
                     msg = "Could not resolve the api key. Please recheck the same"
                     return self._gm.bad_request(msg)
 
-            # Only VAPI/RETELL have an assistant model to verify against.
-            if provider in (ProviderChoices.VAPI, ProviderChoices.RETELL):
+            # VAPI/RETELL/BLAND have an assistant/pathway to verify against.
+            if provider in (
+                ProviderChoices.VAPI,
+                ProviderChoices.RETELL,
+                ProviderChoices.BLAND,
+            ):
                 status_code = ObservabilityService.verify_assistant_id(
                     provider=provider,
                     assistant_id=assistant_id,

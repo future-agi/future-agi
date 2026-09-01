@@ -248,16 +248,12 @@ const CreateRunTestPage = ({ open, onClose }) => {
       return response.data;
     },
     enabled: !!formData?.agentType,
-    keepPreviousData: true,
   });
 
   // Extract scenarios data
   const scenarios = scenariosData?.results || [];
   const scenariosTotal = scenariosData?.count || 0;
   const scenariosPage = scenariosPagination.page;
-  const scenariosTotalPages = Math.ceil(
-    scenariosTotal / scenariosPagination.pageSize,
-  );
 
   // Since search is done server-side, we don't need to filter locally
   const filteredScenarios = scenarios;
@@ -394,6 +390,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
     if (!formData?.selectedScenarios?.length) return [];
     return scenarios.filter((s) => formData.selectedScenarios.includes(s.id));
   }, [scenarios, formData?.selectedScenarios]);
+  const runnableScenarioIds = useMemo(
+    () =>
+      (formData?.selectedScenarios || []).filter((id) => {
+        const s = scenarios.find((x) => x.id === id);
+        return !s || (s.dataset_rows || 0) > 0;
+      }),
+    [scenarios, formData?.selectedScenarios],
+  );
 
   const sourcePreviewData = useMemo(() => {
     const isText = formData?.agentType === AGENT_TYPES.CHAT;
@@ -499,14 +503,6 @@ const CreateRunTestPage = ({ open, onClose }) => {
   // on slow devices don't cause multiple api calls happening
   // on slower devices
   const isMutatingRef = useRef(false);
-  const executeTestMutation = useMutation({
-    mutationFn: (testId) =>
-      axios.post(endpoints.runTests.runTest(testId), {
-        select_all: false,
-        scenario_ids: formData?.selectedScenarios || [],
-      }),
-  });
-
   const createTestMutation = useMutation({
     /**
      *
@@ -522,20 +518,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
     onSettled: () => {
       isMutatingRef.current = false;
     },
-    onSuccess: async (data) => {
-      if (formData?.agentType === AGENT_TYPES.VOICE) {
-        try {
-          await executeTestMutation.mutateAsync(data.id);
-          enqueueSnackbar("Simulation run started", { variant: "success" });
-        } catch (error) {
-          enqueueSnackbar("Test created, but the run could not be started.", {
-            variant: "error",
-          });
-        }
-      } else {
-        enqueueSnackbar("Test created successfully!", { variant: "success" });
-      }
-
+    onSuccess: (data) => {
+      enqueueSnackbar("Test created successfully!", { variant: "success" });
       onClose();
       navigate(`/dashboard/simulate/test/${data.id}/runs`);
     },
@@ -574,7 +558,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     const payload = {
       name: formData?.testName || "",
       description: formData?.description || "",
-      scenario_ids: formData?.selectedScenarios || [],
+      scenario_ids: runnableScenarioIds,
       agent_definition_id: formData.agentDefinitionId,
       agent_version: formData?.agentDefinitionVersionId,
       eval_config_ids: [], // Keep empty for existing eval configs
@@ -633,6 +617,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
 
   const handleScenarioToggle = (scenarioId) => {
     const isSelected = formData.selectedScenarios.includes(scenarioId);
+    if (!isSelected) {
+      const scenario = scenarios.find((s) => s.id === scenarioId);
+      if (scenario && (scenario.dataset_rows || 0) === 0) return;
+    }
     setFormData({
       ...formData,
       selectedScenarios: isSelected
@@ -1018,7 +1006,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       case 1:
         return (
           <>
-            {filteredScenarios.length === 0 && debouncedSearch === "" ? (
+            {!isLoadingScenarios &&
+            !scenariosError &&
+            filteredScenarios.length === 0 &&
+            debouncedSearch === "" ? (
               <EmptyLayout
                 title="Add your first scenario"
                 description="Create scenarios and experiments to evaluate your application across different test cases and conditions."
@@ -1122,102 +1113,133 @@ const CreateRunTestPage = ({ open, onClose }) => {
                 ) : (
                   <>
                     <List sx={{ width: "100%", bgcolor: "background.paper" }}>
-                      {filteredScenarios.map((scenario) => (
-                        <ListItem
-                          key={scenario.id}
-                          sx={{
-                            border: "1px solid",
-                            borderColor: formData.selectedScenarios.includes(
-                              scenario.id,
-                            )
-                              ? "primary.main"
-                              : "divider",
-                            borderRadius: 1,
-                            mb: 1.5,
-                            px: 2,
-                            py: 1.5,
-                            cursor: "pointer",
-                            "&:hover": {
-                              borderColor: "primary.lighter",
-                              bgcolor: alpha(
-                                theme.palette.primary["lighter"],
-                                0.12,
-                              ),
-                            },
-                          }}
-                          onClick={() => {
-                            handleScenarioToggle(scenario.id);
-                          }}
-                        >
-                          <ListItemIcon sx={{ minWidth: 40 }}>
-                            <Checkbox
-                              edge="start"
-                              checked={formData.selectedScenarios.includes(
-                                scenario.id,
-                              )}
-                              tabIndex={-1}
-                              disableRipple
-                            />
-                          </ListItemIcon>
-                          <ListItemText
-                            primary={
-                              <Typography
-                                variant="subtitle2"
-                                sx={{
-                                  display: "-webkit-box",
-                                  WebkitLineClamp: 1,
-                                  WebkitBoxOrient: "vertical",
-                                  overflow: "hidden",
-                                }}
-                              >
-                                {scenario.name}
-                              </Typography>
-                            }
-                            secondary={
-                              <Typography
-                                variant="body2"
-                                color="text.secondary"
-                                sx={{
-                                  display: "-webkit-box",
-                                  WebkitLineClamp: 2,
-                                  WebkitBoxOrient: "vertical",
-                                  overflow: "hidden",
-                                }}
-                              >
-                                {scenario.description ||
-                                  scenario.source ||
-                                  "No description available"}
-                              </Typography>
-                            }
-                          />
-                          <Box
-                            sx={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-end",
-                              gap: 0.5,
-                            }}
+                      {filteredScenarios.map((scenario) => {
+                        const isEmpty = (scenario.dataset_rows || 0) === 0;
+                        return (
+                          <CustomTooltip
+                            key={scenario.id}
+                            show={isEmpty}
+                            arrow
+                            placement="top"
+                            size="small"
+                            title="This scenario has no datapoints to run against."
                           >
-                            {scenario.scenarioType === "dataset" && (
-                              <Chip
-                                label="Dataset"
-                                size="small"
-                                sx={{
-                                  height: "20px",
-                                  fontSize: "11px",
-                                }}
+                            <ListItem
+                              sx={{
+                                border: "1px solid",
+                                borderColor:
+                                  formData.selectedScenarios.includes(
+                                    scenario.id,
+                                  )
+                                    ? "primary.main"
+                                    : "divider",
+                                borderRadius: 1,
+                                mb: 1.5,
+                                px: 2,
+                                py: 1.5,
+                                cursor: isEmpty ? "not-allowed" : "pointer",
+                                opacity: isEmpty ? 0.5 : 1,
+                                "&:hover": isEmpty
+                                  ? {}
+                                  : {
+                                      borderColor: "primary.lighter",
+                                      bgcolor: alpha(
+                                        theme.palette.primary["lighter"],
+                                        0.12,
+                                      ),
+                                    },
+                              }}
+                              onClick={() => {
+                                if (!isEmpty) handleScenarioToggle(scenario.id);
+                              }}
+                            >
+                              <ListItemIcon sx={{ minWidth: 40 }}>
+                                <Checkbox
+                                  edge="start"
+                                  checked={formData.selectedScenarios.includes(
+                                    scenario.id,
+                                  )}
+                                  disabled={isEmpty}
+                                  tabIndex={-1}
+                                  disableRipple
+                                />
+                              </ListItemIcon>
+                              <ListItemText
+                                primary={
+                                  <Typography
+                                    variant="subtitle2"
+                                    sx={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 1,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    {scenario.name}
+                                  </Typography>
+                                }
+                                secondary={
+                                  <Typography
+                                    variant="body2"
+                                    color="text.secondary"
+                                    sx={{
+                                      display: "-webkit-box",
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: "vertical",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    {scenario.description ||
+                                      scenario.source ||
+                                      "No description available"}
+                                  </Typography>
+                                }
                               />
-                            )}
-                            <Typography variant="body2" fontWeight={600}>
-                              {scenario.dataset_rows || 0}
-                            </Typography>
-                          </Box>
-                        </ListItem>
-                      ))}
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "flex-end",
+                                  gap: 0.5,
+                                }}
+                              >
+                                {scenario.scenarioType === "dataset" && (
+                                  <Chip
+                                    label="Dataset"
+                                    size="small"
+                                    sx={{
+                                      height: "20px",
+                                      fontSize: "11px",
+                                    }}
+                                  />
+                                )}
+                                {isEmpty ? (
+                                  <Chip
+                                    label="No datapoints"
+                                    size="small"
+                                    sx={{
+                                      height: "20px",
+                                      color: "text.disabled",
+                                      bgcolor: "action.hover",
+                                    }}
+                                  />
+                                ) : (
+                                  <Typography variant="body2" fontWeight={600}>
+                                    {scenario.dataset_rows}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </ListItem>
+                          </CustomTooltip>
+                        );
+                      })}
                     </List>
 
-                    {/* Pagination */}
-                    {scenariosTotalPages > 1 && (
+                    {/* Gated on rows, not on page count: the rows-per-page
+                        selector lives in this bar, so hiding it whenever the
+                        chosen size covers everything strands the user at that
+                        size with no way back. */}
+                    {scenariosTotal > 0 && (
                       <Box
                         sx={{
                           display: "flex",

@@ -24,6 +24,7 @@ import EvalPickerDrawer from "src/sections/common/EvalPicker/EvalPickerDrawer";
 import { useCompositeChildrenSchemas } from "../hooks/useCompositeChildrenKeys";
 import { canonicalEntries } from "src/utils/utils";
 import CompositeAxisTabs, { axisToLockedFilters } from "./CompositeAxisTabs";
+import { buildCompositeChildRunConfig } from "../Helpers/compositeRuntimeConfig";
 
 const AGGREGATION_OPTIONS = [
   { value: "weighted_avg", label: "Weighted Average" },
@@ -128,10 +129,13 @@ const CompositeDetailPanel = ({
       evalMeta?.params ||
       evalMeta?.config?.params ||
       evalMeta?.config?.run_config?.params;
-    const childConfig =
-      params && typeof params === "object" && Object.keys(params).length > 0
+    const runConfig = buildCompositeChildRunConfig(evalMeta);
+    const childConfig = {
+      ...(params && typeof params === "object" && Object.keys(params).length > 0
         ? { params }
-        : {};
+        : {}),
+      ...(Object.keys(runConfig).length > 0 ? { run_config: runConfig } : {}),
+    };
     const next = [
       ...childrenList,
       {
@@ -580,13 +584,9 @@ const CompositeDetailPanel = ({
           onClose={() => setPickerOpen(false)}
           onEvalAdded={handleEvalAdded}
           existingEvals={childrenList.map((c) => ({ id: c.child_id }))}
-          // Always step into the EvalPickerConfigFull screen — users
-          // need the version selector, scoring settings and (when a
-          // dataset is bound) the variable-mapping editor before the
-          // child is committed to the composite. The previous
-          // skipConfig=true bypassed all of that and added the child
-          // straight to the list with template defaults.
-          skipConfig={false}
+          // Add children directly with template defaults; mapping is
+          // resolved at composite level.
+          skipConfig
           source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
           sourceRowType={pickerSourceRowType}

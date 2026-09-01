@@ -8,7 +8,7 @@ import { RENDERER_CONFIG } from "src/sections/projects/LLMTracing/Renderers/comm
 import { NameCell } from "src/sections/projects/LLMTracing/Renderers";
 import IPOPCell from "src/sections/projects/LLMTracing/Renderers/IPOPCell";
 import IPOPTooltipComponent from "src/sections/projects/LLMTracing/Renderers/IPOPTooltipComponent";
-import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
 const LABEL_BG_COLORS = {
   [LABELS.PRODUCTION]: "green.o10",
@@ -94,11 +94,11 @@ export const getMetricsTabSx = (theme) => ({
 });
 
 export const defaultFilterBase = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -107,26 +107,23 @@ export const getDefaultFilter = () => [
 ];
 
 export const normalizeFilters = (filters = []) => {
-  return filters
-    .filter((filter) => {
-      // Filter out invalid filters
-      return (
-        filter.columnId &&
-        filter.filterConfig?.filterType &&
-        filter.filterConfig?.filterOp &&
-        filter.filterConfig?.filterValue !== undefined &&
-        filter.filterConfig?.filterValue !== null &&
-        filter.filterConfig?.filterValue !== ""
-      );
-    })
-    .map((filter) =>
-      buildApiFilterFromPanelRow({
-        field: filter.columnId,
-        fieldType: filter.filterConfig.filterType,
-        operator: filter.filterConfig.filterOp,
-        value: filter.filterConfig.filterValue,
-      }),
+  const ready = filters.filter((filter) => {
+    const value = filter?.filter_config?.filter_value;
+    return (
+      filter?.column_id &&
+      filter?.filter_config?.filter_type &&
+      filter?.filter_config?.filter_op &&
+      value !== undefined &&
+      value !== null &&
+      value !== "" &&
+      !(
+        Array.isArray(value) &&
+        value.filter((v) => v !== "" && v !== null && v !== undefined)
+          .length === 0
+      )
     );
+  });
+  return serializeFilterListForApi(ready);
 };
 
 // mapping col.name => filter type config
@@ -224,6 +221,7 @@ export const getMetricsListColumnDefs = (col) => {
     headerName: col.name,
     field: col.id,
     hide: !col?.is_visible,
+    context: { sourceColumn: col },
     cellStyle: (params) => {
       const value = params.value;
       if (isCellValueEmpty(value)) {

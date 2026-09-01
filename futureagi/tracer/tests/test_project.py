@@ -6,7 +6,7 @@ Tests for /tracer/project/ endpoints.
 
 import json
 import uuid
-from datetime import timedelta, timezone as datetime_timezone
+from datetime import UTC, timedelta
 
 import pytest
 from django.utils import timezone
@@ -32,7 +32,7 @@ def get_result(response):
 
 
 def _iso_z(value):
-    return value.astimezone(datetime_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _chart_filter(column_id, filter_type, filter_op, filter_value, col_type=None):
@@ -335,7 +335,8 @@ class TestProjectRetrieveAPI:
         data = get_result(response)
         assert data["name"] == "Test Project"
         assert data.get("trace_type") == "experiment"
-        assert "sampling_rate" in data  # Should include sampling rate
+        assert "sampling_rate" in data
+        assert data["sampling_rate"] == 0
 
     def test_retrieve_project_not_found(self, auth_client):
         """Retrieve non-existent project returns error."""
@@ -390,6 +391,77 @@ class TestProjectDeleteAPI:
         assert response.status_code == status.HTTP_200_OK
 
         # Verify project is soft deleted
+        project.refresh_from_db()
+        assert project.deleted is True
+
+    def test_delete_project_publishes_cache_invalidation(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """Bulk delete publishes a collector cache-invalidation for the id."""
+        publish = mocker.patch(
+            "tracer.services.project_deletion.publish_project_invalidation"
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        publish.assert_called_once_with([str(project.id)])
+
+    def test_destroy_project_publishes_cache_invalidation(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """Single destroy() path also publishes the invalidation for its id."""
+        publish = mocker.patch(
+            "tracer.services.project_deletion.publish_project_invalidation"
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(f"/tracer/project/{project.id}/")
+        assert response.status_code == status.HTTP_200_OK
+        publish.assert_called_once_with([str(project.id)])
+
+    def test_delete_project_publishes_on_wire_contract(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """The publish uses the literal channel + id payload the collector reads.
+
+        Patches ``redis.Redis`` (not the helper) so a typo in the channel
+        constant on the Python side is caught.
+        """
+        pipe = mocker.MagicMock()
+        client = mocker.MagicMock()
+        client.pipeline.return_value = pipe
+        mocker.patch(
+            "tracer.services.project_deletion.redis.Redis.from_url",
+            return_value=client,
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        pipe.publish.assert_called_once_with("fi:project:invalidate", str(project.id))
+        pipe.execute.assert_called_once()
+
+    def test_delete_project_publish_failure_is_swallowed(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """A Redis failure during publish never fails the delete."""
+        mocker.patch(
+            "tracer.services.project_deletion.redis.Redis.from_url",
+            side_effect=ConnectionError("redis down"),
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
         project.refresh_from_db()
         assert project.deleted is True
 
@@ -553,6 +625,124 @@ class TestProjectUpdateConfigAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestProjectUpdateSessionConfigAPI:
+    """Tests for POST /tracer/project/update_project_session_config/ endpoint."""
+
+    def _visibility(self, project, column_id):
+        entry = next(
+            (c for c in project.session_config if c.get("id") == column_id), None
+        )
+        return entry["is_visible"] if entry else None
+
+    def test_update_existing_entry(self, auth_client, observe_project):
+        """Toggle visibility on a column already in the stored config."""
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"session_input": False},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "session_input") is False
+
+    def test_stale_config_merges_missing_defaults(self, auth_client, observe_project):
+        """A default column missing from a stale stored config is persisted, not dropped."""
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"total_tokens": True},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "total_tokens") is True
+        # Pre-existing stored entries survive the merge.
+        assert self._visibility(observe_project, "session_input") is True
+
+    def test_empty_config_seeds_defaults(self, auth_client, observe_project):
+        """An empty stored config is seeded from defaults so toggles persist."""
+        observe_project.session_config = []
+        observe_project.save()
+
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"user_id_type": True, "session_id": False},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "user_id_type") is True
+        assert self._visibility(observe_project, "session_id") is False
+        # Untoggled merged-in defaults keep their default visibility.
+        assert self._visibility(observe_project, "total_tokens") is False
+        assert self._visibility(observe_project, "user_id") is True
+
+    def test_stored_default_entry_not_duplicated(self, auth_client, observe_project):
+        """A default column already stored is updated in place, not re-appended."""
+        observe_project.session_config = [
+            {"id": "total_tokens", "name": "Total Tokens", "is_visible": True},
+        ]
+        observe_project.save()
+
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"total_tokens": False},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        total_tokens_entries = [
+            c for c in observe_project.session_config if c.get("id") == "total_tokens"
+        ]
+        assert len(total_tokens_entries) == 1
+        assert total_tokens_entries[0]["is_visible"] is False
+
+    def test_unknown_ids_are_not_appended(self, auth_client, observe_project):
+        """Custom/annotation column ids don't pollute the stored config."""
+        response = auth_client.post(
+            "/tracer/project/update_project_session_config/",
+            {
+                "project_id": str(observe_project.id),
+                "visibility": {"attributes.custom.key": True},
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        observe_project.refresh_from_db()
+        assert self._visibility(observe_project, "attributes.custom.key") is None
+
+    def test_save_is_scoped_to_session_config(self, auth_client, observe_project):
+        """Persist narrows to session_config so a concurrent field write isn't clobbered."""
+        from unittest.mock import patch
+
+        with patch("tracer.models.project.Project.save", autospec=True) as mock_save:
+            response = auth_client.post(
+                "/tracer/project/update_project_session_config/",
+                {
+                    "project_id": str(observe_project.id),
+                    "visibility": {"total_tokens": True},
+                },
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_save.called
+        _, kwargs = mock_save.call_args
+        assert kwargs.get("update_fields") == ["session_config"]
 
 
 @pytest.mark.integration

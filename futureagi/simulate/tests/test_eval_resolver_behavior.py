@@ -11,7 +11,7 @@ resolver produced the correct values) and the persisted
 """
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -151,6 +151,68 @@ def call_execution(db, test_execution, scenario, agent_version):
         duration_seconds=120,
         overall_score=8,
         simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        response_time_ms=1500,
+        avg_agent_latency_ms=8652,
+        avg_stop_time_after_interruption_ms=400,
+        user_interruption_count=2,
+        user_interruption_rate=0.1,
+        user_wpm=120.5,
+        bot_wpm=150.2,
+        talk_ratio=0.45,
+        ai_interruption_count=1,
+        ai_interruption_rate=0.05,
+        cost_cents=250,
+        customer_cost_cents=180,
+        conversation_metrics_data={
+            "avg_latency_ms": 900.5,
+            "total_tokens": 3200,
+            "input_tokens": 1800,
+            "output_tokens": 1400,
+            "turn_count": 12,
+            "agent_talk_percentage": 55.5,
+            "csat_score": 4.5,
+        },
+        provider_call_data={"vapi": {"call_id": "vapi-12345"}},
+        customer_cost_breakdown={
+            "llm": {"cost": 0.039254, "promptTokens": 18667, "completionTokens": 240},
+            "stt": {"cost": 0.01405, "minutes": 1.83},
+            "tts": {"cost": 0.010813, "characters": 983},
+            "vapi": {"cost": 0.0},
+        },
+        customer_latency_metrics={
+            "systemMetrics": {"overall_latency": 850, "p95_latency": 1200},
+            "turnLatencies": [120, 340, 780],
+        },
+        tool_outputs=[
+            {"name": "search", "duration_ms": 210, "result": {"status": "ok"}},
+            {"name": "fetch", "duration_ms": 88, "result": {"status": "ok"}},
+        ],
+    )
+
+
+@pytest.fixture
+def chat_call_execution(db, test_execution, scenario, agent_version):
+    """Chat-sim shape: voice-only metrics stay null; conversation_metrics_data
+    populated."""
+    return CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.COMPLETED,
+        agent_version=agent_version,
+        call_summary="Chat completed successfully.",
+        ended_reason="chat-finished",
+        duration_seconds=45,
+        overall_score=9,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        conversation_metrics_data={
+            "avg_latency_ms": 320.0,
+            "total_tokens": 1800,
+            "input_tokens": 1100,
+            "output_tokens": 700,
+            "turn_count": 8,
+            "agent_talk_percentage": 50.0,
+            "csat_score": 4.0,
+        },
     )
 
 
@@ -192,15 +254,20 @@ def _run(eval_config, call_execution, transcript_data):
     )
 
 
+def _run_xl(eval_config, call_execution, transcript_data):
+    """Exercise xl.py's `_run_single_evaluation` (temporal-activity path)."""
+    from simulate.temporal.activities.xl import _run_single_evaluation
+
+    return _run_single_evaluation(eval_config, call_execution, transcript_data)
+
+
 _SUCCESS_STUB = {"output": "8", "reason": "ok", "output_type": "score"}
 
 
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestDotFormMappingResolution:
-    """The resolver on the rerun path must map every FE-emitted dot-form value
-    to the same runtime value the initial-run path (xl.py) maps it to.
-    """
+    """Every FE-emitted dot-form value resolves to the same runtime value on both eval-runner paths."""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_call_transcript_resolves_to_transcript_data_value(
@@ -283,10 +350,7 @@ class TestDotFormMappingResolution:
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestLegacyUnderscoreCompatibility:
-    """Legacy underscore-form mapping values must keep resolving. Old
-    persisted eval configs from before the dot-form vocabulary must not
-    regress.
-    """
+    """Legacy underscore-form mapping values keep resolving (pre-dot-form configs must not regress)."""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_underscore_transcript_still_resolves(
@@ -316,10 +380,7 @@ class TestLegacyUnderscoreCompatibility:
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestEvalConfigStatusPersistence:
-    """`SimulateEvalConfig.status` must be persisted on both success and
-    failure so downstream selectors filtering on the model see the
-    resolved state.
-    """
+    """`SimulateEvalConfig.status` is persisted on both success and failure paths."""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_status_completed_after_successful_run(
@@ -350,10 +411,7 @@ class TestEvalConfigStatusPersistence:
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestCallContextPropagation:
-    """`call_context` is passed to `run_eval_func` only when the eval
-    opts in via `config.data_injection.call_context`. Agent evals that
-    read the call payload through `explore_trace` depend on this.
-    """
+    """`call_context` reaches `run_eval_func` only when the eval opts in via `config.data_injection.call_context`."""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_call_context_is_none_when_data_injection_disabled(
@@ -392,3 +450,1016 @@ class TestCallContextPropagation:
         assert ctx["call_summary"] == "Customer called about order 123."
         assert ctx["duration_seconds"] == 120
         assert ctx["overall_score"] == 8.0
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestVoiceMetricsAndLatencyResolution:
+    """Every raw-callData scalar the FE picker exposes resolves on the BE for a voice sim."""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_avg_agent_latency_bare_and_dot_form_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"bare": "avg_agent_latency", "dot": "call.avg_agent_latency"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["bare"] == "8652"
+        assert m["dot"] == "8652"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_response_time_ms_and_seconds_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"ms": "response_time_ms", "sec": "response_time"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["ms"] == "1500"
+        assert m["sec"] == "1.5"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_voice_interruption_and_wpm_metrics_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "uic": "user_interruption_count",
+                "uir": "user_interruption_rate",
+                "aic": "ai_interruption_count",
+                "air": "ai_interruption_rate",
+                "uw": "user_wpm",
+                "bw": "bot_wpm",
+                "tr": "talk_ratio",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["uic"] == "2"
+        assert m["uir"] == "0.1"
+        assert m["aic"] == "1"
+        assert m["air"] == "0.05"
+        assert m["uw"] == "120.5"
+        assert m["bw"] == "150.2"
+        assert m["tr"] == "0.45"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_cost_and_provider_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "cost": "cost_cents",
+                "customer_cost": "customer_cost_cents",
+                "prov": "provider",
+                "dot_prov": "call.provider",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["cost"] == "250"
+        assert m["customer_cost"] == "180"
+        assert m["prov"] == "vapi"
+        assert m["dot_prov"] == "vapi"
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestChatMetricsResolution:
+    """Chat metrics from conversation_metrics_data resolve under both bare and dot form."""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_chat_token_and_turn_metrics_resolve_bare(
+        self,
+        mock_run,
+        run_test,
+        chat_call_execution,
+        transcript_data,
+        eval_template,
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "tt": "total_tokens",
+                "it": "input_tokens",
+                "ot": "output_tokens",
+                "tc": "turn_count",
+                "atp": "agent_talk_percentage",
+                "csat": "csat_score",
+                "lat": "avg_latency_ms",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, chat_call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["tt"] == "1800"
+        assert m["it"] == "1100"
+        assert m["ot"] == "700"
+        assert m["tc"] == "8"
+        assert m["atp"] == "50.0"
+        assert m["csat"] == "4.0"
+        assert m["lat"] == "320.0"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_chat_metrics_resolve_dot_form(
+        self,
+        mock_run,
+        run_test,
+        chat_call_execution,
+        transcript_data,
+        eval_template,
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "tt": "call.total_tokens",
+                "csat": "call.csat_score",
+                "lat": "call.avg_latency_ms",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, chat_call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["tt"] == "1800"
+        assert m["csat"] == "4.0"
+        assert m["lat"] == "320.0"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_voice_only_metrics_without_chat_equivalent_resolve_empty_on_chat_sim(
+        self,
+        mock_run,
+        run_test,
+        chat_call_execution,
+        transcript_data,
+        eval_template,
+    ):
+        """Metrics with no chat-side equivalent (WPM, interruption counts,
+        stop-time-after-interruption) resolve to empty string on chat sims,
+        not a mismatch error. Latency and talk metrics DO have chat equivalents
+        and fall back separately.
+        """
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "uw": "user_wpm",
+                "bw": "bot_wpm",
+                "uic": "user_interruption_count",
+                "stop": "avg_stop_time_after_interruption_ms",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, chat_call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["uw"] == ""
+        assert m["bw"] == ""
+        assert m["uic"] == ""
+        assert m["stop"] == ""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_chat_only_metrics_resolve_empty_on_voice_sim_with_no_metrics(
+        self, mock_run, run_test, transcript_data, eval_template, agent_version,
+        test_execution, scenario,
+    ):
+        """Voice sim with no conversation_metrics_data resolves chat metrics to empty."""
+        ce = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+15551230000",
+            status=CallExecution.CallStatus.COMPLETED,
+            agent_version=agent_version,
+            recording_url="s3://bucket/rec.mp3",
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        )
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"tt": "total_tokens", "csat": "csat_score"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, ce, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["tt"] == ""
+        assert m["csat"] == ""
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestGenericDottedPathResolution:
+    """Arbitrary-depth walker: dicts, list indices, and mismatch fall-through."""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_deep_dict_path_customer_cost_breakdown_llm_cost(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"cost": "customer_cost_breakdown.llm.cost"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["cost"] == "0.039254"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_deep_dict_path_with_call_prefix_matches_bare(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"a": "call.customer_cost_breakdown.stt.cost", "b": "customer_cost_breakdown.stt.cost"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["a"] == m["b"] == "0.01405"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_camelcase_leaf_key_customer_cost_breakdown_llm_prompt_tokens(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"pt": "customer_cost_breakdown.llm.promptTokens"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["pt"] == "18667"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_nested_dict_path_customer_latency_system_metrics(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"lat": "customer_latency_metrics.systemMetrics.overall_latency"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["lat"] == "850"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_list_index_path_tool_outputs_by_index(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"first": "tool_outputs.0.name", "second_dur": "tool_outputs.1.duration_ms"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["first"] == "search"
+        assert m["second_dur"] == "88"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_list_index_then_dict_then_dict_deeper_path(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"status": "tool_outputs.0.result.status"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["status"] == "ok"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_arbitrary_depth_walking_stays_correct(
+        self, mock_run, run_test, transcript_data, eval_template, test_execution,
+        scenario, agent_version,
+    ):
+        deep = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": 42}}}}}}}}}}
+        ce = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status=CallExecution.CallStatus.COMPLETED,
+            agent_version=agent_version,
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            customer_cost_breakdown=deep,
+        )
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"leaf": "customer_cost_breakdown.a.b.c.d.e.f.g.h.i.j"}, run_test, eval_template
+        )
+
+        _run(ec, ce, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["leaf"] == "42"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_missing_intermediate_key_resolves_to_empty(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"missing": "customer_cost_breakdown.no_such_key.cost"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["missing"] == ""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_out_of_range_list_index_resolves_to_empty(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"missing": "tool_outputs.99.name"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["missing"] == ""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_unrecognised_head_falls_through_to_mismatch_error(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"x": "this_field_does_not_exist_on_model.foo.bar"},
+            run_test,
+            eval_template,
+        )
+
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestWalkerAttributeSafety:
+    """Dunder / private / callable attrs must not resolve; user paths cannot pivot into module globals."""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_dunder_class_globals_settings_secret_key_does_not_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval(
+            {"x": "call.__class__.__init__.__globals__.settings.SECRET_KEY"},
+            run_test,
+            eval_template,
+        )
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_dunder_dict_does_not_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval(
+            {"x": "call.__dict__"}, run_test, eval_template
+        )
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_django_private_meta_does_not_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval(
+            {"x": "call._meta.app_label"}, run_test, eval_template
+        )
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_django_private_state_does_not_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval({"x": "call._state.db"}, run_test, eval_template)
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_objects_manager_callable_does_not_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval({"x": "call.objects.all"}, run_test, eval_template)
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_save_method_does_not_resolve(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval({"x": "call.save"}, run_test, eval_template)
+        with pytest.raises(Exception):
+            _run(ec, call_execution, transcript_data)
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestSubjectDispatchRobustness:
+    """Walker resolves against any subject root and coerces snake_case <-> camelCase per segment."""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_agent_version_snapshot_deep_path_via_subject_prefix(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"desc": "agent_version.configuration_snapshot.description"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert (
+            mock_run.call_args.kwargs["mappings"]["desc"]
+            == "You are a helpful agent."
+        )
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_persona_bare_attribute_via_subject_prefix(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"vp": "persona.voice_provider"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["vp"] == "elevenlabs"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_simulation_bare_attribute_via_subject_prefix(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"src": "simulation.source_type"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        # source_type is a CharField on RunTest; walker returns its default.
+        assert (
+            mock_run.call_args.kwargs["mappings"]["src"]
+            == str(run_test.source_type)
+        )
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_bare_head_on_non_call_subject_falls_through_to_agent_version(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """Bare head unknown to `call` / `agent` falls through to `agent_version` via subject iteration."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"desc": "configuration_snapshot.description"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert (
+            mock_run.call_args.kwargs["mappings"]["desc"]
+            == "You are a helpful agent."
+        )
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_camelcase_head_coerces_to_snake_case_call_attribute(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """FE-emitted `customerCostBreakdown.llm.cost` resolves the same as
+        the snake_case BE field name `customer_cost_breakdown.llm.cost`."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"cost": "customerCostBreakdown.llm.cost"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["cost"] == "0.039254"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_snake_case_leaf_coerces_to_camelcase_dict_key(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """Snake-case leaf coerces to camelCase payload key, including under a `call.` prefix."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "lat": "customer_latency_metrics.system_metrics.overall_latency",
+                "tokens": "call.customer_cost_breakdown.llm.prompt_tokens",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        mappings = mock_run.call_args.kwargs["mappings"]
+        assert mappings["lat"] == "850"
+        assert mappings["tokens"] == "18667"
+
+    @patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+    def test_walker_branch_runs_on_xl_temporal_activity_path(
+        self, run_test, call_execution, transcript_data, eval_template
+    ):
+        """Regression guard: exercises xl.py's `_run_single_evaluation` (test_executor path is the wider suite)."""
+        from model_hub.views.utils import evals as evals_mod
+
+        with patch.object(
+            evals_mod, "run_eval_func", return_value=_SUCCESS_STUB
+        ) as mock_run:
+            ec = _make_eval(
+                {"cost": "customer_cost_breakdown.llm.cost"},
+                run_test,
+                eval_template,
+            )
+
+            _run_xl(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["cost"] == "0.039254"
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestComputedSerializerFieldsInContext:
+    """FE-dropdown vs BE-resolver parity for computed / aliased serializer fields."""
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_bare_head_call_type_resolves_to_serializer_computed_value(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """FE dropdown emits `call_type`; must resolve via get_call_type (computed, not a model attr)."""
+        mock_run.return_value = _SUCCESS_STUB
+        call_execution.call_metadata = {"call_direction": "outbound"}
+        call_execution.save(update_fields=["call_metadata"])
+        ec = _make_eval({"ct": "call_type"}, run_test, eval_template)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["ct"] == "Outbound"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_bare_head_call_type_defaults_to_inbound_without_metadata(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval({"ct": "call_type"}, run_test, eval_template)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["ct"] == "Inbound"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_bare_head_duration_resolves_from_duration_seconds_for_voice(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """Voice sim: get_duration returns duration_seconds."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval({"d": "duration"}, run_test, eval_template)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["d"] == "120"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_bare_head_audio_url_resolves_from_recording_url(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """FE dropdown emits `audio_url`; ctx must alias to CallExecution.recording_url."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval({"a": "audio_url"}, run_test, eval_template)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["a"] == "s3://bucket/rec.mp3"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_serializer_alias_bareheads_resolve_via_ctx(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """Serializer FK-chain aliases resolve via explicit ctx (walker cannot bridge the rename)."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "sa": "simulator_agent_name",
+                "ad": "agent_definition_used_name",
+                "sc": "scenario",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        mappings = mock_run.call_args.kwargs["mappings"]
+        assert mappings["sa"] == "Test Simulator"
+        assert mappings["ad"] == "Test Agent"
+        assert mappings["sc"] == "Test Scenario"
+
+    @patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+    def test_computed_fields_reach_xl_temporal_activity_path(
+        self, run_test, call_execution, transcript_data, eval_template
+    ):
+        """Regression guard: computed-field ctx entries reach the temporal path too."""
+        from model_hub.views.utils import evals as evals_mod
+
+        with patch.object(
+            evals_mod, "run_eval_func", return_value=_SUCCESS_STUB
+        ) as mock_run:
+            ec = _make_eval(
+                {"ct": "call_type", "d": "duration", "a": "audio_url"},
+                run_test,
+                eval_template,
+            )
+
+            _run_xl(ec, call_execution, transcript_data)
+
+        mappings = mock_run.call_args.kwargs["mappings"]
+        assert mappings["ct"] == "Inbound"
+        assert mappings["d"] == "120"
+        assert mappings["a"] == "s3://bucket/rec.mp3"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_scenario_columns_value_resolves_via_computed_subject(
+        self,
+        mock_run,
+        run_test,
+        call_execution,
+        transcript_data,
+        eval_template,
+        dataset_for_scenario,
+    ):
+        """Walker traversal on the scenario_columns subject; shape drift on get_scenario_columns fails here."""
+        mock_run.return_value = _SUCCESS_STUB
+        row = Row.objects.filter(dataset=dataset_for_scenario).first()
+        call_execution.call_metadata = {"row_id": str(row.id)}
+        call_execution.save(update_fields=["call_metadata"])
+        ec = _make_eval(
+            {"col": "scenario_columns.situation.value"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["col"] == "row value"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_scenario_info_dot_paths_resolve_via_alias(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """`scenario.info.<field>` alias-table resolution (Scenarios has no `info` attr for the walker)."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "sn": "scenario.info.name",
+                "sd": "scenario.info.description",
+                "st": "scenario.info.type",
+                "ss": "scenario.info.source",
+            },
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        mappings = mock_run.call_args.kwargs["mappings"]
+        assert mappings["sn"] == "Test Scenario"
+        assert mappings["sd"] == "Test scenario"
+        assert mappings["st"] == str(call_execution.scenario.scenario_type)
+        assert mappings["ss"] == "Test source"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_context_build_survives_call_metadata_none(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        """In-memory `call.call_metadata=None` must not crash ctx build."""
+        mock_run.return_value = _SUCCESS_STUB
+        # In-memory-only None; DB constraint would reject save.
+        call_execution.call_metadata = None
+        ec = _make_eval({"s": "call.summary"}, run_test, eval_template)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["s"] == "Customer called about order 123."
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_chat_sim_voice_labeled_metrics_fall_back_to_conv_metrics(
+        self, mock_run, run_test, chat_call_execution, transcript_data, eval_template
+    ):
+        """Chat sim: voice-labeled latency + talk_ratio resolve via conv_metrics fallback."""
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"rt_ms": "response_time_ms", "rt": "response_time", "aal_ms": "avg_agent_latency_ms",
+             "aal": "avg_agent_latency", "tr": "talk_ratio", "atp": "agent_talk_percentage"},
+            run_test, eval_template,
+        )
+
+        _run(ec, chat_call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        # chat_call_execution: conv_metrics.avg_latency_ms=320.0, agent_talk_percentage=50.0
+        assert m["rt_ms"] == m["aal_ms"] == m["aal"] == "320.0"
+        assert m["rt"] == "0.32"
+        assert m["tr"] == "0.5"  # 50.0 / 100
+        assert m["atp"] == "50.0"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_voice_sim_chat_labeled_metrics_fall_back_to_model_fields(
+        self, mock_run, run_test, transcript_data, eval_template,
+        test_execution, scenario, agent_version,
+    ):
+        """Voice sim without conv_metrics: chat-labeled fields fall back to model."""
+        ce = CallExecution.objects.create(
+            test_execution=test_execution, scenario=scenario, agent_version=agent_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            avg_agent_latency_ms=8652, talk_ratio=0.62, overall_score=7,
+        )
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"lat": "avg_latency_ms", "atp": "agent_talk_percentage", "c": "csat_score"},
+            run_test, eval_template,
+        )
+
+        _run(ec, ce, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["lat"] == "8652"
+        assert m["atp"] == "62.0"  # 0.62 * 100
+        assert m["c"] == "7"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_chat_sim_zero_valued_metrics_survive_fallback(
+        self, mock_run, run_test, transcript_data, eval_template,
+        test_execution, scenario, agent_version,
+    ):
+        """A legitimate 0 / 0.0 / 0-ms on the primary source must not be
+        clobbered by the cross-modality fallback. If someone rewrites
+        `is not None` -> `or` this test fails loudly."""
+        ce = CallExecution.objects.create(
+            test_execution=test_execution, scenario=scenario, agent_version=agent_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            response_time_ms=0,
+            avg_agent_latency_ms=0,
+            talk_ratio=0.0,
+            overall_score=7,
+            conversation_metrics_data={
+                "avg_latency_ms": 320.0,
+                "agent_talk_percentage": 50.0,
+                "csat_score": 4.0,
+            },
+        )
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "rt_ms": "response_time_ms",
+                "aal_ms": "avg_agent_latency_ms",
+                "tr": "talk_ratio",
+            },
+            run_test, eval_template,
+        )
+
+        _run(ec, ce, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        # Primary source is 0/0.0; must NOT fall through to 320/50.0/0.5.
+        assert m["rt_ms"] == "0"
+        assert m["aal_ms"] == "0"
+        assert m["tr"] == "0.0"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_voice_sim_zero_valued_metrics_survive_fallback(
+        self, mock_run, run_test, transcript_data, eval_template,
+        test_execution, scenario, agent_version,
+    ):
+        """Chat-side keys with a legitimate 0 on the conv_metrics side must
+        not fall through to the voice-side model field."""
+        ce = CallExecution.objects.create(
+            test_execution=test_execution, scenario=scenario, agent_version=agent_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            avg_agent_latency_ms=8652, talk_ratio=0.62, overall_score=7,
+            conversation_metrics_data={
+                "avg_latency_ms": 0.0,
+                "agent_talk_percentage": 0.0,
+                "csat_score": 0.0,
+            },
+        )
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {
+                "lat": "avg_latency_ms",
+                "atp": "agent_talk_percentage",
+                "c": "csat_score",
+            },
+            run_test, eval_template,
+        )
+
+        _run(ec, ce, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        # Conv-metrics is 0.0; must NOT fall through to 8652/62.0/7.
+        assert m["lat"] == "0.0"
+        assert m["atp"] == "0.0"
+        assert m["c"] == "0.0"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_scenario_graph_node_resolves_via_computed_subject(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template, scenario, organization
+    ):
+        """`scenario_graph.nodes.<i>.<field>` exercises get_scenario_graph inline call."""
+        from simulate.models.scenario_graph import ScenarioGraph
+
+        mock_run.return_value = _SUCCESS_STUB
+        ScenarioGraph.objects.create(
+            scenario=scenario,
+            organization=organization,
+            name="Test Graph",
+            is_active=True,
+            graph_config={
+                "graph_data": {
+                    "nodes": [{"id": "n1", "type": "intent", "data": {"label": "Greet"}}],
+                    "edges": [],
+                }
+            },
+        )
+        ec = _make_eval(
+            {"nt": "scenario_graph.nodes.0.type"}, run_test, eval_template
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["nt"] == "intent"
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_subject_build_failure_leaves_ctx_usable(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template, monkeypatch
+    ):
+        """Serializer exception in subject builder falls back to {}, ctx stays usable."""
+        from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+        def _boom(self, obj):
+            raise RuntimeError("simulated serializer failure")
+
+        monkeypatch.setattr(
+            CallExecutionDetailSerializer, "get_scenario_columns", _boom
+        )
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval(
+            {"a": "call.summary", "b": "scenario_columns.persona.value"},
+            run_test,
+            eval_template,
+        )
+
+        _run(ec, call_execution, transcript_data)
+
+        m = mock_run.call_args.kwargs["mappings"]
+        assert m["a"] == "Customer called about order 123."
+        assert m["b"] == ""  # scenario_columns subject fell back to {}
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestRecordingSlotAvailability:
+    """An eval variable mapped to a recording the call has no audio for (e.g.
+    stereo / per-channel on a combined-only provider like Bland) fails with an
+    actionable message naming the available recordings, instead of the eval
+    engine's opaque 'No input received for <var>'."""
+
+    # Combined-only shape: only the mono combined recording exists.
+    _COMBINED_ONLY = {
+        "transcript": "agent: hi\ncustomer: hello",
+        "voice_recording": "s3://bucket/combined.mp3",
+        "assistant_recording": "",
+        "customer_recording": "",
+        "stereo_recording": "",
+        "user_chat_transcript": "",
+        "assistant_chat_transcript": "",
+    }
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_empty_stereo_slot_raises_actionable_error(
+        self, mock_run, run_test, call_execution, eval_template
+    ):
+        ec = _make_eval({"output": "call.stereo_recording"}, run_test, eval_template)
+
+        with pytest.raises(ValueError, match="combined-only"):
+            _run(ec, call_execution, dict(self._COMBINED_ONLY))
+
+        mock_run.assert_not_called()  # never reaches the eval engine
+        ec.refresh_from_db()
+        assert ec.status == StatusType.FAILED.value
+        call_execution.refresh_from_db()
+        reason = call_execution.eval_outputs[str(ec.id)]["reason"]
+        assert "call.voice_recording" in reason  # actionable hint for the FE
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_present_combined_recording_resolves_and_runs(
+        self, mock_run, run_test, call_execution, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval({"output": "call.voice_recording"}, run_test, eval_template)
+
+        _run(ec, call_execution, dict(self._COMBINED_ONLY))
+
+        assert (
+            mock_run.call_args.kwargs["mappings"]["output"]
+            == "s3://bucket/combined.mp3"
+        )
+
+    @patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+    def test_empty_stereo_slot_raises_on_xl_temporal_path(
+        self, run_test, call_execution, eval_template
+    ):
+        """Same guard on the temporal-activity path (two-sources-of-truth)."""
+        from model_hub.views.utils import evals as evals_mod
+
+        ec = _make_eval({"output": "call.stereo_recording"}, run_test, eval_template)
+        with patch.object(evals_mod, "run_eval_func") as mock_run:
+            with pytest.raises(ValueError, match="combined-only"):
+                _run_xl(ec, call_execution, dict(self._COMBINED_ONLY))
+            mock_run.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestLegacyTranscriptRecordingResolution:
+    def test_reads_recordings_from_call_row_and_normalized_provider_data(
+        self, call_execution
+    ):
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        call_execution.provider_call_data = {
+            "vapi": {"usage": {"llm": {"total_tokens": 42}}},
+            "livekit": {
+                "engine": "livekit",
+                "recording": {
+                    "assistant": "s3://bucket/assistant.mp3",
+                    "customer": "s3://bucket/customer.mp3",
+                },
+            }
+        }
+        executor = TestExecutor()
+        executor.voice_service_manager = Mock()
+        executor.voice_service_manager.get_recording_urls.return_value = {}
+
+        transcript_data = executor._get_call_transcript_data(
+            call_execution, url_save_only=True
+        )
+
+        assert transcript_data["voice_recording"] == call_execution.recording_url
+        assert (
+            transcript_data["stereo_recording"]
+            == call_execution.stereo_recording_url
+        )
+        assert transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
+        assert transcript_data["customer_recording"] == "s3://bucket/customer.mp3"
+
+        xl_transcript_data = _build_transcript_data(call_execution)
+        assert xl_transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
+        assert xl_transcript_data["customer_recording"] == "s3://bucket/customer.mp3"

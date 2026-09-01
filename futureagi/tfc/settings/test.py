@@ -15,6 +15,14 @@ if str(_project_root) not in sys.path:
 # env toggling; this only affects the pytest process.
 os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 
+# Point Redis-using code at the test compose sidecar at localhost:16379
+# (per docker-compose.test.yml). Without this, modules fall through to the
+# dev `.env` host `redis://redis:6379/0` which doesn't resolve outside
+# Docker, and the payload_storage / distributed_locks helpers raise
+# "Redis is not available" mid-test.
+os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
+os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
+
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
 
@@ -39,6 +47,15 @@ DATABASES = {
     }
 }
 
+# Prod settings register `default_direct` (the PgBouncer-bypass connection)
+# only when PG_DIRECT_HOST is set, but code such as backfill_eval_usage_version
+# defaults to that alias unconditionally. Mirror it onto the test database so
+# those paths run under pytest; Django routes mirror queries to `default`.
+DATABASES["default_direct"] = {
+    **DATABASES["default"],
+    "TEST": {"MIRROR": "default"},
+}
+
 CLICKHOUSE = {
     "CH_HOST": os.environ.get("CH_HOST", "localhost"),
     "CH_PORT": os.environ.get("CH_PORT", "19000"),
@@ -47,14 +64,6 @@ CLICKHOUSE = {
     "CH_DATABASE": os.environ.get("CH_DATABASE", "test_tfc"),
     "CH_ENABLED": os.environ.get("CH_ENABLED", "true").lower() in ("true", "1", "yes"),
 }
-
-# Point Redis-using code at the test compose sidecar at localhost:16379
-# (per docker-compose.test.yml). Without this, modules fall through to the
-# dev `.env` host `redis://redis:6379/0` which doesn't resolve outside
-# Docker, and the payload_storage / distributed_locks helpers raise
-# "Redis is not available" mid-test.
-os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
-os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
 
 # CHSpanReader / CH25 v2 service uses clickhouse-connect over HTTP. The TCP
 # port lives in `CLICKHOUSE['CH_PORT']` (19000) but the HTTP listener is on
@@ -67,10 +76,16 @@ CLICKHOUSE_V2 = {
     "CH25_USER": os.environ.get("CH25_USER", "default"),
     "CH25_PASSWORD": os.environ.get("CH25_PASSWORD", ""),
     "CH25_DATABASE": os.environ.get("CH25_DATABASE", "test_tfc"),
+    "QUERY_TYPES_V2_PRIMARY": os.environ.get(
+        "CH25_QUERY_TYPES_V2_PRIMARY", "dashboard"
+    ),
+    "QUERY_TYPES_V2_ONLY": os.environ.get("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.environ.get("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.environ.get("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 CH25_EVAL_LOGGER_TABLE = os.environ.get(
-    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger_v2"
+    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger"
 )
 
 # Test cache configuration

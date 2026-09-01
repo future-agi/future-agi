@@ -15,7 +15,9 @@ def iter_live_eval_outputs(eval_outputs, eval_configs: Container[str]):
     id, or a ``set[str]``) -- and this filters the stale keys out. Membership is
     tested with ``in``, so pass a set/dict (not a list) to keep it O(1) per key.
     """
-    for eval_id, eval_data in (eval_outputs or {}).items():
+    if not isinstance(eval_outputs, dict):
+        return
+    for eval_id, eval_data in eval_outputs.items():
         if str(eval_id) in eval_configs:
             yield eval_id, eval_data
 

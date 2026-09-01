@@ -167,7 +167,14 @@ class Command(BaseCommand):
 
         # Determine which queues to poll
         if all_queues_mode:
-            queues_to_poll = get_all_queues()
+            excluded_queues = {
+                queue.strip()
+                for queue in os.getenv("TEMPORAL_EXCLUDED_QUEUES", "").split(",")
+                if queue.strip()
+            }
+            queues_to_poll = [
+                queue for queue in get_all_queues() if queue not in excluded_queues
+            ]
             # Get all unique workflows and activities across all queues
             workflows = get_all_workflows()
             activities = get_all_activities()
@@ -175,6 +182,7 @@ class Command(BaseCommand):
                 "all_queues_mode",
                 queue_count=len(queues_to_poll),
                 queues=queues_to_poll,
+                excluded_queues=sorted(excluded_queues),
             )
         else:
             # Map Celery-style queue names to Temporal queue names

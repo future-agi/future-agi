@@ -392,7 +392,6 @@ const SpanTab = React.forwardRef(
             filterData={openQuickFilter}
             onClose={() => setOpenQuickFilter(null)}
             setFilters={setFilters}
-            setFilterOpen={setFilterOpen}
           />
         </Box>
       </>

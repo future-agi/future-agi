@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 import structlog
 from django.db import models
 from django.db.models import Count
-from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -17,14 +16,10 @@ from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_PROJECT_LIST
-from tracer.models.eval_task import EvalTask
 from tracer.models.monitor import UserAlertMonitor
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
-from tracer.models.project_version import ProjectVersion
-from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanConfig
-from tracer.models.trace_session import TraceSession
 from tracer.queries.projects import apply_project_list_filters
 from tracer.serializers.project import (
     ProjectDetailResponseSerializer,
@@ -44,12 +39,12 @@ from tracer.services.clickhouse.graph_dispatch import (
 from tracer.services.clickhouse.query_builders import (
     ClickHouseFilterBuilder,
     TimeSeriesQueryBuilder,
-    UserListQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
 )
+from tracer.services.project_deletion import soft_delete_projects
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
@@ -58,7 +53,11 @@ from tracer.utils.constants import (
     PROTOTYPE_CODEBLOCK,
 )
 from tracer.utils.graphs_optimized import get_all_system_metrics
-from tracer.utils.helper import get_default_project_version_config, get_sort_query
+from tracer.utils.helper import (
+    get_default_project_session_config,
+    get_default_project_version_config,
+    get_sort_query,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -100,26 +99,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return self._project_scope_queryset().filter(id=project_id).first()
 
     def _soft_delete_projects(self, projects, project_type):
-        now = timezone.now()
-        if project_type == "experiment":
-            ProjectVersion.objects.filter(project__in=projects).update(
-                deleted=True, deleted_at=now
-            )
-        else:
-            TraceSession.objects.filter(project__in=projects).update(
-                deleted=True, deleted_at=now
-            )
-        Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
-        ObservationSpan.objects.filter(project__in=projects).update(
-            deleted=True, deleted_at=now
-        )
-        UserAlertMonitor.objects.filter(project__in=projects).update(
-            deleted=True, deleted_at=now
-        )
-        EvalTask.objects.filter(project__in=projects).update(
-            deleted=True, deleted_at=now
-        )
-        projects.update(deleted=True, deleted_at=now)
+        soft_delete_projects(projects, project_type)
 
     def get_queryset(self):
         # Get base queryset with automatic filtering from mixin
@@ -394,7 +374,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not project:
                 return self._gm.bad_request("Project not found")
 
+            # Merge in default columns missing from the stored config (empty
+            # config, or one seeded before newer columns existed) so their
+            # visibility can be persisted instead of silently dropped.
+            defaults = get_default_project_session_config()
             config = project.session_config or []
+            existing_ids = {item.get("id") for item in config}
+            config = config + [d for d in defaults if d["id"] not in existing_ids]
 
             for key, value in visibility.items():
                 config_entry = next(
@@ -404,7 +390,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     config_entry["is_visible"] = value
 
             project.session_config = config
-            project.save()
+            project.save(update_fields=["session_config"])
 
             return self._gm.success_response({"project_id": project.id})
         except Exception as e:

@@ -37,7 +37,7 @@ const MetricsContent = () => {
   const { id } = useParams();
 
   const hasActiveFiltersOrSearch = useMemo(() => {
-    const hasFilters = filters?.some((f) => f.columnId !== "");
+    const hasFilters = filters?.some((f) => f.column_id);
     return hasFilters;
   }, [filters]);
 
@@ -161,7 +161,7 @@ const MetricsContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
-          const validFilters = filters?.filter((f) => f.columnId !== "");
+          const validFilters = filters?.filter((f) => f.column_id);
           // --- API Request ---
           const response = await axios.get(
             endpoints.develop.runPrompt.getPromptMetrics(),
@@ -266,7 +266,6 @@ const MetricsContent = () => {
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setIsFilterDrawerOpen}
       />
     </Box>
   );

@@ -1,5 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { Box, Drawer, Skeleton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Drawer,
+  Skeleton,
+  Stack,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
@@ -62,15 +69,25 @@ function AggregateBar({ agg }) {
 AggregateBar.propTypes = { agg: PropTypes.object.isRequired };
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
-function scoreColors(pct) {
+function scoreColors(pct, isDark) {
   if (pct >= 70)
-    return { backgroundColor: "rgba(90,206,109,0.12)", color: "#3a9e50" };
+    return {
+      backgroundColor: "rgba(90,206,109,0.12)",
+      color: isDark ? "#94DFA0" : "#3a9e50",
+    };
   if (pct >= 50)
-    return { backgroundColor: "rgba(245,166,35,0.12)", color: "#c47d00" };
-  return { backgroundColor: "rgba(219,47,45,0.10)", color: "#c0392b" };
+    return {
+      backgroundColor: "rgba(245,166,35,0.12)",
+      color: isDark ? "#E8A13A" : "#c47d00",
+    };
+  return {
+    backgroundColor: "rgba(219,47,45,0.10)",
+    color: isDark ? "#E87876" : "#c0392b",
+  };
 }
 
 function ScoreCellRenderer({ value }) {
+  const theme = useTheme();
   if (value == null) {
     return (
       <div
@@ -88,7 +105,10 @@ function ScoreCellRenderer({ value }) {
     );
   }
   const pct = Math.round(value * 100);
-  const { backgroundColor, color } = scoreColors(pct);
+  const { backgroundColor, color } = scoreColors(
+    pct,
+    theme.palette.mode === "dark",
+  );
   return (
     <div
       style={{
@@ -304,7 +324,8 @@ export default function TracesTab({ error }) {
       {isVoiceProject ? (
         // Match TraceDetailDrawerV2's overlay shape so the two drawers feel
         // identical: persistent variant (no backdrop, page stays interactive),
-        // fixed right-anchored, sized in vw.
+        // fixed right-anchored.
+
         <Drawer
           anchor="right"
           variant="persistent"
@@ -312,7 +333,7 @@ export default function TracesTab({ error }) {
           onClose={() => setDrawerTraceId(null)}
           PaperProps={{
             sx: {
-              width: "60vw",
+              width: "auto",
               height: "100vh",
               position: "fixed",
               right: 0,

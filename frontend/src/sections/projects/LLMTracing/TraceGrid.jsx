@@ -23,7 +23,9 @@ import {
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
   normalizeConfigKeys,
+  toBackendFilters,
 } from "./common";
+import { RENDERER_CONFIG } from "./Renderers/common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
@@ -36,7 +38,7 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
-const ROWS_LIMIT = 100;
+const ROWS_LIMIT = 25;
 const EMPTY_EXTRA_FILTERS = [];
 
 const TraceGrid = React.forwardRef(
@@ -224,12 +226,14 @@ const TraceGrid = React.forwardRef(
                 ...(projectId ? { project_id: projectId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...filters,
-                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                filters: JSON.stringify(
+                  toBackendFilters([
+                    ...filters,
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
+                  ]),
+                ),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -475,6 +479,8 @@ const TraceGrid = React.forwardRef(
           return;
         }
         if (event?.column?.colId === "status") return;
+        if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
+          return;
         if (
           event.column.getColId() === APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
         ) {
@@ -558,7 +564,7 @@ const TraceGrid = React.forwardRef(
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
-          rowBuffer={10}
+          rowBuffer={5}
           suppressServerSideFullWidthLoadingRow={true}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
@@ -612,7 +618,6 @@ const TraceGrid = React.forwardRef(
           filterData={openQuickFilter}
           onClose={() => setOpenQuickFilter(null)}
           setFilters={setFilters}
-          setFilterOpen={setFilterOpen}
         />
       </Box>
     );

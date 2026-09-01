@@ -143,8 +143,10 @@ class TestVersionCreateAPI:
         assert r2.status_code == 200
         assert r1.data["result"]["version_number"] == 1
         assert r2.data["result"]["version_number"] == 2
+        # Default rotates to the newly-created version — v1 was default at
+        # create-time but got demoted by v2's create_version transaction.
         assert r1.data["result"]["is_default"] is True
-        assert r2.data["result"]["is_default"] is False
+        assert r2.data["result"]["is_default"] is True
 
     def test_create_version_with_overrides(self, auth_client, user_template):
         response = auth_client.post(
@@ -157,7 +159,10 @@ class TestVersionCreateAPI:
         assert v.criteria == "New instructions {{var}}"
         assert v.model == "turing_flash"
 
-    def test_create_version_keeps_existing_default(self, auth_client, user_template):
+    def test_create_version_rotates_default(self, auth_client, user_template):
+        """Creating a new version demotes the previous default and flags the
+        new version as default in the same transaction.
+        """
         r1 = auth_client.post(self._url(user_template.id), {}, format="json")
         r2 = auth_client.post(self._url(user_template.id), {}, format="json")
 
@@ -166,8 +171,23 @@ class TestVersionCreateAPI:
 
         v1.refresh_from_db()
         v2.refresh_from_db()
-        assert v1.is_default is True
-        assert v2.is_default is False
+        assert v1.is_default is False
+        assert v2.is_default is True
+
+    def test_only_one_default_after_multiple_creates(self, auth_client, user_template):
+        """Invariant: after any number of create_version calls, exactly one
+        version per template carries is_default=True. Enforced at the DB
+        level by the `unique_default_version_per_template` partial unique
+        constraint (migration 0114).
+        """
+        for _ in range(5):
+            auth_client.post(self._url(user_template.id), {}, format="json")
+
+        defaults = EvalTemplateVersion.objects.filter(
+            eval_template=user_template, is_default=True, deleted=False
+        )
+        assert defaults.count() == 1
+        assert defaults.first().version_number == 5
 
     def test_create_version_nonexistent_template(self, auth_client):
         response = auth_client.post(
@@ -1828,6 +1848,49 @@ class TestMaybePinNewVersion:
             f"config has {config_rule_prompt!r} but snapshot has {snapshot_rule_prompt!r}"
         )
 
+    def test_prompt_edit_syncs_required_keys_from_mapping(
+        self, organization, workspace, user, user_template
+    ):
+        """A drawer edit that adds {{order_json}} must snapshot it as an input."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        user_template.config = {
+            "eval_type_id": "AgentEvaluator",
+            "output": "Pass/Fail",
+            "custom_eval": True,
+            "required_keys": ["json"],
+            "rule_prompt": "{{json}}",
+        }
+        user_template.save()
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        maybe_pin_new_version(
+            uem,
+            {
+                "config": {
+                    "config": {
+                        "eval_type_id": "AgentEvaluator",
+                        "custom_eval": True,
+                        "required_keys": ["json"],
+                        "rule_prompt": "{{json}}\n\n{{order_json}}",
+                    },
+                    "mapping": {
+                        "json": "json-col",
+                        "order_json": "order-col",
+                    },
+                }
+            },
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        assert uem.pinned_version is not None
+        assert uem.pinned_version.config_snapshot["required_keys"] == [
+            "json",
+            "order_json",
+        ]
+
     def test_version_switch_with_no_config_change_keeps_selected_version(
         self, organization, workspace, user, user_template
     ):
@@ -1858,3 +1921,70 @@ class TestMaybePinNewVersion:
         assert uem.pinned_version_id == v1.id, "Switching back to v1 with same config should keep v1 pinned"
         version_count = EvalTemplateVersion.objects.filter(eval_template=user_template).count()
         assert version_count == 2, f"No new version should be created, found {version_count}"
+
+    def test_runner_map_fields_uses_pinned_snapshot_required_keys(
+        self, organization, workspace, user, user_template
+    ):
+        """Dataset runs must recover mapped prompt variables from stale versions.
+
+        Regression for the drawer edit path: usage logs received the new input
+        value, but the evaluator got stale required_keys from EvalTemplate.config
+        and left the new placeholder unresolved.
+        """
+        from model_hub.views.eval_runner import EvaluationRunner
+
+        user_template.config = {
+            "eval_type_id": "AgentEvaluator",
+            "output": "Pass/Fail",
+            "custom_eval": True,
+            "required_keys": ["json"],
+            "rule_prompt": "{{json}}\n\n{{order_json}}",
+        }
+        user_template.save()
+
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="{{json}}\n\n{{order_json}}",
+            model="turing_large",
+            config_snapshot={
+                "eval_type_id": "AgentEvaluator",
+                "output": "Pass/Fail",
+                "custom_eval": True,
+                "required_keys": ["json"],
+                "rule_prompt": "{{json}}\n\n{{order_json}}",
+            },
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        uem = self._make_uem(
+            organization,
+            workspace,
+            user,
+            user_template,
+            config={"mapping": {"json": "json-col", "order_json": "order-col"}},
+        )
+        uem.pinned_version = version
+        uem.save()
+
+        runner = object.__new__(EvaluationRunner)
+        runner.eval_template = user_template
+        runner.user_eval_metric = uem
+        runner.user_eval_metric_id = str(uem.id)
+        runner.futureagi_eval = False
+        runner.organization_id = organization.id
+        runner.workspace_id = workspace.id
+        runner.criteria = None
+        runner._resolved_version = version
+        runner.get_few_shot_examples = lambda mapping, required_field=None: []
+
+        mapped = runner.map_fields(
+            required_field=["json", "order_json"],
+            mapping=['{"id": 1, "name": "Alice"}', '{"order_id": 10}'],
+            config={},
+        )
+
+        assert mapped["json"] == '{"id": 1, "name": "Alice"}'
+        assert mapped["order_json"] == '{"order_id": 10}'
+        assert mapped["required_keys"] == ["json", "order_json"]
+        assert mapped["optional_keys"] == ["json", "order_json"]

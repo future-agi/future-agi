@@ -29,6 +29,7 @@ from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
     is_masked,
     resolve_api_key_for_version,
+    resolve_api_secret_for_version,
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
@@ -140,6 +141,16 @@ class CreateAgentVersionView(APIView):
             preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key
             )
+            incoming_livekit_api_key = validated.get("livekit_api_key")
+            preserve_livekit_api_key = (
+                incoming_livekit_api_key is not None
+                and is_masked(incoming_livekit_api_key)
+            )
+            incoming_livekit_api_secret = validated.get("livekit_api_secret")
+            preserve_livekit_api_secret = (
+                incoming_livekit_api_secret is not None
+                and is_masked(incoming_livekit_api_secret)
+            )
 
             # Update agent definition fields directly from validated data
             update_fields = [
@@ -154,6 +165,7 @@ class CreateAgentVersionView(APIView):
                 "languages",
                 "contact_number",
                 "inbound",
+                "target_speaks_first",
                 "model",
                 "model_details",
             ]
@@ -216,15 +228,31 @@ class CreateAgentVersionView(APIView):
                     agent.observability_provider = provider
                     agent.save()
 
-            # Resolve the API key *before* creating the new version so we
-            # read from the active version rather than the brand-new one.
-            if preserve_existing_api_key:
+            # Resolve masked secrets *before* creating the new version so we read
+            # them from the active version rather than the brand-new one. The UI
+            # resends the LiveKit key/secret masked (it never holds the real
+            # value), so without this a new version blanks them → the hosted
+            # runner authenticates with empty creds and room create returns 401.
+            existing_api_key = None
+            existing_livekit_api_key = None
+            existing_livekit_api_secret = None
+            if (
+                preserve_existing_api_key
+                or preserve_livekit_api_key
+                or preserve_livekit_api_secret
+            ):
                 active_version = agent.active_version or agent.latest_version
-                existing_api_key = (
-                    resolve_api_key_for_version(active_version) if active_version else None
-                )
-            else:
-                existing_api_key = None
+                if active_version:
+                    if preserve_existing_api_key:
+                        existing_api_key = resolve_api_key_for_version(active_version)
+                    if preserve_livekit_api_key:
+                        existing_livekit_api_key = resolve_api_key_for_version(
+                            active_version
+                        )
+                    if preserve_livekit_api_secret:
+                        existing_livekit_api_secret = resolve_api_secret_for_version(
+                            active_version
+                        )
 
             version = agent.create_version(
                 description=agent.description,
@@ -235,11 +263,21 @@ class CreateAgentVersionView(APIView):
 
             creds_input = ProviderCredentialsInput(
                 provider=validated.get("provider") or agent.provider or "",
-                api_key=existing_api_key if preserve_existing_api_key else validated.get("api_key"),
+                api_key=existing_api_key
+                if preserve_existing_api_key
+                else validated.get("api_key"),
                 assistant_id=validated.get("assistant_id"),
                 livekit_url=validated.get("livekit_url"),
-                livekit_api_key=validated.get("livekit_api_key"),
-                livekit_api_secret=validated.get("livekit_api_secret"),
+                livekit_api_key=(
+                    existing_livekit_api_key
+                    if preserve_livekit_api_key
+                    else validated.get("livekit_api_key")
+                ),
+                livekit_api_secret=(
+                    existing_livekit_api_secret
+                    if preserve_livekit_api_secret
+                    else validated.get("livekit_api_secret")
+                ),
                 livekit_agent_name=validated.get("livekit_agent_name"),
                 livekit_config_json=validated.get("livekit_config_json"),
                 livekit_max_concurrency=validated.get("livekit_max_concurrency"),
@@ -519,6 +557,8 @@ class AgentVersionEvalSummaryView(APIView):
 
             return self._gm.success_response(final_data)
 
+        except AgentVersion.DoesNotExist:
+            return self._gm.not_found("Agent version not found.")
         except Exception:
             return self._gm.internal_server_error_response(
                 get_error_message("UNABLE_TO_FETCH_EVAL_SUMMARY")
@@ -563,6 +603,8 @@ class AgentVersionCallExecutionView(APIView):
 
             return paginator.get_paginated_response(serializer.data)
 
+        except AgentVersion.DoesNotExist:
+            return self._gm.not_found("Agent version not found.")
         except NotFound:
             raise
         except Exception:

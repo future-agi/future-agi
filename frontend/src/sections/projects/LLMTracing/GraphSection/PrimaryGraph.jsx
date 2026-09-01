@@ -10,7 +10,13 @@
  * Metric dropdown shows ALL metrics from the dashboard metrics API:
  * system metrics, evals, annotations — same as what the dashboard module uses.
  */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import {
   Badge,
@@ -40,7 +46,8 @@ import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-import { FILTER_FOR_HAS_EVAL } from "../common";
+import { toBackendFilters } from "../common";
+import { combineGraphFilters } from "./graphFilterUtils";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -100,11 +107,16 @@ const COMPARE_DATE_OPTIONS = [
 // ---------------------------------------------------------------------------
 // Hook: fetch all metrics from dashboard API (system + eval + annotation)
 // ---------------------------------------------------------------------------
-function useGraphMetrics() {
+function useGraphMetrics(projectId) {
   return useQuery({
-    queryKey: ["graph-metrics-all"],
+    // The catalog is project-scoped, so the project id belongs in the key: a
+    // shared key served one project's evals and annotation labels to the next
+    // project the user opened (TH-6787).
+    queryKey: ["graph-metrics-all", projectId || null],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.dashboard.metrics);
+      const { data } = await axios.get(endpoints.dashboard.metrics, {
+        params: projectId ? { project_ids: projectId } : undefined,
+      });
       return data?.result?.metrics || [];
     },
     select: (metrics) => {
@@ -157,6 +169,7 @@ function useGraphMetrics() {
 // ---------------------------------------------------------------------------
 const PrimaryGraph = ({
   filters = [],
+  extraFilters,
   dateFilter,
   setDateFilter,
   selectedInterval = "day",
@@ -265,8 +278,9 @@ const PrimaryGraph = ({
   };
 
   // Fetch all available metrics (system + eval + annotation)
-  const { data: dynamicMetricGroups } = useGraphMetrics();
-  // Use staticMetrics if provided (for sessions/users), otherwise dynamic
+  const { data: dynamicMetricGroups } = useGraphMetrics(effectiveObserveId);
+  // Use staticMetrics if provided, otherwise dynamic. No caller passes
+  // staticMetrics today — sessions and users use the dynamic catalog too.
   const metricGroups = staticMetrics || dynamicMetricGroups;
 
   // Flatten groups into a single options list for lookup
@@ -288,6 +302,15 @@ const PrimaryGraph = ({
     [allMetrics, selectedMetric],
   );
 
+  // A metric selected in one project may not exist in the next one's catalog.
+  // Drop it once loaded so the trigger label and picker highlight agree.
+  useEffect(() => {
+    if (!metricGroups || !allMetrics.length) return;
+    if (!allMetrics.some((m) => m.id === selectedMetric)) {
+      setSelectedMetric(metricDef.id);
+    }
+  }, [metricGroups, allMetrics, selectedMetric, metricDef.id]);
+
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
     if (!metricGroups) return {};
@@ -304,36 +327,11 @@ const PrimaryGraph = ({
     return result;
   }, [metricGroups, pickerSearch]);
 
-  // Combine filters with date filter + eval filter
-  const combinedFilters = useMemo(() => {
-    const base = filters || [];
-    const hasDateFilter = base.some((f) => f?.column_id === "created_at");
-    const startDate = dateFilter?.dateFilter?.[0];
-    const endDate = dateFilter?.dateFilter?.[1];
-
-    const dateEntry =
-      !hasDateFilter && startDate && endDate
-        ? [
-            {
-              column_id: "created_at",
-              filter_config: {
-                filter_type: "datetime",
-                filter_op: "between",
-                filter_value: [
-                  new Date(startDate).toISOString(),
-                  new Date(endDate).toISOString(),
-                ],
-              },
-            },
-          ]
-        : [];
-
-    return [
-      ...base,
-      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-      ...dateEntry,
-    ];
-  }, [filters, dateFilter, hasEvalFilter]);
+  const combinedFilters = useMemo(
+    () =>
+      combineGraphFilters({ filters, extraFilters, dateFilter, hasEvalFilter }),
+    [filters, extraFilters, dateFilter, hasEvalFilter],
+  );
 
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
@@ -342,6 +340,12 @@ const PrimaryGraph = ({
       "primary-graph",
       effectiveObserveId,
       selectedMetric,
+      // metricDef resolves asynchronously: while the project's scoped catalog
+      // loads it is the hardcoded latency fallback, so keying on selectedMetric
+      // alone pinned that first response for the real metric — the chart then
+      // showed latency data under the eval's name and unit (TH-6787).
+      metricDef.id,
+      metricDef.apiType,
       selectedInterval,
       combinedFilters,
       apiEndpoint,
@@ -349,7 +353,7 @@ const PrimaryGraph = ({
     queryFn: () =>
       axios.post(apiEndpoint, {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: {
           id: metricDef.id,
@@ -585,6 +589,7 @@ const PrimaryGraph = ({
 
           {/* Metric picker trigger */}
           <ButtonBase
+            data-testid="graph-metric-picker-trigger"
             onClick={(e) => setPickerAnchor(e.currentTarget)}
             sx={{
               height: 26,
@@ -875,6 +880,7 @@ const PrimaryGraph = ({
 
 PrimaryGraph.propTypes = {
   filters: PropTypes.array,
+  extraFilters: PropTypes.array,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   selectedInterval: PropTypes.string,

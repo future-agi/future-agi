@@ -4,7 +4,16 @@ import uuid
 
 import pytest
 
-from tracer.utils.eval import EvalSkippedMissingAttribute, _process_mapping
+from tracer.models.observation_span import EvalLogger
+from tracer.utils.eval import (
+    EvalSkippedMissingAttribute,
+    _process_mapping,
+    _process_session_mapping,
+    _process_trace_mapping,
+    evaluate_trace_observe,
+    resolve_session_mapping_lean_first,
+    resolve_trace_mapping_lean_first,
+)
 
 
 @pytest.fixture
@@ -93,14 +102,16 @@ def test_missing_attribute_raises_typed_skip(
     _span_with_attrs, missing_eval_template_id
 ):
     span = _span_with_attrs({"unrelated": "value"})
-    with pytest.raises(ValueError, match="Required attribute 'nonexistent_field'"):
+    with pytest.raises(
+        ValueError, match="Required attribute 'nonexistent_field'"
+    ) as exc:
         _process_mapping(
             {"prompt": "nonexistent_field"},
             span,
             eval_template_id=missing_eval_template_id,
         )
     assert isinstance(exc.value, EvalSkippedMissingAttribute)
-    assert exc.value.skipped_reason == "missing_required_attribute: input"
+    assert exc.value.skipped_reason == "missing_required_attribute: nonexistent_field"
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -334,3 +345,157 @@ def test_voice_fallback_not_reached_when_literal_resolves(
         {"v": "call.duration"}, span, eval_template_id=missing_eval_template_id
     )
     assert out == {"v": "42"}
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Non-string mapping values
+#
+# A saved mapping value is an attribute path string. A resolver handed any
+# other type must fail as a ValueError — the type the eval callers catch and
+# persist as a failed EvalLogger row — rather than a TypeError/AttributeError
+# from inside a path walker.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_object_mapping_value_fails_span_mapping_as_value_error(
+    _span_with_attrs, missing_eval_template_id
+):
+    span = _span_with_attrs({"input": "hello"})
+    with pytest.raises(ValueError, match="must be an attribute path string"):
+        _process_mapping(
+            {"prompt": {"path": "input"}},
+            span,
+            eval_template_id=missing_eval_template_id,
+        )
+    assert _process_mapping(
+        {"prompt": "input"}, span, eval_template_id=missing_eval_template_id
+    ) == {"prompt": "hello"}
+
+
+def test_object_mapping_value_fails_trace_mapping_as_value_error(trace, eval_template):
+    with pytest.raises(ValueError, match="must be an attribute path string"):
+        _process_trace_mapping({"prompt": {"path": "name"}}, trace, eval_template.id)
+    assert _process_trace_mapping({"prompt": "name"}, trace, eval_template.id) == {
+        "prompt": "Test Trace"
+    }
+
+
+def test_object_mapping_value_fails_session_mapping_as_value_error(
+    trace_session, eval_template
+):
+    with pytest.raises(ValueError, match="must be an attribute path string"):
+        _process_session_mapping(
+            {"prompt": {"path": "name"}}, trace_session, eval_template.id
+        )
+    assert _process_session_mapping(
+        {"prompt": "name"}, trace_session, eval_template.id
+    ) == {"prompt": "Test Session"}
+
+
+def test_list_mapping_raises_value_error_not_attribute_error(trace, eval_template):
+    # ``(mapping or {}).items()`` only absorbs an *empty* list. A populated one
+    # used to raise AttributeError, which the callers' broad ``except Exception``
+    # swallows instead of recording — the exact failure mode this set out to end.
+    with pytest.raises(ValueError, match="must be an object"):
+        _process_trace_mapping(["prompt"], trace, eval_template.id)
+
+
+def test_cleared_value_on_a_required_key_is_a_missing_attribute(
+    observation_span, eval_template
+):
+    # ``None`` is admissible (it is how a cleared field is stored) and is popped
+    # for optional keys. On a *required* key the span resolver used to reach
+    # ``None.split(".")``; it now converges on the same missing-attribute
+    # failure the trace and session resolvers already raised.
+    with pytest.raises(EvalSkippedMissingAttribute):
+        _process_mapping({"prompt": None}, observation_span, eval_template.id)
+
+
+# The shape the reporting customer actually saved, quoted from their own report:
+#   generated_value: {"source": "span_attribute", "column_id": "output.value"}
+# Their 31 rows all failed with "'dict' object has no attribute 'startswith'",
+# which is _heavy_span_ids_for_trace_mapping scanning raw mapping values before
+# the resolver binds to a span -- hence trace_id/span_id/session_id all null.
+CUSTOMER_MAPPING_VALUE = {"source": "span_attribute", "column_id": "output.value"}
+
+
+def test_customer_mapping_shape_fails_before_the_heavy_span_scan(
+    trace, eval_template, mocker
+):
+    mocker.patch(
+        "tracer.services.clickhouse.v2.eval_loader._read_source",
+        return_value="clickhouse",
+    )
+    with pytest.raises(ValueError, match="must be an attribute path string"):
+        resolve_trace_mapping_lean_first(
+            {"generated_value": CUSTOMER_MAPPING_VALUE}, trace, eval_template.id
+        )
+
+
+def test_object_mapping_value_fails_lean_first_trace_path(trace, eval_template, mocker):
+    mocker.patch(
+        "tracer.services.clickhouse.v2.eval_loader._read_source",
+        return_value="clickhouse",
+    )
+    with pytest.raises(ValueError, match="must be an attribute path string"):
+        resolve_trace_mapping_lean_first(
+            {"prompt": {"path": "spans.0.input"}}, trace, eval_template.id
+        )
+
+
+def test_object_mapping_value_fails_lean_first_session_path(
+    trace_session, eval_template, mocker
+):
+    mocker.patch(
+        "tracer.services.clickhouse.v2.eval_loader._read_source",
+        return_value="clickhouse",
+    )
+    with pytest.raises(ValueError, match="must be an attribute path string"):
+        resolve_session_mapping_lean_first(
+            {"prompt": {"path": "traces.0.spans.0.input"}},
+            trace_session,
+            eval_template.id,
+        )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# The recorded outcome
+#
+# ``evaluate_trace_observe`` records a ValueError on EvalTask.failed_spans and
+# writes an error EvalLogger row, but its bare ``except Exception`` only logs.
+# A mapping value that used to raise TypeError out of a path walker therefore
+# produced no eval result and no trace of why. Raising ValueError instead is
+# what makes the failure visible, so that is what this asserts.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_object_mapping_value_is_recorded_not_swallowed(
+    trace, observation_span, custom_eval_config, eval_task
+):
+    custom_eval_config.mapping = {"input": {"path": "input"}, "output": "output"}
+    custom_eval_config.save(update_fields=["mapping"])
+
+    # ``._original_func`` for the same reason ``inline_temporal`` uses it: the
+    # temporal_activity wrapper's close_old_connections() drops pytest-django's
+    # test transaction. The body it wraps is the one Temporal runs.
+    result = evaluate_trace_observe._original_func(
+        trace_id=str(trace.id),
+        custom_eval_config_id=str(custom_eval_config.id),
+        eval_task_id=str(eval_task.id),
+    )
+
+    assert result is False
+
+    eval_task.refresh_from_db()
+    assert eval_task.failed_spans, "the failure was swallowed, not recorded"
+    recorded = eval_task.failed_spans[-1]
+    assert recorded["trace_id"] == str(trace.id)
+    assert "must be an attribute path string" in recorded["error"]
+
+    errored = EvalLogger.objects.filter(
+        trace_id=trace.id,
+        custom_eval_config_id=custom_eval_config.id,
+        error=True,
+    ).first()
+    assert errored is not None, "no error row was written for the failed eval"
+    assert "must be an attribute path string" in errored.error_message

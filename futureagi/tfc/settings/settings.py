@@ -129,7 +129,7 @@ INSTALLED_APPS = [
     "model_hub",
     "tracer",
     "simulate",
-    "agent_playground",
+    "agent_playground.apps.AgentPlaygroundConfig",
     "integrations",
     # AI tools shared layer (MCP + AI Assistant)
     "ai_tools",
@@ -137,6 +137,8 @@ INSTALLED_APPS = [
     "mcp_server",
     "agentcc",
     "tfc.deployment_telemetry",
+    "tfc.licensing",
+    "tfc.capabilities",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
@@ -154,6 +156,14 @@ if ee_feature_enabled("ee.falcon_ai"):
     INSTALLED_APPS.append("ee.falcon_ai.apps.FalconAIConfig")
 if has_ee("ee.usage"):
     INSTALLED_APPS.append("ee.usage")
+if has_ee("ee.licensing"):
+    INSTALLED_APPS.append("ee.licensing")
+if has_ee("ee.cloud.control_plane") and os.environ.get("CLOUD_DEPLOYMENT", "") in (
+    "US",
+    "EU",
+    "DEV",
+):
+    INSTALLED_APPS.append("ee.cloud.control_plane.apps.CloudControlPlaneConfig")
 
 # Site ID for django.contrib.sites
 SITE_ID = 1
@@ -470,19 +480,44 @@ SERVER_EMAIL = os.getenv("SERVER_EMAIL")  # ditto (default from-email for Django
 APP_URL = os.getenv("APP_URL")
 
 # ── Billing ───────────────────────────────────────────────────
+# Ships only with the cloud overlay, which is the future-agi/ee repo checked
+# out at futureagi/ee/cloud/. Absent on OSS/EE — BillingConfig falls open to
+# empty defaults there (and fails closed on cloud).
 BILLING_CONFIG_PATH = os.environ.get(
     "BILLING_CONFIG_PATH",
-    os.path.join(BASE_DIR, "..", "ee", "billing.yaml"),
+    os.path.join(BASE_DIR, "..", "ee", "cloud", "billing.yaml"),
 )
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
+EE_LICENSE_PUBLIC_KEYS = os.environ.get("EE_LICENSE_PUBLIC_KEYS", "")
+EE_LICENSE_CLOCK_SKEW_SECONDS = os.environ.get("EE_LICENSE_CLOCK_SKEW_SECONDS", "300")
+EE_LICENSE_KEY_ID = os.environ.get("EE_LICENSE_KEY_ID", "default")
 EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
     "\\n", "\n"
 )
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
+
+# Activation signing key (cloud control plane uses this to mint service tokens)
+ACTIVATION_PRIVATE_KEY = os.environ.get("ACTIVATION_PRIVATE_KEY", "").replace("\\n", "\n")
+ACTIVATION_KEY_ID = os.environ.get("ACTIVATION_KEY_ID", "default")
+ACTIVATION_SIGNING_SERVICE_URL = os.environ.get("ACTIVATION_SIGNING_SERVICE_URL", "")
+ACTIVATION_TOKEN_ISSUER = os.environ.get(
+    "ACTIVATION_TOKEN_ISSUER", "https://licenses.futureagi.com"
+)
+ACTIVATION_TOKEN_AUDIENCE = os.environ.get(
+    "ACTIVATION_TOKEN_AUDIENCE", "futureagi-agentcc-gateway"
+)
+ACTIVATION_TOKEN_TYPE = os.environ.get(
+    "ACTIVATION_TOKEN_TYPE", "futureagi-managed-service-token"
+)
+ACTIVATION_TOKEN_TTL_SECONDS = os.environ.get("ACTIVATION_TOKEN_TTL_SECONDS", "3600")
+ACTIVATION_RUNTIME_STATE_REQUIRED = os.environ.get(
+    "ACTIVATION_RUNTIME_STATE_REQUIRED", "true"
+).lower() in ("1", "true", "yes")
 FUTUREAGI_CLOUD_GATEWAY_URL = os.environ.get(
     "FUTUREAGI_CLOUD_GATEWAY_URL", "https://gateway.futureagi.com"
 )
@@ -525,6 +560,21 @@ CELERY_IMPORTS = [
 # When enabled, test executions use Temporal workflows instead of Celery tasks
 TEMPORAL_TEST_EXECUTION_ENABLED = os.getenv(
     "TEMPORAL_TEST_EXECUTION_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
+# Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
+# to the simulation-runner worker which executes the released SDK, instead of the
+# native in-backend simulation path. Default off — no regression.
+HOSTED_RUNNER_ENABLED = os.getenv("HOSTED_RUNNER_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Route VOICE runs to the hosted simulation runner too (default off: voice stays
+# on the native path). Requires HOSTED_RUNNER_ENABLED.
+HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
+    "HOSTED_RUNNER_VOICE_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
 # Structured logging configuration with django-structlog
@@ -613,13 +663,19 @@ RETELL_LIVEKIT_URL = os.getenv(
 )
 
 # Stripe
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 STRIPE_REDIRECT_DOMAIN = os.getenv("STRIPE_REDIRECT_DOMAIN")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 BUSINESS_MONTHLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_MONTHLY_STRIPE_PRICE_ID")
 BUSINESS_YEARLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_YEARLY_STRIPE_PRICE_ID")
 
 STRIPE_LIVE = bool(STRIPE_SECRET_KEY and STRIPE_SECRET_KEY.startswith("sk_live"))
+
+# Signing secret for the billing webhook endpoint. Keyed off the same
+# live/test signal StripeService._is_live() uses, so the secret can never
+# disagree with the API key the events were generated against.
+STRIPE_WEBHOOK_SECRET = os.getenv(
+    "WEBHOOK_SECRET_LIVE" if STRIPE_LIVE else "WEBHOOK_SECRET_TEST", ""
+)
 
 BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL = [
     x
@@ -801,19 +857,19 @@ WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 # to the legacy CLICKHOUSE dict above for connection details if not set
 # explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HOST": os.getenv("CH25_HOST"),
     "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
-    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
-    "CH25_USER":      os.getenv("CH25_USER", "default"),
-    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER": os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE", "default"),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
     "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
-    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
-    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
-    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 # Fail-closed: rollup routing requires both flag=on and window >= coverage date.

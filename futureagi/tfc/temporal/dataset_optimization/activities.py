@@ -219,10 +219,26 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
     Run entire optimization in one activity. Resume from latest DatasetOptimizationTrial if exists.
     Uses callback to persist each trial immediately after completion.
     """
+    from tfc.ee_gating import EEFeature, check_ee_feature
+
     _safe_close_db()
     hb = Heartbeater(("optimization",))
     async with hb:
         run_id = input["run_id"]
+
+        def _fetch_org_id() -> str | None:
+            close_old_connections()
+            try:
+                return str(
+                    OptimizeDataset.objects.only("organization_id")
+                    .get(id=run_id)
+                    .organization_id
+                )
+            except OptimizeDataset.DoesNotExist:
+                return None
+
+        org_id = await sync_to_async(_fetch_org_id, thread_sensitive=False)()
+        check_ee_feature(EEFeature.OPTIMIZATION, org_id=org_id, activity=True)
 
         def _sync():
             close_old_connections()
@@ -452,9 +468,13 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
             except ImportError:
-                if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
-                return None
+                from temporalio.exceptions import ApplicationError
+
+                raise ApplicationError(
+                    "Dataset optimization requires ee.agenthub (EE).",
+                    type="FeatureUnavailable",
+                    non_retryable=True,
+                )
 
             # Get organization and workspace for API keys
             organization = dataset.organization
@@ -498,12 +518,13 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                     normalize_prompt_text,
                 )
             except ImportError:
-                if settings.DEBUG:
-                    logger.warning(
-                        "Could not import ee.agent_opt.utils.template_variables",
-                        exc_info=True,
-                    )
-                return None
+                from temporalio.exceptions import ApplicationError
+
+                raise ApplicationError(
+                    "Dataset optimization requires ee.agent_opt (EE).",
+                    type="FeatureUnavailable",
+                    non_retryable=True,
+                )
 
             initial_prompt = normalize_prompt_text(initial_prompt)
 
@@ -661,6 +682,11 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
                 "eval_type_id": template_config.get("eval_type_id"),
                 "output_type": template_config.get("output"),
                 "required_keys": template_config.get("required_keys"),
+                "output_type_normalized": eval_template.output_type_normalized,
+                "choice_scores": eval_template.choice_scores,
+                "pass_threshold": eval_template.pass_threshold,
+                "eval_config_id": str(user_eval_metric.id),
+                "eval_name": user_eval_metric.name or eval_template.name,
             }
         )
 

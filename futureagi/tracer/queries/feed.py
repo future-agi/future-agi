@@ -32,7 +32,6 @@ from scipy.stats import ks_2samp
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 from tracer.models.observation_span import EvalLogger, EvalTargetType
-from tracer.models.trace import Trace, TraceErrorAnalysisStatus
 from tracer.models.trace_error_analysis import (
     ClusterSource,
     ErrorClusterTraces,
@@ -42,6 +41,7 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.models.trace_scan import TraceScanIssue, TraceScanResult
+from tracer.queries import deep_analysis_state
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.types.feed_types import (
@@ -149,7 +149,9 @@ def _base_qs(project_ids: list[str]) -> QuerySet:
     return (
         TraceErrorGroup.objects.filter(project_id__in=project_ids, deleted=False)
         .exclude(issue_group__isnull=True)
-        .select_related("project", "assignee", "success_trace")
+        # ``success_trace`` (FK → dropped ``tracer_trace``) is only dereferenced
+        # in the detail path, which resolves it from CH; list/stats never read it.
+        .select_related("project", "assignee")
     )
 
 
@@ -261,9 +263,15 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     # resolution is multi-tenant-pinned, so group sessions by their project
     # (read off the junction's cluster, never a PG TraceSession row).
     sessions_by_project: dict[str, set[str]] = {}
+    # Collect the tenant set so the CH user-count read can prune by primary-key
+    # prefix (trace_id sits below project_id in the PK — an unscoped FINAL read
+    # can't prune parts). Every trace_id below belongs to one of these projects.
+    project_ids: set[str] = set()
     for tid, sid, cid, pid in ect_rows:
         if not cid:
             continue
+        if pid:
+            project_ids.add(str(pid))
         if tid:
             trace_to_clusters.setdefault(str(tid), set()).add(cid)
         elif sid:
@@ -284,7 +292,7 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     # DISTINCT pushed into CH — only user-ids come back, never span payloads.
     with get_reader() as reader:
         users_by_trace = reader.distinct_end_users_by_trace_ids(
-            list(trace_to_clusters.keys())
+            list(trace_to_clusters.keys()), list(project_ids) or None
         )
 
     # Distinct end_user_id per cluster_id — a trace contributes its users to
@@ -298,24 +306,43 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
 
 
 def _fetch_sessions_batch(cluster_ids: list[str]) -> dict:
-    """Return {cluster_id: distinct_session_count}."""
+    """Return {cluster_id: distinct_session_count}.
+
+    Session members carry their session on the junction row; trace members
+    resolve theirs from the CH root span's ``trace_session_id`` (the PG
+    ``Trace.session`` FK is gone post-cutover). Distinct session ids are counted
+    per cluster in Python — mirrors the old cross-store SQL COUNT(DISTINCT).
+    """
     if not cluster_ids:
         return {}
 
-    # Session members store the session directly on the junction row;
-    # trace members reach theirs through trace.session. Coalesce keeps it
-    # one query for mixed batches.
-    rows = (
-        ErrorClusterTraces.objects.filter(cluster__cluster_id__in=cluster_ids)
-        .filter(Q(trace__session__isnull=False) | Q(trace_session__isnull=False))
-        .values("cluster__cluster_id")
-        .annotate(
-            sessions=Count(
-                Coalesce("trace_session_id", "trace__session_id"), distinct=True
-            )
+    rows = list(
+        ErrorClusterTraces.objects.filter(
+            cluster__cluster_id__in=cluster_ids
+        ).values_list(
+            "cluster__cluster_id", "trace_id", "trace_session_id", "cluster__project_id"
         )
     )
-    return {r["cluster__cluster_id"]: r["sessions"] for r in rows}
+
+    # Trace members (no junction session) get their session from CH; batch once,
+    # scoped to the members' tenants so the FINAL read prunes by PK prefix
+    # (trace_id is below project_id in the primary key).
+    trace_ids = {str(tid) for _cid, tid, sid, _pid in rows if tid and not sid}
+    project_ids = {str(pid) for _cid, _tid, _sid, pid in rows if pid}
+    ch_sessions: dict[str, str | None] = {}
+    if trace_ids:
+        with get_reader() as reader:
+            ch_sessions = reader.trace_session_ids_by_trace_ids(
+                list(trace_ids), list(project_ids) or None
+            )
+
+    sessions_by_cluster: dict[str, set] = {}
+    for cid, tid, sid, _pid in rows:
+        session_id = str(sid) if sid else (ch_sessions.get(str(tid)) if tid else None)
+        if session_id:
+            sessions_by_cluster.setdefault(cid, set()).add(session_id)
+
+    return {cid: len(s) for cid, s in sessions_by_cluster.items() if s}
 
 
 def _fetch_latest_trace_id_batch(cluster_ids: list[str]) -> dict:
@@ -548,7 +575,7 @@ def get_cluster_detail(
     cluster_id is hashed from project+content).
     """
     qs = TraceErrorGroup.objects.filter(deleted=False).select_related(
-        "project", "assignee", "success_trace"
+        "project", "assignee"
     )
     if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
@@ -572,22 +599,20 @@ def get_cluster_detail(
 
     success_trace: TracePreview | None = None
     if cluster.success_trace_id:
-        success_trace = TracePreview(
-            trace_id=str(cluster.success_trace_id),
-            input=_trace_input_str(cluster.success_trace),
-            output=_trace_output_str(cluster.success_trace),
-        )
+        success_trace = _ch_trace_preview(str(cluster.success_trace_id))
     elif cluster.source == ClusterSource.EVAL and cluster.eval_config_id:
         # Eval clusters never get the scanner's KNN success match. A genuine
         # PASSING result for the same eval is the honest "working" reference
         # (powers the failing-vs-working comparison, e.g. voice call compare).
+        # Project scope comes off the eval config (project-scoped, PG-resident)
+        # instead of the trace/session FK, which points at the dropped tables.
         if cluster.eval_target_type == EvalTargetType.SESSION:
             # Session evals anchor to the session (trace NULL): find a
             # passing session and represent it by its latest trace.
             _, member_session_ids = _cluster_member_ids(cluster.cluster_id)
             passing_session = (
                 EvalLogger.objects.filter(
-                    trace_session__project_id=cluster.project_id,
+                    custom_eval_config__project_id=cluster.project_id,
                     custom_eval_config_id=cluster.eval_config_id,
                     deleted=False,
                 )
@@ -601,49 +626,32 @@ def get_cluster_detail(
                 rep_tid = _session_rep_trace_map(
                     [str(passing_session)], str(cluster.project_id)
                 ).get(str(passing_session))
-                rep_trace = (
-                    Trace.objects.filter(id=rep_tid).first() if rep_tid else None
-                )
-                if rep_trace:
-                    success_trace = TracePreview(
-                        trace_id=str(rep_trace.id),
-                        input=_trace_input_str(rep_trace),
-                        output=_trace_output_str(rep_trace),
-                    )
+                if rep_tid:
+                    success_trace = _ch_trace_preview(str(rep_tid))
         else:
             member_ids = _trace_ids_for_cluster(
                 cluster.cluster_id, str(cluster.project_id)
             )
-            passing = (
+            passing_trace_id = (
                 EvalLogger.objects.filter(
-                    trace__project_id=cluster.project_id,
+                    custom_eval_config__project_id=cluster.project_id,
                     custom_eval_config_id=cluster.eval_config_id,
                     deleted=False,
                 )
                 .filter(Q(output_bool=True) | Q(output_float__gte=1.0))
                 .exclude(trace_id__in=member_ids)
-                .select_related("trace")
                 .order_by("-created_at")
+                .values_list("trace_id", flat=True)
                 .first()
             )
-            if passing and passing.trace:
-                success_trace = TracePreview(
-                    trace_id=str(passing.trace_id),
-                    input=_trace_input_str(passing.trace),
-                    output=_trace_output_str(passing.trace),
-                )
+            if passing_trace_id:
+                success_trace = _ch_trace_preview(str(passing_trace_id))
 
     representative_trace: TracePreview | None = None
     if row.trace_id:
-        # Direct Trace fetch — session clusters' latest_trace_id is an
-        # effective trace (the session's rep), which has no junction row.
-        rep_trace_obj = Trace.objects.filter(id=row.trace_id).first()
-        if rep_trace_obj:
-            representative_trace = TracePreview(
-                trace_id=str(rep_trace_obj.id),
-                input=_trace_input_str(rep_trace_obj),
-                output=_trace_output_str(rep_trace_obj),
-            )
+        # Session clusters' latest_trace_id is an effective trace (the session's
+        # rep) with no junction row — hydrate it from the CH root span.
+        representative_trace = _ch_trace_preview(str(row.trace_id))
 
     rca = RcaSummary(
         synthesis=cluster.rca_synthesis,
@@ -747,6 +755,32 @@ def _trace_output_str(trace) -> str | None:
     return _safe_str(trace.output)
 
 
+def _ch_trace_preview(trace_id: str) -> TracePreview | None:
+    """``TracePreview`` for a trace hydrated from its CH root span — the sole
+    source post-cutover (no PG ``Trace`` row). Input/output prefer the typed
+    ``input.value``/``output.value`` attrs, falling back to the span's raw
+    input/output payload, matching the pass-reel precedence so the same trace
+    renders identically across surfaces. ``None`` if the trace has no CH root.
+    """
+    if not trace_id:
+        return None
+    root = _get_root_span(str(trace_id))
+    if root is None:
+        return None
+    attrs = root.attrs_string or {}
+    input_text = attrs.get("input.value")
+    if input_text is None and root.input is not None:
+        input_text = _safe_str(root.input)
+    output_text = attrs.get("output.value")
+    if output_text is None and root.output is not None:
+        output_text = _safe_str(root.output)
+    return TracePreview(
+        trace_id=str(trace_id),
+        input=input_text,
+        output=output_text,
+    )
+
+
 class _CHTraceShim:
     """Trace-like view backed by the CH root span, for post-cutover traces
     that have no PG ``Trace`` row. Exposes the attributes the row / rep
@@ -761,25 +795,25 @@ class _CHTraceShim:
         self.output = getattr(root, "output", None)
 
 
-def _resolve_member_traces(trace_ids: list[str]) -> dict:
-    """``{trace_id: trace-like}`` for cluster members — PG ``Trace`` where it
-    exists, else a CH-backed shim built from the root span.
+def _resolve_member_traces(trace_ids: list[str], project_id: str | None = None) -> dict:
+    """``{trace_id: trace-like}`` for cluster members, hydrated from the CH
+    root span. Post-cutover traces are CH-only (no PG ``Trace`` row), so the
+    root span is the sole source for the attrs the row/rep builders read
+    (``id``, ``created_at``, ``input``, ``output``). Members with no root span
+    in CH are omitted (same as an unresolvable trace before the cutover).
 
-    Post-CH-cutover traces are CH-only (no PG ``Trace`` row), so resolving
-    members through PG alone silently drops every collector trace from the
-    Traces tab / Overview. Hydrate the missing ones from the spans table.
+    ``project_id`` (optional) is forwarded so the underlying root read prunes
+    by primary-key prefix — see ``_get_root_spans_batch``.
     """
     ids = [str(t) for t in trace_ids if t]
     if not ids:
         return {}
-    out: dict = {str(t.id): t for t in Trace.objects.filter(id__in=ids)}
-    missing = [tid for tid in ids if tid not in out]
-    if missing:
-        roots = _get_root_spans_batch(missing)
-        for tid in missing:
-            root = roots.get(tid)
-            if root is not None:
-                out[tid] = _CHTraceShim(tid, root)
+    roots = _get_root_spans_batch(ids, project_id)
+    out: dict = {}
+    for tid in ids:
+        root = roots.get(tid)
+        if root is not None:
+            out[tid] = _CHTraceShim(tid, root)
     return out
 
 
@@ -827,29 +861,32 @@ def _session_traces_map(
     # All sessions in one call belong to the project being queried.
     sid_to_trace_ids: dict[str, list[str]] = {}
     all_trace_ids: set[str] = set()
+    start_times: dict[str, datetime | None] = {}
     with get_reader() as reader:
         for sid in sid_set:
             tids = reader.session_trace_ids(project_id, sid)
             if tids:
                 sid_to_trace_ids[sid] = [str(t) for t in tids]
                 all_trace_ids.update(sid_to_trace_ids[sid])
-
-    if not all_trace_ids:
-        return {}
-
-    # Re-order newest-first: session_trace_ids returns an unordered DISTINCT set,
-    # but callers (rep-trace map) require the latest turn first.
-    order_rank = {
-        str(tid): i
-        for i, tid in enumerate(
-            Trace.objects.filter(id__in=all_trace_ids)
-            .order_by("-created_at")
-            .values_list("id", flat=True)
+        if not all_trace_ids:
+            return {}
+        # Order newest-first by the CH root-span start_time (session_trace_ids
+        # returns an unordered DISTINCT set; callers require the latest turn
+        # first). Cross-store PG ``Trace.created_at`` is gone post-cutover.
+        # Single-project (see docstring) — pin the tenant so FINAL prunes by PK.
+        start_times = reader.per_trace_root_span_start_times(
+            list(all_trace_ids), [project_id]
         )
-    }
+
+    def _rank(tid: str) -> datetime:
+        st = start_times.get(tid)
+        if st is None:
+            return datetime.min.replace(tzinfo=UTC)  # no CH root → sort last
+        return st if st.tzinfo else st.replace(tzinfo=UTC)
+
     out: dict[str, list[str]] = {}
     for sid, tids in sid_to_trace_ids.items():
-        out[sid] = sorted(tids, key=lambda t: order_rank.get(t, len(order_rank)))
+        out[sid] = sorted(tids, key=_rank, reverse=True)
     return out
 
 
@@ -1065,14 +1102,13 @@ def _project_cluster_inputs_corpus(
     if not all_trace_ids:
         return [], [], {}
 
-    # Was: ObservationSpan.filter(trace_id__in=, parent_span_id IS NULL
-    # OR ="").values_list("trace_id", "span_attributes"). Loaded the
-    # full row set since PG returns one row per matching span; CH
-    # `list_by_trace_ids` does the same in one query then we pick the
-    # first parentless span per trace in Python. attrs_string is the
-    # typed-Map column where string-valued attrs like input.value live.
+    # We only need each trace's first root input.value, so read parentless spans
+    # project-scoped + lean (input.value lives in attrs_string, kept real) rather
+    # than every span with the fat columns — the widest read in the feed.
     with get_reader() as reader:
-        all_spans = reader.list_by_trace_ids(list(all_trace_ids))
+        all_spans = reader.roots_by_trace_ids(
+            list(all_trace_ids), project_id=str(project_id)
+        )
     trace_input: dict[str, str] = {}
     for span in all_spans:
         if span.parent_span_id:  # root = parent_span_id is "" (CHSpan default)
@@ -1208,10 +1244,13 @@ def _readable_phrase(
     return max(near, key=lambda r: r[0].count(" "))
 
 
-def _root_input_texts(trace_ids: list[str]) -> dict[str, str]:
+def _root_input_texts(trace_ids: list[str], project_id: str) -> dict[str, str]:
     """{trace_id: root-span ``input.value``} for the given traces. Powers the
-    failing-vs-passing input corpora for the distinctive-topic builder."""
-    roots = _get_root_spans_batch(trace_ids)
+    failing-vs-passing input corpora for the distinctive-topic builder.
+
+    ``project_id`` (single tenant — both corpora belong to the cluster's
+    project) pins the root read so its FINAL scan prunes by primary-key prefix."""
+    roots = _get_root_spans_batch(trace_ids, project_id)
     out: dict[str, str] = {}
     for tid, root in roots.items():
         text = (root.attrs_string or {}).get("input.value") or root.input or ""
@@ -1290,8 +1329,8 @@ def _insight_distinctive_topic(
     of failing root-inputs vs the KNN-passing baseline."""
     if not baseline_ids:
         return None
-    fail_texts = list(_root_input_texts(trace_ids).values())
-    base_texts = list(_root_input_texts(baseline_ids).values())
+    fail_texts = list(_root_input_texts(trace_ids, project_id).values())
+    base_texts = list(_root_input_texts(baseline_ids, project_id).values())
     if len(fail_texts) < 2 or len(base_texts) < 2:
         return None
     picked = _readable_phrase(_log_odds_distinctive(fail_texts, base_texts, (2, 3)))
@@ -1368,15 +1407,18 @@ def _insight_brief_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
 
 
 def _insight_distribution_shift(
-    trace_ids: list[str], baseline_ids: list[str], metric: str
+    trace_ids: list[str], baseline_ids: list[str], metric: str, project_id: str
 ) -> PatternInsight | None:
     """KS two-sample on a per-trace numeric (``latency`` or ``tokens``) vs the
     passing baseline. Fires when the distributions differ (p < 0.05) AND the
-    failing side is materially larger (median ratio >= 1.5)."""
+    failing side is materially larger (median ratio >= 1.5).
+
+    ``project_id`` (single tenant — both corpora belong to the cluster's
+    project) pins the totals reads so they prune by primary-key prefix."""
     if not baseline_ids:
         return None
-    fail_tot = _get_trace_totals_batch(trace_ids)
-    base_tot = _get_trace_totals_batch(baseline_ids)
+    fail_tot = _get_trace_totals_batch(trace_ids, project_id)
+    base_tot = _get_trace_totals_batch(baseline_ids, project_id)
 
     def _pick(totals: dict) -> list[float]:
         vals = []
@@ -1578,8 +1620,8 @@ def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
     # Shared builders (both sources) compare vs the KNN-passing baseline.
     candidates: list[PatternInsight | None] = [
         _insight_distinctive_topic(cluster_id, project_id, trace_ids, baseline_ids),
-        _insight_distribution_shift(trace_ids, baseline_ids, "latency"),
-        _insight_distribution_shift(trace_ids, baseline_ids, "tokens"),
+        _insight_distribution_shift(trace_ids, baseline_ids, "latency", project_id),
+        _insight_distribution_shift(trace_ids, baseline_ids, "tokens", project_id),
     ]
     # Scanner-only builders (no passing counterpart for briefs / scan meta).
     if is_scanner:
@@ -1607,12 +1649,20 @@ def _get_root_span(trace_id: str) -> CHSpan | None:
     return roots.get(str(trace_id))
 
 
-def _get_root_spans_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: CHSpan} -- latest root span per trace."""
+def _get_root_spans_batch(trace_ids: list[str], project_id: str | None = None) -> dict:
+    """Return {trace_id_str: CHSpan} -- latest root span per trace.
+
+    ``project_id`` (optional, single tenant) pins the CH read so the root-span
+    FINAL scan prunes by primary-key prefix instead of relying on the trace_id
+    bloom alone — on a large tenant an unscoped batch reads hundreds of granules
+    across every part. Pass it wherever the caller knows the traces' project.
+    """
     if not trace_ids:
         return {}
     with get_reader() as reader:
-        spans = reader.roots_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.roots_by_trace_ids(
+            [str(t) for t in trace_ids], project_id=project_id
+        )
     out: dict = {}
     # CH orders by (trace_id, start_time, id) ASC; we want the latest root
     # per trace_id, so a pass that always overwrites keeps the newest.
@@ -1633,15 +1683,18 @@ def _get_trace_totals(
     return totals.get(str(trace_id), (None, None, None))
 
 
-def _get_trace_totals_batch(trace_ids: list[str]) -> dict:
+def _get_trace_totals_batch(trace_ids: list[str], project_id: str | None = None) -> dict:
     """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans.
 
     Summed CH-side — three ints per trace come back, not the span payloads.
+    ``project_id`` (optional) prunes the scan by primary-key prefix.
     """
     if not trace_ids:
         return {}
     with get_reader() as reader:
-        return reader.totals_by_trace_ids([str(t) for t in trace_ids])
+        return reader.totals_by_trace_ids(
+            [str(t) for t in trace_ids], [project_id] if project_id else None
+        )
 
 
 def _get_trace_score(trace_id: str) -> float | None:
@@ -1721,15 +1774,20 @@ def _highlight_text(text: str, terms: list[str], hl: str) -> object:
     return segments
 
 
-def _attribute_old_key_moments(key_moments: list, trace_id: str) -> list:
+def _attribute_old_key_moments(
+    key_moments: list, trace_id: str, project_id: str
+) -> list:
     """Reconstruct span attribution for old scans whose stored key_moments
     predate it. Deterministic (no LLM): re-match the stored quotes against the
     trace's live spans. Hybrid fast-path — new scans already carry ``role`` and
     never reach here. Returns the moments unchanged if EE/spans are unavailable.
+
+    ``project_id`` scopes the span read to the trace's tenant so the ClickHouse
+    primary-key prefix prunes the scan.
     """
     from tracer.ee_boundary import attribute_key_moments
 
-    return attribute_key_moments(key_moments, trace_id)
+    return attribute_key_moments(key_moments, trace_id, project_id)
 
 
 def _key_moments_to_reel(
@@ -1737,6 +1795,7 @@ def _key_moments_to_reel(
     highlight_terms: list[str] | None = None,
     hl: str = "error",
     trace_id: str | None = None,
+    project_id: str | None = None,
 ) -> list[dict]:
     """
     Map TraceScanResult.key_moments to ReelStep dicts the frontend renders.
@@ -1754,8 +1813,8 @@ def _key_moments_to_reel(
     moments = list(key_moments or [])
     # Hybrid: runtime-reconstruct attribution for old scans only (new scans
     # already have role → zero overhead, no span re-fetch).
-    if trace_id and any(km and not km.get("role") for km in moments):
-        moments = _attribute_old_key_moments(moments, trace_id)
+    if trace_id and project_id and any(km and not km.get("role") for km in moments):
+        moments = _attribute_old_key_moments(moments, trace_id, project_id)
 
     steps: list[dict] = []
     for km in moments:
@@ -1896,7 +1955,7 @@ def _avg_session_eval_score(session_ids: list[str]) -> float | None:
 
 
 def _build_representative_trace(
-    trace: Trace,
+    trace: "_CHTraceShim",
     has_issues: bool,
     pass_reel: list[dict] | None = None,
     highlight_terms: list[str] | None = None,
@@ -2007,39 +2066,42 @@ def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
     own root input + output (+ key_moments if they exist) so the reel always
     has something useful to show.
     """
-    cluster = (
-        TraceErrorGroup.objects.filter(cluster_id=cluster_id)
-        .select_related("success_trace")
-        .first()
-    )
-    if not cluster or not cluster.success_trace:
+    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    if not cluster or not cluster.success_trace_id:
         return []
 
-    success = cluster.success_trace
+    success_id = str(cluster.success_trace_id)
     steps: list[dict] = []
 
-    # 1. User input (from root span or Trace.input)
-    root = _get_root_span(str(success.id))
+    # 1. User input/output from the CH root span — the sole source post-cutover.
+    root = _get_root_span(success_id)
     input_text = None
     output_text = None
     if root:
-        # CHSpan typed-Map string-valued attrs live in attrs_string.
+        # CHSpan typed-Map string-valued attrs live in attrs_string; fall back
+        # to the raw span payload when the typed attr is absent.
         attrs = root.attrs_string or {}
         input_text = attrs.get("input.value")
         output_text = attrs.get("output.value")
-    input_text = input_text or _trace_input_str(success)
-    output_text = output_text or _trace_output_str(success)
+        if input_text is None and root.input is not None:
+            input_text = _safe_str(root.input)
+        if output_text is None and root.output is not None:
+            output_text = _safe_str(root.output)
 
     if input_text:
         steps.append({"label": "USER INPUT", "text": input_text, "meta": None})
 
     # 2. Any key_moments the scanner captured (often empty for clean traces)
     scan_result = (
-        TraceScanResult.objects.filter(trace_id=success.id).only("key_moments").first()
+        TraceScanResult.objects.filter(trace_id=success_id).only("key_moments").first()
     )
     if scan_result:
         steps.extend(
-            _key_moments_to_reel(scan_result.key_moments, trace_id=str(success.id))
+            _key_moments_to_reel(
+                scan_result.key_moments,
+                trace_id=success_id,
+                project_id=str(cluster.project_id) if cluster.project_id else None,
+            )
         )
 
     # 3. Final successful output
@@ -2081,7 +2143,8 @@ def _fetch_representative_traces(
 
     qs = (
         ErrorClusterTraces.objects.filter(cluster__cluster_id=cluster_id)
-        .select_related("trace")
+        # Only raw ``trace_id``/``trace_session_id`` are read below; member
+        # traces hydrate from CH via ``_resolve_member_traces``.
         .order_by("-created_at")
     )
     ect_rows = list(
@@ -2121,14 +2184,14 @@ def _fetch_representative_traces(
             break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
-    traces_by_id = _resolve_member_traces(ordered_ids)
+    traces_by_id = _resolve_member_traces(ordered_ids, project_id)
     deduped = [traces_by_id[t] for t in ordered_ids if t in traces_by_id]
     if not deduped:
         return []
 
     trace_ids = [str(t.id) for t in deduped]
-    roots = _get_root_spans_batch(trace_ids)
-    totals = _get_trace_totals_batch(trace_ids)
+    roots = _get_root_spans_batch(trace_ids, project_id)
+    totals = _get_trace_totals_batch(trace_ids, project_id)
     scores = _get_trace_scores_batch(trace_ids)
     scans = _get_scan_results_batch(trace_ids)
     judges = _trace_judges_batch(trace_ids)
@@ -2262,7 +2325,7 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
     avg_score = avg_score or 0.0
 
     # Latency percentiles: sum(latency_ms) per trace via CH batch helper.
-    totals_by_trace = _get_trace_totals_batch(trace_ids)
+    totals_by_trace = _get_trace_totals_batch(trace_ids, project_id)
     per_trace_latency: list[int] = [
         t[0] for t in totals_by_trace.values() if t[0] is not None
     ]
@@ -2303,7 +2366,7 @@ def _fetch_trace_rows(
     """Paginated list of traces in the cluster for the AG Grid."""
     base = (
         ErrorClusterTraces.objects.filter(cluster__cluster_id=cluster_id)
-        .select_related("trace")
+        # Raw ``trace_id``/``trace_session_id`` only; traces hydrate from CH.
         .order_by("-created_at")
     )
 
@@ -2344,7 +2407,7 @@ def _fetch_trace_rows(
             break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
-    traces_by_id = _resolve_member_traces(page_trace_ids)
+    traces_by_id = _resolve_member_traces(page_trace_ids, project_id)
     page_traces = [traces_by_id[t] for t in page_trace_ids if t in traces_by_id]
     if not page_traces:
         return [], total
@@ -2353,9 +2416,9 @@ def _fetch_trace_rows(
     session_judges = _session_judges_batch(list(session_by_trace.values()))
 
     # Pre-batch CH/PG lookups: one round-trip each.
-    totals_by_trace = _get_trace_totals_batch(page_trace_ids)
+    totals_by_trace = _get_trace_totals_batch(page_trace_ids, project_id)
     scores_by_trace = _get_trace_scores_batch(page_trace_ids)
-    roots_by_trace = _get_root_spans_batch(page_trace_ids)
+    roots_by_trace = _get_root_spans_batch(page_trace_ids, project_id)
     scans_by_trace = {
         str(sr.trace_id): sr
         for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids).only(
@@ -2442,13 +2505,16 @@ def _member_ids_in_window(
     return trace_ids, session_ids
 
 
-def _users_affected_in_window(trace_ids: list[str]) -> int:
-    """Distinct end_user_id across the given traces."""
+def _users_affected_in_window(
+    trace_ids: list[str], project_id: str | None = None
+) -> int:
+    """Distinct end_user_id across the given traces. ``project_id`` (single
+    tenant) pins the CH read so its FINAL scan prunes by primary-key prefix."""
     if not trace_ids:
         return 0
     with get_reader() as reader:
         users_by_trace = reader.distinct_end_users_by_trace_ids(
-            [str(t) for t in trace_ids]
+            [str(t) for t in trace_ids], [project_id] if project_id else None
         )
     all_users: set = set()
     for users in users_by_trace.values():
@@ -2478,10 +2544,22 @@ def _project_scope_total(project_id: str, source: str, start, end=None) -> int:
     projects), so denominator = trace rows in the project window.
     """
     if source == ClusterSource.EVAL:
-        qs = Trace.objects.filter(project_id=project_id, created_at__gte=start)
-        if end is not None:
-            qs = qs.filter(created_at__lt=end)
-        return qs.count()
+        # Denominator = distinct traces in the window. The PG ``Trace`` table is
+        # gone, so count distinct CH root traces over the same window. (CH uses an
+        # inclusive BETWEEN vs the scanner branch's exclusive ``created_at__lt``
+        # below — a boundary-microsecond difference on a rate denominator.)
+        with get_reader() as reader:
+            if end is not None:
+                return reader.count_with_filters(
+                    project_id=str(project_id),
+                    created_at_range=(start, end),
+                    roots_only=True,
+                )
+            return reader.count_with_filters(
+                project_id=str(project_id),
+                created_at_gte=start,
+                roots_only=True,
+            )
     qs = TraceScanResult.objects.filter(project_id=project_id, created_at__gte=start)
     if end is not None:
         qs = qs.filter(created_at__lt=end)
@@ -2525,8 +2603,8 @@ def _fetch_trend_metrics(
         _avg_eval_score(prev_traces) or _avg_session_eval_score(prev_sessions) or 0.0
     )
 
-    cur_users = _users_affected_in_window(cur_traces)
-    prev_users = _users_affected_in_window(prev_traces)
+    cur_users = _users_affected_in_window(cur_traces, project_id)
+    prev_users = _users_affected_in_window(prev_traces, project_id)
 
     return [
         TrendMetric(
@@ -2610,7 +2688,7 @@ def _fetch_events_over_time_with_passing(
 
         with get_reader() as reader:
             users_by_trace = reader.distinct_end_users_by_trace_ids(
-                list(buckets_by_trace.keys())
+                list(buckets_by_trace.keys()), [project_id] if project_id else None
             )
 
         for tid, user_ids in users_by_trace.items():
@@ -3197,31 +3275,6 @@ def _build_recommendations(
     return result
 
 
-_TRACE_STATUS_TO_FEED = {
-    TraceErrorAnalysisStatus.PENDING: "idle",
-    TraceErrorAnalysisStatus.SKIPPED: "idle",
-    TraceErrorAnalysisStatus.PROCESSING: "running",
-    TraceErrorAnalysisStatus.COMPLETED: "done",
-    TraceErrorAnalysisStatus.FAILED: "failed",
-}
-
-
-def _deep_analysis_status(trace: Trace, has_analysis: bool) -> str:
-    """Map ``Trace.error_analysis_status`` to the frontend state machine.
-
-    One nuance: a trace can be in COMPLETED state but have zero
-    ``TraceErrorDetail`` rows (the analysis ran, found nothing). We still
-    return ``done`` — the frontend decides what to render when the lists
-    are empty. Conversely, if status is COMPLETED but the
-    ``TraceErrorAnalysis`` row got deleted (e.g. cascade from a trace
-    delete), we treat that as ``idle`` so the button re-enables.
-    """
-    status = _TRACE_STATUS_TO_FEED.get(trace.error_analysis_status, "idle")
-    if status == "done" and not has_analysis:
-        return "idle"
-    return status
-
-
 def _cluster_has_trace(
     cluster_id: str, trace_id: str, project_ids: list[str] | None = None
 ) -> bool:
@@ -3251,16 +3304,12 @@ def get_deep_analysis(
     if not _cluster_has_trace(cluster_id, trace_id, project_ids):
         return None
 
-    trace = Trace.objects.filter(id=trace_id).only("error_analysis_status").first()
-    if not trace:
-        return None
-
     analysis = (
         TraceErrorAnalysis.objects.filter(trace_id=trace_id)
         .order_by("-analysis_date")
         .first()
     )
-    status = _deep_analysis_status(trace, has_analysis=bool(analysis))
+    status = deep_analysis_state.status(str(trace_id), has_analysis=bool(analysis))
 
     if not analysis or status != "done":
         return DeepAnalysisResponse(
@@ -3311,11 +3360,10 @@ def dispatch_deep_analysis(
     - If cached results already exist and ``force=False``, return a
       ``done`` response without dispatching — the frontend will just
       scroll to the existing panel.
-    - If the trace is already in PROCESSING state, return ``running``
-      without re-dispatching (idempotent double-click protection).
-    - Otherwise: set ``Trace.error_analysis_status=PROCESSING``
-      synchronously and dispatch the Temporal activity. The view returns
-      202 ``running``.
+    - If the trace is already running, return ``running`` without
+      re-dispatching (idempotent double-click protection).
+    - Otherwise: claim the running marker and dispatch the Temporal
+      activity. The view returns 202 ``running``.
     """
     # Import here to avoid pulling the Temporal runtime into module-load
     # time for everything that imports `feed.py`. Task modules can have
@@ -3328,10 +3376,6 @@ def dispatch_deep_analysis(
     if not _cluster_has_trace(cluster_id, trace_id, project_ids):
         return None
 
-    trace = Trace.objects.filter(id=trace_id).only("error_analysis_status").first()
-    if not trace:
-        return None
-
     has_analysis = TraceErrorAnalysis.objects.filter(trace_id=trace_id).exists()
 
     # Idempotent click: cached result exists and user didn't ask for a
@@ -3339,15 +3383,12 @@ def dispatch_deep_analysis(
     if has_analysis and not force:
         return DeepAnalysisDispatchResponse(status="done", trace_id=str(trace_id))
 
-    # Already running → don't double-dispatch.
-    if trace.error_analysis_status == TraceErrorAnalysisStatus.PROCESSING:
+    # Atomic claim (cache.add): a second click while a run is in flight gets
+    # False and returns ``running`` without re-dispatching. ``force`` re-runs
+    # even mid-flight (the marker is already set, so the guard is skipped).
+    claimed = deep_analysis_state.set_running(str(trace_id))
+    if not claimed and not force:
         return DeepAnalysisDispatchResponse(status="running", trace_id=str(trace_id))
-
-    # Flip status synchronously so the first frontend poll sees the
-    # running state without racing the Temporal worker.
-    Trace.objects.filter(id=trace_id).update(
-        error_analysis_status=TraceErrorAnalysisStatus.PROCESSING
-    )
 
     run_deep_analysis_on_demand.delay(str(trace_id), bool(force))
 

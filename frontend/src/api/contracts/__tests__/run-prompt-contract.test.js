@@ -39,4 +39,27 @@ describe("add_run_prompt_column request contract", () => {
     const result = validateContractedRequestConfig(runRequest);
     expect(result.ok).toBe(true);
   });
+
+  it("validates the wire shape: undefined-valued keys are dropped like JSON.stringify does", () => {
+    // The Run Prompt form leaves `run_prompt_config.id: undefined` in the
+    // in-memory payload. axios serializes bodies with JSON.stringify, which
+    // drops undefined keys — so the actual wire payload is valid. The
+    // validator must judge the serialized shape, not the raw object,
+    // otherwise it blocks a request whose real bytes conform (TH-5941).
+    const request = {
+      ...runRequest,
+      data: {
+        ...runRequest.data,
+        config: {
+          ...runRequest.data.config,
+          run_prompt_config: {
+            ...runRequest.data.config.run_prompt_config,
+            id: undefined,
+          },
+        },
+      },
+    };
+    const result = validateContractedRequestConfig(request);
+    expect(result.ok).toBe(true);
+  });
 });

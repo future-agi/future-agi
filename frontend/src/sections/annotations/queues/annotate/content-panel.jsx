@@ -35,7 +35,9 @@ import { canonicalKeys, formatMs } from "src/utils/utils";
 import SpanTreeTimeline from "src/components/traceDetail/SpanTreeTimeline";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
 import LeftPanelSplit from "src/components/traceDetail/TraceLeftPanel";
-import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
+import DrawerToolbar, {
+  ToolbarPill,
+} from "src/components/traceDetail/DrawerToolbar";
 import TraceDisplayPanel, {
   DEFAULT_VIEW_CONFIG,
 } from "src/components/traceDetail/TraceDisplayPanel";
@@ -99,14 +101,16 @@ export default function ContentPanel({ item }) {
   }
 
   // For trace / observation_span, show the full trace view inline
-  // Voice traces (from simulator projects) get the voice-specific UI
+  // Voice traces (conversation root span) get the voice-specific UI
   if (sourceType === "trace" || sourceType === "observation_span") {
     const traceId = content?.trace_id;
-    const isVoiceProject = content?.project_source === "simulator";
+    const isVoiceTrace =
+      content?.observation_type === "conversation" ||
+      content?.project_source === "simulator";
     const spanId =
       sourceType === "observation_span" ? content?.span_id : undefined;
 
-    if (traceId && sourceType === "trace" && isVoiceProject) {
+    if (traceId && sourceType === "trace" && isVoiceTrace) {
       // Voice calls mount the embedded drawer which manages its own
       // scroll; skip the padding/overflow wrapper the other sources use
       // so the drawer can fill the full content panel height.
@@ -174,6 +178,13 @@ function InlineTraceView({ traceId, spanId }) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useGetTraceDetail(traceId);
   const projectId = data?.trace?.project;
+  const sessionId = data?.trace?.session;
+  const [showSession, setShowSession] = useState(false);
+
+  // Drop session overlay when the queue item / trace changes.
+  useEffect(() => {
+    setShowSession(false);
+  }, [traceId]);
 
   // Saved views — includes both traces-type custom views and imagine tabs.
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -340,6 +351,63 @@ function InlineTraceView({ traceId, spanId }) {
     );
   }
 
+  // Session overlay — same SessionContent used for trace_session queue items.
+  // Keeps the annotator in the queue workspace so they can return to the trace.
+  if (showSession && sessionId) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+          bgcolor: "background.paper",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+            minHeight: 36,
+          }}
+        >
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            onClick={() => setShowSession(false)}
+            sx={{
+              fontSize: 12,
+              fontWeight: 500,
+              textTransform: "none",
+              minWidth: 0,
+              px: 0.75,
+            }}
+          >
+            Back to trace
+          </Button>
+          <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
+          <Typography
+            variant="body2"
+            sx={{ fontSize: 12, color: "text.secondary", fontWeight: 500 }}
+          >
+            Session
+          </Typography>
+        </Stack>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
+          <SessionContent content={{ session_id: sessionId }} />
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -363,6 +431,15 @@ function InlineTraceView({ traceId, spanId }) {
         readOnly
         readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
         hideFilter
+        rightSlot={
+          sessionId ? (
+            <ToolbarPill
+              icon="mdi:forum-outline"
+              label="View session"
+              onClick={() => setShowSession(true)}
+            />
+          ) : null
+        }
       />
 
       {/* Display options popover */}
@@ -580,11 +657,7 @@ function VoiceCallContent({ traceId }) {
   }
 
   if (!callData) {
-    return (
-      <Typography color="text.secondary">
-        Voice call data not available.
-      </Typography>
-    );
+    return <InlineTraceView traceId={traceId} />;
   }
 
   const drawerData = {

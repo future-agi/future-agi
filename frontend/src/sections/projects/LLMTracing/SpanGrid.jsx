@@ -24,6 +24,7 @@ import {
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
   normalizeConfigKeys,
+  toBackendFilters,
 } from "./common";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
@@ -42,7 +43,7 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
-const ROWS_LIMIT = 100;
+const ROWS_LIMIT = 25;
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -403,12 +404,14 @@ const SpanGrid = React.forwardRef(
                 ...(observeId ? { project_id: observeId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...filters,
-                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                filters: JSON.stringify(
+                  toBackendFilters([
+                    ...filters,
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
+                  ]),
+                ),
               });
 
               // Use prefetched data if available, otherwise fetch
@@ -575,6 +578,9 @@ const SpanGrid = React.forwardRef(
         if (event?.column?.colId === "status") {
           return;
         }
+        if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId())) {
+          return;
+        }
         if (
           event.column.getColId() === APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
         ) {
@@ -653,7 +659,7 @@ const SpanGrid = React.forwardRef(
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
-          rowBuffer={10}
+          rowBuffer={5}
           rowModelType="serverSide"
           tooltipShowDelay={0}
           tooltipHideDelay={2000}
@@ -696,7 +702,6 @@ const SpanGrid = React.forwardRef(
           filterData={openQuickFilter}
           onClose={() => setOpenQuickFilter(null)}
           setFilters={setFilters}
-          setFilterOpen={setFilterOpen}
         />
       </Box>
     );

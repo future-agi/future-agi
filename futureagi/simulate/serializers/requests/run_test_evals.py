@@ -113,7 +113,17 @@ class EvalConfigUpdateRequestSerializer(StrictInputSerializer):
     kb_id = serializers.UUIDField(
         required=False,
         allow_null=True,
-        help_text="UUID of a knowledge base to use for grounding. Pass null to clear.",
+        help_text="UUID of a knowledge base to use for grounding. Pass null to clear. "
+        "Switching template_id without providing an explicit kb_id will clear the KB association.",
+    )
+    template_id = serializers.UUIDField(
+        required=False,
+        help_text="UUID of the evaluation template to switch to.",
+    )
+    filters = filter_list_field(
+        required=False,
+        allow_null=True,
+        help_text="Updated canonical filter list to restrict which test results are evaluated.",
     )
     name = serializers.CharField(
         required=False,

@@ -54,6 +54,7 @@ import ExportToDatasetDialog from "./export-to-dataset-dialog";
 import AutomationRulesTab from "./automation-rules-tab";
 import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
 import {
   canOpenSubmissionWorkspace,
@@ -131,7 +132,7 @@ export default function QueueDetailView() {
   const currentUserId = String(
     user?.id ||
       (typeof window !== "undefined"
-        ? window.sessionStorage.getItem("currentUserId")
+        ? window.sessionStorage.getItem(SS_KEY_USER_ID)
         : "") ||
       "",
   );
@@ -753,6 +754,17 @@ export default function QueueDetailView() {
               onSelectAll={handleSelectAll}
               onRemove={isManager ? handleRemove : undefined}
               onItemClick={(item) => {
+                const assignedUsers = item?.assigned_users || [];
+                const assignedToOther =
+                  queue?.auto_assign === false &&
+                  !assignedUsers?.some((a) => String(a.id) === currentUserId);
+                if (assignedToOther && !canViewSubmissions && !isManager) {
+                  enqueueSnackbar(
+                    "You cannot annotate items that are not assigned to you",
+                    { variant: "warning" },
+                  );
+                  return;
+                }
                 if (
                   queue?.status === "active" ||
                   queue?.status === "completed"

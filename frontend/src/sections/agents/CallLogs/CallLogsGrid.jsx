@@ -38,6 +38,8 @@ import { ShowComponent } from "src/components/show";
 import { useShallowToggleAnnotationsStore } from "../store";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
+import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
+import { applyQuickFilters } from "src/sections/projects/LLMTracing/common";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
 
@@ -104,6 +106,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     onColumnsChange,
     hideDrawer = false,
     showErrors = false,
+    setExtraFilters,
   },
   forwardedRef,
 ) {
@@ -111,7 +114,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   const theme = useTheme();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [pageLimit, setPageLimit] = useState(25);
+  const [pageLimit, setPageLimit] = useState(15);
   const [totalPages, setTotalPages] = useState(1);
   const [lastFilters, setLastFilters] = useState(params?.filters);
   const { selectedVersion } = useAgentDetailsStore();
@@ -153,6 +156,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     setPage(1);
   }
 
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
+
   const defaultColDef = useMemo(
     () => ({
       lockVisible: true,
@@ -167,8 +172,16 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         display: "flex",
         alignItems: "center",
       },
+      ...(setExtraFilters && {
+        cellRendererParams: {
+          applyQuickFilters: applyQuickFilters(
+            setExtraFilters,
+            setOpenQuickFilter,
+          ),
+        },
+      }),
     }),
-    [],
+    [setExtraFilters],
   );
 
   useEffect(() => {
@@ -526,6 +539,13 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           />
         </ShowComponent>
 
+        <NumberQuickFilterPopover
+          open={Boolean(openQuickFilter)}
+          filterData={openQuickFilter}
+          onClose={() => setOpenQuickFilter(null)}
+          setFilters={setExtraFilters}
+        />
+
         {/* Footer controls */}
         <Stack
           direction="row"
@@ -552,7 +572,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               }}
               sx={{ height: 36, bgcolor: "background.paper" }}
             >
-              {[10, 25, 50].map((size) => (
+              {[10, 15, 25, 50].map((size) => (
                 <MenuItem key={size} value={size}>
                   {size}
                 </MenuItem>
@@ -629,4 +649,5 @@ CallLogsGrid.propTypes = {
   onColumnsChange: PropTypes.func,
   hideDrawer: PropTypes.bool,
   showErrors: PropTypes.bool,
+  setExtraFilters: PropTypes.func,
 };

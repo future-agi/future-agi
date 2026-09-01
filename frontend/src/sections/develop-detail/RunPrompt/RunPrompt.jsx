@@ -82,6 +82,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { sanitizeContent } from "src/utils/utils";
 import { AudioPlaybackProvider } from "../../../components/custom-audio/context-provider/AudioPlaybackContext";
 import logger from "src/utils/logger";
+import { canonicalResponseFormat } from "src/utils/responseFormat";
 import { useCustomAudioDialog, useRunPromptStore } from "../states";
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
 import { ShowComponent } from "../../../components/show";
@@ -637,8 +638,14 @@ export const RunPromptForm = React.forwardRef(
           onClose();
           reset();
         },
-        onError: () => {
-          enqueueSnackbar("Failed to update Run Prompt", {
+        meta: { errorHandled: true },
+        onError: (error) => {
+          const message =
+            error?.detail ||
+            error?.message ||
+            error?.result ||
+            "Failed to update Run Prompt";
+          enqueueSnackbar(message, {
             variant: "error",
           });
         },
@@ -1120,7 +1127,12 @@ export const RunPromptForm = React.forwardRef(
         setAnchorEl(false);
         setOpenRunPreViewModal(false);
       } catch (error) {
-        enqueueSnackbar("Failed to run prompt", { variant: "error" });
+        const message =
+          error?.detail ||
+          error?.message ||
+          error?.result ||
+          "Failed to run prompt";
+        enqueueSnackbar(message, { variant: "error" });
         logger.error("Failed to run prompt", error);
       }
     };
@@ -1182,7 +1194,7 @@ export const RunPromptForm = React.forwardRef(
 
       setValue(
         "config.responseFormat",
-        importedConfig?.response_format ?? "text",
+        canonicalResponseFormat(importedConfig?.response_format ?? "text"),
       );
       setValue(
         "config.tools",

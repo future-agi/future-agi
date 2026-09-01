@@ -9,7 +9,6 @@ import {
   Tabs,
   Tab,
   Chip,
-  CircularProgress,
   Alert,
   Button,
   Accordion,
@@ -25,6 +24,7 @@ import {
   Card,
   CardContent,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
@@ -631,15 +631,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
 
       {/* ---- Loading spinner ---- */}
       {isLoading && (
-        <Box
-          display="flex"
-          justifyContent="center"
-          alignItems="center"
-          flex={1}
-          py={8}
-        >
-          <CircularProgress />
-        </Box>
+        <LoadingScreen variant="orbit" sx={{ flex: 1 }} />
       )}
 
       {/* ---- Detail content ---- */}

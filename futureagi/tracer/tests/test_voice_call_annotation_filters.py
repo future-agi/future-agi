@@ -1354,7 +1354,7 @@ class TestBuildAnnotationSubqueries:
         "min_length": 1,
     }
 
-    def test_numeric_annotation_returns_floored_avg(
+    def test_numeric_annotation_returns_rounded_avg(
         self, project, trace, observation_span, user, organization
     ):
         from accounts.models.user import User
@@ -1378,7 +1378,8 @@ class TestBuildAnnotationSubqueries:
             name="Annotator Two",
             organization=organization,
         )
-        # User1 scores 7.0, User2 scores 8.0 → avg 7.5 → floor 7
+        # User1 scores 7.0, User2 scores 8.0 → avg 7.5 (NUMERIC keeps sub-integer
+        # precision via Round(avg, 2); only STAR floors to an integer).
         TraceAnnotation.objects.create(
             trace=trace,
             annotation_label=label,
@@ -1419,7 +1420,7 @@ class TestBuildAnnotationSubqueries:
 
         ann = getattr(row, f"annotation_{label.id}", None)
         assert ann is not None
-        assert ann["score"] == 7  # floor(7.5) = 7
+        assert ann["score"] == 7.5  # Round(avg(7.0, 8.0), 2) = 7.5
         assert str(user.id) in ann["annotators"]
         assert str(user2.id) in ann["annotators"]
 

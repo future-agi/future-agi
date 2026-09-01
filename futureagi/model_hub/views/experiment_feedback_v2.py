@@ -12,6 +12,7 @@ from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import Feedback, UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
+from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     ExperimentFeedbackSubmitRequestSerializer,
@@ -24,7 +25,6 @@ from model_hub.serializers.experiment_contracts import (
     ExperimentFeedbackTemplateResponseSerializer,
 )
 from model_hub.views.eval_runner import EvaluationRunner
-from model_hub.views.utils.constants import EVAL_OUTPUT_TYPES
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -125,41 +125,9 @@ class ExperimentFeedbackGetTemplateV2View(APIView):
             if not eval_template:
                 return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
 
-            template_data = {
-                "output_type": eval_template.config.get("output"),
-                "eval_description": eval_template.description,
-                "eval_name": eval_template.name,
-                "user_eval_name": user_eval_metric.name,
-            }
-
-            if template_data["output_type"] == EVAL_OUTPUT_TYPES["PASS_FAIL"]:
-                template_data["choices"] = ["Passed", "Failed"]
-
-            elif template_data["output_type"] == EVAL_OUTPUT_TYPES["CHOICES"]:
-                if (
-                    user_eval_metric.config
-                    and isinstance(user_eval_metric.config, dict)
-                    and "config" in user_eval_metric.config
-                    and "choices" in user_eval_metric.config["config"]
-                    and user_eval_metric.config["config"]["choices"]
-                ):
-                    template_data["choices"] = user_eval_metric.config["config"][
-                        "choices"
-                    ]
-                    template_data["multi_choice"] = user_eval_metric.config[
-                        "config"
-                    ].get("multi_choice", False)
-
-                elif hasattr(eval_template, "choices") and eval_template.choices:
-                    template_data["choices"] = eval_template.choices
-                    template_data["multi_choice"] = eval_template.config.get(
-                        "multi_choice", False
-                    )
-
-                else:
-                    template_data["choices"] = []
-                    template_data["multi_choice"] = False
-
+            template_data = resolve_feedback_template_data(
+                user_eval_metric, eval_template
+            )
             return self._gm.success_response(template_data)
 
         except Exception as e:

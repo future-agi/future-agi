@@ -5,7 +5,6 @@ Tests for /tracer/trace/ endpoints.
 """
 
 import uuid
-from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -58,7 +57,6 @@ class TestTraceRetrieveAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         # Spans may be in various locations in the response
-        spans = data.get("observation_spans", data.get("spans", []))
         # API may return spans elsewhere or spans may not be included inline
         # Just verify the response contains trace data
         trace_data = data.get("trace", data)
@@ -634,3 +632,116 @@ class TestTraceExportAPI:
         )
         # Can be 200 with data or 400 if no traces match filters
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+
+
+def test_get_span_trace_map_selects_from_spans(monkeypatch):
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+    captured = {}
+
+    def fake_exec(self, query, params=None, timeout_ms=5000):
+        captured["query"] = query
+        captured["params"] = params
+        class R:
+            data = [{"span_id": "s1", "trace_id": "t1"}]
+        return R()
+
+    monkeypatch.setattr(AnalyticsQueryService, "execute_ch_query", fake_exec)
+    out = AnalyticsQueryService().get_span_trace_map(["t1"])
+
+    assert out == {"s1": "t1"}
+    assert "FROM spans" in captured["query"]
+    assert "trace_id IN %(trace_ids)s" in captured["query"]
+    assert "is_deleted = 0" in captured["query"]
+    assert captured["params"] == {"trace_ids": ["t1"]}
+    assert "project_id" not in captured["query"]
+    assert "start_time" not in captured["query"]
+
+
+def _capture_span_trace_map_query(monkeypatch, **kwargs):
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+    captured = {}
+
+    def fake_exec(self, query, params=None, timeout_ms=5000):
+        captured["query"] = query
+        captured["params"] = params
+
+        class R:
+            data = []
+
+        return R()
+
+    monkeypatch.setattr(AnalyticsQueryService, "execute_ch_query", fake_exec)
+    AnalyticsQueryService().get_span_trace_map(["t1"], **kwargs)
+    return captured
+
+
+def test_get_span_trace_map_scopes_project_id_only(monkeypatch):
+    captured = _capture_span_trace_map_query(monkeypatch, project_id="p1")
+
+    assert "trace_id IN %(trace_ids)s" in captured["query"]
+    assert "project_id = %(project_id)s" in captured["query"]
+    assert "start_time" not in captured["query"]
+    assert captured["params"] == {"trace_ids": ["t1"], "project_id": "p1"}
+
+
+def test_get_span_trace_map_bounds_start_time_window(monkeypatch):
+    from datetime import datetime
+
+    start = datetime(2026, 7, 1)
+    end = datetime(2026, 7, 8)
+    captured = _capture_span_trace_map_query(
+        monkeypatch, project_id="p1", start_date=start, end_date=end
+    )
+
+    assert "trace_id IN %(trace_ids)s" in captured["query"]
+    assert "project_id = %(project_id)s" in captured["query"]
+    assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in captured["query"]
+    assert "start_time < %(end_date)s + INTERVAL 1 DAY" in captured["query"]
+    assert captured["params"] == {
+        "trace_ids": ["t1"],
+        "project_id": "p1",
+        "start_date": start,
+        "end_date": end,
+    }
+
+
+def test_get_span_trace_map_window_needs_both_bounds(monkeypatch):
+    from datetime import datetime
+
+    captured = _capture_span_trace_map_query(
+        monkeypatch, project_id="p1", start_date=datetime(2026, 7, 1)
+    )
+
+    assert "start_time" not in captured["query"]
+    assert captured["params"] == {"trace_ids": ["t1"], "project_id": "p1"}
+
+
+def test_build_annotation_map_pg_has_no_observation_span_join(monkeypatch):
+    """Regression: _build_annotation_map_from_scores_pg must not JOIN the dropped table."""
+    import tracer.views.trace as trace_mod
+    from model_hub.models.score import Score
+
+    captured = {}
+    real_manager = Score.objects  # capture BEFORE patching
+
+    class _FakeManager:
+        def filter(self, *args, **kwargs):
+            qs = real_manager.filter(*args, **kwargs).select_related("annotator")
+            captured["sql"] = str(qs.query)
+            return qs.none()  # empty + chainable + no DB hit
+
+    monkeypatch.setattr(Score, "objects", _FakeManager())
+    span_id = "11111111-1111-1111-1111-111111111111"
+    trace_id = "22222222-2222-2222-2222-222222222222"
+    label_id = "33333333-3333-3333-3333-333333333333"
+    span_trace_map = {span_id: trace_id}
+    trace_mod._build_annotation_map_from_scores_pg(
+        [trace_id],
+        [label_id],
+        {label_id: "numeric"},
+        span_trace_map,
+    )
+    assert "tracer_observation_span" not in captured["sql"]
+    assert "observation_span_id" in captured["sql"]

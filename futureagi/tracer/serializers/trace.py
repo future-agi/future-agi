@@ -1,6 +1,7 @@
 from django.db.models import Q
 from rest_framework import serializers
 
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
@@ -165,6 +166,47 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
         required=False, default=30, min_value=1, max_value=500
     )
     interval = serializers.CharField(required=False, allow_blank=True)
+
+
+class TraceObserveListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField()
+
+
+class TraceObserveColumnConfigSerializer(serializers.Serializer):
+    """One column-config row — the asdict() shape of tracer.utils.helper.FieldConfig."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+    group_by = serializers.CharField(required=False, allow_null=True)
+    output_type = serializers.CharField(required=False, allow_null=True)
+    reverse_output = serializers.BooleanField(required=False, allow_null=True)
+    annotation_label_type = serializers.CharField(required=False, allow_null=True)
+    # FieldConfig defaults `choices` to (None,), so serialized rows can carry
+    # [None] — the child must allow null.
+    choices = serializers.ListField(
+        child=serializers.CharField(allow_null=True), required=False, allow_null=True
+    )
+    settings = JsonValueField(required=False, allow_null=True)
+    choices_map = JsonValueField(required=False, allow_null=True)
+    eval_template_id = serializers.CharField(required=False, allow_null=True)
+    annotators = JsonValueField(required=False, allow_null=True)
+    source_field = serializers.CharField(required=False, allow_null=True)
+    parent_eval_id = serializers.CharField(required=False, allow_null=True)
+
+
+class TraceObserveListResultSerializer(serializers.Serializer):
+    metadata = TraceObserveListMetadataSerializer()
+    # allow_null: real rows carry null cells (cost, latency on error traces).
+    table = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+    config = TraceObserveColumnConfigSerializer(many=True)
+
+
+class TraceObserveListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceObserveListResultSerializer()
 
 
 class TraceExportQuerySerializer(StrictInputSerializer):

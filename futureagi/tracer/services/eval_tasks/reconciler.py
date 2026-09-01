@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from itertools import chain
 
+from django.db.models import Case, CharField, Value, When
 from django.utils import timezone
 
 from tracer.models.eval_task import EvalTask, RowType, RunType
@@ -23,6 +25,9 @@ from tracer.services.eval_tasks.entries import materialize_pending
 # needs to exceed normal ingestion lag (pause/downtime gaps are covered by the
 # persisted cursor, not this overlap).
 _CONTINUOUS_CURSOR_OVERLAP = timedelta(minutes=5)
+
+# Max entry ids per requeue UPDATE — bounds the WHERE id IN (...) list size.
+_REQUEUE_CHUNK = 10_000
 
 
 @dataclass
@@ -40,8 +45,9 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     keeping out-of-scope *completed* results (paid data). For continuous tasks,
     advances the forward cursor so the next pass scans only the new tail.
     """
+    now = timezone.now()
     before = _live_count(task)
-    materialize_pending(task)
+    materialize_pending(task, ceiling=now)
     created = _live_count(task) - before
     if before == 0:
         # Pure create — nothing pre-existing to re-queue or drop.
@@ -49,24 +55,24 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     else:
         requeued, dropped = _requeue_and_drop(task)
         result = ReconcileResult(created=created, requeued=requeued, dropped=dropped)
-    _advance_continuous_cursor(task)
+    _advance_continuous_cursor(task, now)
     return result
 
 
-def _advance_continuous_cursor(task: EvalTask) -> None:
-    """Park the continuous task's forward watermark just behind now().
+def _advance_continuous_cursor(task: EvalTask, now: datetime) -> None:
+    """Park the continuous task's forward watermark at ``now - overlap``.
 
-    Only ever moves forward, and never before the task's start floor — parking
-    at ``now() - overlap`` unclamped would, for a task younger than the overlap,
-    pull the floor back before its start and re-admit pre-start history. Advanced
-    after materialize/requeue so both read the same floor within a pass; the next
-    pass then floors its desired set here instead of re-scanning the whole
-    history.
+    ``now`` is frozen at the start of the reconcile pass (not read here) so the
+    watermark tracks what the scan actually covered, never jumping past rows that
+    arrived during a slow materialize. Only ever moves forward, and never before
+    the task's start floor — parking at ``now - overlap`` unclamped would, for a
+    task younger than the overlap, pull the floor before its start and re-admit
+    pre-start history.
     """
     if task.run_type != RunType.CONTINUOUS:
         return
     start_floor = task.start_time or task.created_at
-    parked = timezone.now() - _CONTINUOUS_CURSOR_OVERLAP
+    parked = now - _CONTINUOUS_CURSOR_OVERLAP
     if start_floor is not None and parked < start_floor:
         parked = start_floor
     if task.continuous_cursor is not None and parked <= task.continuous_cursor:
@@ -109,13 +115,24 @@ def _requeue_and_drop(task: EvalTask) -> tuple[int, int]:
             drop_ids.append(entry.id)  # out of scope, no result yet
 
     requeued = 0
-    for cfg_id, ids in requeue_by_cfg.items():
-        requeued += EvalLogger.objects.filter(id__in=ids).update(
-            status=EvalEntryStatus.PENDING,
-            config_hash=hashes[cfg_id],
-            error=False,
-            skipped_reason=None,
+    # Flatten {cfg_id: [entry_id, ...]} into one flat [entry_id, ...] list.
+    all_ids = list(chain.from_iterable(requeue_by_cfg.values()))
+    if all_ids:
+        hash_case = Case(
+            *[
+                When(custom_eval_config_id=cfg_id, then=Value(hashes[cfg_id]))
+                for cfg_id in requeue_by_cfg
+            ],
+            output_field=CharField(),
         )
+        for chunk_start in range(0, len(all_ids), _REQUEUE_CHUNK):
+            chunk = all_ids[chunk_start : chunk_start + _REQUEUE_CHUNK]
+            requeued += EvalLogger.objects.filter(id__in=chunk).update(
+                status=EvalEntryStatus.PENDING,
+                config_hash=hash_case,
+                error=False,
+                skipped_reason=None,
+            )
     dropped = 0
     if drop_ids:
         dropped = EvalLogger.objects.filter(id__in=drop_ids).update(

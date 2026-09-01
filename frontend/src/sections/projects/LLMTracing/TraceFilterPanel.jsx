@@ -38,9 +38,11 @@ import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
+import { SpanTypes } from "src/utils/constant";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAIFilter } from "src/hooks/use-ai-filter";
+import { FILTER_INPUT_TYPES } from "src/utils/constants";
 import { QueryInput } from "src/components/filter-panel";
 import {
   getPickerOptionExactMatches,
@@ -68,15 +70,7 @@ const BASE_TRACE_FILTER_FIELDS = [
     value: "node_type",
     label: "Node Type",
     type: "enum",
-    choices: [
-      "chain",
-      "retriever",
-      "generation",
-      "llm",
-      "tool",
-      "agent",
-      "embedding",
-    ],
+    choices: SpanTypes.map((s) => s.value),
   },
   { value: "service_name", label: "Service Name", type: "string" },
   { value: "provider", label: "Provider", type: "string" },
@@ -340,9 +334,17 @@ const getOperators = (fieldType) => {
 // Wrapper that special-cases ID-only fields. Use from FilterRow + apply
 // validation; keep `getOperators` as the pure type → ops mapping (Query
 // tab + AI filter schema rely on the type-only behavior).
-const getOperatorsForFilter = (filter) => {
+const getOperatorsForFilter = (filter, property) => {
   if (filter?.field && ID_ONLY_FIELDS.has(filter.field)) return ID_ONLY_OPS;
-  return getOperators(filter?.fieldType);
+  const ops = getOperators(filter?.fieldType);
+  // A property may narrow its own operators — e.g. span type, where the API
+  // takes a value list and has nowhere to put an operator, so anything but
+  // "is one of" would be a no-op or an inversion.
+  if (!Array.isArray(property?.operators)) return ops;
+  // A property whose declared operators share nothing with its type would
+  // narrow the row down to an empty dropdown, so fall back to the type's own.
+  const narrowed = ops.filter((op) => property.operators.includes(op.value));
+  return narrowed.length ? narrowed : ops;
 };
 
 const getDefaultOperatorForFilter = (filter, ops) => {
@@ -447,6 +449,8 @@ export const hasIncompleteNumericRow = (rows) =>
   });
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
+const USER_SELECTABLE_TYPES = new Set(["text", "number", "boolean"]);
+
 const SINGLE_VALUE_OPS = new Set([
   "equals",
   "not_equals",
@@ -642,12 +646,9 @@ export function useTraceFilterProperties(
   { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
   return useQuery({
-    queryKey: [
-      "trace-filter-properties-v2",
-      projectId,
-      isSimulator,
-      sourceScope,
-    ],
+    // Key on projectId only — isSimulator/sourceScope affect only the
+    // per-observer `select`, not the request, so keying on them duplicated fetches.
+    queryKey: ["trace-filter-properties-v2", projectId],
     enabled: enabled && Boolean(projectId),
     queryFn: async () => {
       const params = {};
@@ -935,7 +936,8 @@ const SESSION_VALUE_FIELDS = new Set([
   "last_message",
 ]);
 
-const FREE_TEXT_NO_OPTIONS_TEXT = "No suggestions yet — type a value to add it";
+const FREE_TEXT_NO_OPTIONS_TEXT =
+  "No values in the last 7 days — type to search, or add an exact value";
 
 function normalizePickerValues(values) {
   const rawValues = Array.isArray(values) ? values : values ? [values] : [];
@@ -982,6 +984,14 @@ function ValuePicker({
 
   const isIdOnlyField = !hasStaticChoices && ID_ONLY_FIELDS.has(propertyId);
 
+  // Backend search: ID fields (as before) plus custom attributes, whose
+  // BE path is now ngram-index-backed. Server-side search matters because
+  // the value list is capped and time-windowed — a value outside the first
+  // page can only be found by the backend. Other field types keep
+  // client-side filtering of the fetched page.
+  const usesBackendSearch =
+    !hasStaticChoices && (isIdOnlyField || metricType === "custom_attribute");
+
   // Primary: dashboard API values
   const {
     data: dashboardOptions = [],
@@ -992,7 +1002,7 @@ function ValuePicker({
     metricType,
     projectIds: projectId ? [projectId] : [],
     source,
-    search: isIdOnlyField ? debouncedSearch : "",
+    search: usesBackendSearch ? debouncedSearch : "",
     enabled:
       !hasStaticChoices &&
       Boolean(anchorEl) &&
@@ -1102,9 +1112,7 @@ function ValuePicker({
             {isLoading
               ? "Loading..."
               : options.length === 0
-                ? singleSelect
-                  ? "No value available"
-                  : "No values available"
+                ? "No recent values"
                 : singleSelect
                   ? "Select a value..."
                   : "Select values..."}
@@ -1402,6 +1410,8 @@ function FilterRow({
   ValuePickerOverride,
   categories,
   freeSoloValues = false,
+  operatorFilter,
+  defaultOperatorForType,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const selectedProp = properties.find((p) => p.id === filter.field);
@@ -1409,9 +1419,11 @@ function FilterRow({
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
-  const ops = getOperatorsForFilter(filter);
+  const allOps = getOperatorsForFilter(filter, selectedProp);
+  // Optional per-flow allowlist; currentOpDef resolves against the full set.
+  const ops = operatorFilter ? allOps.filter(operatorFilter) : allOps;
   const safeOperator = normalizeFilterRowOperator(filter).operator;
-  const currentOpDef = ops.find((o) => o.value === safeOperator);
+  const currentOpDef = allOps.find((o) => o.value === safeOperator);
   const updateRow = useCallback(
     (changes) =>
       onChange(index, {
@@ -1434,6 +1446,18 @@ function FilterRow({
 
   const handlePropertySelect = useCallback(
     (prop) => {
+      // When the row owns its type, swapping the property must not reset it —
+      // the type is the user's choice, not a fact about the field.
+      if (prop.typeSelectable && USER_SELECTABLE_TYPES.has(filter.fieldType)) {
+        onChange(index, {
+          ...filter,
+          field: prop.id,
+          fieldName: prop.name,
+          fieldCategory: prop.category,
+          apiColType: prop.apiColType,
+        });
+        return;
+      }
       // Preserve custom annotation types (categorical, thumbs, text) —
       // normalizeFieldType would collapse them to "string" losing
       // operator/input specificity.
@@ -1445,9 +1469,10 @@ function FilterRow({
           ? prop.type
           : normalizeFieldType(prop.type);
       // ID-only fields only support "is"; fallback would render blank.
+      // defaultOperatorForType: optional per-flow { type: op } override.
       const defaultOp = ID_ONLY_FIELDS.has(prop.id)
         ? "is"
-        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
+        : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1463,13 +1488,13 @@ function FilterRow({
         value: defaultValue,
       });
     },
-    [index, onChange],
+    [index, filter, onChange, defaultOperatorForType],
   );
 
   const handleOperatorChange = useCallback(
     (e) => {
       const newOp = e.target.value;
-      const opList = getOperatorsForFilter(filter);
+      const opList = getOperatorsForFilter(filter, selectedProp);
       const newDef = opList.find((o) => o.value === newOp);
       const oldDef = opList.find((o) => o.value === safeOperator);
       let newVal = filter.value;
@@ -1495,7 +1520,20 @@ function FilterRow({
       }
       onChange(index, { ...filter, operator: newOp, value: newVal });
     },
-    [index, filter, safeOperator, isNumber, isDate, onChange],
+    [index, filter, selectedProp, safeOperator, isNumber, isDate, onChange],
+  );
+
+  const handleTypeChange = useCallback(
+    (e) => {
+      const fieldType = e.target.value;
+      onChange(index, {
+        ...filter,
+        fieldType,
+        operator: DEFAULT_OP_FOR_TYPE[fieldType] || "equals",
+        value: fieldType === "boolean" ? "true" : "",
+      });
+    },
+    [index, filter, onChange],
   );
 
   const renderValueInput = () => {
@@ -1794,6 +1832,26 @@ function FilterRow({
         onSelect={handlePropertySelect}
       />
 
+      {selectedProp?.typeSelectable && (
+        <Select
+          size="small"
+          value={filter.fieldType}
+          onChange={handleTypeChange}
+          sx={{
+            flex: "0 1 104px",
+            minWidth: 84,
+            fontSize: 12,
+            height: 28,
+          }}
+        >
+          {FILTER_INPUT_TYPES.map((t) => (
+            <MenuItem key={t.value} value={t.value} sx={{ fontSize: 12 }}>
+              {t.label}
+            </MenuItem>
+          ))}
+        </Select>
+      )}
+
       <Select
         size="small"
         value={safeOperator}
@@ -1852,6 +1910,8 @@ const TraceFilterPanel = ({
   showQueryTab = true,
   categories: categoriesOverride,
   propertyFilter,
+  operatorFilter,
+  defaultOperatorForType,
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
@@ -1913,6 +1973,8 @@ const TraceFilterPanel = ({
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
+  // True when the last AI query returned zero filters (shows inline hint).
+  const [aiEmpty, setAiEmpty] = useState(false);
   // AI filter schema: exclude `attribute` category — those are typically
   // 100s–1000s of free-form keys that aren't referenced by name in natural
   // language and only slow step-1 field selection down without helping.
@@ -2074,11 +2136,14 @@ const TraceFilterPanel = ({
   );
 
   const queryGetOperators = useCallback(
-    (type, field) =>
-      getOperatorsForFilter({ field, fieldType: type }).map((op) =>
+    (type, field) => {
+      const ops = getOperatorsForFilter({ field, fieldType: type });
+      const allowed = operatorFilter ? ops.filter(operatorFilter) : ops;
+      return allowed.map((op) =>
         NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
-      ),
-    [],
+      );
+    },
+    [operatorFilter],
   );
 
   const handleChange = useCallback((idx, updated) => {
@@ -2123,15 +2188,16 @@ const TraceFilterPanel = ({
     };
   }, [rows, open, applyIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flush on close: if a value was entered then the popover closed before the
-  // 350ms debounce fired, run the pending apply immediately so the filter
-  // isn't dropped. On the Query tab a value can be typed but not committed
-  // (no Enter) — it lives only in QueryInput's internal state, so flush that
-  // partial token to rows first. applyIfChanged dedups, so an unchanged set
-  // is a no-op.
+  // Flush pending apply on close; bypass ref lets programmatic applies skip it.
   const wasOpenRef = useRef(open);
+  const bypassNextCloseFlushRef = useRef(false);
   useEffect(() => {
     if (wasOpenRef.current && !open) {
+      if (bypassNextCloseFlushRef.current) {
+        bypassNextCloseFlushRef.current = false;
+        wasOpenRef.current = open;
+        return;
+      }
       if (autoApplyTimerRef.current) {
         clearTimeout(autoApplyTimerRef.current);
         autoApplyTimerRef.current = null;
@@ -2157,13 +2223,14 @@ const TraceFilterPanel = ({
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
+    setAiEmpty(false);
     const aiFilters = await aiParseQuery(aiQuery, {
       smart: true,
       projectId: observeId,
       source,
     });
     if (aiFilters.length > 0) {
-      const converted = aiFilters.map((f) => {
+      const aiRows = aiFilters.map((f) => {
         const prop = properties.find((p) => p.id === f.field);
         const fieldType = prop?.type || "string";
         return {
@@ -2175,16 +2242,28 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
-      // Apply the same normalized/valid-filtered shape every other path sends,
-      // and seed lastAppliedRef with it so dedup matches what we actually sent.
-      const validFilters = computeValidFilters(converted);
-      setRows(converted);
+      // Additive: append AI rows to existing valid filters, no dedup.
+      const merged = [...(computeValidFilters(rows) || []), ...aiRows];
+      const validFilters = computeValidFilters(merged);
+      setRows(merged);
       lastAppliedRef.current = serializeFilterSet(validFilters);
       onApply(validFilters);
       setAiQuery("");
+      bypassNextCloseFlushRef.current = true;
       onClose();
+    } else {
+      setAiEmpty(true);
     }
-  }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
+  }, [
+    aiQuery,
+    aiParseQuery,
+    observeId,
+    source,
+    properties,
+    rows,
+    onApply,
+    onClose,
+  ]);
 
   return (
     <Popover
@@ -2219,7 +2298,10 @@ const TraceFilterPanel = ({
                   : "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
+              onChange={(e) => {
+                setAiQuery(e.target.value);
+                setAiEmpty(false);
+              }}
               disabled={aiLoading}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleAiFilter();
@@ -2266,6 +2348,15 @@ const TraceFilterPanel = ({
                 sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
               >
                 AI unavailable, use filters below
+              </Typography>
+            )}
+            {aiEmpty && !aiError && !aiLoading && (
+              <Typography
+                variant="caption"
+                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+              >
+                Could not derive filters from that query. Try rephrasing or add
+                a filter manually below.
               </Typography>
             )}
           </>
@@ -2318,6 +2409,8 @@ const TraceFilterPanel = ({
                     ValuePickerOverride={ValuePickerOverride}
                     categories={effectiveCategories}
                     freeSoloValues={freeSoloValues}
+                    operatorFilter={operatorFilter}
+                    defaultOperatorForType={defaultOperatorForType}
                   />
                 ))}
               </Stack>
@@ -2431,6 +2524,8 @@ TraceFilterPanel.propTypes = {
   showQueryTab: PropTypes.bool,
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
+  operatorFilter: PropTypes.func,
+  defaultOperatorForType: PropTypes.object,
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,

@@ -17,7 +17,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { panelFilterToStore, unwrapScalarValue } from "../DevelopFilterBox";
-import { transformFilter } from "../common";
+import { transformFilter, validateFilter } from "../common";
 
 describe("unwrapScalarValue", () => {
   it("preserves arrays for canonical list operators", () => {
@@ -174,6 +174,64 @@ describe("panelFilterToStore — AI-path regression (TH-4400)", () => {
       value: [undefined],
     });
     expect(out.filterConfig.filterValue).toBe("");
+  });
+});
+
+describe("panelFilterToStore — free-text scalar + list operator (TH-6621)", () => {
+  // Repro: Dataset Detail → Basic filter → pick a text column (its "equals"
+  // label is the canonical list op `in`) → type a value in the free-text
+  // input. That input emits a bare scalar; `in` needs a list, so the row was
+  // dropped by validateFilter and the grid never updated. The store must wrap
+  // the scalar into a single-element list so the same typed value applies —
+  // and crucially, the result must survive validateFilter (the exact gate the
+  // grid's request builder uses).
+  it("wraps a typed scalar into a list for `in` and passes validateFilter", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldCategory: "dataset",
+      fieldType: "string",
+      operator: "in",
+      value: "02",
+    });
+    expect(out.filterConfig).toMatchObject({
+      filterType: "text",
+      filterOp: "in",
+      filterValue: ["02"],
+    });
+    expect(validateFilter(out)).toBe(true);
+  });
+
+  it("wraps a typed scalar into a list for `not_in` too", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldType: "string",
+      operator: "not_in",
+      value: "02",
+    });
+    expect(out.filterConfig.filterValue).toEqual(["02"]);
+    expect(validateFilter(out)).toBe(true);
+  });
+
+  it("leaves scalar operators (contains) as a bare scalar", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldType: "string",
+      operator: "contains",
+      value: "02",
+    });
+    expect(out.filterConfig.filterValue).toBe("02");
+    expect(validateFilter(out)).toBe(true);
+  });
+
+  it("keeps an empty scalar empty so the row stays invalid (not [''])", () => {
+    const out = panelFilterToStore({
+      field: "vf",
+      fieldType: "string",
+      operator: "in",
+      value: "",
+    });
+    expect(out.filterConfig.filterValue).toBe("");
+    expect(validateFilter(out)).toBe(false);
   });
 });
 

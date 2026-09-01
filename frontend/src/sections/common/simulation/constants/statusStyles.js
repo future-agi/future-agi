@@ -49,4 +49,6 @@ export const statusStyles = {
 
 export const STOPPABLE_STATUSES = ["Evaluating", "Running", "Pending"];
 
+export const TERMINAL_STATUSES = ["Completed", "Failed", "Cancelled"];
+
 export default statusStyles;

@@ -10,14 +10,12 @@ import { useGetDatasetDetail } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import StyledChip from "./styledChip";
 import PropmtCard from "./PromptCard";
-import AnnotationCard from "./AnnotationCard";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
 const tabOptions = [
   { label: "Evals", value: "evals", disabled: false },
   { label: "Prompt", value: "prompt", disabled: false },
-  { label: "Annotation", value: "annotation", disabled: false },
 ];
 
 const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
@@ -127,15 +125,13 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
           </CustomTabs>
         </TabWrapper>
 
-        {currentTab != "annotation" && (
-          <FilterSummary
-            columnLists={columnLists}
-            handleApplyFilter={handleApplyFilter}
-            selectedColumn={selectedColumn}
-            setSelectedColumn={setSelectedColumn}
-            appliedFilter={appliedFilter}
-          />
-        )}
+        <FilterSummary
+          columnLists={columnLists}
+          handleApplyFilter={handleApplyFilter}
+          selectedColumn={selectedColumn}
+          setSelectedColumn={setSelectedColumn}
+          appliedFilter={appliedFilter}
+        />
       </Box>
       <Box sx={{ overflow: "auto", height: "calc(100vh - 200px)" }}>
         <Box display="flex" gap={2} marginBottom={2}>
@@ -169,14 +165,6 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
         </ShowComponent>
         <ShowComponent condition={currentTab === "prompt"}>
           <PropmtCard
-            setCurrentTab={setCurrentTabs}
-            selectedColumns={appliedFilter?.map((item) => item.sourceId)}
-            datasetId={datasetId}
-            datasetIndex={datasetIndex}
-          />
-        </ShowComponent>
-        <ShowComponent condition={currentTab === "annotation"}>
-          <AnnotationCard
             setCurrentTab={setCurrentTabs}
             selectedColumns={appliedFilter?.map((item) => item.sourceId)}
             datasetId={datasetId}

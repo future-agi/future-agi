@@ -142,6 +142,50 @@ def apply_version_overrides(config, resolved_version, criteria=None):
     return config, criteria
 
 
+def resolve_pass_threshold(
+    eval_template,
+    runtime_config: dict | None = None,
+    resolved_version=None,
+) -> float:
+    """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
+    if isinstance(runtime_config, dict):
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
+            return float(run_config["pass_threshold"])
+        if runtime_config.get("pass_threshold") is not None:
+            return float(runtime_config["pass_threshold"])
+
+    if resolved_version is not None:
+        version_threshold = getattr(resolved_version, "pass_threshold", None)
+        if version_threshold is not None:
+            return float(version_threshold)
+
+    template_threshold = getattr(eval_template, "pass_threshold", None)
+    if template_threshold is not None:
+        return float(template_threshold)
+
+    return 0.5
+
+
+def resolve_binding_model(
+    runtime_config: dict | None,
+    eval_template,
+) -> str | None:
+    """Priority: runtime_config[run_config][model] > runtime_config[model] > eval_template.config[model]."""
+    if isinstance(runtime_config, dict):
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict):
+            nested = run_config.get("model")
+            if nested:
+                return nested
+        top_level = runtime_config.get("model")
+        if top_level:
+            return top_level
+
+    template_config = getattr(eval_template, "config", None) or {}
+    return template_config.get("model")
+
+
 def _get_api_key(model, organization_id, workspace_id=None):
     """
     Get API key for the model via LiteLLMModelManager.
@@ -347,6 +391,10 @@ def prepare_eval_config(
                 else None
             )
             config["api_key"] = _get_api_key(raw_model, org_id, ws_id)
+            if not config.get("provider"):
+                from model_hub.utils.llm_providers import get_provider_for_model
+
+                config["provider"] = get_provider_for_model(raw_model, org_id, ws_id)
 
         config["check_internet"] = eval_template.config.get("check_internet", False)
         config["multi_choice"] = eval_template.config.get("multi_choice")
@@ -427,6 +475,16 @@ def create_eval_instance(
 
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
+
+    from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
+
+    _template_config = eval_template.config or {}
+    if not _template_config.get("function_eval") and not is_function_eval(
+        _template_config.get("eval_type_id", "")
+    ):
+        config["pass_threshold"] = resolve_pass_threshold(
+            eval_template, runtime_config, resolved_version
+        )
 
     # Runtime override merge.
     #

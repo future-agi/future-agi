@@ -13,7 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
 import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useDebounce } from "src/hooks/use-debounce";
 import { QUEUE_ROLES, ROLE_PRIORITY } from "../constants";
@@ -71,7 +71,12 @@ export default function AnnotatorPicker({
 }) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search.trim(), 300);
-  const { user } = useAuthContext();
+  // Use the live active org (sessionStorage-backed, same source as the
+  // X-Organization-Id header axios sends) rather than the cached
+  // user.organization.id, which can drift from the active context and made the
+  // members request 404 with "No users found for the specified organization."
+  // (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const scrollRef = useRef(null);
 
   const {
@@ -79,7 +84,7 @@ export default function AnnotatorPicker({
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useOrgMembersInfinite(user?.organization?.id, debouncedSearch);
+  } = useOrgMembersInfinite(currentOrganizationId, debouncedSearch);
 
   const selectedMap = useMemo(
     () => new Map(value.map((a) => [a.userId, normalizeRoles(a)])),

@@ -43,6 +43,7 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
+from tracer.tests._ch_seed import seed_ch_span
 
 # Reuse the fixtures from test_scores_api.py via pytest's collection. They
 # live in the same package so importing here would create a circular
@@ -50,6 +51,29 @@ from model_hub.models.score import Score
 
 SCORE_URL = "/model-hub/scores/"
 QUEUE_URL = "/model-hub/annotation-queues/"
+
+
+def _seed_ch_trace_root(trace):
+    """Give a bare PG ``trace`` a CH-only root span so it resolves CH-native (tracer
+    sources are read from ClickHouse only). Built in memory and seeded to CH — never
+    written to PG (the tracer tables are dropped in prod)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.models.observation_span import ObservationSpan
+
+    span = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)  # CH only — NOT ObservationSpan.objects.create
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +100,15 @@ def observe_project(db, organization, workspace):
 def trace(db, observe_project):
     from tracer.models.trace import Trace
 
-    return Trace.objects.create(
+    trace = Trace.objects.create(
         project=observe_project,
         name="Test Trace",
         input={"prompt": "hello"},
         output={"response": "world"},
     )
+    # Tracer sources resolve CH-native — a trace resolves via its CH root span.
+    _seed_ch_trace_root(trace)
+    return trace
 
 
 @pytest.fixture
@@ -103,7 +130,7 @@ def observation_span(db, observe_project, trace):
     from tracer.models.observation_span import ObservationSpan
 
     span_id = f"span_{uuid.uuid4().hex[:16]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=observe_project,
         trace=trace,
@@ -116,6 +143,8 @@ def observation_span(db, observe_project, trace):
         model="gpt-4",
         status="OK",
     )
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture

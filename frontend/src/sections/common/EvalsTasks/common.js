@@ -1,4 +1,6 @@
 import { endOfToday, sub } from "date-fns";
+import { tokenToPreset } from "src/sections/projects/timeWindowPresets";
+import { inferPresetForLegacy } from "src/sections/projects/legacyPresetInference";
 import EvalsAndTasksCustomTooltip from "./Renderers/EvalsAndTasksCustomToolTip";
 import FilterChipsRenderer from "./Renderers/FilterChipsRenderer";
 import RunningStatusRenderer from "./Renderers/RunningStatusRenderer";
@@ -208,6 +210,7 @@ export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
 const RESERVED_FILTER_KEYS = new Set([
   "project_id",
   "date_range",
+  "date_preset",
   "start_date",
   "end_date",
   "filters",
@@ -222,22 +225,23 @@ const FILTER_KEY_ALIAS = {
 export const formatTaskFilters = (filters_applied) => {
   if (!filters_applied) return [];
 
-  // Attribute filters carry a {columnId, filterConfig} shape. Prefer the
-  // canonical `filters` key; fall back to legacy `span_attributes_filters`.
-  // `colType` round-trips as `apiColType` so the panel picks the right chip.
+  // Attribute filters are stored on the wire as {column_id, filter_config}
+  // (snake_case — see extractAttributeFilters). Prefer the canonical `filters`
+  // key; fall back to legacy `span_attributes_filters`. `col_type` round-trips
+  // as `apiColType` so the panel picks the right chip.
   const span_attributes_filters = (
     filters_applied.filters ||
     filters_applied.span_attributes_filters ||
     []
   ).map((i) => ({
     property: "attributes",
-    propertyId: i?.columnId,
-    apiColType: i?.filterConfig?.colType,
+    propertyId: i?.column_id,
+    apiColType: i?.filter_config?.col_type,
     filterConfig: {
-      filterType: i?.filterConfig?.filterType,
-      filterOp: i?.filterConfig?.filterOp,
-      filterValue: i?.filterConfig?.filterValue,
-      colType: i?.filterConfig?.colType,
+      filterType: i?.filter_config?.filter_type,
+      filterOp: i?.filter_config?.filter_op,
+      filterValue: i?.filter_config?.filter_value,
+      colType: i?.filter_config?.col_type,
     },
   }));
 
@@ -300,6 +304,11 @@ export const getDefaultTaskValues = (data, observeId) => {
       }
     }
 
+    // Without a stored key the task predates the field, so infer.
+    const storedPreset = tokenToPreset(data?.filters_applied?.date_preset);
+    values.datePreset =
+      storedPreset || inferPresetForLegacy(values.startDate, values.endDate);
+
     return values;
   } else {
     return {
@@ -316,6 +325,7 @@ export const getDefaultTaskValues = (data, observeId) => {
         }),
       ),
       endDate: formatDate(endOfToday()),
+      datePreset: "6M",
       runType: "",
     };
   }

@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime
 
+import requests
 import structlog
 from django.db import models, transaction
 from django.utils import timezone
@@ -56,8 +57,12 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.replay_session import ReplaySession
+from tracer.services.observability_providers import (
+    OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+)
 from tracer.utils.observability_provider import create_observability_provider
 from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
@@ -273,6 +278,7 @@ class CreateAgentDefinitionView(APIView):
                 in [
                     ProviderChoices.VAPI,
                     ProviderChoices.RETELL,
+                    ProviderChoices.BLAND,
                     ProviderChoices.OTHERS,
                 ]
             ):
@@ -299,6 +305,7 @@ class CreateAgentDefinitionView(APIView):
                 languages=validated.get("languages") or ["en"],
                 contact_number=validated.get("contact_number"),
                 inbound=validated.get("inbound", True),
+                target_speaks_first=validated.get("target_speaks_first"),
                 knowledge_base_id=validated.get("knowledge_base"),
                 model=validated.get("model"),
                 model_details=validated.get("model_details") or {},
@@ -533,6 +540,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                     workspace=getattr(request, "workspace", None),
                     agent_id=validated.get("agent_id"),
                     assistant_id=assistant_id,
+                    masked_value=api_key,
                 )
                 if not api_key:
                     msg = "Cannot sync with a masked API key. Please paste the actual key."
@@ -567,15 +575,52 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                     agent_id=assistant_id
                 ).model_dump_json()
                 assistant_json = json.loads(assistant_raw)
-                response_engine = assistant_json.get("response_engine")
-                llm_id = response_engine.get("llm_id")
-
-                response_engine_raw = client.llm.retrieve(
-                    llm_id=llm_id
-                ).model_dump_json()
-                response_engine_json = json.loads(response_engine_raw)
                 name = assistant_json.get("agent_name")
-                prompt = response_engine_json.get("general_prompt")
+                response_engine = assistant_json.get("response_engine") or {}
+                engine_type = response_engine.get("type")
+
+                # Retell agents expose their prompt through different engines:
+                # retell-llm carries an llm_id, conversation-flow carries a
+                # conversation_flow_id, custom-llm has no fetchable prompt.
+                if engine_type == "conversation-flow":
+                    flow_id = response_engine.get("conversation_flow_id")
+                    flow_json = json.loads(
+                        client.conversation_flow.retrieve(
+                            conversation_flow_id=flow_id
+                        ).model_dump_json()
+                    )
+                    prompt = flow_json.get("global_prompt") or ""
+                elif response_engine.get("llm_id"):
+                    llm_json = json.loads(
+                        client.llm.retrieve(
+                            llm_id=response_engine["llm_id"]
+                        ).model_dump_json()
+                    )
+                    prompt = llm_json.get("general_prompt") or ""
+                else:
+                    prompt = ""
+
+            elif provider == ProviderChoices.BLAND:
+                # Bland's "assistant" is a Conversational Pathway, fetched by id.
+                resp = requests.get(
+                    f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/{assistant_id}",
+                    headers={"authorization": api_key},
+                    timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+                )
+                resp.raise_for_status()
+                pathway = resp.json()
+                name = pathway.get("name") or ""
+                # Pathways are node graphs, not a single prompt — surface the
+                # description and each node's prompt so the synced agent carries
+                # the pathway's behaviour.
+                node_texts = [
+                    (node.get("data") or {}).get("prompt")
+                    or (node.get("data") or {}).get("text")
+                    for node in pathway.get("nodes", [])
+                ]
+                prompt = "\n\n".join(
+                    text for text in [pathway.get("description"), *node_texts] if text
+                )
 
             response_data = {
                 "assistant_id": assistant_id,
@@ -647,6 +692,7 @@ class EditAgentDefinitionView(APIView):
                 "languages",
                 "contact_number",
                 "inbound",
+                "target_speaks_first",
                 "model",
                 "model_details",
                 "websocket_url",

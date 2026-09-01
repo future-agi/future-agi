@@ -16,7 +16,8 @@ import {
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import PropTypes from "prop-types";
 import React, {
@@ -56,6 +57,7 @@ import TestPlayground from "src/sections/evals/components/TestPlayground";
 import VersionBadge from "src/sections/evals/components/VersionBadge";
 import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import CompositeChildParams from "./CompositeChildParams";
 import {
   getEvalCode,
   getEvalCodeLanguage,
@@ -65,7 +67,10 @@ import {
   normalizeEvalPickerEval,
 } from "./evalPickerValue";
 import { getEvalBaseName } from "src/sections/common/EvaluationDrawer/common";
-import { canonicalEntries } from "src/utils/utils";
+import {
+  canonicalEntries,
+  extractVariablesFromMessages,
+} from "src/utils/utils";
 import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
@@ -76,6 +81,10 @@ import {
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
+import RequiredMark from "src/components/RequiredMark";
+
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const build_tools_payload = (selected_tools) =>
   (selected_tools || []).reduce((acc, tool_name) => {
@@ -112,7 +121,17 @@ const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
 const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so gated controls
+  // never flash as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
+    CAPABILITY.TURING_MODELS,
+  );
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
+  // Confirmed denial (loaded AND not allowed) — seed the model default raw and
+  // only strip it here, never off `locked` (true while loading), so entitled
+  // users keep "turing_large" through the fetch.
+  const fagiModelsDenied = fagiLocked && !capsLoading;
   const {
     source,
     sourceId,
@@ -123,6 +142,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     isEditMode,
     requiredColumnId,
     onFiltersChange,
+    sourceTimeWindow,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
@@ -150,6 +170,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
   const [model, setModel] = useState("turing_large");
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep it through the capabilities fetch (and any config load).
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -167,10 +193,24 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  useEffect(() => {
+    const pinned =
+      evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
+    if (pinned && !selectedVersionId && !isDirty) {
+      setSelectedVersionId(pinned);
+    }
+  }, [
+    evalData?.pinned_version_id,
+    evalData?.pinnedVersionId,
+    selectedVersionId,
+    isDirty,
+  ]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
@@ -184,8 +224,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     name: "filters",
   });
   const localApiFilters = useMemo(
-    () => buildApiFilterArray(localFormFilters),
-    [localFormFilters],
+    () =>
+      buildApiFilterArray(
+        localFormFilters,
+        sourceTimeWindow?.startDate,
+        sourceTimeWindow?.endDate,
+      ),
+    [localFormFilters, sourceTimeWindow?.startDate, sourceTimeWindow?.endDate],
   );
 
   const handleSourceReadyChange = useCallback((ready, mapping) => {
@@ -317,16 +362,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       return [...new Set(requiredKeys)];
     }
 
-    // User evals (mustache): prefer live extraction so mapping updates as user types.
-    const matches =
-      (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-    const templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+    // User evals (mustache): prefer live extraction so mapping updates as user
+    // types. For LLM evals, scan every turn (System / User / Assistant), not
+    // just the System-derived instructions field.
+    const templateVars =
+      evalType === "llm"
+        ? extractVariablesFromMessages(instructions, messages, "mustache")
+        : ((instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || []).map(
+            (m) => m.replace(/\{\{|\}\}/g, "").trim(),
+          );
     if (templateVars.length > 0) return [...new Set(templateVars)];
     // Fallback: stored required_keys (before instructions hydrate)
     if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
     return [];
   }, [
     instructions,
+    messages,
     normalizedFullEval,
     normalizedEvalData,
     evalType,
@@ -380,42 +431,74 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
-  // ── Load pinned version content on mount (edit mode) ──
-  const pinnedVersionLoadDone = useRef(false);
   useEffect(() => {
-    if (
-      selectedVersionId &&
-      versions.length > 0 &&
-      !pinnedVersionLoadDone.current &&
-      !isDirty
-    ) {
-      const version = versions.find((v) => v.id === selectedVersionId);
-      if (version) {
-        pinnedVersionLoadDone.current = true;
-        const config = version.config_snapshot || version.configSnapshot || {};
-        const promptText = config.rule_prompt || version.criteria || "";
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        if (_type === "code") {
-          setInstructions("");
-          setCode(config.code || "");
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(config.model || fullEval?.model || "turing_large");
-        if (config.messages?.length > 0) {
-          setMessages(config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
-        setIsDirty(false);
-        setDataReady(true);
-        initialLoadDone.current = true;
-      }
+    if (!selectedVersionId || !versions.length || isDirty) return;
+    const version = versions.find((v) => v.id === selectedVersionId);
+    if (!version) return;
+
+    const config = version.config_snapshot || version.configSnapshot || {};
+    const promptText = config.rule_prompt || version.criteria || "";
+    const _type =
+      normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
+
+    if (_type === "code") {
+      setInstructions("");
+      setCode(config.code || "");
+    } else {
+      setInstructions(promptText);
+      setCode("");
     }
-  }, [selectedVersionId, versions, isDirty, fullEval, normalizedFullEval, normalizedEvalData, isEditMode, evalData]);
+    if (config.messages?.length > 0) {
+      setMessages(config.messages);
+    } else if (_type === "llm" && promptText) {
+      setMessages([{ role: "system", content: promptText }]);
+    }
+
+    setModel(config.model || fullEval?.model || "turing_large");
+    if (config.output) setOutputType(config.output);
+    if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
+    if (config.choice_scores) setChoiceScores(config.choice_scores);
+    if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
+    if (config.template_format) setTemplateFormat(config.template_format);
+    if (Array.isArray(config.few_shot_examples))
+      setFewShotExamples(config.few_shot_examples);
+
+    if (config.agent_mode) setAgentMode(config.agent_mode);
+    if (config.check_internet != null) setUseInternet(!!config.check_internet);
+    const summaryVal =
+      typeof config.summary === "object"
+        ? config.summary?.type
+        : config.summary;
+    if (summaryVal) setSummaryType(summaryVal);
+    if (Array.isArray(config.tools)) setConnectorIds(config.tools);
+    else if (config.tools && typeof config.tools === "object")
+      setConnectorIds(Object.keys(config.tools));
+    if (Array.isArray(config.knowledge_bases))
+      setKnowledgeBaseIds(config.knowledge_bases);
+    if (config.data_injection && typeof config.data_injection === "object") {
+      const opts = Object.entries(config.data_injection)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      setContextOptions(opts.length ? opts : ["variables_only"]);
+    }
+    if (config.error_localizer_enabled != null) {
+      setErrorLocalizerEnabled(!!config.error_localizer_enabled);
+    }
+
+    if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
+    setIsDirty(false);
+    setDataReady(true);
+    initialLoadDone.current = true;
+  }, [
+    selectedVersionId,
+    versions,
+    isDirty,
+    fullEval,
+    normalizedFullEval,
+    normalizedEvalData,
+    isEditMode,
+    evalData,
+  ]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
   const initialLoadDone = useRef(false);
@@ -482,7 +565,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.multi_choice ??
           evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
-        messages: rawRunConfig.messages ?? evalData?.messages,
+        // Multi-turn LLM evals store the full message chain on the template
+        // config (fullEval.config.messages). Fall through every source so a
+        // dataset / simulate / task / experiment scoped copy of a template
+        // doesn't collapse into just the System turn on hydration.
+        messages:
+          rawRunConfig.messages ??
+          evalData?.messages ??
+          evalData?.config?.messages ??
+          fullEval?.config?.messages,
       };
       const config = {
         ...(fullEval.config || {}),
@@ -751,23 +842,30 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // "Add Evaluation" button.
   const handleSaveVersion = useCallback(async () => {
     if (isSystemEval) return;
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     try {
       const payload = {
-        instructions: evalType === "code" ? "" : instructions,
+        instructions:
+          evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,
@@ -830,7 +928,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
   }, [
     isSystemEval,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalType,
     instructions,
     code,
@@ -866,15 +965,25 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   }, []);
 
   const handleTestEvaluation = useCallback(() => {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     setIsTesting(true);
     setTestError(null);
     setTestPassed(false);
     sourceRef.current?.runTest?.(templateId);
     // Safety timeout
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
-  }, [templateId]);
+  }, [templateId, fagiLocked, evalType, model, isComposite]);
 
   const handleAdd = useCallback(() => {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     // When opened from an optimization context, enforce that the optimized
     // column is mapped to at least one eval input field. Without this the
     // backend's get_metrics_by_column filter would exclude the eval from the
@@ -964,7 +1073,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         config: fullEval?.config || evalData?.config,
         versionId: selectedVersionId,
         data_injection: dataInjection,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         composite_weight_overrides: compositeChildWeights,
       });
       return;
@@ -1004,7 +1113,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       tools,
       knowledge_bases: knowledgeBaseIds,
       data_injection: dataInjection,
-      error_localizer_enabled: errorLocalizerEnabled,
+      error_localizer_enabled: errorLocalizerActive,
     });
   }, [
     templateId,
@@ -1012,6 +1121,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData,
     evalName,
     isEditMode,
+    fagiLocked,
     model,
     sourceMapping,
     evalType,
@@ -1032,8 +1142,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
+    isComposite,
     compositeChildWeights,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     hasValidPromptMessages,
     templateFormat,
     onSave,
@@ -1124,7 +1235,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
           </Typography>
-          <VersionBadge version={currentVersion} />
+          <ShowComponent condition={!isSystemEval}>
+            <VersionBadge version={currentVersion} />
+          </ShowComponent>
           <EvalTypeBadge type={evalType} />
           {isDirty && (
             <Chip
@@ -1186,7 +1299,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       {/* ── Eval Name ── */}
       <Box sx={{ py: 1.5, flexShrink: 0 }}>
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-          Name<span style={{ color: "#d32f2f" }}>*</span>
+          Name
+          <RequiredMark />
         </Typography>
         <TextField
           fullWidth
@@ -1298,76 +1412,82 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                         <Box
                           key={child.child_id}
                           sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
                             p: 1,
                             borderRadius: 1,
                             border: "1px solid",
                             borderColor: "divider",
                           }}
                         >
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography
-                              variant="body2"
-                              fontWeight={600}
-                              noWrap
-                              sx={{ fontSize: "12px" }}
-                            >
-                              #{i + 1} {child.child_name}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {child.eval_type || "llm"}
-                            </Typography>
-                          </Box>
                           <Box
                             sx={{
                               display: "flex",
                               alignItems: "center",
-                              gap: 0.5,
-                              flexShrink: 0,
+                              justifyContent: "space-between",
                             }}
                           >
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ fontSize: "11px" }}
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography
+                                variant="body2"
+                                fontWeight={600}
+                                noWrap
+                                sx={{ fontSize: "12px" }}
+                              >
+                                #{i + 1} {child.child_name}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                {child.eval_type || "llm"}
+                              </Typography>
+                            </Box>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 0.5,
+                                flexShrink: 0,
+                              }}
                             >
-                              Weight
-                            </Typography>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              value={
-                                compositeChildWeights[child.child_id] ??
-                                child.weight ??
-                                1
-                              }
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value) || 0;
-                                setCompositeChildWeights((prev) => ({
-                                  ...prev,
-                                  [child.child_id]: v,
-                                }));
-                                setIsDirty(true);
-                              }}
-                              style={{
-                                width: 50,
-                                padding: "2px 6px",
-                                fontSize: "12px",
-                                borderRadius: 4,
-                                border:
-                                  "1px solid var(--mui-palette-divider, #444)",
-                                background: "transparent",
-                                color: "inherit",
-                                textAlign: "center",
-                              }}
-                            />
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ fontSize: "11px" }}
+                              >
+                                Weight
+                              </Typography>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={
+                                  compositeChildWeights[child.child_id] ??
+                                  child.weight ??
+                                  1
+                                }
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setCompositeChildWeights((prev) => ({
+                                    ...prev,
+                                    [child.child_id]: v,
+                                  }));
+                                  setIsDirty(true);
+                                }}
+                                style={{
+                                  width: 50,
+                                  padding: "2px 6px",
+                                  fontSize: "12px",
+                                  borderRadius: 4,
+                                  border:
+                                    "1px solid var(--mui-palette-divider, #444)",
+                                  background: "transparent",
+                                  color: "inherit",
+                                  textAlign: "center",
+                                }}
+                              />
+                            </Box>
                           </Box>
+                          <CompositeChildParams params={child.config?.params} />
                         </Box>
                       ))}
                     </Box>
@@ -1410,6 +1530,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   initializes with the actual instructions content */}
               {!isComposite && evalType === "agent" && dataReady && (
                 <InstructionEditor
+                  openModelMenuSignal={openModelMenuSignal}
                   key={`agent-${templateId}`}
                   value={instructions}
                   onChange={(v) => {
@@ -1469,6 +1590,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               {!isComposite && evalType === "llm" && dataReady && (
                 <>
                   <LLMPromptEditor
+                    openModelMenuSignal={openModelMenuSignal}
                     key={`llm-${templateId}`}
                     messages={messages}
                     onMessagesChange={(msgs) => {
@@ -1600,44 +1722,53 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     setPassThreshold(v);
                     setIsDirty(true);
                   }}
-                  disabled={false}
+                  disabled={isSystemEval}
                   categoryLocked={isOutputTypeCategoryLocked}
                 />
               )}
 
-              {/* Error Localization (single-eval concern, LLM/Agent only).
-                  Code evals don't support error localization — the feature
-                  introspects model traces, which code evals don't produce. */}
-              {!isComposite && evalType !== "code" && (
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={errorLocalizerEnabled}
-                      onChange={(e) => {
-                        setErrorLocalizerEnabled(e.target.checked);
-                        setIsDirty(true);
-                      }}
-                      size="small"
+              {/* Single-eval concern, LLM/Agent only — code evals don't produce
+                  the model traces the feature introspects. */}
+              {errorLocalizerAvailable &&
+                !isComposite &&
+                evalType !== "code" && (
+                  <CustomTooltip
+                    show={agentEvalLocked}
+                    type=""
+                    arrow
+                    title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                  >
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={errorLocalizerActive}
+                          disabled={agentEvalLocked}
+                          onChange={(e) => {
+                            setErrorLocalizerEnabled(e.target.checked);
+                            setIsDirty(true);
+                          }}
+                          size="small"
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2" fontWeight={500}>
+                            Error Localization
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: "block" }}
+                          >
+                            Pinpoints which parts of the input caused evaluation
+                            failures
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: "flex-start" }}
                     />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" fontWeight={500}>
-                        Error Localization
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: "block" }}
-                      >
-                        Pinpoints which parts of the input caused evaluation
-                        failures
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ alignItems: "flex-start" }}
-                />
-              )}
+                  </CustomTooltip>
+                )}
             </Box>
           }
           rightPanel={
@@ -1724,7 +1855,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
                     sourceColumns={
@@ -1737,6 +1868,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1744,7 +1876,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     hasDataInjection={hasDataInjection}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
                   />
@@ -1753,13 +1885,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
                     {...compositeSourceModeProps}
@@ -1781,6 +1914,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1791,9 +1925,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     localFilters={localApiFilters}
-                    pickerSourceColumns={sourceColumns}
                     allowCustomFieldPath
                     {...compositeSourceModeProps}
                   />
@@ -1811,7 +1944,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     {...compositeSourceModeProps}
                   />
                 )}
@@ -1941,6 +2074,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             settings only. */}
         {source !== "composite" &&
           !sourceReady &&
+          !hasDataInjection &&
           !testError &&
           !testPassed && (
             <Typography
@@ -1963,8 +2097,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
         {source !== "composite" &&
           source !== "workbench" &&
+          source !== "create-simulate" &&
           (() => {
-            const hasInstructions = !!(instructions || "").trim();
+            // LLM evals may keep prompt content in User / Assistant turns
+            // even if the System-derived instructions field is empty.
+            const hasInstructions =
+              !!(instructions || "").trim() ||
+              (evalType === "llm" &&
+                Array.isArray(messages) &&
+                messages.some((m) => (m?.content || "").trim()));
             const hasVariables =
               Array.isArray(variables) && variables.length > 0;
 
@@ -2051,7 +2192,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           })()}
 
         {(() => {
-          const hasInstructions = !!(instructions || "").trim();
+          // LLM evals may keep prompt content in User / Assistant turns
+          // even if the System-derived instructions field is empty.
+          const hasInstructions =
+            !!(instructions || "").trim() ||
+            (evalType === "llm" &&
+              Array.isArray(messages) &&
+              messages.some((m) => (m?.content || "").trim()));
           const hasVariables = Array.isArray(variables) && variables.length > 0;
           const actionLabel =
             source === "composite"
@@ -2103,7 +2250,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
           }
 
-          if (!addDisabled && source !== "composite" && !sourceReady) {
+          if (
+            !addDisabled &&
+            source !== "composite" &&
+            !sourceReady &&
+            !hasDataInjection
+          ) {
             addDisabled = true;
             addDisabledReason = `Map all variables before ${actionLabel}.`;
           }

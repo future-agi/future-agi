@@ -34,6 +34,11 @@ from __future__ import annotations
 import os
 import re
 
+from tracer.services.clickhouse.eval_expressions import (
+    EVAL_STRUCTURED_SCORE_KEY,
+    eval_has_structured_score,
+)
+
 # Resolve the configured CH database name for use in DDL templates.
 # Falls back to "futureagi" which is the production default.
 _CH_DATABASE = os.getenv("CH_DATABASE", "futureagi")
@@ -72,9 +77,11 @@ _LEGACY_CDC_CHAIN_NAMES = (
     "tracer_trace",
     "tracer_enduser",
     "trace_session",
-    "tracer_eval_logger",
     "eval_metrics_hourly",
 )
+# tracer_eval_logger is deliberately NOT retired with the chain: the eval-config
+# discovery reads still query it (CH25_EVAL_LOGGER_TABLE), so the boot apply keeps
+# creating it and the PeerDB CDC mirror keeps filling it.
 
 # The legacy v1 ``spans`` DDL in this module conflicts with the v2 spans
 # schema applied by ``tracer/services/clickhouse/v2/schema/002_spans_v2.sql``.
@@ -328,6 +335,8 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     -- Work-item state (mirror of EvalLogger.status / config_hash)
     status LowCardinality(String) DEFAULT 'completed',
     config_hash Nullable(String),
+    skipped_reason Nullable(String),
+    attempts Int32 DEFAULT 0,
 
     -- Explanation / metadata
     eval_explanation Nullable(String),
@@ -342,11 +351,16 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
 
     -- Soft-delete
     deleted UInt8 DEFAULT 0,
-    deleted_at Nullable(DateTime64(3)),
+    deleted_at Nullable(DateTime64(6)),
 
     -- Timestamps
-    created_at DateTime64(3),
-    updated_at DateTime64(3),
+    -- DateTime64(6) REQUIRED: PeerDB (v0.36.x) normalize writes epoch-micros
+    -- regardless of destination precision. With DateTime64(3) every synced row
+    -- landed ~year 58356 (1000x off), exploding the toYYYYMM partition key so
+    -- ReplacingMergeTree FINAL never deduped (2026-07-18 us2 incident). All
+    -- other PeerDB-mirrored tables already use (6).
+    created_at DateTime64(6),
+    updated_at DateTime64(6),
 
     -- PeerDB CDC meta-columns
     _peerdb_synced_at DateTime64(6),
@@ -1717,6 +1731,17 @@ WHERE c._peerdb_is_deleted = 0;
 #   simulation, SDK, playground) writes here with source_id = eval_template_id.
 # ---------------------------------------------------------------------------
 
+# Comma-joined JSON arguments, not a path: spliced into JSONExtract*(...) calls.
+EVAL_OUTPUT_JSON_ARGS = "JSONExtractString(config), 'output', 'output'"
+
+CH_EVAL_SCORE_EXPR = (
+    f"if({eval_has_structured_score(EVAL_OUTPUT_JSON_ARGS)}, "
+    f"JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS}, '{EVAL_STRUCTURED_SCORE_KEY}'), "
+    f"JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS}))"
+)
+
+CH_EVAL_OUTPUT_STR_EXPR = f"JSONExtractString({EVAL_OUTPUT_JSON_ARGS})"
+
 CDC_USAGE_APICALLLOG = """
 CREATE TABLE IF NOT EXISTS usage_apicalllog (
     id Int64,
@@ -1740,8 +1765,9 @@ CREATE TABLE IF NOT EXISTS usage_apicalllog (
 
     -- Materialized columns: pre-extracted from config JSON at insert time.
     -- Config is double-encoded (JSONB string), so JSONExtractString unwraps first.
-    eval_score Float64 MATERIALIZED JSONExtractFloat(JSONExtractString(config), 'output', 'output'),
-    eval_output_str String MATERIALIZED JSONExtractString(JSONExtractString(config), 'output', 'output'),
+    -- The two placeholders below are substituted from the CH_EVAL_* constants.
+    eval_score Float64 MATERIALIZED __CH_EVAL_SCORE_EXPR__,
+    eval_output_str String MATERIALIZED __CH_EVAL_OUTPUT_STR_EXPR__,
     eval_trace_id String MATERIALIZED JSONExtractString(JSONExtractString(config), 'trace_id'),
     eval_dataset_id String MATERIALIZED JSONExtractString(JSONExtractString(config), 'dataset_id'),
 
@@ -1776,7 +1802,9 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/usage_apicalll
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (organization_id, source_id, created_at, id)
 SETTINGS index_granularity = 8192;
-"""
+""".replace("__CH_EVAL_SCORE_EXPR__", CH_EVAL_SCORE_EXPR).replace(
+    "__CH_EVAL_OUTPUT_STR_EXPR__", CH_EVAL_OUTPUT_STR_EXPR
+)
 
 # ============================================================================
 # Ordered list of all DDL statements
@@ -1887,11 +1915,16 @@ SCHEMA_DDL_STATEMENTS: list[tuple[str, str]] = [
 # that PeerDB may recreate without them during RESYNC operations.
 POST_DDL_ALTERS: list[str] = [
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_score Float64 MATERIALIZED "
-    "JSONExtractFloat(JSONExtractString(config), 'output', 'output')",
+    f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
+    # ADD COLUMN IF NOT EXISTS no-ops once the column exists, so a deployed
+    # table keeps its old expression until MODIFYed.
+    "ALTER TABLE usage_apicalllog MODIFY COLUMN "
+    f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
+    # Restores idx_eval_score if a backfill run died between its DROP and ADD.
+    "ALTER TABLE usage_apicalllog ADD INDEX IF NOT EXISTS "
+    "idx_eval_score eval_score TYPE minmax GRANULARITY 1",
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_output_str String MATERIALIZED "
-    "JSONExtractString(JSONExtractString(config), 'output', 'output')",
+    f"eval_output_str String MATERIALIZED {CH_EVAL_OUTPUT_STR_EXPR}",
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
     "eval_trace_id String MATERIALIZED "
     "JSONExtractString(JSONExtractString(config), 'trace_id')",
@@ -1927,6 +1960,14 @@ POST_DDL_ALTERS: list[str] = [
     "status LowCardinality(String) DEFAULT 'completed'",
     "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
     "config_hash Nullable(String)",
+    # skipped_reason / attempts exist on the PG source (EvalLogger work-item
+    # columns) and are in the PeerDB normalize INSERT column list; without them
+    # the CH normalize fails with "No such column ..." and the mirror never
+    # drains.
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "skipped_reason Nullable(String)",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "attempts Int32 DEFAULT 0",
     # Strip the legacy 365d TTL from the v1 hourly rollup tables. The CREATE
     # strings above no longer declare TTL, but existing prod clusters carry
     # the original TTL on the live tables — these ALTERs remove it.

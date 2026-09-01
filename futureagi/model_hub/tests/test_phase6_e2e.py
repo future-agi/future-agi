@@ -35,9 +35,30 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
+from tracer.tests._ch_seed import seed_ch_span
 
 SCORE_URL = "/model-hub/scores/"
 QUEUE_URL = "/model-hub/annotation-queues/"
+
+
+def _seed_ch_trace_root(trace):
+    """Give a bare PG ``trace`` a CH-only root span so it resolves CH-native (tracer
+    sources are read from ClickHouse only). The span is built in memory and seeded
+    to CH — never written to PG (the tracer tables are dropped in prod). Used by
+    trace-only tests that don't also create an ``observation_span``."""
+    from tracer.models.observation_span import ObservationSpan
+
+    span = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)  # CH only — NOT ObservationSpan.objects.create
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +109,7 @@ def observation_span(db, observe_project, trace):
     from tracer.models.observation_span import ObservationSpan
 
     span_id = f"e2e_span_{uuid.uuid4().hex[:12]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=observe_project,
         trace=trace,
@@ -106,6 +127,9 @@ def observation_span(db, observe_project, trace):
         latency_ms=500,
         status="OK",
     )
+    # Tracer sources resolve CH-native — mirror this root span into ClickHouse.
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture
@@ -249,6 +273,7 @@ class TestCrossSourceVisibility:
         self, auth_client, trace, thumbs_label
     ):
         """Score on trace is visible via for-source?source_type=trace."""
+        _seed_ch_trace_root(trace)
         auth_client.post(
             SCORE_URL,
             {

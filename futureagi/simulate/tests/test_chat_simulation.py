@@ -33,6 +33,7 @@ from simulate.services.types.chat import (
     CreateAssistantResult,
     CreateSessionResult,
     GetSessionResult,
+    LLMUsage,
     SendMessageResult,
 )
 from simulate.tasks.chat_sim import (
@@ -440,7 +441,10 @@ class TestCheckCallBalance:
         try:
             from ee.usage.schemas.events import CheckResult
         except ImportError:
-            CheckResult = None
+            from types import SimpleNamespace
+
+            def CheckResult(**kwargs):
+                return SimpleNamespace(**kwargs)
 
         mock_check_usage.return_value = CheckResult(allowed=True)
 
@@ -464,7 +468,10 @@ class TestCheckCallBalance:
         try:
             from ee.usage.schemas.events import CheckResult
         except ImportError:
-            CheckResult = None
+            from types import SimpleNamespace
+
+            def CheckResult(**kwargs):
+                return SimpleNamespace(**kwargs)
 
         mock_check_usage.return_value = CheckResult(
             allowed=False,
@@ -969,7 +976,7 @@ class TestStoreChatMessages:
         assert assistant_message.latency_ms == 250
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
-    @patch("simulate.utils.chat_simulation._run_simulate_evaluations_task.apply_async")
+    @patch("simulate.tasks.chat_sim._run_simulate_evaluations_task.apply_async")
     def test_store_messages_handles_dict_input(
         self,
         mock_eval_task,
@@ -1147,6 +1154,42 @@ class TestMonitorTestExecutionForChat:
         # EVALUATING should only be set when completed calls have evals in progress.
         test_execution = TestExecution.objects.get(id=test_execution.id)
         assert test_execution.status == TestExecution.ExecutionStatus.PENDING
+
+    @patch("tfc.temporal.drop_in.decorator.close_old_connections")
+    def test_monitor_stays_running_while_a_call_still_runs(
+        self,
+        mock_close_connections,
+        test_execution,
+        scenario,
+        organization,
+        workspace,
+    ):
+        """EVALUATING must not fire while any call is still running, even if a
+        completed call already has evals in progress (matches the native rollup:
+        all calls must leave the voice leg first)."""
+        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+        test_execution.save(update_fields=["status"])
+
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            call_metadata={"eval_started": True, "eval_completed": False},
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1234567891",
+            status=CallExecution.CallStatus.ONGOING,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+
+        monitor_test_execution_for_chat(str(test_execution.id))
+
+        test_execution = TestExecution.objects.get(id=test_execution.id)
+        assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
     def test_monitor_handles_mixed_call_statuses(
@@ -1705,3 +1748,115 @@ class TestStoreChatMessagesWithCostDeduction:
 
         # Assert - cost deduction was NOT called
         mock_deduct_cost.assert_not_called()
+
+
+# ============================================================================
+# API-level tests: empty-persona-response gate through send_message_to_chat
+# (the orchestration the ChatSendMessageView calls) with the real
+# FutureAGIChatService engine and a mocked simulator LLM.
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestSendMessageToChatEmptyGate:
+    """When the simulator persona returns an empty message twice, the send must
+    surface as a failed call execution rather than delivering "" to the agent.
+    """
+
+    @pytest.fixture
+    def wired_call_execution(self, ongoing_call_execution, organization, workspace):
+        """An ongoing chat call wired to a real FutureAGI chat session."""
+        from simulate.models.chat_simulator import (
+            ChatSimulatorAssistant,
+            ChatSimulatorSession,
+        )
+
+        assistant = ChatSimulatorAssistant.objects.create(
+            name="Persona",
+            system_prompt="You are a customer contacting support.",
+            model="gpt-4o",
+            temperature=0.9,
+            max_tokens=800,
+            organization=organization,
+            workspace=workspace,
+        )
+        session = ChatSimulatorSession.objects.create(
+            assistant=assistant,
+            messages=[{"role": "user", "content": "Hi, I need help."}],
+            call_execution=ongoing_call_execution,
+            organization=organization,
+            workspace=workspace,
+        )
+        ongoing_call_execution.call_metadata["chat_session_id"] = str(session.id)
+        ongoing_call_execution.save(update_fields=["call_metadata"])
+        return ongoing_call_execution
+
+    def test_empty_twice_marks_call_execution_failed(
+        self, wired_call_execution, organization, workspace
+    ):
+        from simulate.services.futureagi_chat.service import FutureAGIChatService
+
+        empty = {
+            "content": "  ",
+            "has_chat_ended": False,
+            "ended_reason": None,
+            "usage": LLMUsage(),
+        }
+
+        with patch.object(
+            FutureAGIChatService, "_call_llm", side_effect=[empty, empty]
+        ):
+            with pytest.raises(Exception) as exc_info:
+                send_message_to_chat(
+                    wired_call_execution,
+                    organization,
+                    workspace,
+                    [ChatMessage(role=ChatRole.USER, content="Let me look that up.")],
+                    store_sync=True,
+                )
+
+        assert "Simulator returned an empty message twice" in str(exc_info.value)
+
+        wired_call_execution.refresh_from_db()
+        assert wired_call_execution.status == CallExecution.CallStatus.FAILED
+        assert (
+            "Simulator returned an empty message twice"
+            in wired_call_execution.ended_reason
+        )
+
+    @patch("simulate.tasks.chat_sim.store_chat_messages.apply_async")
+    def test_empty_then_nonempty_recovers(
+        self, mock_store_task, wired_call_execution, organization, workspace
+    ):
+        from simulate.services.futureagi_chat.service import FutureAGIChatService
+
+        responses = [
+            {
+                "content": "",
+                "has_chat_ended": False,
+                "ended_reason": None,
+                "usage": LLMUsage(),
+            },
+            {
+                "content": "Okay, my id is CI-789.",
+                "has_chat_ended": False,
+                "ended_reason": None,
+                "usage": LLMUsage(input_tokens=4, output_tokens=6, total_tokens=10),
+            },
+        ]
+
+        with patch.object(FutureAGIChatService, "_call_llm", side_effect=responses):
+            result = send_message_to_chat(
+                wired_call_execution,
+                organization,
+                workspace,
+                [ChatMessage(role=ChatRole.USER, content="Let me look that up.")],
+            )
+
+        assert result["chat_ended"] is False
+        assert result["output_message"][0].content == "Okay, my id is CI-789."
+        mock_store_task.assert_called_once()
+
+        wired_call_execution.refresh_from_db()
+        assert wired_call_execution.status == CallExecution.CallStatus.ONGOING

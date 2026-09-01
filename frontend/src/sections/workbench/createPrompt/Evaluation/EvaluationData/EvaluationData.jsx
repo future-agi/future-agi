@@ -16,9 +16,11 @@ import {
   calculateRowHeight,
   CELL_STATE,
   isUnsavedRow,
+  mergeUnsavedRows,
 } from "../common";
 import { OriginTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import axios, { endpoints } from "src/utils/axios";
+import { isAuthFailCloseCode } from "../../common";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import "src/components/VariableDrawer/grid.css";
@@ -201,7 +203,7 @@ const EvaluationData = () => {
             reject(err);
           },
           onClose: (event) => {
-            if (event?.code === 4003 || event?.code === 4004) {
+            if (isAuthFailCloseCode(event)) {
               reject(new Error(event?.reason || "Permission denied"));
             } else {
               reject(new Error("Stream connection closed unexpectedly"));
@@ -575,7 +577,8 @@ const EvaluationData = () => {
   }, [evaluationData, processColumnConfig, hasDeletableRow, handleDeleteRow]);
 
   useEffect(() => {
-    setRows(processRowData(evaluationData));
+    const next = processRowData(evaluationData);
+    setRows((prev) => mergeUnsavedRows(next, prev));
     return () => {
       if (addRowTimeoutRef.current) {
         clearTimeout(addRowTimeoutRef.current);

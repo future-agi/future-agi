@@ -250,6 +250,9 @@ export default function CustomToolModal({
             size="small"
             sx={{
               pt: "4px",
+              "& .MuiInputLabel-root": {
+                backgroundColor: "transparent !important",
+              },
             }}
           />
           <FormTextFieldV2
@@ -262,6 +265,9 @@ export default function CustomToolModal({
             required
             sx={{
               pt: "4px",
+              "& .MuiInputLabel-root": {
+                backgroundColor: "transparent !important",
+              },
             }}
           />
           <Stack direction={"column"} gap={"4px"}>
@@ -270,7 +276,10 @@ export default function CustomToolModal({
               fontWeight={"fontWeightRegular"}
               color={"text.primary"}
             >
-              Input Schema<sup>*</sup>
+              Input Schema
+              <Box component="span" sx={{ color: "error.main" }}>
+                {" *"}
+              </Box>
             </Typography>
             <Box
               sx={{

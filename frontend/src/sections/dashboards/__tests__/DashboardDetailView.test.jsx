@@ -1,19 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
+import { DATE_PRESETS } from "../constants";
 
-// Controlled mutation stubs (hoisted so the vi.mock factory can see them).
+// Controlled stubs (hoisted so the vi.mock factory can see them). `widgets` is
+// per-test controllable so we can drive both the empty and populated dashboard.
 const h = vi.hoisted(() => ({
   deleteWidget: { mutate: vi.fn(), isPending: false },
   deleteDashboard: { mutate: vi.fn(), isPending: false },
+  widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
+  // Permission state the useCanEditDashboard mock returns; per-test controllable
+  // so we can drive both the writer and viewer (read-only) paths.
+  canEdit: {
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    isReadOnly: false,
+  },
 }));
+
+const WRITER = {
+  canCreate: true,
+  canUpdate: true,
+  canDelete: true,
+  isReadOnly: false,
+};
+const VIEWER = {
+  canCreate: false,
+  canUpdate: false,
+  canDelete: false,
+  isReadOnly: true,
+};
 
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardDetail: () => ({
     data: {
       id: "dash-1",
       name: "My Dash",
-      widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
+      widgets: h.widgets,
     },
     isLoading: false,
   }),
@@ -30,6 +54,10 @@ vi.mock("react-router-dom", async (orig) => ({
   ...(await orig()),
   useParams: () => ({ dashboardId: "dash-1" }),
   useNavigate: () => vi.fn(),
+}));
+
+vi.mock("../hooks/useCanEditDashboard", () => ({
+  default: () => h.canEdit,
 }));
 
 vi.mock("../WidgetChart", () => ({
@@ -49,8 +77,10 @@ const openWidgetDeleteDialog = () => {
 describe("DashboardDetailView — delete confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
     h.deleteWidget.isPending = false;
     h.deleteDashboard.isPending = false;
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
   });
 
   it("widget delete: opens the keyed dialog with the widget's name", () => {
@@ -83,7 +113,9 @@ describe("DashboardDetailView — delete confirmation", () => {
   it("dashboard delete: deletes the dashboard by id, closing on settle", () => {
     render(<DashboardDetailView />);
     fireEvent.click(screen.getByRole("button", { name: /dashboard options/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /delete dashboard/i }));
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /delete dashboard/i }),
+    );
     expect(
       screen.getByText(/Are you sure you want to delete "My Dash"/),
     ).toBeInTheDocument();
@@ -93,5 +125,140 @@ describe("DashboardDetailView — delete confirmation", () => {
       expect.objectContaining({ onSettled: expect.any(Function) }),
     );
     expect(h.deleteWidget.mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe("DashboardDetailView — time filter bar visibility", () => {
+  // A chip label unique to the global time-filter bar, read from the real
+  // preset source (not hand-authored) so the assertion tracks what renders.
+  const presetLabel = DATE_PRESETS.find((p) => p.value === "30D").label;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
+  });
+
+  it("hides the time filter bar on an empty (0-widget) dashboard", () => {
+    h.widgets = [];
+    render(<DashboardDetailView />);
+    // The empty-state CTA is what should greet the user instead...
+    expect(screen.getByText(/no widgets yet/i)).toBeInTheDocument();
+    // ...and the interactive-but-inert time filter is not in the DOM.
+    expect(screen.queryByText(presetLabel)).not.toBeInTheDocument();
+  });
+
+  it("shows the time filter bar once the dashboard has a widget", () => {
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    render(<DashboardDetailView />);
+    expect(screen.getByText(presetLabel)).toBeInTheDocument();
+    expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — RBAC gating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+  });
+
+  it("writer sees the write affordances", () => {
+    h.canEdit = { ...WRITER };
+    render(<DashboardDetailView />);
+    expect(
+      screen.getByRole("button", { name: /dashboard options/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /widget options/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("read-only viewer: every write affordance is gated out", () => {
+    h.canEdit = { ...VIEWER };
+    render(<DashboardDetailView />);
+    // dashboard ⋮ menu (rename / add widget / delete dashboard) — trigger hidden
+    expect(
+      screen.queryByRole("button", { name: /dashboard options/i }),
+    ).toBeNull();
+    // per-widget ⋮ menu (edit / duplicate / resize / delete) — hidden
+    expect(
+      screen.queryByRole("button", { name: /widget options/i }),
+    ).toBeNull();
+    // add-widget affordance — hidden
+    expect(screen.queryByRole("button", { name: /add widget/i })).toBeNull();
+  });
+
+  it("read-only viewer: the read path still renders (dashboard + widgets)", () => {
+    h.canEdit = { ...VIEWER };
+    render(<DashboardDetailView />);
+    // chart still renders — viewers can view, just not edit
+    expect(screen.getByTestId("widget-chart")).toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — widget description (TH-7678)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
+  });
+
+  it("renders the description on the widget card", () => {
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "Total tokens consumed per day",
+        position: 0,
+        width: 12,
+      },
+    ];
+    render(<DashboardDetailView />);
+    expect(screen.getByText("Tokens")).toBeInTheDocument();
+    expect(
+      screen.getByText("Total tokens consumed per day"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the description for a read-only viewer too", () => {
+    h.canEdit = { ...VIEWER };
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "Total tokens consumed per day",
+        position: 0,
+        width: 12,
+      },
+    ];
+    render(<DashboardDetailView />);
+    expect(
+      screen.getByText("Total tokens consumed per day"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no description line when the widget has none", () => {
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    const { container } = render(<DashboardDetailView />);
+    // The card header holds the title row and nothing else.
+    const header = container.querySelector(
+      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+    );
+    expect(header.children).toHaveLength(1);
+  });
+
+  it("treats a whitespace-only description as no description", () => {
+    h.widgets = [
+      {
+        id: "w-1",
+        name: "Tokens",
+        description: "   ",
+        position: 0,
+        width: 12,
+      },
+    ];
+    const { container } = render(<DashboardDetailView />);
+    const header = container.querySelector(
+      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+    );
+    expect(header.children).toHaveLength(1);
   });
 });

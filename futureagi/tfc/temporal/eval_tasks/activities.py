@@ -32,6 +32,7 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsInput,
     WorkflowLabelsOutput,
 )
+from tracer.services.eval_tasks.ch_guardrails import eval_ch_guardrails
 
 # =============================================================================
 # Synchronous helpers (the testable core)
@@ -51,8 +52,9 @@ def _reconcile_sync(task_id: str) -> dict:
         from tracer.models.eval_task import EvalTask
         from tracer.services.eval_tasks.reconciler import reconcile
 
-        task = EvalTask.objects.get(id=task_id)
-        result = reconcile(task)
+        with eval_ch_guardrails():
+            task = EvalTask.objects.get(id=task_id)
+            result = reconcile(task)
         return {
             "task_id": str(task_id),
             "created": result.created,
@@ -96,10 +98,11 @@ def _run_entry_sync(entry_id: str) -> dict:
         from tracer.models.observation_span import EvalLogger
         from tracer.services.eval_tasks.run_entry import run_entry
 
-        entry = EvalLogger.objects.filter(id=entry_id).first()
-        if entry is None:
-            return {"entry_id": str(entry_id), "status": "deleted"}
-        return {"entry_id": str(entry_id), "status": str(run_entry(entry))}
+        with eval_ch_guardrails():
+            entry = EvalLogger.objects.filter(id=entry_id).first()
+            if entry is None:
+                return {"entry_id": str(entry_id), "status": "deleted"}
+            return {"entry_id": str(entry_id), "status": str(run_entry(entry))}
     finally:
         close_old_connections()
 

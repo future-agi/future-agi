@@ -921,7 +921,7 @@ func TestResolveResultMissingProjects(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewUsageEmitterNilRedis(t *testing.T) {
-	u := NewUsageEmitter(nil, slog.Default())
+	u := NewUsageEmitter(nil, nil, slog.Default())
 	if u != nil {
 		t.Fatal("NewUsageEmitter with nil redis must return nil")
 	}
@@ -933,20 +933,17 @@ func TestUsageEmitterEmitIngestionNil(t *testing.T) {
 }
 
 func TestBillingEventIDDeterministic(t *testing.T) {
-	a := billingEventID("trace-abc", "tracing_event")
-	if a != billingEventID("trace-abc", "tracing_event") {
-		t.Error("same dedupKey+eventType must yield the same event_id (re-poll must dedup)")
+	a := billingEventID("trace-abc")
+	if a != billingEventID("trace-abc") {
+		t.Error("same dedupKey must yield the same event_id (re-poll must dedup, even across a mode flip)")
 	}
-	if billingEventID("trace-abc", "observe_add") == a {
-		t.Error("different eventType must yield distinct ids (else the two events collide on unique event_id)")
-	}
-	if billingEventID("trace-xyz", "tracing_event") == a {
+	if billingEventID("trace-xyz") == a {
 		t.Error("different dedupKey must yield distinct ids")
 	}
 }
 
 func TestBillingEventIDEmptyKeyIsRandom(t *testing.T) {
-	if billingEventID("", "tracing_event") == billingEventID("", "tracing_event") {
+	if billingEventID("") == billingEventID("") {
 		t.Error("empty dedupKey must fall back to a random event_id (SDK batches)")
 	}
 }
@@ -962,7 +959,8 @@ func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
 	}
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-1", "events") // events mode → tracing_event is emitted
 
 	// Order: same call twice (re-poll), a different call, then an SDK batch twice.
 	u.EmitIngestion("org-1", 1, 1, 100, "trace-A")
@@ -992,6 +990,123 @@ func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
 	}
 	if ids[3] == ids[4] {
 		t.Error("SDK batch (empty dedupKey) must get random event_ids")
+	}
+}
+
+// setTracingMode seeds the org's billing-mode cache key so EmitIngestion
+// resolves a known mode without a Postgres pool.
+func setTracingMode(t *testing.T, rdb *redis.Client, orgID, mode string) {
+	t.Helper()
+	if err := rdb.Set(context.Background(), "tracing_billing_mode:"+orgID, mode, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// usageStreamEvents returns every event currently on the usage stream.
+func usageStreamEvents(t *testing.T, rdb *redis.Client) []map[string]any {
+	t.Helper()
+	msgs, err := rdb.XRange(context.Background(), usageStreamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, m.Values)
+	}
+	return out
+}
+
+// storage mode → one observe_add (amount = payloadBytes), no tracing_event.
+func TestEmitIngestionStorageModeEmitsOnlyStorage(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-s", "storage")
+
+	u.EmitIngestion("org-s", 3, 7, 500, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("storage mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "observe_add" {
+		t.Errorf("storage mode must emit observe_add, got %v", evs[0]["event_type"])
+	}
+	if evs[0]["amount"] != "500" {
+		t.Errorf("observe_add amount must be payloadBytes=500, got %v", evs[0]["amount"])
+	}
+}
+
+// events mode → one tracing_event (amount = traces+spans), no observe_add.
+func TestEmitIngestionEventsModeEmitsOnlyTracing(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-e", "events")
+
+	u.EmitIngestion("org-e", 3, 7, 500, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" {
+		t.Errorf("events mode must emit tracing_event, got %v", evs[0]["event_type"])
+	}
+	if evs[0]["amount"] != "10" {
+		t.Errorf("tracing_event amount must be traces+spans=10, got %v", evs[0]["amount"])
+	}
+}
+
+// Unknown mode (no cache key, no PG) defaults to storage — matches Python.
+func TestEmitIngestionDefaultsToStorageWhenModeUnknown(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+
+	u.EmitIngestion("org-x", 3, 7, 500, "")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 || evs[0]["event_type"] != "observe_add" {
+		t.Fatalf("unknown mode must default to storage (observe_add only), got %v", evs)
+	}
+}
+
+// events-mode tracing amount is traces+spans, and payloadBytes is ignored.
+func TestEmitIngestionEventsModeAmountIncludesSpans(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-b", "events")
+
+	u.EmitIngestion("org-b", 2, 5, 999, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event (bytes ignored), got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" || evs[0]["amount"] != "7" {
+		t.Errorf("want tracing_event amount=7 (2 traces + 5 spans), got type=%v amount=%v",
+			evs[0]["event_type"], evs[0]["amount"])
+	}
+}
+
+// events mode with spans=0 pins the other boundary of the traces+spans sum.
+func TestEmitIngestionEventsModeTracesOnly(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-t", "events")
+
+	u.EmitIngestion("org-t", 2, 0, 999, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" || evs[0]["amount"] != "2" {
+		t.Errorf("want tracing_event amount=2 (2 traces + 0 spans), got type=%v amount=%v",
+			evs[0]["event_type"], evs[0]["amount"])
 	}
 }
 
@@ -1135,6 +1250,113 @@ func TestWatchRevocationsIgnoresUnrelatedKeys(t *testing.T) {
 	// key-b must remain.
 	if _, status := a.cache.get(otherCK); status != "fresh" {
 		t.Error("key-b should still be fresh")
+	}
+}
+
+func TestResolveResultDeleteProjectByID(t *testing.T) {
+	r := &ResolveResult{
+		OrgID: "org-1",
+		Projects: map[string]string{
+			"alpha": "id-A",
+			"beta":  "id-B",
+			"alias": "id-A", // same id under a second name
+		},
+	}
+	if !r.DeleteProjectByID("id-A") {
+		t.Fatal("expected DeleteProjectByID to report a removal")
+	}
+	if _, ok := r.GetProject("alpha"); ok {
+		t.Error("alpha (id-A) should be evicted")
+	}
+	if _, ok := r.GetProject("alias"); ok {
+		t.Error("alias (id-A) should be evicted")
+	}
+	if id, ok := r.GetProject("beta"); !ok || id != "id-B" {
+		t.Errorf("beta (id-B) should survive, got (%q, %v)", id, ok)
+	}
+	if r.DeleteProjectByID("id-A") {
+		t.Error("second delete of id-A should report no removal")
+	}
+}
+
+func TestCacheEvictProjectID(t *testing.T) {
+	c := newCache(5*time.Minute, 1*time.Hour)
+	// Two keys in the same org both cached the deleted project; a third is unrelated.
+	c.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "other": "P9"}})
+	c.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
+	c.putPositive("ck-3", &ResolveResult{OrgID: "org-2", Projects: map[string]string{"unrelated": "P2"}})
+
+	if n := c.evictProjectID("P1"); n != 2 {
+		t.Fatalf("evictProjectID touched %d entries, want 2", n)
+	}
+	e1, _ := c.get("ck-1")
+	if _, ok := e1.result.GetProject("pokedex"); ok {
+		t.Error("pokedex should be evicted from ck-1")
+	}
+	if id, ok := e1.result.GetProject("other"); !ok || id != "P9" {
+		t.Error("unrelated mapping in ck-1 should survive")
+	}
+	e3, _ := c.get("ck-3")
+	if id, ok := e3.result.GetProject("unrelated"); !ok || id != "P2" {
+		t.Error("other org's mapping should be untouched")
+	}
+	if n := c.evictProjectID(""); n != 0 {
+		t.Errorf("empty projectID should touch 0 entries, got %d", n)
+	}
+}
+
+func TestWatchProjectInvalidationEvictsByID(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+
+	a := &Authenticator{
+		cache: newCache(5*time.Minute, 1*time.Hour),
+		rdb:   rdb,
+		log:   slog.Default(),
+	}
+	a.cache.putPositive("ck-1", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1"}})
+	a.cache.putPositive("ck-2", &ResolveResult{OrgID: "org-1", Projects: map[string]string{"pokedex": "P1", "live": "P3"}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go a.WatchRevocations(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	if err := rdb.Publish(ctx, projectInvalidateChannel, "P1").Err(); err != nil {
+		t.Fatalf("publish failed: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		e1, _ := a.cache.get("ck-1")
+		e2, _ := a.cache.get("ck-2")
+		_, ok1 := e1.result.GetProject("pokedex")
+		_, ok2 := e2.result.GetProject("pokedex")
+		if !ok1 && !ok2 {
+			// P1 gone from both; the unrelated "live" mapping must remain.
+			if id, ok := e2.result.GetProject("live"); !ok || id != "P3" {
+				t.Fatalf("unrelated mapping evicted: got (%q, %v)", id, ok)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("project id P1 was not evicted after invalidation publish")
+}
+
+// TestInvalidationChannelWireContract pins the literal channel names shared
+// with the Django backend. The backend publishes to these exact strings
+// (futureagi/tracer/services/project_deletion.py and accounts/views/keys.py);
+// a rename on either side silently breaks invalidation, so assert the literals
+// rather than the constants.
+func TestInvalidationChannelWireContract(t *testing.T) {
+	if projectInvalidateChannel != "fi:project:invalidate" {
+		t.Errorf("projectInvalidateChannel drifted: got %q", projectInvalidateChannel)
+	}
+	if revocationChannel != "fi:auth:revoke" {
+		t.Errorf("revocationChannel drifted: got %q", revocationChannel)
 	}
 }
 

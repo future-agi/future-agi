@@ -1,4 +1,12 @@
-import { Box, Typography, IconButton, Chip, Skeleton } from "@mui/material";
+import {
+  Box,
+  Typography,
+  IconButton,
+  Chip,
+  Skeleton,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -372,6 +380,8 @@ const CustomDevelopDetailColumn = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
     props;
 
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
   const colDef = props?.column?.colDef;
   const refButton = useRef(null);
 
@@ -440,13 +450,16 @@ const CustomDevelopDetailColumn = (props) => {
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
-      return "#EEFDFE"; // Same color as evaluation
+      // Same color as evaluation
+      return isDark ? alpha("#22B3B7", 0.16) : "#EEFDFE";
     } else if (originType === "run_prompt") {
-      return "#EEF4FF";
+      return isDark ? alpha("#2F7CF7", 0.18) : "#EEF4FF";
     } else if (originType === "optimisation") {
-      return "primary.lighter";
+      return isDark
+        ? alpha(theme.palette.primary.main, 0.16)
+        : "primary.lighter";
     } else if (originType === "annotation_label") {
-      return "#FFE2FE";
+      return isDark ? alpha("#FF85C0", 0.16) : "#FFE2FE";
     }
     return "background.default";
   };

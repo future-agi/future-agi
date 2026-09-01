@@ -134,6 +134,10 @@ const valuePanelToStore = (val, panelType, operator) => {
     return val;
   }
   if (isNullish(val)) return "";
+  // in/not_in require a list value; wrap a single typed scalar so it still applies.
+  if (operator === "in" || operator === "not_in") {
+    return val === "" ? "" : [val];
+  }
   return val;
 };
 
@@ -579,6 +583,7 @@ const DevelopFilterBox = () => {
         onRemoveFilter={handleRemoveChip}
         onClearAll={handleClearChips}
         onAddFilter={() => setDevelopFilterOpen(true)}
+        onChipClick={() => setDevelopFilterOpen(true)}
       />
       <TraceFilterPanel
         anchorEl={anchorEl}

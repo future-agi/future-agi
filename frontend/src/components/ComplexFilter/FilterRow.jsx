@@ -270,6 +270,7 @@ const FilterRow = ({
 
   return (
     <Box
+      className="cf-row"
       sx={{
         display: "flex",
         alignItems: "center",
@@ -277,6 +278,7 @@ const FilterRow = ({
       }}
     >
       <Box
+        className="cf-row__controls"
         sx={{
           display: "flex",
           alignItems: "center",
@@ -394,7 +396,7 @@ const FilterRow = ({
           />
         </IconButton>
       </Box>
-      <Box>
+      <Box className="cf-row__add">
         <ShowComponent condition={index === 0}>
           <Button
             onClick={addFilter}

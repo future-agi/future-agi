@@ -35,12 +35,12 @@ import {
   Typography,
   useTheme,
   InputAdornment,
-  InputBase,
   CircularProgress,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
+import WidgetPieCharts from "./WidgetPieCharts";
 import {
   buildTimeRangePayload,
   resolveInitialTimeRange,
@@ -56,14 +56,19 @@ import {
   useDeleteWidget,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
+import { useDebounce } from "src/hooks/use-debounce";
 import Iconify from "src/components/iconify";
 import FilterValueLabel, {
   useResolvedFilterOptions,
 } from "src/components/filter-value-label";
 import { useSnackbar } from "src/components/snackbar";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import WidgetDescriptionPopover from "./WidgetDescriptionPopover";
+import TruncatedTooltipText from "./TruncatedTooltipText";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import {
   coerceFilterValue,
   isAllowedFilterOperator,
@@ -75,12 +80,25 @@ import {
   DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  fromAxisConfigPayload,
+  getAggColumnLabel,
   getAutoDecimals,
-  getSeriesAverage,
+  getSeriesScalar,
+  groupPieSeries,
   getSuggestedUnitConfig,
+  getUnitRendering,
   getYAxisRangeWarning,
+  makeSeriesKey,
+  resolveSavedSelection,
+  toAxisConfigPayload,
 } from "./widgetUtils";
-import { DATE_PRESETS } from "./constants";
+import {
+  AGGREGATION_OPTIONS,
+  ALL_AGGREGATIONS,
+  PERCENTILE_OPTIONS,
+  DATE_PRESETS,
+  DEFAULT_WIDGET_HEIGHT,
+} from "./constants";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -173,27 +191,6 @@ const CHART_TYPES = [
   { label: "Table", value: "table", icon: "mdi:table", group: "other" },
   { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
 ];
-
-const AGGREGATION_OPTIONS = [
-  { label: "Sum", value: "sum" },
-  { label: "Average", value: "avg" },
-  { label: "Median", value: "median" },
-  { label: "Distinct Count", value: "count_distinct" },
-  { label: "Count", value: "count" },
-  { label: "Minimum", value: "min" },
-  { label: "Maximum", value: "max" },
-];
-
-const PERCENTILE_OPTIONS = [
-  { label: "25th Percentile", value: "p25" },
-  { label: "50th Percentile", value: "p50" },
-  { label: "75th Percentile", value: "p75" },
-  { label: "90th Percentile", value: "p90" },
-  { label: "95th Percentile", value: "p95" },
-  { label: "99th Percentile", value: "p99" },
-];
-
-const ALL_AGGREGATIONS = [...AGGREGATION_OPTIONS, ...PERCENTILE_OPTIONS];
 
 // Curated list of unit presets shown in the widget editor's Unit
 // dropdown. Keep in sync with ``UNIT_RENDERING`` in ``widgetUtils.js``
@@ -357,6 +354,36 @@ const SERIES_COLORS = [
   "#00CEC9", // teal
   "#A29BFE", // lavender
 ];
+
+const hashSeriesName = (name) => {
+  const s = String(name || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+};
+const buildSeriesColorMap = (names) => {
+  const map = {};
+  const used = new Set();
+  (names || []).forEach((name) => {
+    const start = hashSeriesName(name) % SERIES_COLORS.length;
+    let picked = start;
+    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
+      const candidate = (start + i) % SERIES_COLORS.length;
+      if (!used.has(candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    used.add(picked);
+    map[name] = SERIES_COLORS[picked];
+  });
+  return map;
+};
+const getSeriesColor = (name, map) =>
+  (map && map[name]) ||
+  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -875,7 +902,16 @@ function FilterValuePickerPopup({
     Array.isArray(filter?.value) ? [...filter.value] : [],
   );
 
-  const { options, isLoading } = useResolvedFilterOptions(filter, source);
+  // Backend search (custom attributes) reaches values outside the fetched
+  // page and the default lookback; the client-side filter below stays as the
+  // instant layer on top of whatever is already loaded.
+  const debouncedSearch = useDebounce(search, 500);
+  const { options, isLoading } = useResolvedFilterOptions(
+    filter,
+    source,
+    true,
+    debouncedSearch,
+  );
 
   const filteredOptions = useMemo(() => {
     if (!search) return options;
@@ -1043,6 +1079,8 @@ export default function WidgetEditorView() {
   const effectiveWidgetId = createdWidgetId || widgetId;
   const isEditing = effectiveWidgetId && effectiveWidgetId !== "new";
 
+  const { canDelete, isReadOnly } = useCanEditDashboard();
+
   const { data: dashboard } = useDashboardDetail(dashboardId);
   const createMutation = useCreateWidget();
   const updateMutation = useUpdateWidget();
@@ -1069,7 +1107,9 @@ export default function WidgetEditorView() {
   const [chartName, setChartName] = useState("");
   const [chartDescription, setChartDescription] = useState("");
   const [editingName, setEditingName] = useState(false);
-  const [editingDesc, setEditingDesc] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
+  const descSlotRef = useRef(null);
+  const trimmedDescription = (chartDescription || "").trim();
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
@@ -1094,9 +1134,7 @@ export default function WidgetEditorView() {
     );
   };
 
-  const [timePreset, setTimePreset] = useState(
-    incomingTimePreset || "30D",
-  );
+  const [timePreset, setTimePreset] = useState(incomingTimePreset || "30D");
   const [granularity, setGranularity] = useState("day");
   const [chartType, setChartType] = useState("line");
   const [metrics, setMetrics] = useState([]);
@@ -1126,14 +1164,14 @@ export default function WidgetEditorView() {
   const [isDragging, setIsDragging] = useState(false);
   const [tableSearch, setTableSearch] = useState("");
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible, Set = selected indices
+  // Saved selection keys, applied once previewSeries loads.
+  const pendingVisibleSeriesRef = useRef(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
-  const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
-  const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
   const customDays =
@@ -1234,21 +1272,23 @@ export default function WidgetEditorView() {
       custom_attribute: "custom_attribute",
       custom_column: "custom_column",
     };
-    return paginatedMetrics.map((m) => ({
-      id: m.name,
-      name: m.displayName || m.display_name || m.name,
-      type: categoryMap[m.category] || m.category,
-      source: m.source,
-      sources: m.sources,
-      dataType: m.type || "number",
-      outputType: m.outputType || m.output_type,
-      columnDataType: m.dataType || m.data_type,
-      configIds: m.configIds || m.config_ids,
-      evalKey: m.evalKey || m.eval_key,
-      unit: m.unit,
-      choices: m.choices,
-    }));
-  }, [paginatedMetrics]);
+    return paginatedMetrics
+      .filter((m) => pickerMode !== "metric" || m.role !== "dimension")
+      .map((m) => ({
+        id: m.name,
+        name: m.displayName || m.display_name || m.name,
+        type: categoryMap[m.category] || m.category,
+        source: m.source,
+        sources: m.sources,
+        dataType: m.type || "number",
+        outputType: m.outputType || m.output_type,
+        columnDataType: m.dataType || m.data_type,
+        configIds: m.configIds || m.config_ids,
+        evalKey: m.evalKey || m.eval_key,
+        unit: m.unit,
+        choices: m.choices,
+      }));
+  }, [paginatedMetrics, pickerMode]);
 
   // Infinite scroll handler for the picker's right panel
   const pickerListRef = useRef(null);
@@ -1338,6 +1378,8 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
+        // undefined = nothing to restore; null = all visible; array = saved keys.
+        pendingVisibleSeriesRef.current = cc.visible_series;
         const { timePreset: initialPreset, customDateRange: initialRange } =
           resolveInitialTimeRange(
             qc.timeRange || qc.time_range,
@@ -1348,13 +1390,14 @@ export default function WidgetEditorView() {
         setGranularity(qc.granularity || "day");
         setChartType(cc.chartType || cc.chart_type || "line");
         // Restore axis config if saved
-        const savedAxis = cc.axisConfig || cc.axis_config;
+        const savedAxis = cc.axis_config;
         if (savedAxis) {
+          const restoredAxis = fromAxisConfigPayload(savedAxis);
           setAxisConfig((prev) => ({
-            leftY: { ...prev.leftY, ...savedAxis.leftY },
-            rightY: { ...prev.rightY, ...savedAxis.rightY },
-            xAxis: { ...prev.xAxis, ...savedAxis.xAxis },
-            seriesAxis: savedAxis.seriesAxis || {},
+            leftY: { ...prev.leftY, ...restoredAxis.leftY },
+            rightY: { ...prev.rightY, ...restoredAxis.rightY },
+            xAxis: { ...prev.xAxis, ...restoredAxis.xAxis },
+            seriesAxis: restoredAxis.seriesAxis,
           }));
         }
         // Restore metrics with frontend type keys + source
@@ -2013,7 +2056,12 @@ export default function WidgetEditorView() {
   };
 
   const handleRemoveBreakdown = (index) => {
-    setBreakdowns(breakdowns.filter((_, i) => i !== index));
+    const next = breakdowns.filter((_, i) => i !== index);
+    setBreakdowns(next);
+    // Pie needs something to slice by. Fall back here rather than in an effect,
+    // so loading a legacy breakdown-less pie widget for editing doesn't get
+    // silently rewritten before the user touches anything.
+    if (chartType === "pie" && !next.some((b) => b.id)) setChartType("column");
   };
 
   const [saveStatus, setSaveStatus] = useState("idle"); // "idle" | "saving" | "saved"
@@ -2024,11 +2072,17 @@ export default function WidgetEditorView() {
       return;
     }
 
+    // visible_series lives in chart_config since query_config's serializer
+    // rejects unknown fields.
     const data = {
       name: chartName.trim() || "Untitled widget",
-      description: chartDescription,
+      description: chartDescription.trim(),
       query_config: buildQueryConfig(),
-      chart_config: { chart_type: chartType, axis_config: axisConfig },
+      chart_config: {
+        chart_type: chartType,
+        axis_config: toAxisConfigPayload(axisConfig),
+        visible_series: currentVisibleSeriesKeys(),
+      },
     };
 
     setSaveStatus("saving");
@@ -2071,7 +2125,7 @@ export default function WidgetEditorView() {
   const previewSeries = useMemo(() => {
     if (!previewResult?.metrics) return [];
     const allSeries = [];
-    for (const metric of previewResult.metrics) {
+    for (const [metricIndex, metric] of previewResult.metrics.entries()) {
       for (const s of metric.series || []) {
         const isSingleMetric = previewResult.metrics.length === 1;
         let seriesLabel;
@@ -2084,6 +2138,15 @@ export default function WidgetEditorView() {
         }
         allSeries.push({
           name: seriesLabel,
+          key: makeSeriesKey(metric, s.name),
+          // Metric identity survives only inside `seriesLabel`, a composite
+          // display string. Carry it explicitly so pie rendering can group per
+          // metric and honour each metric's own aggregation.
+          metricIndex,
+          metricName: metric.name,
+          aggregation: metric.aggregation,
+          unit: metric.unit ?? "",
+          breakdownName: s.name,
           data: (s.data || []).map((point) => ({
             x: new Date(point.timestamp).getTime(),
             y: point.value != null ? Number(point.value) : null,
@@ -2094,9 +2157,33 @@ export default function WidgetEditorView() {
     return allSeries;
   }, [previewResult]);
 
+  // Current selection as stable keys for persistence; null = all visible.
+  const currentVisibleSeriesKeys = useCallback(
+    () =>
+      visibleSeries === null
+        ? null
+        : [...visibleSeries].map((i) => previewSeries[i]?.key).filter(Boolean),
+    [visibleSeries, previewSeries],
+  );
+
   // Auto-select top 10 series when there are more than 10 breakdown series
   const MAX_CHART_SERIES = 10;
   useEffect(() => {
+    if (previewSeries.length === 0) return;
+
+    // Restore a saved selection once, on the first non-empty previewSeries;
+    // consuming the ref lets later re-queries fall through to the default below.
+    if (pendingVisibleSeriesRef.current !== undefined) {
+      const saved = pendingVisibleSeriesRef.current;
+      pendingVisibleSeriesRef.current = undefined;
+      const decision = resolveSavedSelection(saved, previewSeries);
+      // undefined = the saved selection is stale → fall through to the default.
+      if (decision !== undefined) {
+        setVisibleSeries(decision);
+        return;
+      }
+    }
+
     if (previewSeries.length <= MAX_CHART_SERIES) {
       // Show all if within limit
       if (visibleSeries !== null) setVisibleSeries(null);
@@ -2135,6 +2222,12 @@ export default function WidgetEditorView() {
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+  const isLineChart = apexType === "line";
+
+  const aggColumnLabel = useMemo(
+    () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
+    [metrics],
+  );
 
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
@@ -2157,15 +2250,23 @@ export default function WidgetEditorView() {
   );
   const leftAxisFormatConfig = useMemo(() => {
     const leftAxis = axisConfig.leftY || {};
+    const metricUnits = (previewResult?.metrics || []).map(
+      (m) => m?.unit ?? "",
+    );
+    const isMixedUnits = new Set(metricUnits).size > 1;
+    const effectiveUnit = isMixedUnits
+      ? ""
+      : leftAxis.unit || suggestedLeftAxisUnit.unit;
     return {
       ...leftAxis,
-      unit: leftAxis.unit || suggestedLeftAxisUnit.unit,
-      prefixSuffix:
-        leftAxis.unit || !suggestedLeftAxisUnit.unit
-          ? leftAxis.prefixSuffix || "prefix"
-          : suggestedLeftAxisUnit.prefixSuffix,
+      unit: effectiveUnit,
+      prefixSuffix: effectiveUnit
+        ? leftAxis.prefixSuffix ||
+          suggestedLeftAxisUnit.prefixSuffix ||
+          "prefix"
+        : suggestedLeftAxisUnit.prefixSuffix,
     };
-  }, [axisConfig.leftY, suggestedLeftAxisUnit]);
+  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewResult?.metrics]);
 
   useEffect(() => {
     const currentUnit = axisConfig.leftY.unit;
@@ -2189,16 +2290,47 @@ export default function WidgetEditorView() {
     setAutoAppliedLeftAxisUnit(suggested || null);
   }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
-  // Colors that match chartSeries — preserves original color assignment even when series are filtered out
-  const chartColors = useMemo(() => {
-    if (visibleSeries === null) return SERIES_COLORS;
-    const colors = [];
-    previewSeries.forEach((_, i) => {
-      if (visibleSeries.has(i))
-        colors.push(SERIES_COLORS[i % SERIES_COLORS.length]);
-    });
-    return colors;
-  }, [previewSeries, visibleSeries]);
+  // Hash-derived colors give cross-reload stability; the map walker
+  // advances to the next free slot on collision so ≤10 series never
+  // share a color inside one widget. Built from previewSeries so hidden
+  // series keep their color when re-checked.
+  const seriesColorMap = useMemo(
+    () => buildSeriesColorMap(previewSeries.map((s) => s.name)),
+    [previewSeries],
+  );
+  const chartColors = useMemo(
+    () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
+    [chartSeries, seriesColorMap],
+  );
+
+  // Pie slices are breakdown values, which repeat across metrics — key their
+  // colours by the raw breakdown name so a project stays one colour in every pie.
+  const pieColorMap = useMemo(
+    () =>
+      buildSeriesColorMap([
+        ...new Set(previewSeries.map((s) => s.breakdownName)),
+      ]),
+    [previewSeries],
+  );
+  const pieColorFor = useCallback(
+    (name) => getSeriesColor(name, pieColorMap),
+    [pieColorMap],
+  );
+
+  // A pie needs a category to slice by. `hasBreakdown` mirrors the filter in
+  // buildQueryConfig so the gate matches what is actually queried;
+  // `pieHasBreakdown` is response-driven so legacy saved pies render correctly.
+  const hasBreakdown = breakdowns.some((b) => b.id);
+  const pieHasBreakdown = useMemo(
+    () => previewSeries.some((s) => s.breakdownName !== "total"),
+    [previewSeries],
+  );
+  // From previewSeries, not the top-10-filtered chartSeries: a global cap can
+  // starve one metric of every slice, and groupPieSeries caps per metric.
+  const pieGroups = useMemo(
+    () => (isPie && pieHasBreakdown ? groupPieSeries(previewSeries) : []),
+    [isPie, pieHasBreakdown, previewSeries],
+  );
 
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
@@ -2230,74 +2362,6 @@ export default function WidgetEditorView() {
   );
 
   const chartOptions = useMemo(() => {
-    if (isPie) {
-      const pieTotal = chartSeries.reduce(
-        (sum, s) => sum + s.data.reduce((a, pt) => a + (pt.y || 0), 0),
-        0,
-      );
-      const fmtTotal =
-        pieTotal >= 1000000
-          ? `${(pieTotal / 1000000).toFixed(1)}M`
-          : pieTotal >= 1000
-            ? pieTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : pieTotal.toFixed(0);
-      const txtColor = isDark ? "#fff" : "#1a1a2e";
-      return {
-        chart: {
-          type: "donut",
-          toolbar: { show: false },
-          animations: { enabled: true, easing: "easeinout", speed: 400 },
-        },
-        labels: chartSeries.map((s) => s.name),
-        colors: chartColors,
-        plotOptions: {
-          pie: {
-            expandOnClick: false,
-            donut: {
-              size: "58%",
-              labels: {
-                show: true,
-                name: { show: false },
-                value: {
-                  show: true,
-                  fontSize: "36px",
-                  fontWeight: 700,
-                  color: txtColor,
-                  offsetY: 12,
-                  formatter: () => fmtTotal,
-                },
-                total: {
-                  show: true,
-                  showAlways: true,
-                  fontSize: "36px",
-                  fontWeight: 700,
-                  color: txtColor,
-                  label: "",
-                  formatter: () => fmtTotal,
-                },
-              },
-            },
-          },
-        },
-        dataLabels: { enabled: false },
-        legend: { show: false, height: 0 },
-        stroke: { width: 4, colors: [isDark ? "#1e1e2e" : "#fff"] },
-        states: {
-          hover: { filter: { type: "darken", value: 0.92 } },
-          active: { filter: { type: "none" } },
-        },
-        tooltip: {
-          theme: theme.palette.mode,
-          style: { fontSize: "12px" },
-          y: {
-            formatter: (val) =>
-              val >= 1000
-                ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-                : val.toLocaleString(undefined, { maximumFractionDigits: 2 }),
-          },
-        },
-      };
-    }
     const makeFormatter =
       (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
       (val) =>
@@ -2570,10 +2634,12 @@ export default function WidgetEditorView() {
         };
       })(),
       markers: {
-        size: apexType === "line" || apexType === "area" ? 4 : 0,
+        size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
         strokeWidth: 2,
         strokeColors: isDark ? theme.palette.background.paper : "#fff",
-        hover: { size: 6, sizeOffset: 3 },
+        hover: isLineChart
+          ? { size: 8, sizeOffset: 2 }
+          : { size: 6, sizeOffset: 3 },
       },
       states: {
         hover: {
@@ -2609,7 +2675,7 @@ export default function WidgetEditorView() {
         : {
             enabled: true,
             shared: false,
-            intersect: false,
+            intersect: isLineChart,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
               const color = w.globals.colors[seriesIndex] || "#6366F1";
@@ -2652,9 +2718,9 @@ export default function WidgetEditorView() {
     };
   }, [
     apexType,
+    isLineChart,
     isStacked,
     isHorizontal,
-    isPie,
     chartSeries,
     chartColors,
     theme,
@@ -2665,72 +2731,6 @@ export default function WidgetEditorView() {
     visibleSeries,
   ]);
 
-  // Pie series: sum of all values per series
-  const pieSeries = useMemo(() => {
-    if (!isPie) return [];
-    return chartSeries.map((s) =>
-      s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-    );
-  }, [isPie, chartSeries]);
-
-  // Compute pie connector lines + labels via ref measurement
-  useEffect(() => {
-    if (!isPie || !pieSeries.length) {
-      setPieConnectors([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const container = pieChartRef.current;
-      if (!container) return;
-      const w = container.offsetWidth;
-      const h = container.offsetHeight;
-      // Donut center: horizontally centered, vertically offset for legend (~30px top)
-      const cx = w / 2;
-      const cy = h * 0.48 + 15;
-      const outerR = Math.min(w, h - 40) * 0.33;
-      const total = pieSeries.reduce((a, b) => a + b, 0);
-      if (total === 0) return;
-      const items = [];
-      let cumAngle = -90;
-      pieSeries.forEach((val, i) => {
-        const sliceAngle = (val / total) * 360;
-        const midAngle = cumAngle + sliceAngle / 2;
-        const midRad = (midAngle * Math.PI) / 180;
-        cumAngle += sliceAngle;
-        if (sliceAngle < 3) return;
-        const origIdx = previewSeries.indexOf(chartSeries[i]);
-        const idx = origIdx >= 0 ? origIdx : i;
-        const letter = LETTER_LABELS[idx] || "";
-        const name = chartSeries[i]?.name || "";
-        const fv =
-          val >= 1000
-            ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-        const edgeX = cx + outerR * Math.cos(midRad);
-        const edgeY = cy + outerR * Math.sin(midRad);
-        const elbowDist = outerR + 22;
-        const elbowX = cx + elbowDist * Math.cos(midRad);
-        const elbowY = cy + elbowDist * Math.sin(midRad);
-        const isRight = Math.cos(midRad) >= 0;
-        const endX = isRight ? elbowX + 22 : elbowX - 22;
-        const textX = isRight ? endX + 5 : endX - 5;
-        items.push({
-          edgeX,
-          edgeY,
-          elbowX,
-          elbowY,
-          endX,
-          textX,
-          isRight,
-          line1: `${letter}. ${name}`,
-          line2: fv,
-        });
-      });
-      setPieConnectors(items);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [isPie, pieSeries, chartSeries, previewSeries]);
-
   // Horizontal bar: aggregate each series into one bar
   const barData = useMemo(() => {
     if (!isHorizontal) return null;
@@ -2739,10 +2739,12 @@ export default function WidgetEditorView() {
       return name.length > 25 ? name.slice(0, 22) + "..." : name;
     });
     const values = chartSeries.map((s) => {
-      const avg = getSeriesAverage(s.data);
+      // Same aggregation-aware value the metric card, table and pie use, so
+      // one widget cannot read differently per chart type.
+      const value = getSeriesScalar(s.data, s.aggregation);
       return {
-        value: avg,
-        numericValue: avg == null ? 0 : avg,
+        value,
+        numericValue: value == null ? 0 : value,
       };
     });
     return {
@@ -2756,6 +2758,16 @@ export default function WidgetEditorView() {
 
   const showChart = viewMode !== "table" && chartHeight > 0;
   const _showTable = true;
+
+  // A preview query only fires when there's at least one metric AND (if a custom
+  // range is chosen) a range is actually set — mirrors the auto-preview effect.
+  const canPreview =
+    metrics.length > 0 && !(timePreset === "custom" && !customDateRange);
+
+  const previewLoading =
+    queryMutation.isPending ||
+    (isEditing && !initialized) ||
+    (canPreview && queryMutation.isIdle);
 
   const cleanupDragRef = useRef(null);
   const handleDragStart = useCallback(
@@ -2846,9 +2858,7 @@ export default function WidgetEditorView() {
               whiteSpace: "nowrap",
               display: "block",
             }}
-            onClick={() =>
-              navigate(dashboardDetailUrl)
-            }
+            onClick={() => navigate(dashboardDetailUrl)}
           >
             {dashboard?.name || "Dashboard"}
           </Link>
@@ -2884,45 +2894,107 @@ export default function WidgetEditorView() {
           />
         ) : (
           <Typography
-            onClick={() => setEditingName(true)}
+            onClick={() => !isReadOnly && setEditingName(true)}
             sx={{
               fontSize: "14px",
               fontWeight: 500,
-              cursor: "pointer",
+              cursor: isReadOnly ? "default" : "pointer",
               maxWidth: 300,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              "&:hover": { color: "primary.main" },
+              "&:hover": isReadOnly ? undefined : { color: "primary.main" },
             }}
           >
             {chartName || "Untitled widget"}
           </Typography>
         )}
 
-        {/* Inline editable description */}
-        <InputBase
+        {/* Description — a capped preview in the bar; the full text is read
+            and edited in a popover, so the bar can't be blown out by length. */}
+        <Box ref={descSlotRef} sx={{ display: "flex", minWidth: 0 }}>
+          {trimmedDescription ? (
+            <TruncatedTooltipText text={trimmedDescription}>
+              {(measureRef) => (
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  gap={0.5}
+                  role={isReadOnly ? undefined : "button"}
+                  tabIndex={isReadOnly ? undefined : 0}
+                  aria-label={
+                    isReadOnly
+                      ? undefined
+                      : `Edit description: ${trimmedDescription}`
+                  }
+                  onClick={() => !isReadOnly && setDescOpen(true)}
+                  onKeyDown={(e) => {
+                    if (isReadOnly) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setDescOpen(true);
+                    }
+                  }}
+                  sx={{
+                    minWidth: 0,
+                    maxWidth: 260,
+                    px: 0.75,
+                    py: 0.25,
+                    borderRadius: 1,
+                    color: "text.secondary",
+                    cursor: isReadOnly ? "default" : "pointer",
+                    transition: "background-color 0.15s, color 0.15s",
+                    "&:hover": isReadOnly
+                      ? undefined
+                      : { bgcolor: "action.hover", color: "text.primary" },
+                    "&:focus-visible": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      outlineOffset: 2,
+                    },
+                  }}
+                >
+                  <Iconify
+                    icon="mdi:text-box-outline"
+                    width={14}
+                    sx={{ flexShrink: 0 }}
+                  />
+                  <Typography
+                    ref={measureRef}
+                    noWrap
+                    sx={{ fontSize: "13px", minWidth: 0 }}
+                  >
+                    {trimmedDescription}
+                  </Typography>
+                </Stack>
+              )}
+            </TruncatedTooltipText>
+          ) : (
+            !isReadOnly && (
+              <Button
+                size="small"
+                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                onClick={() => setDescOpen(true)}
+                sx={{
+                  flexShrink: 0,
+                  fontSize: "13px",
+                  fontWeight: 400,
+                  color: "text.disabled",
+                  "&:hover": { color: "text.secondary" },
+                }}
+              >
+                Add description
+              </Button>
+            )
+          )}
+        </Box>
+
+        <WidgetDescriptionPopover
+          open={descOpen}
+          anchorEl={descSlotRef.current}
           value={chartDescription}
-          onChange={(e) => setChartDescription(e.target.value)}
-          onClick={() => !editingDesc && setEditingDesc(true)}
-          onBlur={() => setEditingDesc(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") setEditingDesc(false);
-          }}
-          readOnly={!editingDesc}
-          autoFocus={editingDesc}
-          placeholder="+ Add desc..."
-          sx={{
-            minWidth: 140,
-            maxWidth: 200,
-            fontSize: "13px",
-            color: chartDescription ? "text.secondary" : "text.disabled",
-            cursor: editingDesc ? "text" : "pointer",
-            "&:hover": { color: "text.secondary" },
-            "& .MuiInputBase-input": {
-              padding: 0,
-            },
-          }}
+          onChange={setChartDescription}
+          onClose={() => setDescOpen(false)}
         />
 
         {/* Spacer */}
@@ -2946,7 +3018,7 @@ export default function WidgetEditorView() {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { minWidth: 180 } } }}
         >
-          {isEditing && (
+          {isEditing && canDelete && (
             <MenuItem
               onClick={() => {
                 setMoreMenuAnchor(null);
@@ -2964,44 +3036,59 @@ export default function WidgetEditorView() {
               <ListItemText>Delete</ListItemText>
             </MenuItem>
           )}
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              // Delay to let MUI Menu close and release focus trap
-              setTimeout(() => setEditingName(true), 150);
-            }}
-          >
-            <ListItemIcon>
-              <Iconify icon="mdi:pencil-outline" width={18} />
-            </ListItemIcon>
-            <ListItemText>Rename</ListItemText>
-          </MenuItem>
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              const dupData = {
-                name: `${chartName || "Untitled widget"} (copy)`,
-                width: 12,
-                height: 1,
-                position: 0,
-                query_config: buildQueryConfig(),
-                chart_config: {
-                  chart_type: chartType,
-                  axis_config: axisConfig,
-                },
-              };
-              createMutation
-                .mutateAsync({ dashboardId, data: dupData })
-                .then(() => {
-                  enqueueSnackbar("Widget duplicated", { variant: "success" });
-                });
-            }}
-          >
-            <ListItemIcon>
-              <Iconify icon="mdi:content-copy" width={18} />
-            </ListItemIcon>
-            <ListItemText>Duplicate</ListItemText>
-          </MenuItem>
+          {!isReadOnly && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                // Delay to let MUI Menu close and release focus trap
+                setTimeout(() => setEditingName(true), 150);
+              }}
+            >
+              <ListItemIcon>
+                <Iconify icon="mdi:pencil-outline" width={18} />
+              </ListItemIcon>
+              <ListItemText>Rename</ListItemText>
+            </MenuItem>
+          )}
+          {!isReadOnly && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                const source = dashboard?.widgets?.find(
+                  (w) => w.id === widgetId,
+                );
+                const dupData = {
+                  name: `${chartName || "Untitled widget"} (copy)`,
+                  description: trimmedDescription,
+                  // Carry the source widget's own layout and sit the copy next
+                  // to it, as the backend's duplicate endpoint does. The
+                  // hardcoded height of 1 fell under the card's >50 guard, so
+                  // it silently rendered at the default height instead.
+                  width: source?.width || 12,
+                  height: source?.height || DEFAULT_WIDGET_HEIGHT,
+                  position: (source?.position ?? 0) + 1,
+                  query_config: buildQueryConfig(),
+                  chart_config: {
+                    chart_type: chartType,
+                    axis_config: toAxisConfigPayload(axisConfig),
+                    visible_series: currentVisibleSeriesKeys(),
+                  },
+                };
+                createMutation
+                  .mutateAsync({ dashboardId, data: dupData })
+                  .then(() => {
+                    enqueueSnackbar("Widget duplicated", {
+                      variant: "success",
+                    });
+                  });
+              }}
+            >
+              <ListItemIcon>
+                <Iconify icon="mdi:content-copy" width={18} />
+              </ListItemIcon>
+              <ListItemText>Duplicate</ListItemText>
+            </MenuItem>
+          )}
           <Divider />
           <MenuItem
             onClick={() => {
@@ -3009,13 +3096,15 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                // Agg column header is aggregation-derived, so the value must
+                // honour that aggregation too.
+                const avg = getSeriesScalar(s.data, s.aggregation);
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -3045,13 +3134,15 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                // Agg column header is aggregation-derived, so the value must
+                // honour that aggregation too.
+                const avg = getSeriesScalar(s.data, s.aggregation);
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -3104,30 +3195,38 @@ export default function WidgetEditorView() {
         />
 
         <Button
-          onClick={() =>
-            navigate(dashboardDetailUrl)
-          }
+          onClick={() => navigate(dashboardDetailUrl)}
           sx={{ color: "text.primary", fontWeight: 500 }}
         >
           Close
         </Button>
-        <Button
-          variant="contained"
-          onClick={handleSave}
-          disabled={saveStatus !== "idle"}
-          color={saveStatus === "saved" ? "success" : "primary"}
-          startIcon={
-            saveStatus === "saved" ? (
-              <Iconify icon="mdi:check" width={18} />
-            ) : undefined
-          }
+        <CustomTooltip
+          show={isReadOnly}
+          type=""
+          title="You don't have permission to edit widgets."
+          size="small"
+          arrow
         >
-          {saveStatus === "saving"
-            ? "Saving..."
-            : saveStatus === "saved"
-              ? "Saved"
-              : "Save"}
-        </Button>
+          <span>
+            <Button
+              variant="contained"
+              onClick={handleSave}
+              disabled={isReadOnly || saveStatus !== "idle"}
+              color={saveStatus === "saved" ? "success" : "primary"}
+              startIcon={
+                saveStatus === "saved" ? (
+                  <Iconify icon="mdi:check" width={18} />
+                ) : undefined
+              }
+            >
+              {saveStatus === "saving"
+                ? "Saving..."
+                : saveStatus === "saved"
+                  ? "Saved"
+                  : "Save"}
+            </Button>
+          </span>
+        </CustomTooltip>
       </Stack>
 
       {/* Main content area */}
@@ -3263,13 +3362,48 @@ export default function WidgetEditorView() {
                 {CHART_TYPES.map((ct, i) => {
                   const prev = i > 0 ? CHART_TYPES[i - 1] : null;
                   const showDivider = prev && prev.group !== ct.group;
+                  // A pie shows parts of one whole, so it needs a breakdown to
+                  // slice by — without one every metric is a single value and
+                  // would render as a meaningless 100% circle (TH-6530).
+                  const pieDisabled = ct.value === "pie" && !hasBreakdown;
+                  const label = (
+                    <Stack direction="row" alignItems="center" gap={0.5}>
+                      <Iconify icon={ct.icon} width={16} />
+                      {ct.label}
+                    </Stack>
+                  );
                   return [
                     showDivider && <Divider key={`div-${i}`} />,
-                    <MenuItem key={ct.value} value={ct.value}>
-                      <Stack direction="row" alignItems="center" gap={0.5}>
-                        <Iconify icon={ct.icon} width={16} />
-                        {ct.label}
-                      </Stack>
+                    // The tooltip goes inside the MenuItem, never around it:
+                    // Select matches its current value against `props.value` on
+                    // its direct children, and a wrapper has none. A legacy
+                    // breakdown-less pie widget is exactly the case where the
+                    // disabled item is also the selected one, so wrapping it
+                    // made MUI log an out-of-range value and forward option
+                    // props onto the wrapper.
+                    <MenuItem
+                      key={ct.value}
+                      value={ct.value}
+                      disabled={pieDisabled}
+                    >
+                      {pieDisabled ? (
+                        <CustomTooltip
+                          show
+                          size="small"
+                          title="Add a breakdown to slice the pie by"
+                          placement="right"
+                        >
+                          {/* A disabled MenuItem sets pointer-events: none, so
+                              the trigger has to opt back in to receive hover —
+                              and span the whole row, or the dead area beside
+                              the label swallows the pointer. */}
+                          <Stack sx={{ pointerEvents: "auto", width: "100%" }}>
+                            {label}
+                          </Stack>
+                        </CustomTooltip>
+                      ) : (
+                        label
+                      )}
                     </MenuItem>,
                   ];
                 })}
@@ -3289,7 +3423,7 @@ export default function WidgetEditorView() {
             }}
           >
             {/* Bar chart — horizontal bars (left) + search/checkboxes (right) */}
-            {isHorizontal && queryMutation.isPending && (
+            {isHorizontal && previewLoading && (
               <Box
                 sx={{
                   flex: 1,
@@ -3301,25 +3435,21 @@ export default function WidgetEditorView() {
                 <CircularProgress size={24} />
               </Box>
             )}
-            {isHorizontal &&
-              !queryMutation.isPending &&
-              previewSeries.length === 0 && (
-                <Box
-                  sx={{
-                    flex: 1,
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                  <Typography variant="body2" color="text.secondary">
-                    Fill in the required fields to see preview
-                  </Typography>
-                </Box>
-              )}
-            {isHorizontal &&
-            previewSeries.length > 0 &&
-            !queryMutation.isPending
+            {isHorizontal && !previewLoading && previewSeries.length === 0 && (
+              <Box
+                sx={{
+                  flex: 1,
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  Fill in the required fields to see preview
+                </Typography>
+              </Box>
+            )}
+            {isHorizontal && previewSeries.length > 0 && !previewLoading
               ? (() => {
                   const maxVal = Math.max(
                     ...barData.series[0].data.map(Math.abs),
@@ -3360,12 +3490,7 @@ export default function WidgetEditorView() {
                         sx={{ px: 2, pt: 2, pb: 1 }}
                       >
                         {chartSeries.map((s, i) => {
-                          const origIdx = previewSeries.indexOf(s);
-                          const color =
-                            SERIES_COLORS[
-                              (origIdx >= 0 ? origIdx : i) %
-                                SERIES_COLORS.length
-                            ];
+                          const color = getSeriesColor(s.name, seriesColorMap);
                           return (
                             <Stack
                               key={i}
@@ -3448,17 +3573,10 @@ export default function WidgetEditorView() {
                           <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
                             {barData.rows.map((row, i) => {
                               const val = row.numericValue;
-                              const origIdx =
-                                visibleSeries === null
-                                  ? i
-                                  : [...(visibleSeries || [])].sort(
-                                      (a, b) => a - b,
-                                    )[i];
-                              const color =
-                                SERIES_COLORS[
-                                  (origIdx != null ? origIdx : i) %
-                                    SERIES_COLORS.length
-                                ];
+                              const color = getSeriesColor(
+                                row.name || row.label,
+                                seriesColorMap,
+                              );
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
                               const fmtVal =
@@ -3635,8 +3753,10 @@ export default function WidgetEditorView() {
                               const checked =
                                 visibleSeries === null ||
                                 visibleSeries?.has(si);
-                              const color =
-                                SERIES_COLORS[si % SERIES_COLORS.length];
+                              const color = getSeriesColor(
+                                s.name,
+                                seriesColorMap,
+                              );
                               return (
                                 <Box
                                   key={si}
@@ -3700,11 +3820,11 @@ export default function WidgetEditorView() {
                   overflow: "hidden",
                 }}
               >
-                {queryMutation.isPending ? (
+                {previewLoading ? (
                   <CircularProgress size={24} />
                 ) : previewSeries.length > 0 ? (
                   <Box sx={{ width: "100%", height: "100%" }}>
-                    {isMetricCard ? (
+                    {isMetricCard || (isPie && !pieHasBreakdown) ? (
                       <Stack
                         direction="row"
                         gap={3}
@@ -3713,7 +3833,15 @@ export default function WidgetEditorView() {
                         sx={{ height: "100%" }}
                       >
                         {chartSeries.map((s, i) => {
-                          const avg = getSeriesAverage(s.data);
+                          // Honour the metric's own aggregation and unit, so
+                          // this matches the saved widget exactly.
+                          const value = getSeriesScalar(s.data, s.aggregation);
+                          const cellConfig = s.unit
+                            ? {
+                                ...leftAxisFormatConfig,
+                                ...getUnitRendering(s.unit),
+                              }
+                            : leftAxisFormatConfig;
                           return (
                             <Box key={i} sx={{ textAlign: "center" }}>
                               <Typography
@@ -3722,7 +3850,11 @@ export default function WidgetEditorView() {
                                   color: chartColors[i % chartColors.length],
                                 }}
                               >
-                                {avg == null ? "—" : formatValFn(avg)}
+                                {value == null
+                                  ? "—"
+                                  : formatValueWithConfig(value, cellConfig, {
+                                      fallbackDecimals: autoDecimals,
+                                    })}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -3814,10 +3946,10 @@ export default function WidgetEditorView() {
                                             width: 8,
                                             height: 8,
                                             borderRadius: "2px",
-                                            bgcolor:
-                                              SERIES_COLORS[
-                                                i % SERIES_COLORS.length
-                                              ],
+                                            bgcolor: getSeriesColor(
+                                              s.name,
+                                              seriesColorMap,
+                                            ),
                                             display: "inline-block",
                                           }}
                                         />
@@ -3897,81 +4029,12 @@ export default function WidgetEditorView() {
                         );
                       })()
                     ) : isPie ? (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexDirection: "column",
-                          width: "100%",
-                          height: "100%",
-                        }}
-                      >
-                        {chartSeries.length > 1 && (
-                          <ChartLegend
-                            items={chartSeries.map((s) => s.name)}
-                            colors={chartColors}
-                          />
-                        )}
-                        <Box
-                          ref={pieChartRef}
-                          sx={{
-                            position: "relative",
-                            flex: 1,
-                            minHeight: 0,
-                          }}
-                        >
-                          <ReactApexChart
-                            key={`pie-${axisConfig.leftY.unit}-${axisConfig.leftY.prefixSuffix}-${axisConfig.leftY.abbreviation}-${axisConfig.leftY.decimals}`}
-                            options={chartOptions}
-                            series={pieSeries}
-                            type="donut"
-                            height="100%"
-                          />
-                          {pieConnectors.length > 0 && (
-                            <svg
-                              style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                height: "100%",
-                                pointerEvents: "none",
-                                overflow: "visible",
-                              }}
-                            >
-                              {pieConnectors.map((c, i) => (
-                                <g key={i}>
-                                  <polyline
-                                    points={`${c.edgeX},${c.edgeY} ${c.elbowX},${c.elbowY} ${c.endX},${c.elbowY}`}
-                                    fill="none"
-                                    stroke={
-                                      isDark
-                                        ? "rgba(255,255,255,0.35)"
-                                        : "rgba(0,0,0,0.25)"
-                                    }
-                                    strokeWidth="1"
-                                  />
-                                  <text
-                                    x={c.textX}
-                                    y={c.elbowY - 6}
-                                    textAnchor={c.isRight ? "start" : "end"}
-                                    fill={isDark ? "#fff" : "#1a1a2e"}
-                                    fontSize="12"
-                                    fontWeight="500"
-                                    fontFamily="inherit"
-                                  >
-                                    <tspan x={c.textX} dy="0">
-                                      {c.line1}
-                                    </tspan>
-                                    <tspan x={c.textX} dy="15">
-                                      {c.line2}
-                                    </tspan>
-                                  </text>
-                                </g>
-                              ))}
-                            </svg>
-                          )}
-                        </Box>
-                      </Box>
+                      <WidgetPieCharts
+                        groups={pieGroups}
+                        colorFor={pieColorFor}
+                        baseFormatConfig={leftAxisFormatConfig}
+                        fallbackDecimals={autoDecimals}
+                      />
                     ) : outOfRangeWarning ? (
                       <Box
                         sx={{
@@ -4146,7 +4209,8 @@ export default function WidgetEditorView() {
               )}
 
             {/* Pie chart: summary columns below the chart */}
-            {isPie && previewSeries.length > 0 && (
+            {/* Pie chart: one summary column per metric */}
+            {isPie && pieGroups.length > 0 && (
               <Box
                 sx={{
                   flex: 1,
@@ -4157,47 +4221,43 @@ export default function WidgetEditorView() {
                   overflow: "auto",
                 }}
               >
-                {chartSeries.map((s, i) => {
-                  const origIdx = previewSeries.indexOf(s);
-                  const idx = origIdx >= 0 ? origIdx : i;
-                  return (
-                    <Box
-                      key={i}
+                {pieGroups.map((g, i) => (
+                  <Box
+                    key={g.metricIndex}
+                    sx={{
+                      flex: 1,
+                      textAlign: "center",
+                      py: 2,
+                      px: 1.5,
+                      borderRight:
+                        i < pieGroups.length - 1
+                          ? `1px solid ${theme.palette.divider}`
+                          : "none",
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
                       sx={{
-                        flex: 1,
-                        textAlign: "center",
-                        py: 2,
-                        px: 1.5,
-                        borderRight:
-                          i < chartSeries.length - 1
-                            ? `1px solid ${theme.palette.divider}`
-                            : "none",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        color: "text.primary",
                       }}
                     >
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 600,
-                          fontSize: "13px",
-                          color: "text.primary",
-                        }}
-                      >
-                        {LETTER_LABELS[idx]} {s.name}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                          fontSize: "11px",
-                          display: "block",
-                        }}
-                      >
-                        {metrics[idx]?.name || ""} -{" "}
-                        {metrics[idx]?.aggregation || "avg"}
-                      </Typography>
-                    </Box>
-                  );
-                })}
+                      {LETTER_LABELS[g.metricIndex]} {g.metricName}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        fontSize: "11px",
+                        display: "block",
+                      }}
+                    >
+                      {g.aggregation} · {g.slices.length}{" "}
+                      {g.slices.length === 1 ? "slice" : "slices"}
+                    </Typography>
+                  </Box>
+                ))}
               </Box>
             )}
 
@@ -4243,8 +4303,14 @@ export default function WidgetEditorView() {
                         .includes(tableSearch.toLowerCase()),
                   )
                   .sort((a, b) => {
-                    const avgA = getSeriesAverage(previewSeries[a].data);
-                    const avgB = getSeriesAverage(previewSeries[b].data);
+                    const avgA = getSeriesScalar(
+                      previewSeries[a].data,
+                      previewSeries[a].aggregation,
+                    );
+                    const avgB = getSeriesScalar(
+                      previewSeries[b].data,
+                      previewSeries[b].aggregation,
+                    );
                     const scoreA =
                       avgA == null ? Number.NEGATIVE_INFINITY : avgA;
                     const scoreB =
@@ -4371,7 +4437,7 @@ export default function WidgetEditorView() {
                                 zIndex: 2,
                               }}
                             >
-                              Average
+                              {aggColumnLabel}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
@@ -4408,9 +4474,11 @@ export default function WidgetEditorView() {
                             const s = previewSeries[si];
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
-                            const avg = getSeriesAverage(s.data);
-                            const color =
-                              SERIES_COLORS[si % SERIES_COLORS.length];
+                            const avg = getSeriesScalar(s.data, s.aggregation);
+                            const color = getSeriesColor(
+                              s.name,
+                              seriesColorMap,
+                            );
                             return (
                               <tr
                                 key={si}
@@ -4467,7 +4535,18 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg == null ? "—" : formatValFn(avg)}
+                                  {avg == null
+                                    ? "—"
+                                    : formatValueWithConfig(
+                                        avg,
+                                        s.unit
+                                          ? {
+                                              ...leftAxisFormatConfig,
+                                              ...getUnitRendering(s.unit),
+                                            }
+                                          : leftAxisFormatConfig,
+                                        { fallbackDecimals: autoDecimals },
+                                      )}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;
@@ -4505,1563 +4584,1590 @@ export default function WidgetEditorView() {
           </Box>
         </Box>
 
-        {/* Right panel */}
-        <Box
-          sx={{
-            width: 320,
-            minWidth: 320,
-            borderLeft: `1px solid ${theme.palette.divider}`,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "auto",
-          }}
-        >
-          {/* Tabs */}
-          <Tabs
-            value={rightTab}
-            onChange={(_, v) => setRightTab(v)}
-            sx={{ px: 2, minHeight: 40 }}
+        {/* Right panel — config surface, hidden for read-only (viewer) users */}
+        {!isReadOnly && (
+          <Box
+            sx={{
+              width: 320,
+              minWidth: 320,
+              borderLeft: `1px solid ${theme.palette.divider}`,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "auto",
+            }}
           >
-            <Tab label="Query" sx={{ minHeight: 40, textTransform: "none" }} />
-            <Tab label="Chart" sx={{ minHeight: 40, textTransform: "none" }} />
-          </Tabs>
-          <Divider />
-
-          {rightTab === 0 && (
-            <Box
-              sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+            {/* Tabs */}
+            <Tabs
+              value={rightTab}
+              onChange={(_, v) => setRightTab(v)}
+              sx={{ px: 2, minHeight: 40 }}
             >
-              {/* Metric section */}
-              <Box>
-                <Tooltip
-                  placement="left"
-                  arrow
-                  componentsProps={{
-                    tooltip: {
-                      sx: {
-                        bgcolor: isDark ? "#1a1a2e" : "#fff",
-                        borderRadius: 2,
-                        p: 2,
-                        maxWidth: 180,
-                        boxShadow: isDark
-                          ? "0 4px 20px rgba(0,0,0,0.5)"
-                          : "0 4px 20px rgba(0,0,0,0.12)",
-                        border: isDark ? "none" : "1px solid",
-                        borderColor: isDark ? "transparent" : "divider",
-                      },
-                    },
-                    arrow: {
-                      sx: {
-                        color: isDark ? "#1a1a2e" : "#fff",
-                        "&::before": {
+              <Tab
+                label="Query"
+                sx={{ minHeight: 40, textTransform: "none" }}
+              />
+              <Tab
+                label="Chart"
+                sx={{ minHeight: 40, textTransform: "none" }}
+              />
+            </Tabs>
+            <Divider />
+
+            {rightTab === 0 && (
+              <Box
+                sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+              >
+                {/* Metric section */}
+                <Box>
+                  <Tooltip
+                    placement="left"
+                    arrow
+                    componentsProps={{
+                      tooltip: {
+                        sx: {
+                          bgcolor: isDark ? "#1a1a2e" : "#fff",
+                          borderRadius: 2,
+                          p: 2,
+                          maxWidth: 180,
+                          boxShadow: isDark
+                            ? "0 4px 20px rgba(0,0,0,0.5)"
+                            : "0 4px 20px rgba(0,0,0,0.12)",
                           border: isDark ? "none" : "1px solid",
                           borderColor: isDark ? "transparent" : "divider",
                         },
                       },
-                    },
-                  }}
-                  title={
-                    <Box sx={{ textAlign: "center" }}>
-                      <svg
-                        width="120"
-                        height="90"
-                        viewBox="0 0 120 90"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {/* Line chart */}
-                        <line
-                          x1="15"
-                          y1="75"
-                          x2="15"
-                          y2="10"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.15)"
-                              : "rgba(0,0,0,0.1)"
-                          }
-                          strokeWidth="1"
-                        />
-                        <line
-                          x1="15"
-                          y1="75"
-                          x2="110"
-                          y2="75"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.15)"
-                              : "rgba(0,0,0,0.1)"
-                          }
-                          strokeWidth="1"
-                        />
-                        {/* Grid lines */}
-                        <line
-                          x1="15"
-                          y1="55"
-                          x2="110"
-                          y2="55"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.04)"
-                          }
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
-                        <line
-                          x1="15"
-                          y1="35"
-                          x2="110"
-                          y2="35"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.04)"
-                          }
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
-                        {/* Line 1 - purple */}
-                        <polyline
-                          points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
-                          fill="none"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {/* Line 2 - teal */}
-                        <polyline
-                          points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
-                          fill="none"
-                          stroke={isDark ? "#5BE49B" : "#22C55E"}
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {/* Data points - purple */}
-                        <circle
-                          cx="20"
-                          cy="60"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        <circle
-                          cx="65"
-                          cy="28"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        <circle
-                          cx="95"
-                          cy="18"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        {/* Data points - teal */}
-                        <circle
-                          cx="20"
-                          cy="68"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="50"
-                          cy="58"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="65"
-                          cy="48"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="95"
-                          cy="42"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                      </svg>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "text.secondary",
-                          mt: 0.5,
-                          display: "block",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        Choose what to measure and track.
-                      </Typography>
-                    </Box>
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    onClick={(e) => {
-                      if (metrics.length < 5) openPicker(e, "metric");
-                    }}
-                    sx={{
-                      cursor: metrics.length >= 5 ? "default" : "pointer",
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      mx: -1,
-                      transition: "background-color 0.15s",
-                      "&:hover":
-                        metrics.length < 5
-                          ? {
-                              bgcolor: (t) =>
-                                t.palette.mode === "dark"
-                                  ? "rgba(145, 107, 255, 0.12)"
-                                  : "rgba(105, 65, 198, 0.08)",
-                              "& .metric-section-title": {
-                                color: "primary.main",
-                              },
-                            }
-                          : {},
-                    }}
-                  >
-                    <Typography
-                      className="metric-section-title"
-                      variant="body2"
-                      fontWeight="fontWeightSemiBold"
-                      sx={{ transition: "color 0.15s" }}
-                    >
-                      Metric
-                      <Typography component="span" color="error.main">
-                        *
-                      </Typography>
-                    </Typography>
-                    <Iconify
-                      icon="mdi:plus"
-                      width={18}
-                      sx={{
-                        color:
-                          metrics.length >= 5
-                            ? "text.disabled"
-                            : "text.secondary",
-                      }}
-                    />
-                  </Stack>
-                </Tooltip>
-
-                {/* Added metrics */}
-                {metrics.map((m, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      "&:hover .metric-hover-action": {
-                        opacity: 1,
+                      arrow: {
+                        sx: {
+                          color: isDark ? "#1a1a2e" : "#fff",
+                          "&::before": {
+                            border: isDark ? "none" : "1px solid",
+                            borderColor: isDark ? "transparent" : "divider",
+                          },
+                        },
                       },
                     }}
-                  >
-                    <Stack direction="row" alignItems="center" gap={1}>
-                      <Chip
-                        label={LETTER_LABELS[i]}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          minWidth: 24,
-                          height: 24,
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          "& .MuiChip-label": {
-                            paddingLeft: "0px !important",
-                            paddingRight: "0px !important",
-                            overflow: "visible !important",
-                            textOverflow: "clip !important",
-                          },
-                        }}
-                      />
-                      <Iconify
-                        icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"}
-                        width={16}
-                        sx={{ color: "text.secondary" }}
-                      />
-                      <Typography
-                        variant="body2"
-                        noWrap
-                        title={m.name}
-                        sx={{
-                          flex: 1,
-                          cursor: "pointer",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          maxWidth: 160,
-                          "&:hover": { color: "primary.main" },
-                        }}
-                        onClick={(e) => openPicker(e, "metric", i)}
-                      >
-                        {m.name}
-                      </Typography>
-                      {m._linkedAgents && (
-                        <Tooltip
-                          title={`Linked to observability: ${m._linkedAgents}`}
+                    title={
+                      <Box sx={{ textAlign: "center" }}>
+                        <svg
+                          width="120"
+                          height="90"
+                          viewBox="0 0 120 90"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
                         >
-                          <Chip
-                            label="Linked"
-                            size="small"
-                            color="info"
-                            variant="outlined"
-                            sx={{
-                              height: 20,
-                              fontSize: "10px",
-                              "& .MuiChip-label": { px: 0.75 },
-                            }}
+                          {/* Line chart */}
+                          <line
+                            x1="15"
+                            y1="75"
+                            x2="15"
+                            y2="10"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.15)"
+                                : "rgba(0,0,0,0.1)"
+                            }
+                            strokeWidth="1"
                           />
+                          <line
+                            x1="15"
+                            y1="75"
+                            x2="110"
+                            y2="75"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.15)"
+                                : "rgba(0,0,0,0.1)"
+                            }
+                            strokeWidth="1"
+                          />
+                          {/* Grid lines */}
+                          <line
+                            x1="15"
+                            y1="55"
+                            x2="110"
+                            y2="55"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.04)"
+                            }
+                            strokeWidth="1"
+                            strokeDasharray="3 3"
+                          />
+                          <line
+                            x1="15"
+                            y1="35"
+                            x2="110"
+                            y2="35"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.04)"
+                            }
+                            strokeWidth="1"
+                            strokeDasharray="3 3"
+                          />
+                          {/* Line 1 - purple */}
+                          <polyline
+                            points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
+                            fill="none"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {/* Line 2 - teal */}
+                          <polyline
+                            points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
+                            fill="none"
+                            stroke={isDark ? "#5BE49B" : "#22C55E"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {/* Data points - purple */}
+                          <circle
+                            cx="20"
+                            cy="60"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          <circle
+                            cx="65"
+                            cy="28"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          <circle
+                            cx="95"
+                            cy="18"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          {/* Data points - teal */}
+                          <circle
+                            cx="20"
+                            cy="68"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="50"
+                            cy="58"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="65"
+                            cy="48"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="95"
+                            cy="42"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                        </svg>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: isDark
+                              ? "rgba(255,255,255,0.7)"
+                              : "text.secondary",
+                            mt: 0.5,
+                            display: "block",
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Choose what to measure and track.
+                        </Typography>
+                      </Box>
+                    }
+                  >
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      onClick={(e) => {
+                        if (metrics.length < 5) openPicker(e, "metric");
+                      }}
+                      sx={{
+                        cursor: metrics.length >= 5 ? "default" : "pointer",
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        mx: -1,
+                        transition: "background-color 0.15s",
+                        "&:hover":
+                          metrics.length < 5
+                            ? {
+                                bgcolor: (t) =>
+                                  t.palette.mode === "dark"
+                                    ? "rgba(145, 107, 255, 0.12)"
+                                    : "rgba(105, 65, 198, 0.08)",
+                                "& .metric-section-title": {
+                                  color: "primary.main",
+                                },
+                              }
+                            : {},
+                      }}
+                    >
+                      <Typography
+                        className="metric-section-title"
+                        variant="body2"
+                        fontWeight="fontWeightSemiBold"
+                        sx={{ transition: "color 0.15s" }}
+                      >
+                        Metric
+                        <Typography component="span" color="error.main">
+                          *
+                        </Typography>
+                      </Typography>
+                      <Iconify
+                        icon="mdi:plus"
+                        width={18}
+                        sx={{
+                          color:
+                            metrics.length >= 5
+                              ? "text.disabled"
+                              : "text.secondary",
+                        }}
+                      />
+                    </Stack>
+                  </Tooltip>
+
+                  {/* Added metrics */}
+                  {metrics.map((m, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .metric-hover-action": {
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" gap={1}>
+                        <Chip
+                          label={LETTER_LABELS[i]}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            minWidth: 24,
+                            height: 24,
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            "& .MuiChip-label": {
+                              paddingLeft: "0px !important",
+                              paddingRight: "0px !important",
+                              overflow: "visible !important",
+                              textOverflow: "clip !important",
+                            },
+                          }}
+                        />
+                        <Iconify
+                          icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"}
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
+                        <Typography
+                          variant="body2"
+                          noWrap
+                          title={m.name}
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            maxWidth: 160,
+                            "&:hover": { color: "primary.main" },
+                          }}
+                          onClick={(e) => openPicker(e, "metric", i)}
+                        >
+                          {m.name}
+                        </Typography>
+                        {m._linkedAgents && (
+                          <Tooltip
+                            title={`Linked to observability: ${m._linkedAgents}`}
+                          >
+                            <Chip
+                              label="Linked"
+                              size="small"
+                              color="info"
+                              variant="outlined"
+                              sx={{
+                                height: 20,
+                                fontSize: "10px",
+                                "& .MuiChip-label": { px: 0.75 },
+                              }}
+                            />
+                          </Tooltip>
+                        )}
+                        <Tooltip title="Add filter to this metric">
+                          <IconButton
+                            className="metric-hover-action"
+                            size="small"
+                            onClick={(e) =>
+                              openPicker(e, "metric_filter", null, i)
+                            }
+                            sx={{
+                              opacity: m.filters?.length > 0 ? 1 : 0,
+                              transition: "opacity 0.15s",
+                              color:
+                                m.filters?.length > 0
+                                  ? "primary.main"
+                                  : "text.secondary",
+                            }}
+                          >
+                            <Iconify icon="mdi:filter-outline" width={16} />
+                          </IconButton>
                         </Tooltip>
-                      )}
-                      <Tooltip title="Add filter to this metric">
                         <IconButton
                           className="metric-hover-action"
                           size="small"
-                          onClick={(e) =>
-                            openPicker(e, "metric_filter", null, i)
-                          }
+                          onClick={() => handleRemoveMetric(i)}
                           sx={{
-                            opacity: m.filters?.length > 0 ? 1 : 0,
+                            opacity: 0,
                             transition: "opacity 0.15s",
-                            color:
-                              m.filters?.length > 0
-                                ? "primary.main"
-                                : "text.secondary",
                           }}
                         >
-                          <Iconify icon="mdi:filter-outline" width={16} />
+                          <Iconify icon="mdi:close" width={14} />
                         </IconButton>
-                      </Tooltip>
-                      <IconButton
-                        className="metric-hover-action"
-                        size="small"
-                        onClick={() => handleRemoveMetric(i)}
-                        sx={{
-                          opacity: 0,
-                          transition: "opacity 0.15s",
-                        }}
-                      >
-                        <Iconify icon="mdi:close" width={14} />
-                      </IconButton>
-                    </Stack>
-                    <AggregationPicker
-                      value={
-                        m.allowedAggregations?.length &&
-                        !m.allowedAggregations.includes(m.aggregation)
-                          ? m.allowedAggregations[0]
-                          : m.aggregation
-                      }
-                      onChange={(val) => handleUpdateMetricAggregation(i, val)}
-                      theme={theme}
-                      allowedAggregations={m.allowedAggregations}
-                      extraOptions={
-                        m.source === "datasets" ||
-                        m.source === "simulation" ||
-                        m.source === "all"
-                          ? DATASET_EXTRA_AGGREGATIONS
-                          : undefined
-                      }
-                    />
+                      </Stack>
+                      <AggregationPicker
+                        value={
+                          m.allowedAggregations?.length &&
+                          !m.allowedAggregations.includes(m.aggregation)
+                            ? m.allowedAggregations[0]
+                            : m.aggregation
+                        }
+                        onChange={(val) =>
+                          handleUpdateMetricAggregation(i, val)
+                        }
+                        theme={theme}
+                        allowedAggregations={m.allowedAggregations}
+                        extraOptions={
+                          m.source === "datasets" ||
+                          m.source === "simulation" ||
+                          m.source === "all"
+                            ? DATASET_EXTRA_AGGREGATIONS
+                            : undefined
+                        }
+                      />
 
-                    {/* Per-metric inline filters */}
-                    {(m.filters || []).map((mf, fi) => {
-                      const mfOps = getFilterOperators(mf.dataType);
-                      const curMfOp = mfOps.find(
-                        (o) => o.value === mf.operator,
-                      );
-                      return (
-                        <Box
-                          key={fi}
+                      {/* Per-metric inline filters */}
+                      {(m.filters || []).map((mf, fi) => {
+                        const mfOps = getFilterOperators(mf.dataType);
+                        const curMfOp = mfOps.find(
+                          (o) => o.value === mf.operator,
+                        );
+                        return (
+                          <Box
+                            key={fi}
+                            sx={{
+                              mt: 1,
+                              pl: 1,
+                              borderLeft: `2px solid ${theme.palette.primary.main}`,
+                            }}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={0.5}
+                            >
+                              <Iconify
+                                icon={
+                                  METRIC_TYPE_ICONS[mf.type] ||
+                                  "mdi:filter-outline"
+                                }
+                                width={14}
+                                sx={{ color: "primary.main" }}
+                              />
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  flex: 1,
+                                  fontWeight: 500,
+                                  cursor: "pointer",
+                                  "&:hover": { color: "primary.main" },
+                                }}
+                                onClick={(e) =>
+                                  openPicker(e, "metric_filter", fi, i)
+                                }
+                              >
+                                {mf.name}
+                              </Typography>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleRemoveMetricFilter(i, fi)}
+                                sx={{ p: 0.25 }}
+                              >
+                                <Iconify icon="mdi:close" width={12} />
+                              </IconButton>
+                            </Stack>
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={0.5}
+                              sx={{ mt: 0.5 }}
+                            >
+                              <FormControl size="small" sx={{ minWidth: 70 }}>
+                                <Select
+                                  value={mf.operator}
+                                  onChange={(e) => {
+                                    const newOp = e.target.value;
+                                    const newDef = mfOps.find(
+                                      (o) => o.value === newOp,
+                                    );
+                                    let newVal = mf.value;
+                                    if (newDef?.noValue) newVal = "";
+                                    else if (newDef?.multi && !curMfOp?.multi)
+                                      newVal = [];
+                                    else if (newDef?.range && !curMfOp?.range)
+                                      newVal = ["", ""];
+                                    else if (!newDef?.multi && curMfOp?.multi)
+                                      newVal = "";
+                                    else if (!newDef?.range && curMfOp?.range)
+                                      newVal = "";
+                                    handleUpdateMetricFilter(i, fi, {
+                                      operator: newOp,
+                                      value: newVal,
+                                    });
+                                  }}
+                                  variant="standard"
+                                  sx={{ fontSize: "12px" }}
+                                >
+                                  {mfOps.map((op) => (
+                                    <MenuItem key={op.value} value={op.value}>
+                                      {op.label}
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              {curMfOp?.noValue ? null : curMfOp?.multi ? (
+                                <FilterValueLabel
+                                  filter={mf}
+                                  source={mf.source || "traces"}
+                                  variant="caption"
+                                  innerRef={(el) => {
+                                    mfValueRefs.current[`${i}_${fi}`] = el;
+                                  }}
+                                  onClick={(e) => {
+                                    setMfValueAnchor(e.currentTarget);
+                                    setMfValueTarget({
+                                      metricIdx: i,
+                                      filterIdx: fi,
+                                    });
+                                  }}
+                                />
+                              ) : curMfOp?.range ? (
+                                <Stack
+                                  direction="row"
+                                  alignItems="center"
+                                  gap={0.5}
+                                  sx={{ flex: 1 }}
+                                >
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Min"
+                                    type="number"
+                                    value={
+                                      Array.isArray(mf.value)
+                                        ? mf.value[0] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const cur = Array.isArray(mf.value)
+                                        ? [...mf.value]
+                                        : ["", ""];
+                                      cur[0] = e.target.value;
+                                      handleUpdateMetricFilter(i, fi, {
+                                        value: cur,
+                                      });
+                                    }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
+                                  />
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                  >
+                                    –
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Max"
+                                    type="number"
+                                    value={
+                                      Array.isArray(mf.value)
+                                        ? mf.value[1] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const cur = Array.isArray(mf.value)
+                                        ? [...mf.value]
+                                        : ["", ""];
+                                      cur[1] = e.target.value;
+                                      handleUpdateMetricFilter(i, fi, {
+                                        value: cur,
+                                      });
+                                    }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
+                                  />
+                                </Stack>
+                              ) : (
+                                <TextField
+                                  size="small"
+                                  variant="standard"
+                                  placeholder="Value"
+                                  type={
+                                    mf.dataType === "number" ? "number" : "text"
+                                  }
+                                  value={mf.value || ""}
+                                  onChange={(e) =>
+                                    handleUpdateMetricFilter(i, fi, {
+                                      value: e.target.value,
+                                    })
+                                  }
+                                  sx={{ flex: 1, fontSize: "12px" }}
+                                />
+                              )}
+                            </Stack>
+                            {fi < (m.filters || []).length - 1 && (
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{
+                                  display: "inline-block",
+                                  mt: 0.5,
+                                  px: 1,
+                                  py: 0.25,
+                                  borderRadius: 0.5,
+                                  bgcolor: "action.hover",
+                                  fontSize: "11px",
+                                }}
+                              >
+                                And
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  ))}
+
+                  {/* Empty metric slot */}
+                  {metrics.length === 0 && (
+                    <Box
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        cursor: "pointer",
+                        "&:hover": { borderColor: "primary.main" },
+                      }}
+                      onClick={(e) => openPicker(e, "metric")}
+                    >
+                      <Stack direction="row" alignItems="center" gap={0.75}>
+                        <Iconify
+                          icon="mdi:plus-circle-outline"
+                          width={18}
+                          sx={{ color: "primary.main" }}
+                        />
+                        <Typography variant="body2" color="primary.main">
+                          Select Metric
+                        </Typography>
+                      </Stack>
+                    </Box>
+                  )}
+                </Box>
+
+                <Divider />
+
+                {/* Filter section */}
+                <Box>
+                  <Tooltip
+                    placement="left"
+                    arrow
+                    componentsProps={{
+                      tooltip: {
+                        sx: {
+                          bgcolor: isDark ? "#1a1a2e" : "#fff",
+                          borderRadius: 2,
+                          p: 2,
+                          maxWidth: 180,
+                          boxShadow: isDark
+                            ? "0 4px 20px rgba(0,0,0,0.5)"
+                            : "0 4px 20px rgba(0,0,0,0.12)",
+                          border: isDark ? "none" : "1px solid",
+                          borderColor: isDark ? "transparent" : "divider",
+                        },
+                      },
+                      arrow: {
+                        sx: {
+                          color: isDark ? "#1a1a2e" : "#fff",
+                          "&::before": {
+                            border: isDark ? "none" : "1px solid",
+                            borderColor: isDark ? "transparent" : "divider",
+                          },
+                        },
+                      },
+                    }}
+                    title={
+                      <Box sx={{ textAlign: "center" }}>
+                        <svg
+                          width="120"
+                          height="90"
+                          viewBox="0 0 120 90"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          {/* Funnel shape */}
+                          <rect
+                            x="10"
+                            y="10"
+                            width="100"
+                            height="16"
+                            rx="3"
+                            fill={
+                              isDark
+                                ? "rgba(145,107,255,0.25)"
+                                : "rgba(105,65,198,0.1)"
+                            }
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1.5"
+                          />
+                          <rect
+                            x="25"
+                            y="34"
+                            width="70"
+                            height="16"
+                            rx="3"
+                            fill={
+                              isDark
+                                ? "rgba(145,107,255,0.4)"
+                                : "rgba(105,65,198,0.18)"
+                            }
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1.5"
+                          />
+                          <rect
+                            x="40"
+                            y="58"
+                            width="40"
+                            height="16"
+                            rx="3"
+                            fill={
+                              isDark
+                                ? "rgba(145,107,255,0.6)"
+                                : "rgba(105,65,198,0.28)"
+                            }
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1.5"
+                          />
+                          {/* Connecting lines */}
+                          <line
+                            x1="25"
+                            y1="26"
+                            x2="25"
+                            y2="34"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1="95"
+                            y1="26"
+                            x2="95"
+                            y2="34"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1="40"
+                            y1="50"
+                            x2="40"
+                            y2="58"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1="80"
+                            y1="50"
+                            x2="80"
+                            y2="58"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          {/* Data dots */}
+                          <circle
+                            cx="30"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="50"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="70"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                          />
+                          <circle
+                            cx="90"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="40"
+                            cy="42"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="60"
+                            cy="42"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="80"
+                            cy="42"
+                            r="2"
+                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                          />
+                          <circle
+                            cx="52"
+                            cy="66"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="68"
+                            cy="66"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                        </svg>
+                        <Typography
+                          variant="caption"
                           sx={{
-                            mt: 1,
-                            pl: 1,
-                            borderLeft: `2px solid ${theme.palette.primary.main}`,
+                            color: isDark
+                              ? "rgba(255,255,255,0.7)"
+                              : "text.secondary",
+                            mt: 0.5,
+                            display: "block",
+                            lineHeight: 1.3,
                           }}
                         >
-                          <Stack direction="row" alignItems="center" gap={0.5}>
-                            <Iconify
-                              icon={
-                                METRIC_TYPE_ICONS[mf.type] ||
-                                "mdi:filter-outline"
-                              }
-                              width={14}
-                              sx={{ color: "primary.main" }}
-                            />
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                flex: 1,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                "&:hover": { color: "primary.main" },
-                              }}
-                              onClick={(e) =>
-                                openPicker(e, "metric_filter", fi, i)
-                              }
-                            >
-                              {mf.name}
-                            </Typography>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleRemoveMetricFilter(i, fi)}
-                              sx={{ p: 0.25 }}
-                            >
-                              <Iconify icon="mdi:close" width={12} />
-                            </IconButton>
-                          </Stack>
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            gap={0.5}
-                            sx={{ mt: 0.5 }}
-                          >
-                            <FormControl size="small" sx={{ minWidth: 70 }}>
-                              <Select
-                                value={mf.operator}
-                                onChange={(e) => {
-                                  const newOp = e.target.value;
-                                  const newDef = mfOps.find(
-                                    (o) => o.value === newOp,
-                                  );
-                                  let newVal = mf.value;
-                                  if (newDef?.noValue) newVal = "";
-                                  else if (newDef?.multi && !curMfOp?.multi)
-                                    newVal = [];
-                                  else if (newDef?.range && !curMfOp?.range)
-                                    newVal = ["", ""];
-                                  else if (!newDef?.multi && curMfOp?.multi)
-                                    newVal = "";
-                                  else if (!newDef?.range && curMfOp?.range)
-                                    newVal = "";
-                                  handleUpdateMetricFilter(i, fi, {
-                                    operator: newOp,
-                                    value: newVal,
-                                  });
-                                }}
-                                variant="standard"
-                                sx={{ fontSize: "12px" }}
-                              >
-                                {mfOps.map((op) => (
-                                  <MenuItem key={op.value} value={op.value}>
-                                    {op.label}
-                                  </MenuItem>
-                                ))}
-                              </Select>
-                            </FormControl>
-                            {curMfOp?.noValue ? null : curMfOp?.multi ? (
-                              <FilterValueLabel
-                                filter={mf}
-                                source={mf.source || "traces"}
-                                variant="caption"
-                                innerRef={(el) => {
-                                  mfValueRefs.current[`${i}_${fi}`] = el;
-                                }}
-                                onClick={(e) => {
-                                  setMfValueAnchor(e.currentTarget);
-                                  setMfValueTarget({
-                                    metricIdx: i,
-                                    filterIdx: fi,
-                                  });
-                                }}
-                              />
-                            ) : curMfOp?.range ? (
-                              <Stack
-                                direction="row"
-                                alignItems="center"
-                                gap={0.5}
-                                sx={{ flex: 1 }}
-                              >
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Min"
-                                  type="number"
-                                  value={
-                                    Array.isArray(mf.value)
-                                      ? mf.value[0] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const cur = Array.isArray(mf.value)
-                                      ? [...mf.value]
-                                      : ["", ""];
-                                    cur[0] = e.target.value;
-                                    handleUpdateMetricFilter(i, fi, {
-                                      value: cur,
-                                    });
-                                  }}
-                                  sx={{ flex: 1, fontSize: "12px" }}
-                                />
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                >
-                                  –
-                                </Typography>
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Max"
-                                  type="number"
-                                  value={
-                                    Array.isArray(mf.value)
-                                      ? mf.value[1] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const cur = Array.isArray(mf.value)
-                                      ? [...mf.value]
-                                      : ["", ""];
-                                    cur[1] = e.target.value;
-                                    handleUpdateMetricFilter(i, fi, {
-                                      value: cur,
-                                    });
-                                  }}
-                                  sx={{ flex: 1, fontSize: "12px" }}
-                                />
-                              </Stack>
-                            ) : (
-                              <TextField
-                                size="small"
-                                variant="standard"
-                                placeholder="Value"
-                                type={
-                                  mf.dataType === "number" ? "number" : "text"
-                                }
-                                value={mf.value || ""}
-                                onChange={(e) =>
-                                  handleUpdateMetricFilter(i, fi, {
-                                    value: e.target.value,
-                                  })
-                                }
-                                sx={{ flex: 1, fontSize: "12px" }}
-                              />
-                            )}
-                          </Stack>
-                          {fi < (m.filters || []).length - 1 && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{
-                                display: "inline-block",
-                                mt: 0.5,
-                                px: 1,
-                                py: 0.25,
-                                borderRadius: 0.5,
-                                bgcolor: "action.hover",
-                                fontSize: "11px",
-                              }}
-                            >
-                              And
-                            </Typography>
-                          )}
-                        </Box>
-                      );
-                    })}
-                  </Box>
-                ))}
-
-                {/* Empty metric slot */}
-                {metrics.length === 0 && (
-                  <Box
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      cursor: "pointer",
-                      "&:hover": { borderColor: "primary.main" },
-                    }}
-                    onClick={(e) => openPicker(e, "metric")}
+                          Filter to include or exclude specific data.
+                        </Typography>
+                      </Box>
+                    }
                   >
-                    <Stack direction="row" alignItems="center" gap={0.75}>
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      onClick={(e) => openPicker(e, "filter")}
+                      sx={{
+                        cursor: "pointer",
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        mx: -1,
+                        transition: "background-color 0.15s",
+                        "&:hover": {
+                          bgcolor: (t) =>
+                            t.palette.mode === "dark"
+                              ? "rgba(145, 107, 255, 0.12)"
+                              : "rgba(105, 65, 198, 0.08)",
+                          "& .filter-section-title": {
+                            color: "primary.main",
+                          },
+                        },
+                      }}
+                    >
+                      <Typography
+                        className="filter-section-title"
+                        variant="body2"
+                        fontWeight="fontWeightSemiBold"
+                        sx={{ transition: "color 0.15s" }}
+                      >
+                        Filter
+                      </Typography>
                       <Iconify
-                        icon="mdi:plus-circle-outline"
+                        icon="mdi:plus"
                         width={18}
-                        sx={{ color: "primary.main" }}
+                        sx={{ color: "text.secondary" }}
                       />
-                      <Typography variant="body2" color="primary.main">
-                        Select Metric
-                      </Typography>
                     </Stack>
-                  </Box>
-                )}
-              </Box>
+                  </Tooltip>
+                  {filters.map((f, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .filter-hover-action": {
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" gap={1}>
+                        <Iconify
+                          icon={
+                            METRIC_TYPE_ICONS[f.type] || "mdi:filter-outline"
+                          }
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            "&:hover": { color: "primary.main" },
+                          }}
+                          onClick={(e) => openPicker(e, "filter", i)}
+                        >
+                          {f.name || "Select attribute"}
+                        </Typography>
+                        <IconButton
+                          className="filter-hover-action"
+                          size="small"
+                          onClick={() => handleRemoveFilter(i)}
+                          sx={{
+                            opacity: 0,
+                            transition: "opacity 0.15s",
+                          }}
+                        >
+                          <Iconify icon="mdi:close" width={14} />
+                        </IconButton>
+                      </Stack>
+                      {f.name &&
+                        (() => {
+                          const ops = getFilterOperators(f.dataType);
+                          const currentOp = ops.find(
+                            (o) => o.value === f.operator,
+                          );
+                          return (
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ mt: 1 }}
+                            >
+                              <FormControl size="small" sx={{ minWidth: 80 }}>
+                                <Select
+                                  value={f.operator}
+                                  onChange={(e) => {
+                                    const updated = [...filters];
+                                    const newOp = e.target.value;
+                                    const newDef = ops.find(
+                                      (o) => o.value === newOp,
+                                    );
+                                    let newVal = f.value;
+                                    if (newDef?.noValue) newVal = "";
+                                    else if (newDef?.multi && !currentOp?.multi)
+                                      newVal = [];
+                                    else if (newDef?.range && !currentOp?.range)
+                                      newVal = ["", ""];
+                                    else if (!newDef?.multi && currentOp?.multi)
+                                      newVal = "";
+                                    else if (!newDef?.range && currentOp?.range)
+                                      newVal = "";
+                                    updated[i] = {
+                                      ...updated[i],
+                                      operator: newOp,
+                                      value: newVal,
+                                    };
+                                    setFilters(updated);
+                                  }}
+                                  variant="standard"
+                                  sx={{ fontSize: "13px" }}
+                                >
+                                  {ops.map((op) => (
+                                    <MenuItem key={op.value} value={op.value}>
+                                      {op.label}
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              {currentOp?.noValue ? null : currentOp?.multi ? (
+                                <FilterValueLabel
+                                  filter={f}
+                                  source={f.source || "traces"}
+                                  variant="body2"
+                                  innerRef={(el) => {
+                                    filterValueRefs.current[i] = el;
+                                  }}
+                                  onClick={(e) => {
+                                    setFilterValueAnchor(e.currentTarget);
+                                    setFilterValueIndex(i);
+                                    setFilterValueSearch("");
+                                  }}
+                                />
+                              ) : currentOp?.range ? (
+                                <Stack
+                                  direction="row"
+                                  alignItems="center"
+                                  gap={0.5}
+                                  sx={{ flex: 1 }}
+                                >
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Min"
+                                    type="number"
+                                    value={
+                                      Array.isArray(f.value)
+                                        ? f.value[0] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const updated = [...filters];
+                                      const cur = Array.isArray(f.value)
+                                        ? [...f.value]
+                                        : ["", ""];
+                                      cur[0] = e.target.value;
+                                      updated[i] = {
+                                        ...updated[i],
+                                        value: cur,
+                                      };
+                                      setFilters(updated);
+                                    }}
+                                    sx={{ flex: 1, fontSize: "13px" }}
+                                  />
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                  >
+                                    and
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Max"
+                                    type="number"
+                                    value={
+                                      Array.isArray(f.value)
+                                        ? f.value[1] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const updated = [...filters];
+                                      const cur = Array.isArray(f.value)
+                                        ? [...f.value]
+                                        : ["", ""];
+                                      cur[1] = e.target.value;
+                                      updated[i] = {
+                                        ...updated[i],
+                                        value: cur,
+                                      };
+                                      setFilters(updated);
+                                    }}
+                                    sx={{ flex: 1, fontSize: "13px" }}
+                                  />
+                                </Stack>
+                              ) : (
+                                <TextField
+                                  size="small"
+                                  variant="standard"
+                                  placeholder="Value"
+                                  type={
+                                    f.dataType === "number" ? "number" : "text"
+                                  }
+                                  value={f.value || ""}
+                                  onChange={(e) => {
+                                    const updated = [...filters];
+                                    updated[i] = {
+                                      ...updated[i],
+                                      value: e.target.value,
+                                    };
+                                    setFilters(updated);
+                                  }}
+                                  sx={{ flex: 1, fontSize: "13px" }}
+                                />
+                              )}
+                            </Stack>
+                          );
+                        })()}
+                    </Box>
+                  ))}
+                </Box>
 
-              <Divider />
+                <Divider />
 
-              {/* Filter section */}
-              <Box>
-                <Tooltip
-                  placement="left"
-                  arrow
-                  componentsProps={{
-                    tooltip: {
-                      sx: {
-                        bgcolor: isDark ? "#1a1a2e" : "#fff",
-                        borderRadius: 2,
-                        p: 2,
-                        maxWidth: 180,
-                        boxShadow: isDark
-                          ? "0 4px 20px rgba(0,0,0,0.5)"
-                          : "0 4px 20px rgba(0,0,0,0.12)",
-                        border: isDark ? "none" : "1px solid",
-                        borderColor: isDark ? "transparent" : "divider",
-                      },
-                    },
-                    arrow: {
-                      sx: {
-                        color: isDark ? "#1a1a2e" : "#fff",
-                        "&::before": {
+                {/* Breakdown section */}
+                <Box>
+                  <Tooltip
+                    placement="left"
+                    arrow
+                    componentsProps={{
+                      tooltip: {
+                        sx: {
+                          bgcolor: isDark ? "#1a1a2e" : "#fff",
+                          borderRadius: 2,
+                          p: 2,
+                          maxWidth: 180,
+                          boxShadow: isDark
+                            ? "0 4px 20px rgba(0,0,0,0.5)"
+                            : "0 4px 20px rgba(0,0,0,0.12)",
                           border: isDark ? "none" : "1px solid",
                           borderColor: isDark ? "transparent" : "divider",
                         },
                       },
-                    },
-                  }}
-                  title={
-                    <Box sx={{ textAlign: "center" }}>
-                      <svg
-                        width="120"
-                        height="90"
-                        viewBox="0 0 120 90"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {/* Funnel shape */}
-                        <rect
-                          x="10"
-                          y="10"
-                          width="100"
-                          height="16"
-                          rx="3"
-                          fill={
-                            isDark
-                              ? "rgba(145,107,255,0.25)"
-                              : "rgba(105,65,198,0.1)"
-                          }
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1.5"
-                        />
-                        <rect
-                          x="25"
-                          y="34"
-                          width="70"
-                          height="16"
-                          rx="3"
-                          fill={
-                            isDark
-                              ? "rgba(145,107,255,0.4)"
-                              : "rgba(105,65,198,0.18)"
-                          }
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1.5"
-                        />
-                        <rect
-                          x="40"
-                          y="58"
-                          width="40"
-                          height="16"
-                          rx="3"
-                          fill={
-                            isDark
-                              ? "rgba(145,107,255,0.6)"
-                              : "rgba(105,65,198,0.28)"
-                          }
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1.5"
-                        />
-                        {/* Connecting lines */}
-                        <line
-                          x1="25"
-                          y1="26"
-                          x2="25"
-                          y2="34"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        <line
-                          x1="95"
-                          y1="26"
-                          x2="95"
-                          y2="34"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        <line
-                          x1="40"
-                          y1="50"
-                          x2="40"
-                          y2="58"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        <line
-                          x1="80"
-                          y1="50"
-                          x2="80"
-                          y2="58"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        {/* Data dots */}
-                        <circle
-                          cx="30"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="50"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="70"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#FF6B6B" : "#EF4444"}
-                        />
-                        <circle
-                          cx="90"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="40"
-                          cy="42"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="60"
-                          cy="42"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="80"
-                          cy="42"
-                          r="2"
-                          fill={isDark ? "#FF6B6B" : "#EF4444"}
-                        />
-                        <circle
-                          cx="52"
-                          cy="66"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="68"
-                          cy="66"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                      </svg>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "text.secondary",
-                          mt: 0.5,
-                          display: "block",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        Filter to include or exclude specific data.
-                      </Typography>
-                    </Box>
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    onClick={(e) => openPicker(e, "filter")}
-                    sx={{
-                      cursor: "pointer",
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      mx: -1,
-                      transition: "background-color 0.15s",
-                      "&:hover": {
-                        bgcolor: (t) =>
-                          t.palette.mode === "dark"
-                            ? "rgba(145, 107, 255, 0.12)"
-                            : "rgba(105, 65, 198, 0.08)",
-                        "& .filter-section-title": {
-                          color: "primary.main",
+                      arrow: {
+                        sx: {
+                          color: isDark ? "#1a1a2e" : "#fff",
+                          "&::before": {
+                            border: isDark ? "none" : "1px solid",
+                            borderColor: isDark ? "transparent" : "divider",
+                          },
                         },
                       },
                     }}
+                    title={
+                      <Box sx={{ textAlign: "center" }}>
+                        {(() => {
+                          const teal = isDark ? "#5BE49B" : "#16A34A";
+                          const tealFill1 = isDark
+                            ? "rgba(91,228,155,0.2)"
+                            : "rgba(22,163,74,0.12)";
+                          const tealFill2 = isDark
+                            ? "rgba(91,228,155,0.3)"
+                            : "rgba(22,163,74,0.2)";
+                          const tealFill3 = isDark
+                            ? "rgba(91,228,155,0.15)"
+                            : "rgba(22,163,74,0.08)";
+                          const tealFill4 = isDark
+                            ? "rgba(91,228,155,0.25)"
+                            : "rgba(22,163,74,0.15)";
+                          const purple = isDark ? "#916BFF" : "#7C4DFF";
+                          const purpleFill1 = isDark
+                            ? "rgba(145,107,255,0.2)"
+                            : "rgba(105,65,198,0.12)";
+                          const purpleFill2 = isDark
+                            ? "rgba(145,107,255,0.3)"
+                            : "rgba(105,65,198,0.2)";
+                          const purpleFill3 = isDark
+                            ? "rgba(145,107,255,0.15)"
+                            : "rgba(105,65,198,0.08)";
+                          const purpleFill4 = isDark
+                            ? "rgba(145,107,255,0.25)"
+                            : "rgba(105,65,198,0.15)";
+                          const coral = isDark ? "#FF6B6B" : "#EF4444";
+                          const coralFill1 = isDark
+                            ? "rgba(255,107,107,0.2)"
+                            : "rgba(239,68,68,0.12)";
+                          const coralFill2 = isDark
+                            ? "rgba(255,107,107,0.3)"
+                            : "rgba(239,68,68,0.2)";
+                          const coralFill3 = isDark
+                            ? "rgba(255,107,107,0.15)"
+                            : "rgba(239,68,68,0.08)";
+                          const coralFill4 = isDark
+                            ? "rgba(255,107,107,0.25)"
+                            : "rgba(239,68,68,0.15)";
+                          return (
+                            <svg
+                              width="120"
+                              height="90"
+                              viewBox="0 0 120 90"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              {/* Cube group 1 - teal */}
+                              <g transform="translate(8, 40)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={tealFill1}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={tealFill2}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              <g transform="translate(8, 22)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={tealFill3}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={tealFill4}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              {/* Cube group 2 - purple */}
+                              <g transform="translate(44, 30)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={purpleFill1}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={purpleFill2}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              <g transform="translate(44, 12)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={purpleFill3}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={purpleFill4}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              {/* Cube group 3 - coral */}
+                              <g transform="translate(80, 38)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={coralFill1}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={coralFill2}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              <g transform="translate(80, 20)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={coralFill3}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={coralFill4}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                            </svg>
+                          );
+                        })()}
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: isDark
+                              ? "rgba(255,255,255,0.7)"
+                              : "text.secondary",
+                            mt: 0.5,
+                            display: "block",
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Segment your data into different categories.
+                        </Typography>
+                      </Box>
+                    }
                   >
-                    <Typography
-                      className="filter-section-title"
-                      variant="body2"
-                      fontWeight="fontWeightSemiBold"
-                      sx={{ transition: "color 0.15s" }}
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      onClick={(e) => openPicker(e, "breakdown")}
+                      sx={{
+                        cursor: "pointer",
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        mx: -1,
+                        transition: "background-color 0.15s",
+                        "&:hover": {
+                          bgcolor: (t) =>
+                            t.palette.mode === "dark"
+                              ? "rgba(145, 107, 255, 0.12)"
+                              : "rgba(105, 65, 198, 0.08)",
+                          "& .breakdown-section-title": {
+                            color: "primary.main",
+                          },
+                        },
+                      }}
                     >
-                      Filter
-                    </Typography>
-                    <Iconify
-                      icon="mdi:plus"
-                      width={18}
-                      sx={{ color: "text.secondary" }}
-                    />
-                  </Stack>
-                </Tooltip>
-                {filters.map((f, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      "&:hover .filter-hover-action": {
-                        opacity: 1,
-                      },
-                    }}
-                  >
-                    <Stack direction="row" alignItems="center" gap={1}>
+                      <Typography
+                        className="breakdown-section-title"
+                        variant="body2"
+                        fontWeight="fontWeightSemiBold"
+                        sx={{ transition: "color 0.15s" }}
+                      >
+                        Breakdown
+                      </Typography>
                       <Iconify
-                        icon={METRIC_TYPE_ICONS[f.type] || "mdi:filter-outline"}
-                        width={16}
+                        icon="mdi:plus"
+                        width={18}
                         sx={{ color: "text.secondary" }}
                       />
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          flex: 1,
-                          cursor: "pointer",
-                          "&:hover": { color: "primary.main" },
-                        }}
-                        onClick={(e) => openPicker(e, "filter", i)}
-                      >
-                        {f.name || "Select attribute"}
-                      </Typography>
-                      <IconButton
-                        className="filter-hover-action"
-                        size="small"
-                        onClick={() => handleRemoveFilter(i)}
-                        sx={{
-                          opacity: 0,
-                          transition: "opacity 0.15s",
-                        }}
-                      >
-                        <Iconify icon="mdi:close" width={14} />
-                      </IconButton>
                     </Stack>
-                    {f.name &&
-                      (() => {
-                        const ops = getFilterOperators(f.dataType);
-                        const currentOp = ops.find(
-                          (o) => o.value === f.operator,
+                  </Tooltip>
+                  {breakdowns.map((b, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .breakdown-hover-action": {
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" gap={1}>
+                        <Iconify
+                          icon={
+                            METRIC_TYPE_ICONS[b.type] ||
+                            "mdi:chart-timeline-variant"
+                          }
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            "&:hover": { color: "primary.main" },
+                          }}
+                          onClick={(e) => openPicker(e, "breakdown", i)}
+                        >
+                          {b.name || "Select attribute"}
+                        </Typography>
+                        <IconButton
+                          className="breakdown-hover-action"
+                          size="small"
+                          onClick={() => handleRemoveBreakdown(i)}
+                          sx={{
+                            opacity: 0,
+                            transition: "opacity 0.15s",
+                          }}
+                        >
+                          <Iconify icon="mdi:close" width={14} />
+                        </IconButton>
+                      </Stack>
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {rightTab === 1 && (
+              <Box sx={{ p: 2, overflow: "auto" }}>
+                {isPie || isTable || isMetricCard ? (
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ fontStyle: "italic", textAlign: "center", mt: 4 }}
+                  >
+                    {isPie
+                      ? "Pie charts do not have axis settings"
+                      : isTable
+                        ? "Table view does not have axis settings"
+                        : "Metric cards do not have axis settings"}
+                  </Typography>
+                ) : (
+                  <>
+                    {/* AXIS collapsible section */}
+                    <Typography
+                      variant="overline"
+                      fontWeight={700}
+                      sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
+                    >
+                      AXIS
+                    </Typography>
+
+                    {/* Axis Assignment */}
+                    <Box>
+                      <Typography
+                        variant="subtitle2"
+                        fontWeight={700}
+                        sx={{ mb: 1.5 }}
+                      >
+                        Axis Assignment
+                      </Typography>
+                      {previewSeries.map((s, si) => {
+                        const seriesColor = getSeriesColor(
+                          s.name,
+                          seriesColorMap,
                         );
                         return (
                           <Stack
+                            key={si}
                             direction="row"
                             alignItems="center"
-                            gap={1}
-                            sx={{ mt: 1 }}
+                            justifyContent="space-between"
+                            sx={{ mb: 1 }}
                           >
-                            <FormControl size="small" sx={{ minWidth: 80 }}>
-                              <Select
-                                value={f.operator}
-                                onChange={(e) => {
-                                  const updated = [...filters];
-                                  const newOp = e.target.value;
-                                  const newDef = ops.find(
-                                    (o) => o.value === newOp,
-                                  );
-                                  let newVal = f.value;
-                                  if (newDef?.noValue) newVal = "";
-                                  else if (newDef?.multi && !currentOp?.multi)
-                                    newVal = [];
-                                  else if (newDef?.range && !currentOp?.range)
-                                    newVal = ["", ""];
-                                  else if (!newDef?.multi && currentOp?.multi)
-                                    newVal = "";
-                                  else if (!newDef?.range && currentOp?.range)
-                                    newVal = "";
-                                  updated[i] = {
-                                    ...updated[i],
-                                    operator: newOp,
-                                    value: newVal,
-                                  };
-                                  setFilters(updated);
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ flex: 1, minWidth: 0 }}
+                            >
+                              <Box
+                                sx={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 0.5,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  bgcolor: seriesColor + "22",
+                                  color: seriesColor,
+                                  fontSize: "11px",
+                                  fontWeight: 700,
                                 }}
-                                variant="standard"
-                                sx={{ fontSize: "13px" }}
                               >
-                                {ops.map((op) => (
-                                  <MenuItem key={op.value} value={op.value}>
-                                    {op.label}
-                                  </MenuItem>
-                                ))}
-                              </Select>
-                            </FormControl>
-                            {currentOp?.noValue ? null : currentOp?.multi ? (
-                              <FilterValueLabel
-                                filter={f}
-                                source={f.source || "traces"}
+                                {LETTER_LABELS[si] || si}
+                              </Box>
+                              <Iconify
+                                icon="mdi:chart-line"
+                                width={16}
+                                sx={{
+                                  color: seriesColor,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <Typography
                                 variant="body2"
-                                innerRef={(el) => {
-                                  filterValueRefs.current[i] = el;
-                                }}
-                                onClick={(e) => {
-                                  setFilterValueAnchor(e.currentTarget);
-                                  setFilterValueIndex(i);
-                                  setFilterValueSearch("");
-                                }}
-                              />
-                            ) : currentOp?.range ? (
-                              <Stack
-                                direction="row"
-                                alignItems="center"
-                                gap={0.5}
-                                sx={{ flex: 1 }}
+                                noWrap
+                                sx={{ fontWeight: 500 }}
                               >
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Min"
-                                  type="number"
-                                  value={
-                                    Array.isArray(f.value)
-                                      ? f.value[0] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const updated = [...filters];
-                                    const cur = Array.isArray(f.value)
-                                      ? [...f.value]
-                                      : ["", ""];
-                                    cur[0] = e.target.value;
-                                    updated[i] = { ...updated[i], value: cur };
-                                    setFilters(updated);
-                                  }}
-                                  sx={{ flex: 1, fontSize: "13px" }}
-                                />
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                >
-                                  and
-                                </Typography>
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Max"
-                                  type="number"
-                                  value={
-                                    Array.isArray(f.value)
-                                      ? f.value[1] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const updated = [...filters];
-                                    const cur = Array.isArray(f.value)
-                                      ? [...f.value]
-                                      : ["", ""];
-                                    cur[1] = e.target.value;
-                                    updated[i] = { ...updated[i], value: cur };
-                                    setFilters(updated);
-                                  }}
-                                  sx={{ flex: 1, fontSize: "13px" }}
-                                />
-                              </Stack>
-                            ) : (
-                              <TextField
-                                size="small"
-                                variant="standard"
-                                placeholder="Value"
-                                type={
-                                  f.dataType === "number" ? "number" : "text"
-                                }
-                                value={f.value || ""}
-                                onChange={(e) => {
-                                  const updated = [...filters];
-                                  updated[i] = {
-                                    ...updated[i],
-                                    value: e.target.value,
-                                  };
-                                  setFilters(updated);
-                                }}
-                                sx={{ flex: 1, fontSize: "13px" }}
-                              />
-                            )}
+                                {s.name?.split(" (")[0] || s.name}
+                              </Typography>
+                            </Stack>
+                            <ToggleButtons
+                              options={[
+                                { label: "L", value: "left" },
+                                { label: "R", value: "right" },
+                              ]}
+                              value={axisConfig.seriesAxis[si] || "left"}
+                              onChange={(v) => setSeriesAxis(si, v)}
+                              theme={theme}
+                            />
                           </Stack>
                         );
-                      })()}
-                  </Box>
-                ))}
-              </Box>
-
-              <Divider />
-
-              {/* Breakdown section */}
-              <Box>
-                <Tooltip
-                  placement="left"
-                  arrow
-                  componentsProps={{
-                    tooltip: {
-                      sx: {
-                        bgcolor: isDark ? "#1a1a2e" : "#fff",
-                        borderRadius: 2,
-                        p: 2,
-                        maxWidth: 180,
-                        boxShadow: isDark
-                          ? "0 4px 20px rgba(0,0,0,0.5)"
-                          : "0 4px 20px rgba(0,0,0,0.12)",
-                        border: isDark ? "none" : "1px solid",
-                        borderColor: isDark ? "transparent" : "divider",
-                      },
-                    },
-                    arrow: {
-                      sx: {
-                        color: isDark ? "#1a1a2e" : "#fff",
-                        "&::before": {
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
-                        },
-                      },
-                    },
-                  }}
-                  title={
-                    <Box sx={{ textAlign: "center" }}>
-                      {(() => {
-                        const teal = isDark ? "#5BE49B" : "#16A34A";
-                        const tealFill1 = isDark
-                          ? "rgba(91,228,155,0.2)"
-                          : "rgba(22,163,74,0.12)";
-                        const tealFill2 = isDark
-                          ? "rgba(91,228,155,0.3)"
-                          : "rgba(22,163,74,0.2)";
-                        const tealFill3 = isDark
-                          ? "rgba(91,228,155,0.15)"
-                          : "rgba(22,163,74,0.08)";
-                        const tealFill4 = isDark
-                          ? "rgba(91,228,155,0.25)"
-                          : "rgba(22,163,74,0.15)";
-                        const purple = isDark ? "#916BFF" : "#7C4DFF";
-                        const purpleFill1 = isDark
-                          ? "rgba(145,107,255,0.2)"
-                          : "rgba(105,65,198,0.12)";
-                        const purpleFill2 = isDark
-                          ? "rgba(145,107,255,0.3)"
-                          : "rgba(105,65,198,0.2)";
-                        const purpleFill3 = isDark
-                          ? "rgba(145,107,255,0.15)"
-                          : "rgba(105,65,198,0.08)";
-                        const purpleFill4 = isDark
-                          ? "rgba(145,107,255,0.25)"
-                          : "rgba(105,65,198,0.15)";
-                        const coral = isDark ? "#FF6B6B" : "#EF4444";
-                        const coralFill1 = isDark
-                          ? "rgba(255,107,107,0.2)"
-                          : "rgba(239,68,68,0.12)";
-                        const coralFill2 = isDark
-                          ? "rgba(255,107,107,0.3)"
-                          : "rgba(239,68,68,0.2)";
-                        const coralFill3 = isDark
-                          ? "rgba(255,107,107,0.15)"
-                          : "rgba(239,68,68,0.08)";
-                        const coralFill4 = isDark
-                          ? "rgba(255,107,107,0.25)"
-                          : "rgba(239,68,68,0.15)";
-                        return (
-                          <svg
-                            width="120"
-                            height="90"
-                            viewBox="0 0 120 90"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            {/* Cube group 1 - teal */}
-                            <g transform="translate(8, 40)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={tealFill1}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={tealFill2}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            <g transform="translate(8, 22)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={tealFill3}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={tealFill4}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            {/* Cube group 2 - purple */}
-                            <g transform="translate(44, 30)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={purpleFill1}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={purpleFill2}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            <g transform="translate(44, 12)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={purpleFill3}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={purpleFill4}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            {/* Cube group 3 - coral */}
-                            <g transform="translate(80, 38)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={coralFill1}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={coralFill2}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            <g transform="translate(80, 20)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={coralFill3}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={coralFill4}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                          </svg>
-                        );
-                      })()}
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "text.secondary",
-                          mt: 0.5,
-                          display: "block",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        Segment your data into different categories.
-                      </Typography>
-                    </Box>
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    onClick={(e) => openPicker(e, "breakdown")}
-                    sx={{
-                      cursor: "pointer",
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      mx: -1,
-                      transition: "background-color 0.15s",
-                      "&:hover": {
-                        bgcolor: (t) =>
-                          t.palette.mode === "dark"
-                            ? "rgba(145, 107, 255, 0.12)"
-                            : "rgba(105, 65, 198, 0.08)",
-                        "& .breakdown-section-title": {
-                          color: "primary.main",
-                        },
-                      },
-                    }}
-                  >
-                    <Typography
-                      className="breakdown-section-title"
-                      variant="body2"
-                      fontWeight="fontWeightSemiBold"
-                      sx={{ transition: "color 0.15s" }}
-                    >
-                      Breakdown
-                    </Typography>
-                    <Iconify
-                      icon="mdi:plus"
-                      width={18}
-                      sx={{ color: "text.secondary" }}
-                    />
-                  </Stack>
-                </Tooltip>
-                {breakdowns.map((b, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      "&:hover .breakdown-hover-action": {
-                        opacity: 1,
-                      },
-                    }}
-                  >
-                    <Stack direction="row" alignItems="center" gap={1}>
-                      <Iconify
-                        icon={
-                          METRIC_TYPE_ICONS[b.type] ||
-                          "mdi:chart-timeline-variant"
-                        }
-                        width={16}
-                        sx={{ color: "text.secondary" }}
-                      />
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          flex: 1,
-                          cursor: "pointer",
-                          "&:hover": { color: "primary.main" },
-                        }}
-                        onClick={(e) => openPicker(e, "breakdown", i)}
-                      >
-                        {b.name || "Select attribute"}
-                      </Typography>
-                      <IconButton
-                        className="breakdown-hover-action"
-                        size="small"
-                        onClick={() => handleRemoveBreakdown(i)}
-                        sx={{
-                          opacity: 0,
-                          transition: "opacity 0.15s",
-                        }}
-                      >
-                        <Iconify icon="mdi:close" width={14} />
-                      </IconButton>
-                    </Stack>
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-          )}
-
-          {rightTab === 1 && (
-            <Box sx={{ p: 2, overflow: "auto" }}>
-              {isPie || isTable || isMetricCard ? (
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ fontStyle: "italic", textAlign: "center", mt: 4 }}
-                >
-                  {isPie
-                    ? "Pie charts do not have axis settings"
-                    : isTable
-                      ? "Table view does not have axis settings"
-                      : "Metric cards do not have axis settings"}
-                </Typography>
-              ) : (
-                <>
-                  {/* AXIS collapsible section */}
-                  <Typography
-                    variant="overline"
-                    fontWeight={700}
-                    sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
-                  >
-                    AXIS
-                  </Typography>
-
-                  {/* Left Y-Axis */}
-                  <AxisSection
-                    title="Left Y-Axis"
-                    config={axisConfig.leftY}
-                    onChange={(key, val) => updateAxis("leftY", key, val)}
-                    theme={theme}
-                    showReset
-                    onReset={() =>
-                      setAxisConfig((prev) => ({
-                        ...prev,
-                        leftY: {
-                          visible: true,
-                          label: "",
-                          unit: "",
-                          prefixSuffix: "prefix",
-                          abbreviation: true,
-                          decimals: DEFAULT_DECIMALS,
-                          min: "",
-                          max: "",
-                          outOfBounds: "visible",
-                          scale: "linear",
-                        },
-                      }))
-                    }
-                  />
-
-                  <Divider sx={{ my: 2 }} />
-
-                  {/* Right Y-Axis */}
-                  <AxisSection
-                    title="Right Y-Axis"
-                    config={axisConfig.rightY}
-                    onChange={(key, val) => updateAxis("rightY", key, val)}
-                    theme={theme}
-                    showReset
-                    onReset={() =>
-                      setAxisConfig((prev) => ({
-                        ...prev,
-                        rightY: {
-                          visible: false,
-                          label: "",
-                          unit: "",
-                          prefixSuffix: "prefix",
-                          abbreviation: true,
-                          decimals: DEFAULT_DECIMALS,
-                          min: "",
-                          max: "",
-                          outOfBounds: "hidden",
-                          scale: "linear",
-                        },
-                      }))
-                    }
-                  />
-
-                  <Divider sx={{ my: 2 }} />
-
-                  {/* X-Axis */}
-                  <Box sx={{ mb: 3 }}>
-                    <Typography
-                      variant="subtitle2"
-                      fontWeight={700}
-                      sx={{ mb: 1.5 }}
-                    >
-                      X-Axis
-                    </Typography>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                      sx={{ mb: 1.5 }}
-                    >
-                      <Typography variant="body2" color="text.secondary">
-                        Axis
-                      </Typography>
-                      <ToggleButtons
-                        options={[
-                          { label: "Visible", value: true },
-                          { label: "Hidden", value: false },
-                        ]}
-                        value={axisConfig.xAxis.visible}
-                        onChange={(v) => updateAxis("xAxis", "visible", v)}
-                        theme={theme}
-                      />
-                    </Stack>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                    >
-                      <Typography variant="body2" color="text.secondary">
-                        Label
-                      </Typography>
-                      <TextField
-                        size="small"
-                        value={axisConfig.xAxis.label}
-                        onChange={(e) =>
-                          updateAxis("xAxis", "label", e.target.value)
-                        }
-                        placeholder="e.g. Time (s)"
-                        inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
-                        sx={{
-                          width: 180,
-                          "& .MuiOutlinedInput-root": { fontSize: "13px" },
-                        }}
-                      />
-                    </Stack>
-                  </Box>
-
-                  <Divider sx={{ my: 2 }} />
-
-                  {/* Axis Assignment */}
-                  <Box>
-                    <Typography
-                      variant="subtitle2"
-                      fontWeight={700}
-                      sx={{ mb: 1.5 }}
-                    >
-                      Axis Assignment
-                    </Typography>
-                    {previewSeries.map((s, si) => (
-                      <Stack
-                        key={si}
-                        direction="row"
-                        alignItems="center"
-                        justifyContent="space-between"
-                        sx={{ mb: 1 }}
-                      >
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          gap={1}
-                          sx={{ flex: 1, minWidth: 0 }}
+                      })}
+                      {previewSeries.length === 0 && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ fontStyle: "italic" }}
                         >
-                          <Box
-                            sx={{
-                              width: 22,
-                              height: 22,
-                              borderRadius: 0.5,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              bgcolor:
-                                SERIES_COLORS[si % SERIES_COLORS.length] + "22",
-                              color: SERIES_COLORS[si % SERIES_COLORS.length],
-                              fontSize: "11px",
-                              fontWeight: 700,
-                            }}
-                          >
-                            {LETTER_LABELS[si] || si}
-                          </Box>
-                          <Iconify
-                            icon="mdi:chart-line"
-                            width={16}
-                            sx={{
-                              color: SERIES_COLORS[si % SERIES_COLORS.length],
-                              flexShrink: 0,
-                            }}
-                          />
-                          <Typography
-                            variant="body2"
-                            noWrap
-                            sx={{ fontWeight: 500 }}
-                          >
-                            {s.name?.split(" (")[0] || s.name}
-                          </Typography>
-                        </Stack>
+                          Add metrics to see axis assignments
+                        </Typography>
+                      )}
+                    </Box>
+
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* Left Y-Axis */}
+                    <AxisSection
+                      title="Left Y-Axis"
+                      config={axisConfig.leftY}
+                      onChange={(key, val) => updateAxis("leftY", key, val)}
+                      theme={theme}
+                      showReset
+                      onReset={() =>
+                        setAxisConfig((prev) => ({
+                          ...prev,
+                          leftY: {
+                            visible: true,
+                            label: "",
+                            unit: "",
+                            prefixSuffix: "prefix",
+                            abbreviation: true,
+                            decimals: DEFAULT_DECIMALS,
+                            min: "",
+                            max: "",
+                            outOfBounds: "visible",
+                            scale: "linear",
+                          },
+                        }))
+                      }
+                    />
+
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* Right Y-Axis */}
+                    <AxisSection
+                      title="Right Y-Axis"
+                      config={axisConfig.rightY}
+                      onChange={(key, val) => updateAxis("rightY", key, val)}
+                      theme={theme}
+                      showReset
+                      onReset={() =>
+                        setAxisConfig((prev) => ({
+                          ...prev,
+                          rightY: {
+                            visible: false,
+                            label: "",
+                            unit: "",
+                            prefixSuffix: "prefix",
+                            abbreviation: true,
+                            decimals: DEFAULT_DECIMALS,
+                            min: "",
+                            max: "",
+                            outOfBounds: "hidden",
+                            scale: "linear",
+                          },
+                        }))
+                      }
+                    />
+
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* X-Axis */}
+                    <Box sx={{ mb: 3 }}>
+                      <Typography
+                        variant="subtitle2"
+                        fontWeight={700}
+                        sx={{ mb: 1.5 }}
+                      >
+                        X-Axis
+                      </Typography>
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        alignItems="center"
+                        sx={{ mb: 1.5 }}
+                      >
+                        <Typography variant="body2" color="text.secondary">
+                          Axis
+                        </Typography>
                         <ToggleButtons
                           options={[
-                            { label: "L", value: "left" },
-                            { label: "R", value: "right" },
+                            { label: "Visible", value: true },
+                            { label: "Hidden", value: false },
                           ]}
-                          value={axisConfig.seriesAxis[si] || "left"}
-                          onChange={(v) => setSeriesAxis(si, v)}
+                          value={axisConfig.xAxis.visible}
+                          onChange={(v) => updateAxis("xAxis", "visible", v)}
                           theme={theme}
                         />
                       </Stack>
-                    ))}
-                    {previewSeries.length === 0 && (
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ fontStyle: "italic" }}
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        alignItems="center"
                       >
-                        Add metrics to see axis assignments
-                      </Typography>
-                    )}
-                  </Box>
-                </>
-              )}
-            </Box>
-          )}
-        </Box>
+                        <Typography variant="body2" color="text.secondary">
+                          Label
+                        </Typography>
+                        <TextField
+                          size="small"
+                          value={axisConfig.xAxis.label}
+                          onChange={(e) =>
+                            updateAxis("xAxis", "label", e.target.value)
+                          }
+                          placeholder="e.g. Time (s)"
+                          inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
+                          sx={{
+                            width: 180,
+                            "& .MuiOutlinedInput-root": { fontSize: "13px" },
+                          }}
+                        />
+                      </Stack>
+                    </Box>
+                  </>
+                )}
+              </Box>
+            )}
+          </Box>
+        )}
       </Box>
 
       {/* Shared Picker Popper — used for metric, filter, and breakdown */}

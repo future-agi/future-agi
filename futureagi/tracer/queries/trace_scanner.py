@@ -7,6 +7,7 @@ All return typed dataclasses — no raw dicts at the boundary.
 
 import hashlib
 import json
+import re
 
 import structlog
 
@@ -14,6 +15,13 @@ from tracer.models.trace_scan import TraceScanConfig, TraceScanResult
 from tracer.types.scan_types import ScanConfig, SpanData, TraceData
 
 logger = structlog.get_logger(__name__)
+
+# Per-message attributes emitted by every ingest adapter, in either the OTel
+# GenAI (gen_ai.*) or OpenInference (llm.*) namespace.
+_MESSAGE_ATTR_RE = re.compile(
+    r"^(?:gen_ai\.(?:input|output)\.messages\.\d+\.message"
+    r"|llm\.(?:input|output)_messages\.\d+\.message)\.(?:role|content)$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +131,7 @@ def mark_traces_failed(trace_ids: list[str], project_id: str, reason: str) -> in
 # ---------------------------------------------------------------------------
 
 # Map our observation_type to the span role the scanner understands.
-# Kept vendor-neutral — compress_v2 reads span kind by suffix, not by
+# Kept vendor-neutral — the scanner reads span kind by suffix, not by
 # a specific SDK prefix, so we just emit plain "span.kind".
 _OBS_TYPE_TO_KIND = {
     "GENERATION": "LLM",
@@ -141,8 +149,14 @@ _TOKEN_KEYS = [
 ]
 
 
-def fetch_trace_data(trace_ids: list[str]) -> list[TraceData]:
-    """Fetch trace spans from DB and build nested span trees for the scanner."""
+def fetch_trace_data(trace_ids: list[str], project_id: str) -> list[TraceData]:
+    """Fetch trace spans from DB and build nested span trees for the scanner.
+
+    ``project_id`` scopes the read to its (single-project) batch — bounds it and
+    stops a cross-project trace_id collision merging a foreign project's spans into
+    the tree. ``include_heavy=False`` stubs the fat columns the scanner never reads
+    (``_ch_span_to_span`` takes tool defs from ``attrs_string``).
+    """
     # Was: ObservationSpan.objects.filter(trace_id=).order_by("start_time")
     #      .values("id", "name", "parent_span_id", "start_time", "end_time",
     #              "input", "output", "metadata", "model", "observation_type",
@@ -159,7 +173,11 @@ def fetch_trace_data(trace_ids: list[str]) -> list[TraceData]:
         return []
 
     with get_reader() as reader:
-        all_spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        all_spans = reader.list_by_trace_ids(
+            [str(t) for t in trace_ids],
+            project_id=str(project_id),
+            include_heavy=False,
+        )
 
     # Group CH spans by trace_id while preserving CH's start_time order.
     by_trace: dict[str, list] = {}
@@ -234,10 +252,12 @@ def _ch_span_to_span(span) -> SpanData:
     # Surface function-calling tool definitions so the scanner can derive the
     # AVAILABLE tool set (vs. tools actually called). Kept verbatim from the raw
     # span attributes — no transformation, the scanner parses the names.
-    # The definitions are a top-level key living in the typed string map or
-    # the attributes_extra JSON overflow, depending on value size. Some
-    # producers wrote attributes_extra as a stringified dict, so the reader
-    # can hand back a double-encoded value — decode up to twice.
+    # Routing is by OTLP value TYPE, not size: a string value lands in attrs_string
+    # (any length), a structured value overflows to attributes_extra. fetch_trace_data
+    # reads spans lean (attributes_extra stubbed to ''), so only the attrs_string form
+    # is available here — a structured-value tool list degrades the tools_available
+    # signal, not correctness. Some producers wrote attributes_extra as a stringified
+    # dict, so the reader can hand back a double-encoded value — decode up to twice.
     extra_attrs: dict = {}
     if span.attributes_extra:
         try:
@@ -251,6 +271,15 @@ def _ch_span_to_span(span) -> SpanData:
         val = (span.attrs_string or {}).get(tool_key) or extra_attrs.get(tool_key)
         if val:
             attrs[tool_key] = val
+
+    # Per-message attributes, so the scanner can see the conversation as ordered
+    # turns instead of one flattened blob. Without these, input.value is the whole
+    # serialized message list and the scanner cannot tell which agent reply
+    # answered which user question — it pairs a question from one turn with an
+    # answer from another and reports failures that never happened.
+    for key, val in (span.attrs_string or {}).items():
+        if _MESSAGE_ATTR_RE.match(key):
+            attrs[key] = val
 
     for key in _TOKEN_KEYS:
         if key in metadata:
@@ -295,6 +324,13 @@ def write_scan_results(
     written = 0
 
     for result in results:
+        # A retryable result means the scan could not be completed, not that the
+        # trace is clean. Any row here is terminal — filter_already_scanned
+        # treats FAILED the same as COMPLETED — so writing one would hide the
+        # trace from every later sweep. Leave it unwritten and it gets picked up
+        # again.
+        if getattr(result, "retryable", False):
+            continue
         try:
             # Serialize dataclasses to JSON-safe dicts for JSONField storage.
             # role/span/status/is_failure are the deterministic span

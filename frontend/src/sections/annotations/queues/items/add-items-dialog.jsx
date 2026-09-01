@@ -54,7 +54,9 @@ import {
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
   SPAN_DEFAULT_COLUMNS,
+  applyQuickFilters,
 } from "src/sections/projects/LLMTracing/common";
+import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import DateRangePill, {
   dateFilterForOption,
 } from "src/sections/projects/LLMTracing/DateRangePill";
@@ -90,6 +92,7 @@ import {
 } from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
+import { summarizeAddResults, addResultToast } from "./add-items-results";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -509,6 +512,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   // obs page's "Add to queue") instead of being converted to root spans.
   const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
+  // Trace project (from TraceSelector) — passed to fetchRootSpans to prune CH.
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
@@ -551,8 +556,6 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           sourceType === "call_execution");
 
       if (isBackendFilterMode) {
-        const totalCount =
-          selectAllInfo.totalCount - selectAllInfo.excludedIds.size;
         addItems(
           {
             queueId,
@@ -568,11 +571,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             },
           },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -620,7 +623,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
-            const rootSpanMap = await fetchRootSpans(traceIds);
+            const rootSpanMap = await fetchRootSpans(
+              traceIds,
+              selectAllInfo.projectId ? [selectAllInfo.projectId] : [],
+            );
             const mappedIds = traceIds
               .map((traceId) => rootSpanMap[traceId])
               .filter(Boolean);
@@ -651,16 +657,24 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         // annotator workspace's span-oriented UI (consistent with the
         // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
-          const rootSpanMap = await fetchRootSpans(ids);
-          const originalCount = ids.length;
-          ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
-          effectiveSourceType = "observation_span";
-          const droppedCount = originalCount - ids.length;
-          if (droppedCount > 0) {
-            enqueueSnackbar(
-              `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-              { variant: "warning" },
+          setIsResolving(true);
+          try {
+            const rootSpanMap = await fetchRootSpans(
+              ids,
+              selectedProjectId ? [selectedProjectId] : [],
             );
+            const originalCount = ids.length;
+            ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
+            effectiveSourceType = "observation_span";
+            const droppedCount = originalCount - ids.length;
+            if (droppedCount > 0) {
+              enqueueSnackbar(
+                `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
+                { variant: "warning" },
+              );
+            }
+          } finally {
+            setIsResolving(false);
           }
         }
 
@@ -670,34 +684,45 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         }));
       }
 
+      // The project these items belong to — the dialog is project-scoped, so the
+      // server can scope its source-resolution reads to one tenant (fast) instead of
+      // scanning the whole ClickHouse table. Mirrors the filter-mode payload.
+      const enumeratedProjectId =
+        selectionMode === "selectAll" && selectAllInfo
+          ? selectAllInfo.projectId
+          : selectedProjectId;
+
       // Batch enumerated payloads into chunks of 500
       const BATCH_SIZE = 500;
       const totalCount = itemsToAdd.length;
       if (totalCount > BATCH_SIZE) {
+        const responses = [];
         for (let i = 0; i < totalCount; i += BATCH_SIZE) {
           const batch = itemsToAdd.slice(i, i + BATCH_SIZE);
-          await new Promise((resolve, reject) => {
+          const resp = await new Promise((resolve, reject) => {
             addItems(
-              { queueId, items: batch },
+              { queueId, items: batch, project_id: enumeratedProjectId },
               { onSuccess: resolve, onError: reject },
             );
           });
+          responses.push(resp);
         }
-        enqueueSnackbar(`${totalCount} items added to queue`, {
-          variant: "success",
-        });
+        const { message, variant } = addResultToast(
+          summarizeAddResults(responses),
+        );
+        enqueueSnackbar(message, { variant });
         resetSelection();
         setSourceType(null);
         onClose();
       } else {
         addItems(
-          { queueId, items: itemsToAdd },
+          { queueId, items: itemsToAdd, project_id: enumeratedProjectId },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -846,6 +871,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
                 onVoiceProjectChange={setIsVoiceTraceSelection}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "observation_span" && (
@@ -1093,9 +1119,9 @@ export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
     .filter((col) => col.is_visible !== false)
     .map((col) => {
-      const colDataType = col.data_type
-      const colIsFrozen = col.is_frozen
-      const colOriginType = col.origin_type
+      const colDataType = col.data_type;
+      const colIsFrozen = col.is_frozen;
+      const colOriginType = col.origin_type;
       const enrichedCol = {
         ...col,
         dataType: colDataType,
@@ -1541,7 +1567,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexWrap: "wrap",
           flexShrink: 0,
@@ -1553,7 +1579,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           label="Dataset"
           value={datasetId}
           onChange={handleDatasetChange}
-          sx={{ minWidth: 220, flex: "1 1 260px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
           required
           SelectProps={{
             MenuProps: {
@@ -1765,7 +1791,12 @@ const traceDefaultFilterBase = {
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
+function TraceSelector({
+  onSetSelection,
+  onSelectAll,
+  onVoiceProjectChange,
+  onProjectChange,
+}) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1779,6 +1810,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
@@ -1825,6 +1857,12 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   useEffect(() => {
     onVoiceProjectChange?.(isVoiceProject);
   }, [isVoiceProject, onVoiceProjectChange]);
+
+  // Surface the selected project so handleSubmit can pass it to fetchRootSpans
+  // (prunes the CH scan).
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   // Fetch versions for prototype projects
   const {
@@ -1908,7 +1946,9 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+            filters: JSON.stringify(
+              stripUiFilterKeys(filtersRef.current || []),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -1972,6 +2012,13 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
       },
       suppressSizeToFit: false,
       sortable: false,
+      cellRendererParams: {
+        applyQuickFilters: applyQuickFilters(
+          setFilters,
+          setOpenQuickFilter,
+          setFilterOpen,
+        ),
+      },
     }),
     [],
   );
@@ -2103,7 +2150,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -2146,7 +2193,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -2156,7 +2203,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2235,6 +2282,8 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
+          source="traces"
+          tab="trace"
           isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
@@ -2352,7 +2401,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
                 excludedIds: new Set(),
                 projectId,
                 projectVersionId: versionId || undefined,
-                filters: validatedFilters,
+                filters: stripUiFilterKeys(validatedFilters || []),
               });
             }}
           />
@@ -2363,7 +2412,9 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             cellHeight="Short"
             params={{
               project_id: projectId,
-              filters: JSON.stringify(validatedFilters || []),
+              filters: JSON.stringify(
+                stripUiFilterKeys(validatedFilters || []),
+              ),
             }}
             onSelectionChanged={(traceIds) => {
               onSetSelection(traceIds);
@@ -2419,6 +2470,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
               rowModelType="serverSide"
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              context={{ disableCellNavigation: true }}
               getRowId={(d) => d?.data?.trace_id ?? d?.data?.traceId}
               animateRows={false}
               blockLoadDebounceMillis={300}
@@ -2427,6 +2479,13 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           <StatusBar api={gridApi} />
         </Box>
       )}
+
+      <NumberQuickFilterPopover
+        open={Boolean(openQuickFilter)}
+        filterData={openQuickFilter}
+        onClose={() => setOpenQuickFilter(null)}
+        setFilters={setFilters}
+      />
     </Box>
   );
 }
@@ -2435,6 +2494,7 @@ TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
   onVoiceProjectChange: PropTypes.func,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -2454,6 +2514,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
@@ -2555,7 +2616,9 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+            filters: JSON.stringify(
+              stripUiFilterKeys(filtersRef.current || []),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2620,6 +2683,13 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
       },
       suppressSizeToFit: false,
       sortable: false,
+      cellRendererParams: {
+        applyQuickFilters: applyQuickFilters(
+          setFilters,
+          setOpenQuickFilter,
+          setFilterOpen,
+        ),
+      },
     }),
     [],
   );
@@ -2736,7 +2806,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -2779,7 +2849,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -2789,7 +2859,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2987,6 +3057,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               rowModelType="serverSide"
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              context={{ disableCellNavigation: true }}
               getRowId={(d) => d?.data?.span_id ?? d?.data?.spanId}
               animateRows={false}
               blockLoadDebounceMillis={300}
@@ -2995,6 +3066,13 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           <StatusBar api={gridApi} />
         </Box>
       )}
+
+      <NumberQuickFilterPopover
+        open={Boolean(openQuickFilter)}
+        filterData={openQuickFilter}
+        onClose={() => setOpenQuickFilter(null)}
+        setFilters={setFilters}
+      />
     </Box>
   );
 }
@@ -3119,7 +3197,9 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+                filters: JSON.stringify(
+                  stripUiFilterKeys(filtersRef.current || []),
+                ),
               },
             },
           );
@@ -3300,7 +3380,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -3343,7 +3423,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -3353,7 +3433,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -4359,7 +4439,7 @@ function SimulationSelector({ onSetSelection }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -4371,7 +4451,7 @@ function SimulationSelector({ onSetSelection }) {
           label="Test"
           value={testId}
           onChange={handleTestChange}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
           required
           InputLabelProps={{ shrink: true }}
           InputProps={{
@@ -4403,7 +4483,7 @@ function SimulationSelector({ onSetSelection }) {
             </MenuItem>
           )}
           {tests.map((t) => (
-            <MenuItem key={t.id} value={t.id} sx={{ width: "100%" }}>
+            <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 540 }}>
               <CustomTooltip
                 size="small"
                 arrow
@@ -4440,7 +4520,7 @@ function SimulationSelector({ onSetSelection }) {
             label="Execution run"
             value={executionRunId}
             onChange={handleExecutionRunChange}
-            sx={{ minWidth: 220, flex: "1 1 320px" }}
+            sx={{ minWidth: 540, flex: "0 1 280px" }}
             required
             InputLabelProps={{ shrink: true }}
             InputProps={{
@@ -4479,7 +4559,7 @@ function SimulationSelector({ onSetSelection }) {
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
-                <MenuItem key={run.id} value={run.id} sx={{ width: "100%" }}>
+                <MenuItem key={run.id} value={run.id} sx={{ maxWidth: 540 }}>
                   <CustomTooltip
                     size="small"
                     arrow

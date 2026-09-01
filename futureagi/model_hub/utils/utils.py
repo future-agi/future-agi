@@ -21,6 +21,7 @@ from nltk.stem import WordNetLemmatizer
 logger = structlog.get_logger(__name__)
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.api_key import ApiKey
@@ -36,6 +37,18 @@ from tfc.settings.settings import (
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.types import ClickhouseDatatypes
+
+# The HuggingFace Hub now emits the `List` feature type (datasets 4.0) in dataset
+# metadata, which pinned datasets 3.6.0 can't parse: load_dataset() raises
+# "Feature type 'List' not found" and streaming ingestion loads zero rows. Alias it
+# to the 3.6.0 equivalent (LargeList); setdefault leaves a future upgrade untouched.
+try:
+    from datasets.features import features as _hf_features
+
+    if hasattr(_hf_features, "_FEATURE_TYPES") and hasattr(_hf_features, "LargeList"):
+        _hf_features._FEATURE_TYPES.setdefault("List", _hf_features.LargeList)
+except Exception:  # defensive: datasets internals moved
+    logger.warning("hf List feature-type shim did not install", exc_info=True)
 
 
 class MyCustomLLM(CustomLLM):
@@ -730,6 +743,11 @@ def get_data_type_huggingface(column_info):
         "datetime": DataTypeChoices.DATETIME.value,
         "Image": DataTypeChoices.IMAGE.value,
         "Audio": DataTypeChoices.AUDIO.value,
+        "Pdf": DataTypeChoices.DOCUMENT.value,
+        "PDF": DataTypeChoices.DOCUMENT.value,
+        "pdf": DataTypeChoices.DOCUMENT.value,
+        "Document": DataTypeChoices.DOCUMENT.value,
+        "document": DataTypeChoices.DOCUMENT.value,
         "date32": DataTypeChoices.DATETIME.value,
         "date64": DataTypeChoices.DATETIME.value,
         "date": DataTypeChoices.DATETIME.value,

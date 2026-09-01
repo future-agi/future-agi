@@ -1,10 +1,11 @@
 import json
 import os
+import re
 import time
 
 from django.conf import settings
 import jinja2
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.jinja_utils import nest_dotted_value
@@ -64,9 +65,10 @@ class CustomPromptEvaluator(LLM):
         # Multi-message support: full message chain from the LLM-as-a-judge editor
         self._messages = kwargs.get("messages")
         self._few_shot_examples = kwargs.get("few_shot_examples")
-        # Configure Jinja2 environment with explicit {{ }} delimiters (Handlebars-compatible)
-        # PreserveUndefined keeps undefined variables as {{ variable }} instead of raising errors
-        self.env = Environment(
+        # Sandboxed: templates are user-authored; a plain Environment lets
+        # `{{ ''.__class__.__mro__[1].__subclasses__() }}` reach subprocess/os
+        # (SSTI -> RCE). PreserveUndefined keeps unmapped `{{ var }}` literal.
+        self.env = SandboxedEnvironment(
             variable_start_string="{{",
             variable_end_string="}}",
             undefined=PreserveUndefined,
@@ -154,6 +156,47 @@ class CustomPromptEvaluator(LLM):
             )
         return ""
 
+    def _render_template(
+        self, template_str: str, safe_context: dict, fallback_kwargs: dict | None = None
+    ) -> str:
+        """Render a fragment with the same edge-case handling as rule_prompt.
+
+        `safe_context.pop(...)` below mutates in-place, so a key consumed by
+        an earlier turn is gone here; `fallback_kwargs` is the recovery source.
+        """
+        if not template_str:
+            return template_str
+        fallback_kwargs = fallback_kwargs or {}
+        to_render = template_str
+
+        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", to_render)
+        for var_name in raw_vars:
+            stripped = var_name.strip()
+            if " " in stripped:
+                if stripped in safe_context:
+                    replacement = str(safe_context.pop(stripped))
+                else:
+                    replacement = str(
+                        fallback_kwargs.get(stripped, "{{" + stripped + "}}")
+                    )
+                to_render = to_render.replace("{{" + var_name + "}}", replacement)
+                to_render = to_render.replace("{{ " + stripped + " }}", replacement)
+            elif "." in stripped and stripped in safe_context:
+                parts = stripped.split(".")
+                value = safe_context.pop(stripped)
+                nest_dotted_value(safe_context, parts, value)
+
+        try:
+            return self.env.from_string(to_render).render(**safe_context)
+        except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
+            # Sandbox rejection or parse failure: str.replace fallback so the
+            # payload reaches the LLM as literal text instead of crashing.
+            rendered = to_render
+            for key, value in safe_context.items():
+                rendered = rendered.replace("{{" + key + "}}", str(value))
+                rendered = rendered.replace("{{ " + key + " }}", str(value))
+            return rendered
+
     def _evaluate(self, **kwargs) -> EvalResult:
         """
         Run the LLM evaluator.
@@ -199,8 +242,6 @@ class CustomPromptEvaluator(LLM):
             # Pre-process: handle variable names with spaces (e.g., {{TTS Testing}})
             # Jinja2 doesn't allow spaces in variable names, so we do simple string
             # replacement for these before Jinja2 parsing.
-            import re
-
             prompt_to_render = self.rule_prompt
             safe_context = dict(template_context)
 
@@ -245,9 +286,8 @@ class CustomPromptEvaluator(LLM):
             try:
                 template = self.env.from_string(prompt_to_render)
                 rendered_prompt = template.render(**safe_context)
-            except jinja2.TemplateSyntaxError:
-                # Fallback: simple string replacement when Jinja2 can't parse
-                # the template (e.g. variable names with spaces).
+            except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
+                # Parse failure or sandbox rejection: str.replace fallback.
                 rendered_prompt = prompt_to_render
                 for key, value in safe_context.items():
                     rendered_prompt = rendered_prompt.replace("{{" + key + "}}", str(value))
@@ -320,7 +360,18 @@ class CustomPromptEvaluator(LLM):
             user_content = user_text
 
         # Build system message: use custom system_prompt if provided, else generated.
-        system_content = self.system_prompt if self.system_prompt else self._system_message()
+        # Render via the shared helper so the System turn gets the same
+        # edge-case coverage (spaces in var names, dotted names, syntax-
+        # error fallback) as rule_prompt and the multi-turn messages.
+        if self.system_prompt:
+            try:
+                system_content = self._render_template(
+                    self.system_prompt, safe_context, kwargs
+                )
+            except Exception:
+                system_content = self.system_prompt
+        else:
+            system_content = self._system_message()
         if gt_blocks:
             system_content = (system_content or "") + "\n\n" + GT_CALIBRATION_INSTRUCTION
 
@@ -346,7 +397,10 @@ class CustomPromptEvaluator(LLM):
                 if example.get("output"):
                     messages.append({"role": "assistant", "content": example["output"]})
 
-        # Add additional message chain (user/assistant turns from the editor)
+        # Add additional message chain (user/assistant turns from the editor).
+        # Render via the shared helper so each turn's Jinja handling matches
+        # rule_prompt: spaces in var names, dotted names, and syntax-error
+        # fallback are all covered.
         if self._messages:
             for msg in self._messages:
                 role = msg.get("role", "user")
@@ -354,11 +408,8 @@ class CustomPromptEvaluator(LLM):
                 if role == "system":
                     continue  # Already handled above
                 if content.strip():
-                    # Render template variables in each message
                     try:
-                        # Use safe_context (which has JSON parsed to native
-                        # objects in Jinja mode) so {% for %} loops work
-                        rendered = self.env.from_string(content).render(**safe_context)
+                        rendered = self._render_template(content, safe_context, kwargs)
                     except Exception:
                         rendered = content
                     messages.append({"role": role, "content": rendered})

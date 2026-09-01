@@ -19,6 +19,7 @@ from tracer.utils.eleven_labs import normalize_eleven_labs_data
 from tracer.utils.otel import ResourceLimitError, get_or_create_project
 from tracer.utils.retell import normalize_retell_data
 from tracer.utils.twilio_calls import normalize_twilio_data
+from tracer.utils.usage_emit import emit_span_ingestion_usage
 from tracer.utils.vapi import normalize_vapi_data
 
 logger = structlog.get_logger(__name__)
@@ -62,12 +63,11 @@ def fetch_observability_logs(
                 success_count += 1
             else:
                 failure_count += 1
-        except Exception as e:
+        except Exception as exc:
             failure_count += 1
-            logger.exception(
-                "Failed to fetch logs for provider, continuing with next provider",
-                provider_id=str(provider_id),
-                error=str(e),
+            logger.error(
+                "provider_log_fetch_failed",
+                error_type=type(exc).__name__,
             )
             continue
 
@@ -101,19 +101,22 @@ def fetch_logs_for_provider(
         try:
             provider = ObservabilityProvider.objects.get(id=provider_id)
         except ObservabilityProvider.DoesNotExist:
-            logger.warning(
-                "Provider not found, skipping",
-                provider_id=str(provider_id),
-            )
+            logger.warning("observability_provider_not_found")
             return None
 
         last_fetched_at = start_time if start_time else provider.last_fetched_at
         end_time_to_use = end_time if end_time else now
 
-        if provider.provider != ProviderChoices.RETELL or not last_fetched_at:
+        # Default: poll for every provider. Retell is the exception — after the
+        # first watermark, ongoing ingest is webhook-primary unless the caller
+        # passes start_time for an explicit backfill.
+        if (
+            provider.provider != ProviderChoices.RETELL
+            or provider.last_fetched_at is None
+            or start_time is not None
+        ):
             logger.info(
-                "Fetching logs for provider",
-                provider_id=str(provider_id),
+                "provider_log_fetch_started",
                 provider_type=provider.provider,
                 start_time=str(last_fetched_at) if last_fetched_at else None,
                 end_time=str(end_time_to_use),
@@ -129,47 +132,46 @@ def fetch_logs_for_provider(
                 if e.response is not None and e.response.status_code in (401, 403):
                     logger.error(
                         "authentication_failed_for_provider",
-                        provider_id=str(provider_id),
                         provider_type=provider.provider,
                         status_code=e.response.status_code,
                     )
                     return None
-                logger.exception(
-                    "Failed to fetch logs from provider API",
-                    provider_id=str(provider_id),
+                logger.error(
+                    "provider_log_fetch_failed",
                     provider_type=provider.provider,
-                    error=str(e),
+                    status_code=(
+                        e.response.status_code if e.response is not None else None
+                    ),
+                    error_type=type(e).__name__,
                 )
                 return None
-            except Exception as e:
-                logger.exception(
-                    "Failed to fetch logs from provider API",
-                    provider_id=str(provider_id),
+            except Exception as exc:
+                logger.error(
+                    "provider_log_fetch_failed",
                     provider_type=provider.provider,
-                    error=str(e),
+                    error_type=type(exc).__name__,
                 )
                 return None
 
             # Only update last_fetched_at if we successfully got logs
             try:
                 _update_last_fetched_at(provider, end_time_to_use)
-            except Exception as e:
+            except Exception as exc:
                 logger.warning(
-                    "Failed to update last_fetched_at for provider",
-                    provider_id=str(provider_id),
-                    error=str(e),
+                    "provider_watermark_update_failed",
+                    provider_type=provider.provider,
+                    error_type=type(exc).__name__,
                 )
 
             # Process and store logs
             try:
                 process_and_store_logs(logs, provider)
-            except Exception as e:
-                logger.exception(
-                    "Failed to process and store logs",
-                    provider_id=str(provider_id),
+            except Exception as exc:
+                logger.error(
+                    "provider_log_processing_failed",
                     provider_type=provider.provider,
                     logs_count=len(logs) if logs else 0,
-                    error=str(e),
+                    error_type=type(exc).__name__,
                 )
                 # Still return logs since we fetched them successfully
                 return logs
@@ -180,16 +182,18 @@ def fetch_logs_for_provider(
                 provider_type=provider.provider,
                 logs_count=len(logs) if logs else 0,
             )
-
             return logs
 
+        logger.info(
+            "provider_log_fetch_skipped_webhook_primary",
+            provider_type=provider.provider,
+        )
         return []
 
-    except Exception as e:
-        logger.exception(
-            "Unexpected error fetching logs for provider",
-            provider_id=str(provider_id),
-            error=str(e),
+    except Exception as exc:
+        logger.error(
+            "provider_log_fetch_failed",
+            error_type=type(exc).__name__,
         )
         return None
 
@@ -206,8 +210,9 @@ def _create_observation_span(
 
     CDC is off (CH25): the fi-collector export owns the CH ``spans``/``traces``
     write — there are no PG ``tracer_trace`` / ``tracer_observation_span`` tables.
-    The trace id is deterministic (provider + log id) so a re-poll upserts in
-    place under the CH RMT sort keys (both include trace_id) instead of duplicating.
+    The trace id is deterministic (project id : provider : log id) so a re-poll
+    upserts in place under the CH RMT sort keys (both include trace_id) instead
+    of duplicating.
     """
     span_kwargs = dict(
         id=uuid.uuid4(),
@@ -229,7 +234,7 @@ def _create_observation_span(
         latency_ms=normalized_data.get("latency_ms"),
     )
     trace = Trace(
-        id=_provider_collector_trace_id(provider.provider, provider_log_id),
+        id=_provider_collector_trace_id(project.id, provider.provider, provider_log_id),
         project=project,
         metadata=metadata,
     )
@@ -237,17 +242,51 @@ def _create_observation_span(
 
 
 _PROVIDER_SPAN_NS = uuid.UUID("4d61d4e2-7b3c-4a1e-9f02-2c6a5b8e1d70")
+_REHOST_BILLING_NS = uuid.UUID("8de415d3-3146-47fa-b3d6-bf3c05421621")
 
 
-def _provider_collector_span_id(provider: str, provider_log_id: str) -> str:
+def _rehost_billing_event_id(
+    project_id: str | uuid.UUID,
+    provider: str,
+    call_id: str,
+    artifact_type: str,
+) -> str:
+    """Stable billing ID for one project-scoped provider recording artifact.
+
+    The namespace and Vapi input string intentionally match the prior Vapi-only
+    helper, so already-issued Vapi event IDs remain stable across this refactor.
+    """
+    return str(
+        uuid.uuid5(
+            _REHOST_BILLING_NS,
+            f"{project_id}:{provider}:{call_id}:{artifact_type}",
+        )
+    )
+
+
+def _provider_collector_span_id(
+    project_id: str | uuid.UUID, provider: str, provider_log_id: str
+) -> str:
     """Deterministic id stable across re-polls so CH ``spans`` (ReplacingMergeTree) upserts in place.
-    Caveat: re-emits reuse the same ``_version`` (start_time), so late data may lose the merge."""
-    return uuid.uuid5(_PROVIDER_SPAN_NS, f"{provider}:{provider_log_id}").hex[:16]
+    Keyed by ``project_id`` so a call shared across projects (one provider account, many
+    projects) gets a distinct id per project — only the project-scoping convention matches
+    deterministic_id.py; this natural key (``:``-joined, provider-call) is local to this module.
+    Caveat: re-emits reuse the same ``_version`` (start_time), so late data may lose the merge.
+    """
+    return uuid.uuid5(
+        _PROVIDER_SPAN_NS, f"{str(project_id)}:{provider}:{provider_log_id}"
+    ).hex[:16]
 
 
-def _provider_collector_trace_id(provider: str, provider_log_id: str) -> uuid.UUID:
-    """Deterministic trace id stable across re-polls. The CH ``spans`` and ``traces`` RMT sort keys both include trace_id, so a random id per poll would duplicate; this keys both writes to the call."""
-    return uuid.uuid5(_PROVIDER_SPAN_NS, f"trace:{provider}:{provider_log_id}")
+def _provider_collector_trace_id(
+    project_id: str | uuid.UUID, provider: str, provider_log_id: str
+) -> uuid.UUID:
+    """Deterministic trace id stable across re-polls. The CH ``spans`` and ``traces`` RMT sort keys both include trace_id, so a random id per poll would duplicate; this keys both writes to the call.
+    Keyed by ``project_id`` so the same provider call ingested into multiple projects yields a distinct trace per project.
+    """
+    return uuid.uuid5(
+        _PROVIDER_SPAN_NS, f"trace:{str(project_id)}:{provider}:{provider_log_id}"
+    )
 
 
 def _to_epoch_ns(value) -> int | None:
@@ -295,14 +334,18 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             )
             if processed.get("transcript"):
                 attrs["fi.conversation.transcript"] = processed["transcript"]
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "provider_transcript_compute_failed", provider=provider, exc_info=True
+                "provider_transcript_compute_failed",
+                provider=provider,
+                error_type=type(exc).__name__,
             )
         start_ns = _to_epoch_ns(span.start_time)
         span_dict = {
             "trace_id": span.trace.id.hex,
-            "span_id": _provider_collector_span_id(provider, provider_log_id),
+            "span_id": _provider_collector_span_id(
+                project.id, provider, provider_log_id
+            ),
             "parent_span_id": None,
             "parent_id": None,
             "name": span.name,
@@ -341,26 +384,85 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             service_name="fi-provider",
         )
         # collectTrace is sole `traces` writer (derives it from this root span); no app-side mirror, a second row would never merge.
-    except Exception:
-        logger.exception(
+    except Exception as exc:
+        logger.error(
             "provider_collector_export_failed",
             provider=provider,
-            provider_log_id=provider_log_id,
+            error_type=type(exc).__name__,
         )
 
 
-def process_and_store_logs(logs: list, provider: ObservabilityProvider):
+def flatten_provider_call_attributes(provider_key: str, payload: dict) -> dict:
+    """Flat eval attributes for one provider call payload — the same shape the
+    ingest pipeline stores on the span.
+
+    Lets callers (e.g. the simulate call-detail drawer) render flat keys like
+    ``call.duration`` / ``conversation.transcript.*`` / cost for non-VAPI
+    providers instead of a single collapsed ``raw_log`` tree. VAPI is handled by
+    its caller directly because it needs ``include_call_logs=False`` to skip a
+    blocking log fetch. Returns ``{}`` for an unknown provider or on any
+    normalizer error, so callers can fall back to raw_log.
+    """
+    normalizers = {
+        ProviderChoices.RETELL.value: normalize_retell_data,
+        ProviderChoices.ELEVEN_LABS.value: normalize_eleven_labs_data,
+        ProviderChoices.BLAND.value: normalize_bland_data,
+        ProviderChoices.TWILIO.value: normalize_twilio_data,
+    }
+    normalize_fn = normalizers.get(provider_key)
+    if normalize_fn is None or not isinstance(payload, dict):
+        return {}
+    try:
+        return normalize_fn(payload).get("span_attributes") or {}
+    except Exception as exc:
+        logger.warning(
+            "flatten_provider_call_attributes_failed",
+            provider=provider_key,
+            error_type=type(exc).__name__,
+        )
+        return {}
+
+
+def process_and_store_logs(
+    logs: list,
+    provider: ObservabilityProvider,
+    *,
+    api_key: str | None = None,
+):
     """
     Processes raw log data and stores it as ObservationSpan objects.
+
+    For Vapi providers, ``api_key`` is threaded through to
+    :func:`normalize_vapi_data` so the call-log download can use the
+    authenticated endpoint. When ``api_key`` is None it is resolved
+    via the Selector; when no key is available the pipeline falls back
+    to the legacy unauthenticated fetch.
     """
     project = provider.project
 
+    if provider.provider == ProviderChoices.VAPI and api_key is None:
+        try:
+            from tracer.selectors import get_agent_api_key
+
+            api_key = get_agent_api_key(project.id, provider.provider)
+        except Exception:
+            logger.exception(
+                "process_and_store_logs: vapi api_key resolution failed",
+                provider_id=str(provider.id),
+            )
+
     normalization_functions = {
-        "vapi": normalize_vapi_data,
-        "retell": normalize_retell_data,
-        "eleven_labs": normalize_eleven_labs_data,
-        "bland": normalize_bland_data,
-        "twilio": normalize_twilio_data,
+        ProviderChoices.VAPI: lambda log: normalize_vapi_data(
+            log, api_key=api_key, project_id=str(project.id)
+        ),
+        ProviderChoices.RETELL: lambda log: normalize_retell_data(
+            log, project_id=str(project.id)
+        ),
+        ProviderChoices.ELEVEN_LABS: normalize_eleven_labs_data,
+        ProviderChoices.BLAND: lambda log: normalize_bland_data(
+            log, project_id=str(project.id)
+        ),
+        ProviderChoices.TWILIO: normalize_twilio_data,
     }
 
     if provider.provider not in normalization_functions:
@@ -368,16 +470,31 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
 
     normalize_fn = normalization_functions[provider.provider]
 
+    if not isinstance(logs, (list, tuple)):
+        logger.error(
+            "process_and_store_logs: logs is NOT a list/tuple",
+            logs_type=type(logs).__name__,
+        )
+        return
+
     for log in logs:
         provider_log_id = None
         try:
             normalized_data = normalize_fn(log)
             provider_log_id = normalized_data.get("id")
-        except Exception:
-            logger.exception(f"Failed to normalize log for {provider.provider}")
+        except Exception as exc:
+            logger.error(
+                "provider_log_normalization_failed",
+                provider_type=provider.provider,
+                error_type=type(exc).__name__,
+            )
+            continue
 
         if not provider_log_id:
-            logger.error(f"No provider log id found for {provider.provider}")
+            logger.error(
+                "provider_log_id_missing",
+                provider_type=provider.provider,
+            )
             continue
 
         metadata = {
@@ -392,15 +509,39 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
             span = _create_observation_span(
                 project, provider, normalized_data, metadata, provider_log_id
             )
-        except Exception as e:
-            logger.exception(
-                f"Error creating observation span for {provider.provider}: {e}"
+        except Exception as exc:
+            logger.error(
+                "provider_observation_span_creation_failed",
+                provider_type=provider.provider,
+                error_type=type(exc).__name__,
             )
             continue
 
         # Emit to the fi-collector: it writes CH `spans`/`traces` (the read store)
         # AND meters ingestion usage, so there is no app-side CH write or usage emit.
         _export_provider_call_to_collector(span, provider.provider, provider_log_id)
+
+        # Emit one idempotent ledger event per rehosted provider recording type.
+        # Provider polls repeat raw URLs, so UUID5 is the durable
+        # dedupe key; this deployment has no ProviderLog model to persist on.
+        rehost_uploads = normalized_data.get("rehost_uploads") or {}
+        if rehost_uploads:
+            organization_id = str(getattr(project, "organization_id", "") or "")
+            if organization_id:
+                for artifact_type, payload_bytes in rehost_uploads.items():
+                    emit_span_ingestion_usage(
+                        organization_id=organization_id,
+                        num_traces=0,
+                        num_spans=0,
+                        payload_bytes=payload_bytes,
+                        source="voice_recording_rehost",
+                        event_id=_rehost_billing_event_id(
+                            project.id,
+                            provider.provider,
+                            provider_log_id,
+                            artifact_type,
+                        ),
+                    )
 
 
 def create_observability_provider(
@@ -477,7 +618,14 @@ def normalize_and_store_logs(body, agent_definition_id) -> None:
             return
 
         call_log = body.get("call")
-        process_and_store_logs([call_log], provider)
+        # Webhook path already has the AgentDefinition in scope, so pass
+        # the api_key directly. process_and_store_logs falls back to the
+        # Selector otherwise.
+        version = agent_definition.active_version or agent_definition.latest_version
+        from simulate.services.agent_definition import resolve_api_key_for_version
+
+        api_key = resolve_api_key_for_version(version) if version else None
+        process_and_store_logs([call_log], provider, api_key=api_key)
 
         logger.info("normalize_and_store_logs completed")
 

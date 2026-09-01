@@ -114,7 +114,7 @@ class DatasetTableColumnSerializer(serializers.Serializer):
     reason_column = serializers.BooleanField()
     is_numeric_eval = serializers.BooleanField()
     is_numeric_eval_percentage = serializers.BooleanField()
-    eval_tag = serializers.JSONField()
+    eval_tag = serializers.ListField(child=serializers.CharField(), default=list)
     metadata = serializers.JSONField()
     choices_map = serializers.JSONField()
 

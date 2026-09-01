@@ -7,7 +7,6 @@ import {
   Chip,
   Skeleton,
   Stack,
-  Tooltip,
   Typography,
   alpha,
   useTheme,
@@ -1252,32 +1251,6 @@ RichText.propTypes = {
 const FAIL_COLOR = errorPalette.main;
 const PASS_COLOR = success.main;
 
-function SpanPointer({ pointer }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const blue = isDark ? "#7DB1FF" : "#2563EB";
-  return (
-    <Tooltip title="Open this span in the trace drawer" arrow>
-      <Box
-        component="span"
-        sx={{
-          ml: "auto",
-          flexShrink: 0,
-          fontSize: "10px",
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          color: blue,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-          "&:hover": { textDecoration: "underline" },
-        }}
-      >
-        ⌖ {pointer}
-      </Box>
-    </Tooltip>
-  );
-}
-SpanPointer.propTypes = { pointer: PropTypes.string.isRequired };
-
 function roleColor(isFailure, isDark) {
   if (isFailure) return isDark ? "#ff9a99" : "#c0322f";
   return isDark ? alpha("#fff", 0.42) : alpha("#000", 0.45);
@@ -1297,7 +1270,6 @@ function ReelStep({ step, isFailReel, isLast }) {
       : isDark
         ? alpha("#fff", 0.28)
         : alpha("#000", 0.28);
-  const pointer = step.spanPointer || step.span;
   const raw = step.rawJson || step.raw;
   const note = step.note;
   const rColor = roleColor(isFailure, isDark);
@@ -1339,7 +1311,6 @@ function ReelStep({ step, isFailReel, isLast }) {
           {step.meta}
         </Box>
       )}
-      {pointer && <SpanPointer pointer={pointer} />}
     </Stack>
   );
 
@@ -1458,7 +1429,7 @@ ReelStep.propTypes = {
   isLast: PropTypes.bool,
 };
 
-function BreadcrumbList({ steps, isFailReel, showFooter = true }) {
+function BreadcrumbList({ steps, isFailReel }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const accent = isFailReel ? FAIL_COLOR : PASS_COLOR;
@@ -1498,31 +1469,12 @@ function BreadcrumbList({ steps, isFailReel, showFooter = true }) {
           />
         ))}
       </Box>
-      {showFooter && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="flex-end"
-          gap={0.4}
-          sx={{ mt: 1.25 }}
-        >
-          <Iconify
-            icon="mdi:cursor-default-click-outline"
-            width={11}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography fontSize="10.5px" color="text.disabled">
-            click any pointer to open that span in the trace drawer
-          </Typography>
-        </Stack>
-      )}
     </Box>
   );
 }
 BreadcrumbList.propTypes = {
   steps: PropTypes.array.isRequired,
   isFailReel: PropTypes.bool,
-  showFooter: PropTypes.bool,
 };
 
 function ReelColumn({
@@ -1596,11 +1548,7 @@ function ReelColumn({
       </Stack>
       <Box sx={{ flex: 1, px: 1.25, py: 1 }}>
         {steps.length > 0 ? (
-          <BreadcrumbList
-            steps={steps}
-            isFailReel={isFailReel}
-            showFooter={false}
-          />
+          <BreadcrumbList steps={steps} isFailReel={isFailReel} />
         ) : (
           <Stack
             alignItems="center"
@@ -2177,14 +2125,30 @@ RootCauses.propTypes = { causes: PropTypes.array.isRequired };
 
 // ── Recommendations ──────────────────────────────────────────────────────────
 const PRIORITY_META = {
-  critical: { color: "#DB2F2D", label: "Critical", icon: "mdi:alert-circle" },
-  high: { color: "#F5A623", label: "High", icon: "mdi:alert-circle-outline" },
+  critical: {
+    color: "#DB2F2D",
+    darkColor: "#E87876",
+    label: "Critical",
+    icon: "mdi:alert-circle",
+  },
+  high: {
+    color: "#F5A623",
+    darkColor: "#F5A623",
+    label: "High",
+    icon: "mdi:alert-circle-outline",
+  },
   medium: {
     color: "#2F7CF7",
+    darkColor: "#78AAFA",
     label: "Medium",
     icon: "mdi:information-outline",
   },
-  low: { color: "#5ACE6D", label: "Low", icon: "mdi:check-circle-outline" },
+  low: {
+    color: "#5ACE6D",
+    darkColor: "#5ACE6D",
+    label: "Low",
+    icon: "mdi:check-circle-outline",
+  },
 };
 const EFFORT_COLOR = { Low: "#5ACE6D", Medium: "#F5A623", High: "#DB2F2D" };
 
@@ -2208,7 +2172,8 @@ RecSectionLabel.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 
 function RecommendationCard({ rec, rootCauses, isDark }) {
   const [expanded, setExpanded] = useState(false);
-  const pm = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
+  const pmBase = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
+  const pm = { ...pmBase, color: isDark ? pmBase.darkColor : pmBase.color };
   const linkedCause = rootCauses?.find((c) => c.rank === rec.root_cause_link);
 
   return (

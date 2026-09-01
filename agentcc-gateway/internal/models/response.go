@@ -21,24 +21,58 @@ type Choice struct {
 	Logprobs     *json.RawMessage `json:"logprobs,omitempty"`
 }
 
+// MarshalJSON guarantees the assistant message always carries a "content" key.
+//
+// Message.Content is omitempty (it has to be: the same struct is marshaled back
+// out on the request path, where a null content is rejected upstream), so a
+// message with no text drops the key entirely. Providers that translate a
+// non-OpenAI response leave Content unset whenever the model returned no text —
+// a tool-call-only reply, or one where reasoning consumed the whole budget — and
+// clients that expect the OpenAI shape then read a message with no content field
+// at all. Normalizing here rather than in each provider keeps the guarantee in
+// one place; Choice is only ever marshaled on the response path.
+//
+// The value mirrors OpenAI: null when the model called tools, empty string
+// otherwise.
+func (c Choice) MarshalJSON() ([]byte, error) {
+	type Alias Choice
+	if c.Message.Content == nil {
+		if len(c.Message.ToolCalls) > 0 {
+			c.Message.Content = json.RawMessage(`null`)
+		} else {
+			c.Message.Content = json.RawMessage(`""`)
+		}
+	}
+	return json.Marshal((*Alias)(&c))
+}
+
 type Usage struct {
 	PromptTokens            int              `json:"prompt_tokens"`
 	CompletionTokens        int              `json:"completion_tokens"`
 	TotalTokens             int              `json:"total_tokens"`
 	PromptTokensDetails     *json.RawMessage `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *json.RawMessage `json:"completion_tokens_details,omitempty"`
+	// ServerToolUse counts provider-executed tool calls, which are billed per
+	// call on top of tokens.  A response that reports tokens alone understates
+	// what the request cost.
+	ServerToolUse *ServerToolUsage `json:"server_tool_use,omitempty"`
+}
+
+// ServerToolUsage mirrors Anthropic's usage.server_tool_use block.
+type ServerToolUsage struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
 }
 
 // StreamChunk represents a single SSE chunk in a streaming response.
 type StreamChunk struct {
-	ID                string               `json:"id"`
-	Object            string               `json:"object"`
-	Created           int64                `json:"created"`
-	Model             string               `json:"model"`
-	Choices           []StreamChoice       `json:"choices"`
-	Usage             *Usage               `json:"usage,omitempty"`
-	AgentccMetadata     *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
-	SystemFingerprint string               `json:"system_fingerprint,omitempty"`
+	ID                string                 `json:"id"`
+	Object            string                 `json:"object"`
+	Created           int64                  `json:"created"`
+	Model             string                 `json:"model"`
+	Choices           []StreamChoice         `json:"choices"`
+	Usage             *Usage                 `json:"usage,omitempty"`
+	AgentccMetadata   *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
+	SystemFingerprint string                 `json:"system_fingerprint,omitempty"`
 }
 
 type AgentccStreamMetadata struct {

@@ -2,7 +2,7 @@
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 
@@ -14,6 +14,8 @@ import DeleteScenarioDialog from "src/components/scenarios/DeleteScenarioDialog"
 import EditScenarioDialog from "src/components/scenarios/EditScenarioDialog";
 import ScenarioActionMenu from "src/components/scenarios/ScenariosActionMenu";
 import { getChipConfig } from "src/components/scenarios/CustomCellRenderers/ChipCellRenderer";
+import ScenarioStatusChip from "src/components/scenarios/CustomCellRenderers/ScenarioStatusCellRenderer";
+import { isScenarioInProgress } from "src/utils/scenarioStatus";
 
 import { useAuthContext } from "src/auth/hooks";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -55,8 +57,15 @@ function ChipCell({ getValue }) {
   );
 }
 
-function CreatedAtCell({ getValue }) {
-  const value = getValue();
+function CreatedAtCell({ value }) {
+  const [, setTick] = useState(0);
+  // Re-render every minute so the relative "time ago" stays current even when
+  // the grid data itself hasn't changed.
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+
   if (!value) {
     return (
       <Typography variant="body2" sx={{ fontSize: 13, color: "text.disabled" }}>
@@ -105,6 +114,13 @@ function Scenarios() {
       }),
     select: (d) => d.data,
     keepPreviousData: true,
+    refetchInterval: (query) => {
+      const results = query?.state?.data?.data?.results ?? [];
+      const hasInProgress = results.some((s) =>
+        isScenarioInProgress(s?.status),
+      );
+      return hasInProgress ? 5000 : false;
+    },
   });
 
   const items = useMemo(() => data?.results ?? [], [data]);
@@ -185,6 +201,14 @@ function Scenarios() {
         ),
       },
       {
+        id: "status",
+        accessorKey: "status",
+        header: "Status",
+        size: 140,
+        enableSorting: false,
+        cell: ({ getValue }) => <ScenarioStatusChip status={getValue()} />,
+      },
+      {
         id: "scenario_type",
         accessorKey: "scenario_type",
         header: "Scenario Type",
@@ -198,7 +222,7 @@ function Scenarios() {
         header: "Created At",
         size: 170,
         enableSorting: false,
-        cell: CreatedAtCell,
+        cell: ({ getValue }) => <CreatedAtCell value={getValue()} />,
       },
     ];
 

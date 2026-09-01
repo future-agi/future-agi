@@ -27,9 +27,10 @@ from model_hub.serializers.scores import (
     UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
-    resolve_ch_span_source,
     resolve_default_queue_item_for_source,
     resolve_source_object,
+    source_project,
+    tracer_project_id_for_source,
 )
 from tfc.constants.roles import OrganizationRoles
 from tfc.utils.api_contracts import validated_request
@@ -192,7 +193,9 @@ def _auto_complete_queue_items(source_type, source_obj, annotator):
             )
 
 
-def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_ids):
+def _auto_create_queue_items_for_default_queues(
+    source_type, source_obj, label_ids, organization=None
+):
     """
     For default queues: auto-create a QueueItem when someone annotates a source
     that belongs to the queue's scope (project, dataset, or agent_definition).
@@ -212,8 +215,10 @@ def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_i
     # Build scope filters for default queues this source belongs to
     scope_q = Q()
 
-    # Project-scoped: trace, observation_span, trace_session have project FK
-    project = getattr(source_obj, "project", None)
+    # Project-scoped: trace, observation_span, trace_session. Their CH duck-typed
+    # sources carry only ``project_id`` (no ``.project`` relation), so resolve the
+    # Project row org-scoped rather than reading a relation that's always None.
+    project = source_project(source_obj, organization)
     if project:
         scope_q |= Q(project=project)
 
@@ -352,20 +357,14 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Tracer sources (trace / observation_span / trace_session) resolve
+        # CH-native via the single boundary — the PG tracer tables are dropped.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
         )
-        # CDC-off fallback: collector-only spans have no PG row, so resolve from CH
-        # instead of 404ing. CHSpan duck-types as a source object for the writes below.
-        if not source_obj and source_type == "observation_span":
-            source_obj = resolve_ch_span_source(
-                source_id,
-                organization=request.organization,
-                workspace=getattr(request, "workspace", None),
-            )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
 
@@ -405,6 +404,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         # (set_workspace_from_organization), so workspace-scoped reads
         # continue to work correctly.
         source_trace_id = _span_source_trace_id(source_type, source_obj)
+        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
         with transaction.atomic():
             score, created = Score.no_workspace_objects.update_or_create(
                 **{f"{fk_field}_id": source_obj.pk},
@@ -423,6 +423,12 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     # Denormalized trace locator so a span Score (incl. CH-only spans
                     # with no PG row to join) rolls up to its trace in the trace-detail map.
                     **({"trace_id": source_trace_id} if source_trace_id else {}),
+                    # Denormalized tracer project id for cheap label discovery.
+                    **(
+                        {"tracer_project_id": tracer_project_id}
+                        if tracer_project_id
+                        else {}
+                    ),
                 },
             )
 
@@ -437,7 +443,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # write that already happened.
             transaction.on_commit(
                 lambda: _safe_auto_create_queue_items_for_default_queues(
-                    source_type, source_obj, [label_id]
+                    source_type, source_obj, [label_id], request.organization
                 )
             )
             transaction.on_commit(
@@ -467,19 +473,13 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Tracer sources resolve CH-native via the single boundary (see create()).
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
         )
-        # CDC-off fallback: collector-only spans live only in CH (see create()).
-        if not source_obj and source_type == "observation_span":
-            source_obj = resolve_ch_span_source(
-                source_id,
-                organization=request.organization,
-                workspace=getattr(request, "workspace", None),
-            )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
 
@@ -490,10 +490,6 @@ class ScoreViewSet(viewsets.ModelViewSet):
             elif span_notes_source_id:
                 span_notes_target = resolve_source_object(
                     "observation_span",
-                    span_notes_source_id,
-                    organization=request.organization,
-                    workspace=getattr(request, "workspace", None),
-                ) or resolve_ch_span_source(
                     span_notes_source_id,
                     organization=request.organization,
                     workspace=getattr(request, "workspace", None),
@@ -522,6 +518,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         created_scores = []
         errors = []
         source_trace_id = _span_source_trace_id(source_type, source_obj)
+        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
         # SpanNotes.span (db_constraint=False FK) rejects a CHSpan object on assignment;
         # write the id form so collector-only spans work.
         span_notes_pk = (
@@ -566,6 +563,12 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         or getattr(queue_item, "workspace", None),
                         # Denormalized trace locator (see create()).
                         **({"trace_id": source_trace_id} if source_trace_id else {}),
+                        # Denormalized tracer project id (see create()).
+                        **(
+                            {"tracer_project_id": tracer_project_id}
+                            if tracer_project_id
+                            else {}
+                        ),
                     },
                 )
                 created_scores.append(score)
@@ -626,7 +629,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             scored_label_ids = [s["label_id"] for s in data["scores"]]
             transaction.on_commit(
                 lambda: _safe_auto_create_queue_items_for_default_queues(
-                    source_type, source_obj, scored_label_ids
+                    source_type, source_obj, scored_label_ids, request.organization
                 )
             )
             transaction.on_commit(

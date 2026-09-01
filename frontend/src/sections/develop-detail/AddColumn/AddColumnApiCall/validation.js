@@ -9,7 +9,7 @@ export const getAddColumnApiCallValidation = (
 ) => {
   return z.object({
     type: z.string().optional(),
-    columnName:
+    column_name:
       isConditionalNode || isEdit
         ? z.string().optional()
         : z.string().min(1, "Name is required"),
@@ -110,7 +110,7 @@ export const getAddColumnApiCallValidation = (
           if (BARE_VARIABLE_RE.test(value)) return value;
           return JSON.parse(value);
         }),
-      outputType: z.string().min(1, "Output type is required"),
+      output_type: z.string().min(1, "Output type is required"),
     }),
     concurrency: z.number().positive("Concurrency must be a positive integer"),
   });

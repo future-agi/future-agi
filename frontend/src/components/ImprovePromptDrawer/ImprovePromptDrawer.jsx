@@ -14,7 +14,11 @@ import logger from "src/utils/logger";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useParams } from "react-router";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
-import { runPromptOverSocket } from "src/sections/workbench/createPrompt/common";
+import {
+  handleAuthFailClose,
+  handleWsErrorFrame,
+  runPromptOverSocket,
+} from "src/sections/workbench/createPrompt/common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import { useActiveSocket } from "src/hooks/use-active-socket";
 
@@ -64,6 +68,14 @@ export default function ImprovePromptDrawer({
         // one from llm streaming activity completion and one canonical final completion.
         // settled ensures we resolve/reject only once.
         let settled = false;
+        const isSettled = () => settled;
+        const markSettled = () => {
+          settled = true;
+        };
+        const resetImprovementState = () => {
+          setIsImprovingPrompt(false);
+          setLoadingStage("");
+        };
         const completeImprovement = (message, promptText) => {
           if (settled || !promptText) return;
           settled = true;
@@ -85,6 +97,17 @@ export default function ImprovePromptDrawer({
           },
           onMessage: (data) => {
             const wsData = data;
+            // Surface top-level BE error frames (permission, workspace, etc.)
+            // before the type filter so the spinner doesn't hang on 4003/4004.
+            const handled = handleWsErrorFrame({
+              wsData,
+              isSettled,
+              markSettled,
+              cleanup: resetImprovementState,
+              reject,
+              defaultMessage: "Failed to improve prompt",
+            });
+            if (handled) return;
             if (wsData?.type !== "improve_prompt") return;
             const generatePromptData = wsData;
             const current_activity = generatePromptData?.current_activity;
@@ -132,16 +155,21 @@ export default function ImprovePromptDrawer({
             );
             reject(err);
           },
-          onClose: () => {
-            if (!settled) {
-              settled = true;
-              setIsImprovingPrompt(false);
-              reject(
-                new Error(
-                  "WebSocket closed before prompt improvement completed",
-                ),
-              );
-            }
+          onClose: (event) => {
+            const handled = handleAuthFailClose({
+              event,
+              isSettled,
+              markSettled,
+              cleanup: () => setIsImprovingPrompt(false),
+              reject,
+            });
+            if (handled) return;
+            if (settled) return;
+            settled = true;
+            setIsImprovingPrompt(false);
+            reject(
+              new Error("WebSocket closed before prompt improvement completed"),
+            );
           },
         });
         activeSocketRef.current = socket;

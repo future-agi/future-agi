@@ -9,7 +9,6 @@ from typing import Any
 
 import chevron
 import litellm
-import requests
 import structlog
 import yaml
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
@@ -34,6 +33,7 @@ from agentic_eval.core_evals.run_prompt.other_services.manager import (
     get_model_parameters,
 )
 from model_hub.models.api_key import ApiKey
+from model_hub.utils.llm_providers import is_model_in_catalog
 from model_hub.models.choices import (
     CellStatus,
     LiteLlmModelProvider,
@@ -98,6 +98,7 @@ from tfc.utils.error_codes import (
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
+from tfc.utils.ssrf_guard import safe_fetch
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -945,8 +946,9 @@ def process_media_markers(text, image_markers, model_name):
                 }
             )
             try:
-                # Download and encode audio
-                response = requests.get(info["url"], timeout=120)
+                # SSRF-guarded: user-supplied URL; safe_fetch resolves + pins
+                # IP and blocks private/link-local hosts before download.
+                response = safe_fetch(info["url"], method="GET", timeout=120)
                 response.raise_for_status()
 
                 bytes_data = response.content
@@ -1047,10 +1049,26 @@ class LitellmAPIView(CreateAPIView):
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
+        from tfc.ee_gates import turing_oss_gate_response
+
         validated_data = request.validated_data
+
+        gate_response = turing_oss_gate_response(validated_data.get("model"))
+        if gate_response is not None:
+            return gate_response
+
         # `validated_request` owns request-shape validation; from here the view
         # handles only domain execution errors.
         organization = _request_organization(request)
+        organization_id = organization.id if organization else None
+        model_name = validated_data.get("model")
+        if model_name and not is_model_in_catalog(
+            model_name, organization_id=organization_id
+        ):
+            return self._gm.bad_request(
+                f"Model '{model_name}' is no longer available. "
+                "Please update the column to use a supported model before running."
+            )
         dataset = (
             _request_dataset_queryset(request)
             .filter(id=validated_data.get("dataset_id"))
@@ -1725,6 +1743,13 @@ class AddRunPromptColumnView(APIView):
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
+            model_name = config.get("model")
+            if model_name and not is_model_in_catalog(model_name, organization_id=organization.id):
+                return self._gm.bad_request(
+                    f"Model '{model_name}' is no longer available. "
+                    "Please select a supported model."
+                )
+
             output_format = config.get("output_format")
             messages = config.get("messages", [])
             if output_format != "audio":
@@ -1994,6 +2019,13 @@ class EditRunPromptColumnView(APIView):
             )
             if not column:
                 return self._gm.not_found("Column or dataset not found")
+
+            model_name = config.get("model")
+            if model_name and not is_model_in_catalog(model_name, organization_id=dataset.organization_id):
+                return self._gm.bad_request(
+                    f"Model '{model_name}' is no longer available. "
+                    "Please select a supported model."
+                )
 
             # Verify column is a run prompt column
             if column.source != SourceChoices.RUN_PROMPT.value:
@@ -2755,7 +2787,17 @@ class RunPromptForRowsView(APIView):
                 if set(map(str, scoped_rows)) != requested_row_ids:
                     return self._gm.not_found("Row not found")
 
-            # Run all evaluations in a single async task
+            deprecated_models = [
+                rp.model for rp in run_prompters
+                if rp.model and not is_model_in_catalog(rp.model, organization_id=user_org_id)
+            ]
+            if deprecated_models:
+                names = ", ".join(f"'{m}'" for m in set(deprecated_models))
+                return self._gm.bad_request(
+                    f"Model(s) {names} no longer available. "
+                    "Please update the column(s) to use supported models before running."
+                )
+
             run_prompt = None
             if selected_all_rows:
                 run_prompt = RunPrompter.objects.get(id=run_prompt_ids[0])

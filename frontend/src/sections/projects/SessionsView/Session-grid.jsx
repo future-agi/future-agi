@@ -15,11 +15,18 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import TracesDrawer from "../TracesDrawer/TracesDrawer";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { getSessionListColumnDef } from "./common";
+import {
+  getSessionListColumnDef,
+  initialVisibility,
+  mergeNonCustomColumns,
+} from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
-import { normalizeConfigKeys } from "src/sections/projects/LLMTracing/common";
+import {
+  normalizeConfigKeys,
+  toBackendFilters,
+} from "src/sections/projects/LLMTracing/common";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -37,7 +44,7 @@ const getSessionGridThemeParams = (theme) => ({
   rowHoverColor: "rgba(120,87,252,0.04)",
 });
 
-const DATASET_ROWS_LIMIT = 30;
+const DATASET_ROWS_LIMIT = 25;
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -229,18 +236,19 @@ const SessionGrid = React.forwardRef(
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(filters),
+                filters: JSON.stringify(toBackendFilters(filters)),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
-              // Use prefetched data if available, otherwise fetch
+              // Await the in-flight prefetch promise if present, else fetch —
+              // dedupes a concurrent getRows for the same page.
               const cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              const results =
-                cached ||
-                (await axios.get(endpoints.project.projectSessionList(), {
-                  params: buildParams(pageNumber),
-                }));
+              const results = cached
+                ? await cached
+                : await axios.get(endpoints.project.projectSessionList(), {
+                    params: buildParams(pageNumber),
+                  });
               const res = results?.data?.result;
               const newCols = normalizeConfigKeys(res?.config);
 
@@ -273,21 +281,13 @@ const SessionGrid = React.forwardRef(
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  let finalNonCustom;
-                  if (idSetChanged) {
-                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
-                    const seen = new Set();
-                    const kept = currentNonCustom
-                      .filter((cc) => newById.has(cc.id))
-                      .map((cc) => {
-                        seen.add(cc.id);
-                        return newById.get(cc.id);
-                      });
-                    const added = newCols.filter((nc) => !seen.has(nc.id));
-                    finalNonCustom = [...kept, ...added];
-                  } else {
-                    finalNonCustom = currentNonCustom;
-                  }
+                  const finalNonCustom = idSetChanged
+                    ? mergeNonCustomColumns(
+                        currentNonCustom,
+                        newCols,
+                        updateObjRef.current,
+                      )
+                    : currentNonCustom;
                   setColumns(
                     allCustom.length > 0
                       ? [...finalNonCustom, ...allCustom]
@@ -318,7 +318,22 @@ const SessionGrid = React.forwardRef(
                 const columnConfig = (newCols || []).find(
                   (config) => config.id === column.field,
                 );
-                return columnConfig ? columnConfig.isVisible : true;
+                const backendVisible = columnConfig
+                  ? columnConfig.isVisible
+                  : true;
+
+                const isDefaultColumn = Object.hasOwn(
+                  initialVisibility,
+                  column.field,
+                );
+                if (
+                  !isDefaultColumn &&
+                  !backendVisible &&
+                  updateObjRef.current?.[column.field] === true
+                ) {
+                  return true;
+                }
+                return backendVisible;
               });
 
               setFilteredColumnDefs(filteredColumns);
@@ -334,16 +349,17 @@ const SessionGrid = React.forwardRef(
                 rowCount: lastRow,
               });
 
-              // Prefetch next page so scroll feels instant
+              // Prefetch next page so scroll feels instant. Cache the promise
+              // (not the resolved value) so a concurrent getRows dedupes.
               if (!isLastPage) {
-                axios
-                  .get(endpoints.project.projectSessionList(), {
-                    params: buildParams(pageNumber + 1),
-                  })
-                  .then((res) => {
-                    prefetchCache.current.set(pageNumber + 1, res);
-                  })
-                  .catch(() => {});
+                const prefetch = axios.get(
+                  endpoints.project.projectSessionList(),
+                  { params: buildParams(pageNumber + 1) },
+                );
+                prefetchCache.current.set(pageNumber + 1, prefetch);
+                prefetch.catch(() => {
+                  prefetchCache.current.delete(pageNumber + 1);
+                });
               }
             } catch (error) {
               const message =
@@ -475,7 +491,7 @@ const SessionGrid = React.forwardRef(
                 pagination={false}
                 cacheBlockSize={DATASET_ROWS_LIMIT}
                 maxBlocksInCache={5}
-                rowBuffer={10}
+                rowBuffer={5}
                 suppressServerSideFullWidthLoadingRow={true}
                 serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                 defaultColDef={defaultColDef}

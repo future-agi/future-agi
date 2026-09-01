@@ -179,3 +179,74 @@ def test_voice_call_list_v2_count_no_legacy():
 def test_voice_call_list_v2_content_no_legacy():
     sql, _ = _voice_call_builder().build_content_query(span_ids=["sp1"])
     _assert_no_legacy(sql, "VoiceCallList.build_content_query")
+
+
+# ─── MonitorMetrics ──────────────────────────────────────────────────────────
+_MONITOR_ATTR_FILTER = {
+    "span_attributes_filters": [
+        {
+            "column_id": "my.attr",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "x",
+            },
+        }
+    ]
+}
+_MONITOR_METRIC_TYPES = [
+    "count_of_errors",
+    "error_rates_for_function_calling",
+    "error_free_session_rates",
+    "service_provider_error_rates",
+    "llm_api_failure_rates",
+    "span_response_time",
+    "llm_response_time",
+    "token_usage",
+    "daily_tokens_spent",
+    "monthly_tokens_spent",
+    "evaluation_metrics",
+]
+
+
+def _monitor_builder():
+    return MonitorMetricsQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=_MONITOR_ATTR_FILTER,
+        eval_config_id="22222222-2222-2222-2222-222222222222",
+        eval_output_type="SCORE",
+    )
+
+
+@pytest.mark.parametrize("metric_type", _MONITOR_METRIC_TYPES)
+def test_monitor_metrics_v2_value_no_legacy(metric_type):
+    from datetime import datetime
+
+    sql, _ = _monitor_builder().build_metric_value_query(
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8)
+    )
+    _assert_no_legacy(sql, f"MonitorMetrics.value[{metric_type}]")
+    assert "SETTINGS" in sql, f"v2 settings missing on value[{metric_type}]"
+
+
+@pytest.mark.parametrize("metric_type", _MONITOR_METRIC_TYPES)
+def test_monitor_metrics_v2_historical_no_legacy(metric_type):
+    from datetime import datetime
+
+    sql, _ = _monitor_builder().build_historical_stats_query(
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8), interval_kind="hour"
+    )
+    _assert_no_legacy(sql, f"MonitorMetrics.historical[{metric_type}]")
+    assert "SETTINGS" in sql, f"v2 settings missing on historical[{metric_type}]"
+
+
+@pytest.mark.parametrize("metric_type", _MONITOR_METRIC_TYPES)
+def test_monitor_metrics_v2_time_series_no_legacy(metric_type):
+    from datetime import datetime
+
+    sql, _ = _monitor_builder().build_time_series_query(
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8), 3600
+    )
+    _assert_no_legacy(sql, f"MonitorMetrics.time_series[{metric_type}]")
+    assert "SETTINGS" in sql, f"v2 settings missing on time_series[{metric_type}]"

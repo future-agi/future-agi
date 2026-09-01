@@ -23,9 +23,12 @@ from model_hub.utils.composite_aggregation import (
     aggregate_scores,
     aggregate_summaries,
 )
-from model_hub.utils.scoring import determine_pass_fail, normalize_score
+from evaluations.engine.instance import resolve_pass_threshold
+from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
+
+PER_CHILD_ERROR_LOCALIZER_ENABLED = False
 
 
 @dataclass
@@ -112,7 +115,26 @@ def _execute_child(
                     **link_params,
                 }
 
-        effective_model = model or child_template.model or None
+        link_run_config = link_config.get("run_config") or {}
+        if not isinstance(link_run_config, dict):
+            link_run_config = {}
+
+        pinned_model = link.pinned_version.model if link.pinned_version else None
+        effective_model = (
+            link_run_config.get("model")
+            or link_config.get("model")
+            or pinned_model
+            or child_template.model
+            or model
+            or None
+        )
+        effective_error_localizer = bool(
+            error_localizer
+            or (
+                PER_CHILD_ERROR_LOCALIZER_ENABLED
+                and link_run_config.get("error_localizer_enabled")
+            )
+        )
 
         result = run_eval_func(
             runtime_config,
@@ -120,7 +142,7 @@ def _execute_child(
             child_template,
             org,
             model=effective_model,
-            error_localizer=error_localizer,
+            error_localizer=effective_error_localizer,
             source=source,
             workspace=workspace,
             input_data_types=input_data_types or {},
@@ -129,39 +151,16 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
+            # A pinned child ran the snapshot above, so its usage log must be
+            # stamped with the pinned version — not the template default that
+            # run_eval_func would otherwise resolve.
+            resolved_version=link.pinned_version if link.pinned_version else None,
         )
 
-        score: float | None = None
-        _output_type = child_template.output_type_normalized
-        if not _output_type:
-            # Older / code-created templates may not have output_type_normalized
-            # set. Derive it from config["output"] before falling back to a
-            # dumb numeric cast so "Passed"/"Failed" strings score correctly.
-            _config_output = (getattr(child_template, "config", None) or {}).get("output", "")
-            _output_type = {
-                "Pass/Fail": "pass_fail",
-                "score": "percentage",
-                "choices": "choices",
-            }.get(_config_output)
-
-        if _output_type:
-            score = normalize_score(
-                result.get("output"),
-                _output_type,
-                child_template.choice_scores,
-            )
-        else:
-            # Last resort — best-effort numeric fallback.
-            try:
-                raw = result.get("output")
-                if raw is not None:
-                    score = max(0.0, min(1.0, float(raw)))
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Child %s has no output_type_normalized and a non-numeric "
-                    "output — skipping in aggregation",
-                    child_template.name,
-                )
+        # None: unscoreable children fall through to the exclusion branch below.
+        score: float | None = score_eval_output(
+            result.get("output"), child_template, default_score=None
+        )
 
         return CompositeChildResult(
             child_id=str(child_template.id),
@@ -262,6 +261,23 @@ def _log_composite_usage(
             "duration": duration,
         }
 
+        # Stamp the parent composite's own version (children stamp theirs
+        # inside run_eval_func).
+        try:
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            parent_version = EvalTemplateVersion.objects.get_default(parent)
+            if parent_version:
+                config_payload["version_id"] = str(parent_version.id)
+                config_payload["version_number"] = parent_version.version_number
+        except Exception:
+            # stdlib logger here (not structlog) — no kwargs support.
+            logger.warning(
+                "version_tracking_failed path=composite_parent template_id=%s",
+                parent.id,
+                exc_info=True,
+            )
+
         status = (
             APICallStatusChoices.SUCCESS.value
             if completed > 0
@@ -315,6 +331,14 @@ def execute_composite_children_sync(
     Responsibilities:
     - Execute children in `order` (`child_links` is assumed pre-sorted).
     - Apply per-binding weight overrides if provided.
+    - Resolve each child's model as link `run_config` → link config → pinned
+      version → child template → `model`. A composite has no model of its
+      own, so `model` is a fallback for model-less children (system evals),
+      not an override.
+    - Enable the error localizer for a child from the composite-level
+      `error_localizer` only. The child's own
+      `run_config.error_localizer_enabled` is captured on the link but not
+      honoured — see `PER_CHILD_ERROR_LOCALIZER_ENABLED`.
     - Aggregate only when `parent.aggregation_enabled`; otherwise return
       raw child results with a null aggregate.
     - Defer pass/fail until a numeric aggregate is actually available.
@@ -357,10 +381,10 @@ def execute_composite_children_sync(
 
     if parent.aggregation_enabled:
         threshold_map = {
-            str(link.child_id): (
-                link.child.pass_threshold
-                if link.child.pass_threshold is not None
-                else 0.5
+            str(link.child_id): resolve_pass_threshold(
+                eval_template=link.child,
+                runtime_config=link.config or {},
+                resolved_version=link.pinned_version,
             )
             for link in child_links
         }

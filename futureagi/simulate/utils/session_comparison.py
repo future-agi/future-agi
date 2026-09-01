@@ -449,6 +449,10 @@ def _extract_metrics_from_provider_call_data(call_execution: CallExecution):
             duration = (end - start).total_seconds()
         except (ValueError, TypeError):
             pass
+    # Provider-agnostic fallback (Bland, etc.): duration_seconds is populated on
+    # the model for every provider during fetch, so comparison isn't VAPI-only.
+    if not duration:
+        duration = call_execution.duration_seconds or 0
 
     # Count turns from messages
     messages = vapi_data.get("messages", [])
@@ -457,6 +461,17 @@ def _extract_metrics_from_provider_call_data(call_execution: CallExecution):
         total_turns = sum(
             1 for m in messages if m.get("role") in ("user", "assistant", "bot")
         )
+    if not total_turns:
+        # CallTranscript rows are written for every provider.
+        from simulate.models.test_execution import CallTranscript
+
+        total_turns = CallTranscript.objects.filter(
+            call_execution=call_execution,
+            speaker_role__in=[
+                CallTranscript.SpeakerRole.USER,
+                CallTranscript.SpeakerRole.ASSISTANT,
+            ],
+        ).count()
 
     return {
         "duration": duration,
@@ -479,6 +494,31 @@ def fetch_voice_trace_comparison_metrics(
     comparison_metrics = _extract_metrics_from_provider_call_data(call_execution)
 
     return _build_metric_comparisons(base_metrics, comparison_metrics)
+
+
+def _transcripts_from_call_transcript_rows(call_execution: CallExecution):
+    """Provider-agnostic transcripts from the persisted CallTranscript rows.
+
+    These are written for every voice provider (VAPI, Bland, ...) and ordered by
+    start_time_ms, so a provider whose raw payload isn't VAPI/Retell-shaped
+    (e.g. Bland) still compares against a baseline instead of rendering blank.
+    """
+    from simulate.models.test_execution import CallTranscript
+
+    role_map = {
+        CallTranscript.SpeakerRole.ASSISTANT: "assistant",
+        CallTranscript.SpeakerRole.USER: "user",
+    }
+    transcripts = []
+    rows = CallTranscript.objects.filter(call_execution=call_execution).order_by(
+        "start_time_ms"
+    )
+    for row in rows:
+        display_role = role_map.get(row.speaker_role)
+        content = (row.content or "").strip()
+        if display_role and content:
+            transcripts.append({"role": display_role, "messages": [content]})
+    return transcripts
 
 
 def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
@@ -517,7 +557,10 @@ def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
         "transcript_with_tool_calls", []
     )
 
-    if isinstance(transcript, list):
+    # Guard on retell_data so a provider without a retell payload (e.g. Bland,
+    # whose empty transcript is still a list) falls through to the CallTranscript
+    # fallback instead of returning an empty list here.
+    if retell_data and isinstance(transcript, list):
         transcripts = []
         for entry in transcript:
             role = entry.get("role", "")
@@ -531,7 +574,8 @@ def _extract_transcripts_from_provider_call_data(call_execution: CallExecution):
                 )
         return transcripts
 
-    return []
+    # Provider-agnostic fallback (Bland, etc.): read the persisted transcript.
+    return _transcripts_from_call_transcript_rows(call_execution)
 
 
 def fetch_voice_trace_comparison_transcripts(
@@ -558,7 +602,7 @@ def fetch_voice_trace_comparison_transcripts(
 
 
 def fetch_baseline_trace_recordings(trace_id: str, _span: dict | None = None) -> dict:
-    """Fetch recording URLs from the baseline voice trace's conversation span."""
+    """Return recording URLs from a baseline voice trace's span attributes."""
     try:
         span = _span or fetch_voice_conversation_span(trace_id)
     except ValueError:
@@ -567,54 +611,52 @@ def fetch_baseline_trace_recordings(trace_id: str, _span: dict | None = None) ->
     sa = span["span_attributes"] or {}
     recordings = {}
     for label, attr_key in RECORDING_ATTR_KEYS.items():
-        url = sa.get(attr_key)
-        if url:
+        if url := sa.get(attr_key):
             recordings[label] = url
     return recordings
 
 
 def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
-    """Fetch recording URLs from a simulated CallExecution's provider_call_data."""
+    """Recording URLs for a simulated call: model fields first, provider_call_data fallback."""
+    model_recordings = _fallback_model_recordings(call_execution)
+
     provider_data = call_execution.provider_call_data
-    if not provider_data or not isinstance(provider_data, dict):
-        return _fallback_model_recordings(call_execution)
-
-    # Get provider payload
-    if len(provider_data) == 1:
-        payload = next(iter(provider_data.values()))
-    else:
-        payload = provider_data.get("vapi", {})
-
+    payload = None
+    if isinstance(provider_data, dict):
+        if len(provider_data) == 1:
+            payload = next(iter(provider_data.values()))
+        else:
+            payload = provider_data.get("vapi", {})
     if not isinstance(payload, dict):
-        return _fallback_model_recordings(call_execution)
+        payload = {}
 
     recording = (
-        payload.get("artifact", {}).get("recording") or payload.get("recording") or {}
+        (payload.get("artifact") or {}).get("recording") or payload.get("recording") or {}
     )
     if not isinstance(recording, dict):
-        return _fallback_model_recordings(call_execution)
+        recording = {}
 
-    recordings = {}
     mono = recording.get("mono") or {}
-    if combined_url := mono.get("combinedUrl"):
-        recordings["mono_combined"] = combined_url
+    recordings: dict[str, str] = {}
+    if combined := model_recordings.get("mono_combined") or mono.get("combinedUrl"):
+        recordings["mono_combined"] = combined
+    if stereo := model_recordings.get("stereo") or recording.get("stereoUrl"):
+        recordings["stereo"] = stereo
     if customer_url := mono.get("customerUrl"):
         recordings["mono_customer"] = customer_url
     if assistant_url := mono.get("assistantUrl"):
         recordings["mono_assistant"] = assistant_url
-    if stereo_url := recording.get("stereoUrl"):
-        recordings["stereo"] = stereo_url
 
-    return recordings or _fallback_model_recordings(call_execution)
+    return recordings
 
 
 def _fallback_model_recordings(call_execution: CallExecution) -> dict:
-    """Fallback to model-level recording URL fields."""
+    """Read the durable S3-mirrored recording URLs off the model."""
     recordings = {}
-    if call_execution.stereo_recording_url:
-        recordings["stereo"] = call_execution.stereo_recording_url
-    if call_execution.recording_url:
-        recordings["mono_combined"] = call_execution.recording_url
+    if stereo := call_execution.stereo_recording_url:
+        recordings["stereo"] = stereo
+    if mono := call_execution.recording_url:
+        recordings["mono_combined"] = mono
     return recordings
 
 

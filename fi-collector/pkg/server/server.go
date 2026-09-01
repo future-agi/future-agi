@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,15 +32,17 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
 
 // Config is what main() passes us. Public fields = YAML wire format.
 type Config struct {
-	GRPCAddr     string        `yaml:"grpc_addr"`      // :4317 default
-	HTTPAddr     string        `yaml:"http_addr"`      // :4318 default; empty disables
-	BatchMaxRows int           `yaml:"batch_max_rows"` // flush after N rows
-	BatchMaxAge  time.Duration `yaml:"batch_max_age"`  // flush after X time
+	GRPCAddr       string        `yaml:"grpc_addr"`         // :4317 default
+	HTTPAddr       string        `yaml:"http_addr"`         // :4318 default; empty disables
+	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
+	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
+	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
 }
 
 // Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
@@ -56,8 +59,9 @@ type Server struct {
 	usage    UsageEmitter
 	metering Metering
 	log      *slog.Logger
-	grpc    *grpc.Server
-	httpd   *http.Server
+	pricer   chexp.Pricer
+	grpc     *grpc.Server
+	httpd    *http.Server
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -80,10 +84,17 @@ type Server struct {
 }
 
 // Option configures optional Server dependencies.
-type Option struct{ log *slog.Logger }
+type Option struct {
+	log    *slog.Logger
+	pricer chexp.Pricer
+}
 
 // WithLogger sets the server's logger.
 func WithLogger(l *slog.Logger) Option { return Option{log: l} }
+
+// WithPricer sets the server's token-cost pricer. Nil (the zero value)
+// disables token-based cost (see chexp.Pricer).
+func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -108,11 +119,24 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if cfg.BatchMaxAge <= 0 {
 		cfg.BatchMaxAge = 5 * time.Second
 	}
+	if cfg.GRPCMaxRecvMiB <= 0 {
+		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
+		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
+		// Match the OTLP/HTTP body cap so both transports accept the same spans.
+		cfg.GRPCMaxRecvMiB = maxOTLPHTTPBodyBytes >> 20
+	}
+	if cfg.GRPCMaxRecvMiB > 1024 {
+		cfg.GRPCMaxRecvMiB = 1024 // keep the <<20 shift well under proto's 2 GiB ceiling
+	}
 
 	log := slog.Default()
+	var pricer chexp.Pricer
 	for _, o := range opts {
 		if o.log != nil {
 			log = o.log
+		}
+		if o.pricer != nil {
+			pricer = o.pricer
 		}
 	}
 
@@ -123,6 +147,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		usage:    usage,
 		metering: metering,
 		log:      log,
+		pricer:   pricer,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
@@ -153,7 +178,11 @@ func (s *Server) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
 		}
-		var grpcOpts []grpc.ServerOption
+		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", s.cfg.GRPCMaxRecvMiB)
+		grpcOpts := []grpc.ServerOption{
+			grpc.MaxRecvMsgSize(s.cfg.GRPCMaxRecvMiB << 20),
+			grpc.StatsHandler(&grpcErrLogger{log: s.log}),
+		}
 		if s.auth != nil {
 			grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(s.auth.GRPCInterceptor()))
 		}
@@ -225,6 +254,59 @@ func (s *Server) shutdown() {
 	s.drainNow(context.Background())
 }
 
+// grpcErrLogger surfaces transport-level message-size rejections. A message
+// larger than MaxRecvMsgSize is rejected with RESOURCE_EXHAUSTED before the
+// handler or interceptor runs, so a stats.Handler is the only server-side
+// hook that sees it — without this, the client's span is dropped with no
+// trace in the collector's own logs. Deliberately narrow: auth failures are
+// logged by the interceptor, quota rejections are silent by design (same
+// code, would be indistinguishable spam), and client cancels are benign.
+type grpcErrLogger struct {
+	log *slog.Logger
+}
+
+type grpcMethodKey struct{}
+
+// grpc-go's MaxRecvMsgSize rejection message. Both recv variants
+// ("received message larger than max" and the gzip "received message after
+// decompression larger than max") share these two substrings; matching both
+// excludes the send-side "trying to send message larger than max", which
+// carries the same ResourceExhausted code but is the wrong story for a
+// "request rejected" log.
+const (
+	grpcMsgRecv     = "received message"
+	grpcMsgTooLarge = "larger than max"
+)
+
+func (h *grpcErrLogger) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	return context.WithValue(ctx, grpcMethodKey{}, info.FullMethodName)
+}
+
+func (h *grpcErrLogger) HandleRPC(ctx context.Context, s stats.RPCStats) {
+	end, ok := s.(*stats.End)
+	if !ok || end.Error == nil {
+		return
+	}
+	st, _ := status.FromError(end.Error)
+	if st.Code() != codes.ResourceExhausted ||
+		!strings.Contains(st.Message(), grpcMsgRecv) ||
+		!strings.Contains(st.Message(), grpcMsgTooLarge) {
+		return
+	}
+	method, _ := ctx.Value(grpcMethodKey{}).(string)
+	h.log.Error("grpc message over size cap, request rejected",
+		"method", method,
+		"code", st.Code().String(),
+		"err", st.Message(),
+	)
+}
+
+func (h *grpcErrLogger) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	return ctx
+}
+
+func (h *grpcErrLogger) HandleConn(context.Context, stats.ConnStats) {}
+
 // otlpHandler implements ptraceotlp.GRPCServer. Stateless per call.
 type otlpHandler struct {
 	ptraceotlp.UnimplementedGRPCServer
@@ -248,7 +330,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		}
 	}
 
-	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
+	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
@@ -298,6 +380,10 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > maxOTLPHTTPBodyBytes {
+		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+		// equally visible server-side.
+		s.log.Error("http body over size cap, request rejected",
+			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -339,7 +425,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
+	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)

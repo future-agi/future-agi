@@ -107,6 +107,13 @@ const EvaluationDrawerChild = ({
         config: {
           required_keys: evalItem.eval_required_keys || [],
           ...(evalItem.config?.run_config || evalItem.run_config || {}),
+          // Multi-turn LLM evals persist the full message chain on the
+          // template config, not under run_config — forward it so the
+          // picker pre-populates with every turn (not just System) before
+          // the detail API response merges the canonical value in.
+          ...(evalItem.config?.messages
+            ? { messages: evalItem.config.messages }
+            : {}),
           // Map the UserEvalMetric.error_localizer BooleanField to the key
           // EvalPickerConfigFull expects so the toggle shows the saved state.
           ...(evalItem.error_localizer !== undefined

@@ -10,12 +10,14 @@ Tests cover:
 - AgentDefinitionOperationsViewSet: POST fetch_assistant_from_provider
 """
 
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
 
@@ -175,6 +177,28 @@ class TestCreateAgentDefinition:
         assert data["message"] == "Agent definition created successfully"
         assert "agent" in data
         assert "id" in data["agent"]
+
+    def test_create_provider_target_without_secret_or_phone(self, auth_client):
+        response = auth_client.post(
+            "/simulate/agent-definitions/create/",
+            {
+                "agent_name": "Scenario-only Vapi Target",
+                "agent_type": "voice",
+                "provider": "vapi",
+                "assistant_id": "assistant_123",
+                "inbound": True,
+                "commit_message": "Created by Agent Learning Kit",
+                "languages": ["en"],
+                "description": "Healthcare scheduling assistant",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        agent = response.json()["agent"]
+        assert agent["provider"] == "vapi"
+        assert agent["assistant_id"] == "assistant_123"
+        assert not agent["api_key"]
 
     def test_create_voice_agent_response_masks_api_key(self, auth_client):
         raw_api_key = "sk-agent-definition-raw-secret-123456"
@@ -708,6 +732,115 @@ class TestFetchAssistantFromProvider:
         assert data["result"]["name"] == "Support Bot"
         assert data["result"]["prompt"] == "You are a helpful assistant."
 
+    def test_valid_bland_request(self, auth_client):
+        # Bland's "assistant" is a Conversational Pathway (a node graph); the
+        # synced prompt assembles the description and each node's prompt/text.
+        mock_pathway = {
+            "name": "Hours Pathway",
+            "description": "Store hours agent",
+            "nodes": [
+                {"data": {"prompt": "You are the front-desk agent. Opens 9 AM."}},
+                {"data": {"text": "Thank the caller and say goodbye."}},
+            ],
+        }
+        with patch("simulate.views.agent_definition.requests.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = mock_pathway
+            mock_resp.raise_for_status.return_value = None
+            mock_get.return_value = mock_resp
+
+            response = auth_client.post(
+                self.URL,
+                {
+                    "assistant_id": "2fdd4db9-5e81-4422-b11c-168f0182d4fc",
+                    "api_key": "org_key",
+                    "provider": "bland",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["status"] is True
+        assert data["result"]["name"] == "Hours Pathway"
+        prompt = data["result"]["prompt"]
+        assert "Store hours agent" in prompt
+        assert "front-desk agent" in prompt
+        assert "say goodbye" in prompt
+        # Fetched the pathway by id with Bland's raw authorization header.
+        assert mock_get.call_args[0][0].endswith(
+            "/v1/pathway/2fdd4db9-5e81-4422-b11c-168f0182d4fc"
+        )
+        assert mock_get.call_args[1]["headers"]["authorization"] == "org_key"
+
+    def test_valid_retell_llm_agent(self, auth_client):
+        agent_obj = MagicMock()
+        agent_obj.model_dump_json.return_value = json.dumps(
+            {
+                "agent_name": "LLM Bot",
+                "response_engine": {"type": "retell-llm", "llm_id": "llm_9"},
+            }
+        )
+        llm_obj = MagicMock()
+        llm_obj.model_dump_json.return_value = json.dumps(
+            {"general_prompt": "You are an LLM-engine agent."}
+        )
+        with patch("simulate.views.agent_definition.Retell") as MockRetell:
+            client = MagicMock()
+            client.agent.retrieve.return_value = agent_obj
+            client.llm.retrieve.return_value = llm_obj
+            MockRetell.return_value = client
+
+            response = auth_client.post(
+                self.URL,
+                {"assistant_id": "agent_abc", "api_key": "key_1", "provider": "retell"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["result"]["name"] == "LLM Bot"
+        assert data["result"]["prompt"] == "You are an LLM-engine agent."
+        client.llm.retrieve.assert_called_once_with(llm_id="llm_9")
+
+    def test_valid_retell_conversation_flow_agent(self, auth_client):
+        # Conversation-flow agents carry no llm_id; the prompt lives on the
+        # flow's global_prompt, fetched via conversation_flow.retrieve.
+        agent_obj = MagicMock()
+        agent_obj.model_dump_json.return_value = json.dumps(
+            {
+                "agent_name": "Flow Bot",
+                "response_engine": {
+                    "type": "conversation-flow",
+                    "conversation_flow_id": "flow_123",
+                },
+            }
+        )
+        flow_obj = MagicMock()
+        flow_obj.model_dump_json.return_value = json.dumps(
+            {"global_prompt": "You are a conversation-flow agent."}
+        )
+        with patch("simulate.views.agent_definition.Retell") as MockRetell:
+            client = MagicMock()
+            client.agent.retrieve.return_value = agent_obj
+            client.conversation_flow.retrieve.return_value = flow_obj
+            MockRetell.return_value = client
+
+            response = auth_client.post(
+                self.URL,
+                {"assistant_id": "agent_abc", "api_key": "key_1", "provider": "retell"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["result"]["name"] == "Flow Bot"
+        assert data["result"]["prompt"] == "You are a conversation-flow agent."
+        client.conversation_flow.retrieve.assert_called_once_with(
+            conversation_flow_id="flow_123"
+        )
+        client.llm.retrieve.assert_not_called()
+
     def test_invalid_credentials(self, auth_client):
         with (
             patch("tfc.ee_gating.check_ee_feature", return_value=None),
@@ -861,3 +994,374 @@ class TestAgentDefinitionOperationsCRUD:
         assert agent_definition.deleted_at is not None
         assert version.deleted is True
         assert version.deleted_at is not None
+
+    # ------------------------------------------------------------------
+    # list
+    # ------------------------------------------------------------------
+
+    def test_list_operations_returns_workspace_scoped_agents(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        agent_definition,
+        agent_definition_text,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Operations Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Hidden Operations Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Hidden from the requesting workspace",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+
+        response = auth_client.get(self.URL)
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "results" in data
+        assert "count" in data
+        listed_ids = {row["id"] for row in data["results"]}
+        assert str(agent_definition.id) in listed_ids
+        assert str(agent_definition_text.id) in listed_ids
+        assert str(hidden_agent.id) not in listed_ids
+        # Detail-serializer shape: assert on a real field returned by
+        # AgentDefinitionResponseSerializer.
+        sample = next(
+            row for row in data["results"] if row["id"] == str(agent_definition.id)
+        )
+        assert sample["agent_name"] == agent_definition.agent_name
+        assert sample["agent_type"] == agent_definition.agent_type
+
+    def test_list_operations_unauthenticated_returns_401(self, api_client):
+        response = api_client.get(self.URL)
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    # ------------------------------------------------------------------
+    # retrieve
+    # ------------------------------------------------------------------
+
+    def test_retrieve_operation_returns_agent_fields(
+        self, auth_client, agent_definition
+    ):
+        response = auth_client.get(f"{self.URL}{agent_definition.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["id"] == str(agent_definition.id)
+        assert data["agent_name"] == agent_definition.agent_name
+        assert data["agent_type"] == agent_definition.agent_type
+        assert data["inbound"] is True
+        assert data["provider"] == agent_definition.provider
+        assert data["contact_number"] == agent_definition.contact_number
+
+    def test_retrieve_operation_unauthenticated_returns_401(
+        self, api_client, agent_definition
+    ):
+        response = api_client.get(f"{self.URL}{agent_definition.id}/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_retrieve_operation_not_found_returns_404(self, auth_client):
+        response = auth_client.get(f"{self.URL}{uuid.uuid4()}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_retrieve_operation_other_workspace_returns_404(
+        self, auth_client, organization, user
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Retrieve Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Hidden Retrieve Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Hidden retrieve target",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+
+        response = auth_client.get(f"{self.URL}{hidden_agent.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_agent.refresh_from_db()
+        assert hidden_agent.agent_name == "Hidden Retrieve Agent"
+
+    # ------------------------------------------------------------------
+    # update (PUT)
+    # ------------------------------------------------------------------
+
+    def test_put_update_operation_persists_changes(
+        self, auth_client, agent_definition_text
+    ):
+        payload = {
+            "agent_name": "Renamed Operations Text Bot",
+            "agent_type": agent_definition_text.agent_type,
+            "inbound": True,
+            "languages": ["en"],
+            "description": "Renamed via PUT.",
+        }
+        response = auth_client.put(
+            f"{self.URL}{agent_definition_text.id}/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["agent_name"] == "Renamed Operations Text Bot"
+        assert body["description"] == "Renamed via PUT."
+
+        agent_definition_text.refresh_from_db()
+        assert agent_definition_text.agent_name == "Renamed Operations Text Bot"
+        assert agent_definition_text.description == "Renamed via PUT."
+
+    def test_put_update_operation_unauthenticated_returns_401(
+        self, api_client, agent_definition_text
+    ):
+        response = api_client.put(
+            f"{self.URL}{agent_definition_text.id}/",
+            {
+                "agent_name": "Should Not Persist",
+                "agent_type": agent_definition_text.agent_type,
+                "inbound": True,
+                "languages": ["en"],
+            },
+            format="json",
+        )
+
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+        agent_definition_text.refresh_from_db()
+        assert agent_definition_text.agent_name == "Test Text Agent"
+
+    def test_put_update_operation_not_found_returns_404(self, auth_client):
+        response = auth_client.put(
+            f"{self.URL}{uuid.uuid4()}/",
+            {
+                "agent_name": "Ghost Bot",
+                "agent_type": "text",
+                "inbound": True,
+                "languages": ["en"],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_put_update_operation_other_workspace_returns_404(
+        self, auth_client, organization, user
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Update Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Hidden Update Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Hidden update target",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+
+        response = auth_client.put(
+            f"{self.URL}{hidden_agent.id}/",
+            {
+                "agent_name": "Leaked Hidden Agent",
+                "agent_type": hidden_agent.agent_type,
+                "inbound": True,
+                "languages": ["en"],
+                "description": "Should not persist",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_agent.refresh_from_db()
+        assert hidden_agent.agent_name == "Hidden Update Agent"
+        assert hidden_agent.description == "Hidden update target"
+
+    # ------------------------------------------------------------------
+    # partial_update (PATCH)
+    # ------------------------------------------------------------------
+
+    def test_partial_update_operation_persists_field_change(
+        self, auth_client, agent_definition_text
+    ):
+        original_name = agent_definition_text.agent_name
+        original_type = agent_definition_text.agent_type
+        original_inbound = agent_definition_text.inbound
+
+        response = auth_client.patch(
+            f"{self.URL}{agent_definition_text.id}/",
+            {"description": "new-value"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["description"] == "new-value"
+
+        agent_definition_text.refresh_from_db()
+        assert agent_definition_text.description == "new-value"
+        assert agent_definition_text.agent_name == original_name
+        assert agent_definition_text.agent_type == original_type
+        assert agent_definition_text.inbound == original_inbound
+
+    def test_partial_update_operation_ignores_read_only_fields(
+        self, auth_client, agent_definition_text, organization
+    ):
+        original_id = agent_definition_text.id
+        original_org_id = agent_definition_text.organization_id
+        other_org_id = uuid.uuid4()
+
+        response = auth_client.patch(
+            f"{self.URL}{agent_definition_text.id}/",
+            {
+                "id": str(uuid.uuid4()),
+                "organization": str(other_org_id),
+                "description": "read-only-check",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        agent_definition_text.refresh_from_db()
+        assert agent_definition_text.id == original_id
+        assert agent_definition_text.organization_id == original_org_id
+        assert agent_definition_text.description == "read-only-check"
+
+    def test_partial_update_operation_unauthenticated_returns_401(
+        self, api_client, agent_definition_text
+    ):
+        response = api_client.patch(
+            f"{self.URL}{agent_definition_text.id}/",
+            {"description": "should-not-persist"},
+            format="json",
+        )
+
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+        agent_definition_text.refresh_from_db()
+        assert agent_definition_text.description == "Test text agent"
+
+    def test_partial_update_operation_not_found_returns_404(self, auth_client):
+        response = auth_client.patch(
+            f"{self.URL}{uuid.uuid4()}/",
+            {"description": "ghost"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_partial_update_operation_other_workspace_returns_404(
+        self, auth_client, organization, user
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Patch Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Hidden Patch Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Hidden patch target",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+
+        response = auth_client.patch(
+            f"{self.URL}{hidden_agent.id}/",
+            {"description": "leaked"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_agent.refresh_from_db()
+        assert hidden_agent.description == "Hidden patch target"
+
+    # ------------------------------------------------------------------
+    # destroy (DELETE)
+    # ------------------------------------------------------------------
+
+    def test_destroy_operation_soft_deletes(self, auth_client, agent_definition):
+        response = auth_client.delete(f"{self.URL}{agent_definition.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        agent_definition.refresh_from_db()
+        assert agent_definition.deleted is True
+        assert agent_definition.deleted_at is not None
+
+    def test_destroy_operation_unauthenticated_returns_401(
+        self, api_client, agent_definition
+    ):
+        response = api_client.delete(f"{self.URL}{agent_definition.id}/")
+
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+        agent_definition.refresh_from_db()
+        assert agent_definition.deleted is False
+        assert agent_definition.deleted_at is None
+
+    def test_destroy_operation_not_found_returns_404(self, auth_client):
+        response = auth_client.delete(f"{self.URL}{uuid.uuid4()}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_destroy_operation_other_workspace_returns_404(
+        self, auth_client, organization, user
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Destroy Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Hidden Destroy Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Hidden destroy target",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+
+        response = auth_client.delete(f"{self.URL}{hidden_agent.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_agent.refresh_from_db()
+        assert hidden_agent.deleted is False
+        assert hidden_agent.deleted_at is None

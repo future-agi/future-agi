@@ -241,7 +241,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
                 }}
                 onDrop={handleFileChange}
                 heading="Choose a file or drag & drop it here"
-                description="Supports JSONL, JSON, and CSV file format up to 10 MB"
+                description="Supports JSONL, JSON, and CSV file format up to 25 MB"
                 actionButton={
                   <Button
                     variant="outlined"
@@ -285,13 +285,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
             loading={isPending}
             disabled={!isDirty}
           >
-            {/* <Typography
-              variant="s2"
-              width={"80px"}
-              fontWeight={"fontWeightSemiBold"}
-            > */}
-            Save
-            {/* </Typography> */}
+            Upload
           </LoadingButton>
         </DialogActions>
       </Box>

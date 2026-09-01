@@ -14,7 +14,6 @@ import {
   Card,
   CardContent,
   Chip,
-  CircularProgress,
   ClickAwayListener,
   Divider,
   IconButton,
@@ -29,6 +28,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
@@ -53,8 +53,11 @@ import {
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useSnackbar } from "src/components/snackbar";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
+import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import TruncatedTooltipText from "./TruncatedTooltipText";
 import {
   DndContext,
   DragOverlay,
@@ -93,7 +96,7 @@ function computeRows(widgets) {
 // InlineEdit — click-to-edit text field
 // ---------------------------------------------------------------------------
 const InlineEdit = forwardRef(function InlineEdit(
-  { value, onSave, placeholder, typographyProps, multiline },
+  { value, onSave, placeholder, typographyProps, multiline, readOnly = false },
   ref,
 ) {
   const [editing, setEditing] = useState(false);
@@ -101,6 +104,7 @@ const InlineEdit = forwardRef(function InlineEdit(
   const inputRef = useRef(null);
 
   const startEdit = () => {
+    if (readOnly) return;
     setDraft(value || "");
     setEditing(true);
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -158,15 +162,17 @@ const InlineEdit = forwardRef(function InlineEdit(
       {...typographyProps}
       onClick={startEdit}
       sx={{
-        cursor: "pointer",
+        cursor: readOnly ? "default" : "pointer",
         borderRadius: 1,
         px: 1,
         py: 0.5,
         border: "2px solid transparent",
-        "&:hover": {
-          border: "2px solid",
-          borderColor: "divider",
-        },
+        "&:hover": readOnly
+          ? undefined
+          : {
+              border: "2px solid",
+              borderColor: "divider",
+            },
         transition: "border-color 0.15s",
         ...typographyProps?.sx,
       }}
@@ -437,12 +443,15 @@ function DraggableWidgetCard({
   _isDragActive,
   rowHeight,
   datePreset,
+  isReadOnly,
 }) {
   const theme = useTheme();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: widget.id,
     data: { widget },
+    disabled: isReadOnly,
   });
+  const description = widget.description?.trim();
 
   const widgetHeight =
     rowHeight ||
@@ -490,74 +499,105 @@ function DraggableWidgetCard({
             overflow: "hidden",
           }}
         >
-          {/* Header row — entire bar is the drag activator */}
+          {/* Header — title row plus description; the block is the drag activator */}
           <div
-            {...attributes}
-            {...listeners}
+            {...(isReadOnly ? {} : { ...attributes, ...listeners })}
             style={{
               display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
+              flexDirection: "column",
               marginBottom: 4,
-              minHeight: 24,
-              cursor: "grab",
+              cursor: isReadOnly ? "default" : "grab",
             }}
           >
-            <Iconify
-              icon="mdi:drag"
-              width={16}
-              sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
-            />
-
-            <Typography
-              variant="subtitle2"
-              fontWeight="fontWeightSemiBold"
-              noWrap
-              sx={{
-                flex: 1,
-                cursor: "pointer",
-                "&:hover": { textDecoration: "underline" },
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                minHeight: 24,
               }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() =>
-                navigate(
-                  `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                )
-              }
             >
-              {widget.name}
-            </Typography>
+              {!isReadOnly && (
+                <Iconify
+                  icon="mdi:drag"
+                  width={16}
+                  sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
+                />
+              )}
 
-            {/* Actions */}
-            <Stack
-              className="widget-actions"
-              direction="row"
-              spacing={0}
-              onPointerDown={(e) => e.stopPropagation()}
-              sx={{ opacity: 0, transition: "opacity 0.15s" }}
-            >
-              <Tooltip title="Edit">
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    navigate(
-                      `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                    )
-                  }
+              <Typography
+                variant="subtitle2"
+                fontWeight="fontWeightSemiBold"
+                noWrap
+                sx={{
+                  flex: 1,
+                  cursor: "pointer",
+                  "&:hover": { textDecoration: "underline" },
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() =>
+                  navigate(
+                    `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                  )
+                }
+              >
+                {widget.name}
+              </Typography>
+
+              {/* Actions */}
+              {!isReadOnly && (
+                <Stack
+                  className="widget-actions"
+                  direction="row"
+                  spacing={0}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  sx={{ opacity: 0, transition: "opacity 0.15s" }}
                 >
-                  <Iconify icon="mdi:pencil-outline" width={16} />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="More">
-                <IconButton
-                  size="small"
-                  aria-label="Widget options"
-                  onClick={(e) => onMenuOpen(e, widget)}
-                >
-                  <Iconify icon="mdi:dots-vertical" width={16} />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+                  <Tooltip title="Edit">
+                    <IconButton
+                      size="small"
+                      onClick={() =>
+                        navigate(
+                          `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                        )
+                      }
+                    >
+                      <Iconify icon="mdi:pencil-outline" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="More">
+                    <IconButton
+                      size="small"
+                      aria-label="Widget options"
+                      onClick={(e) => onMenuOpen(e, widget)}
+                    >
+                      <Iconify icon="mdi:dots-vertical" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              )}
+            </div>
+
+            {description && (
+              <TruncatedTooltipText text={description}>
+                {(measureRef) => (
+                  <Typography
+                    ref={measureRef}
+                    variant="caption"
+                    noWrap
+                    onPointerDown={(e) => e.stopPropagation()}
+                    sx={{
+                      color: "text.secondary",
+                      pl: isReadOnly ? 0 : "20px",
+                      pr: 1,
+                      mt: 0.25,
+                    }}
+                  >
+                    {description}
+                  </Typography>
+                )}
+              </TruncatedTooltipText>
+            )}
           </div>
 
           {/* Chart */}
@@ -632,6 +672,8 @@ export default function DashboardDetailView() {
   const { dashboardId } = useParams();
   const { enqueueSnackbar } = useSnackbar();
 
+  const { canUpdate, isReadOnly } = useCanEditDashboard();
+
   const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
   const updateWidget = useUpdateWidget();
@@ -668,7 +710,7 @@ export default function DashboardDetailView() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const lastConfirmDeleteRef = useRef(null);
-  
+
   if (confirmDelete) lastConfirmDeleteRef.current = confirmDelete;
   const confirmDeleteView = confirmDelete ?? lastConfirmDeleteRef.current;
 
@@ -692,6 +734,10 @@ export default function DashboardDetailView() {
   );
 
   const rows = useMemo(() => computeRows(widgets), [widgets]);
+
+  // The time filter only acts on widgets — hide the bar until one exists
+  // (an interactive-but-inert bar on an empty dashboard reads as broken).
+  const hasWidgets = widgets.length > 0;
 
   // --- Handlers ---
 
@@ -1009,18 +1055,7 @@ export default function DashboardDetailView() {
   // --- Render ---
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "60vh",
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "60vh" }} />;
   }
 
   if (!dashboard) {
@@ -1092,86 +1127,94 @@ export default function DashboardDetailView() {
               />
             </IconButton>
           </Tooltip>
-          <Tooltip title="More options">
-            <IconButton
-              size="small"
-              aria-label="Dashboard options"
-              onClick={(e) => setDashMenuAnchor(e.currentTarget)}
-            >
-              <Iconify icon="mdi:dots-horizontal" width={20} />
-            </IconButton>
-          </Tooltip>
+          {!isReadOnly && (
+            <Tooltip title="More options">
+              <IconButton
+                size="small"
+                aria-label="Dashboard options"
+                onClick={(e) => setDashMenuAnchor(e.currentTarget)}
+              >
+                <Iconify icon="mdi:dots-horizontal" width={20} />
+              </IconButton>
+            </Tooltip>
+          )}
         </Stack>
       </Stack>
 
-      {/* ---- Global date filter bar ---- */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.5}
-        sx={{
-          px: 3,
-          py: 1.5,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          flexWrap: "wrap",
-          gap: 0.5,
-        }}
-      >
-        <Chip
-          ref={customDateAnchorRef}
-          icon={
-            <Iconify
-              icon="mdi:calendar-outline"
-              width={15}
-              sx={{ color: "inherit !important" }}
+      {/* ---- Global date filter bar (hidden until the dashboard has widgets) ---- */}
+      {hasWidgets && (
+        <>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{
+              px: 3,
+              py: 1.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexWrap: "wrap",
+              gap: 0.5,
+            }}
+          >
+            <Chip
+              ref={customDateAnchorRef}
+              icon={
+                <Iconify
+                  icon="mdi:calendar-outline"
+                  width={15}
+                  sx={{ color: "inherit !important" }}
+                />
+              }
+              label={
+                datePreset === "custom" && customDateRange
+                  ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                  : "Custom"
+              }
+              size="small"
+              variant={datePreset === "custom" ? "filled" : "outlined"}
+              color={datePreset === "custom" ? "primary" : "default"}
+              onClick={() => setIsDatePickerOpen(true)}
+              sx={DATE_CHIP_SX}
             />
-          }
-          label={
-            datePreset === "custom" && customDateRange
-              ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
-              : "Custom"
-          }
-          size="small"
-          variant={datePreset === "custom" ? "filled" : "outlined"}
-          color={datePreset === "custom" ? "primary" : "default"}
-          onClick={() => setIsDatePickerOpen(true)}
-          sx={DATE_CHIP_SX}
-        />
-        {DATE_PRESETS.filter((p) => p.value !== "custom").map((preset) => (
-          <Chip
-            key={preset.value}
-            label={preset.label}
-            size="small"
-            variant={datePreset === preset.value ? "filled" : "outlined"}
-            color={datePreset === preset.value ? "primary" : "default"}
-            onClick={() =>
-              setDatePreset(datePreset === preset.value ? null : preset.value)
-            }
-            sx={DATE_CHIP_SX}
-          />
-        ))}
-        <Chip
-          label="Default"
-          size="small"
-          variant={!datePreset ? "filled" : "outlined"}
-          color={!datePreset ? "primary" : "default"}
-          onClick={() => setDatePreset(null)}
-          sx={DATE_CHIP_SX}
-        />
-      </Stack>
+            {DATE_PRESETS.filter((p) => p.value !== "custom").map((preset) => (
+              <Chip
+                key={preset.value}
+                label={preset.label}
+                size="small"
+                variant={datePreset === preset.value ? "filled" : "outlined"}
+                color={datePreset === preset.value ? "primary" : "default"}
+                onClick={() =>
+                  setDatePreset(
+                    datePreset === preset.value ? null : preset.value,
+                  )
+                }
+                sx={DATE_CHIP_SX}
+              />
+            ))}
+            <Chip
+              label="Default"
+              size="small"
+              variant={!datePreset ? "filled" : "outlined"}
+              color={!datePreset ? "primary" : "default"}
+              onClick={() => setDatePreset(null)}
+              sx={DATE_CHIP_SX}
+            />
+          </Stack>
 
-      <CustomDateRangePicker
-        open={isDatePickerOpen}
-        onClose={() => setIsDatePickerOpen(false)}
-        anchorEl={customDateAnchorRef.current}
-        setDateFilter={(filter) => {
-          if (filter && filter[0] && filter[1]) {
-            setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
-          }
-        }}
-        setDateOption={() => setDatePreset("custom")}
-      />
+          <CustomDateRangePicker
+            open={isDatePickerOpen}
+            onClose={() => setIsDatePickerOpen(false)}
+            anchorEl={customDateAnchorRef.current}
+            setDateFilter={(filter) => {
+              if (filter && filter[0] && filter[1]) {
+                setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
+              }
+            }}
+            setDateOption={() => setDatePreset("custom")}
+          />
+        </>
+      )}
 
       {/* ---- Dashboard title & description (inline editable) ---- */}
       <Box sx={{ px: 3, pt: 2 }}>
@@ -1180,6 +1223,7 @@ export default function DashboardDetailView() {
           value={dashboard.name}
           onSave={handleNameSave}
           placeholder="Untitled Dashboard"
+          readOnly={!canUpdate}
           typographyProps={{
             variant: "h4",
             sx: {
@@ -1187,6 +1231,7 @@ export default function DashboardDetailView() {
               fontWeight: 700,
               color: "text.primary",
               lineHeight: 1.3,
+              wordBreak: "break-word",
             },
           }}
         />
@@ -1195,12 +1240,15 @@ export default function DashboardDetailView() {
           onSave={handleDescSave}
           placeholder="+ Add description..."
           multiline
+          readOnly={!canUpdate}
           typographyProps={{
             variant: "body2",
             sx: {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
               fontSize: "14px",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
             },
           }}
         />
@@ -1211,7 +1259,7 @@ export default function DashboardDetailView() {
         ref={gridContainerRef}
         sx={{ px: 3, pt: 2, pb: 4, flex: 1, overflow: "visible" }}
       >
-        {widgets.length === 0 ? (
+        {!hasWidgets ? (
           <Box
             sx={{
               display: "flex",
@@ -1233,17 +1281,28 @@ export default function DashboardDetailView() {
             <Typography variant="body2" color="text.secondary">
               Add your first widget to start visualizing data
             </Typography>
-            <Button
-              variant="outlined"
-              startIcon={<Iconify icon="mdi:plus" />}
-              onClick={() =>
-                navigate(
-                  `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                )
-              }
+            <CustomTooltip
+              show={isReadOnly}
+              type=""
+              title="You don't have permission to add widgets."
+              size="small"
+              arrow
             >
-              Add Widget
-            </Button>
+              <span>
+                <Button
+                  variant="outlined"
+                  startIcon={<Iconify icon="mdi:plus" />}
+                  disabled={isReadOnly}
+                  onClick={() =>
+                    navigate(
+                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                    )
+                  }
+                >
+                  Add Widget
+                </Button>
+              </span>
+            </CustomTooltip>
           </Box>
         ) : (
           <>
@@ -1287,7 +1346,7 @@ export default function DashboardDetailView() {
                       }}
                     >
                       {/* Add-to-row button */}
-                      {!activeWidget && row.length < 4 && (
+                      {!activeWidget && row.length < 4 && !isReadOnly && (
                         <Tooltip title="Add widget to row" placement="left">
                           <IconButton
                             className="row-add-btn"
@@ -1343,17 +1402,20 @@ export default function DashboardDetailView() {
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
+                              isReadOnly={isReadOnly}
                             />
 
                             {/* Resize handle between adjacent widgets */}
-                            {!activeWidget && widgetIdx < row.length - 1 && (
-                              <ResizeHandle
-                                leftWidget={widget}
-                                rightWidget={row[widgetIdx + 1]}
-                                containerWidth={containerWidth}
-                                onResizeEnd={handleWidthResize}
-                              />
-                            )}
+                            {!activeWidget &&
+                              widgetIdx < row.length - 1 &&
+                              !isReadOnly && (
+                                <ResizeHandle
+                                  leftWidget={widget}
+                                  rightWidget={row[widgetIdx + 1]}
+                                  containerWidth={containerWidth}
+                                  onResizeEnd={handleWidthResize}
+                                />
+                              )}
                           </React.Fragment>
                         ))}
 
@@ -1366,7 +1428,7 @@ export default function DashboardDetailView() {
                     </Box>
 
                     {/* Row-level height resize handle */}
-                    {!activeWidget && (
+                    {!activeWidget && !isReadOnly && (
                       <RowResizeHandle
                         row={row}
                         onRowResize={handleRowResize}
@@ -1392,20 +1454,22 @@ export default function DashboardDetailView() {
             </DndContext>
 
             {/* Add widget button below grid */}
-            <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
-              <Button
-                variant="outlined"
-                startIcon={<Iconify icon="mdi:plus" />}
-                onClick={() =>
-                  navigate(
-                    `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                  )
-                }
-                sx={{ borderStyle: "dashed" }}
-              >
-                Add Widget
-              </Button>
-            </Box>
+            {!isReadOnly && (
+              <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<Iconify icon="mdi:plus" />}
+                  onClick={() =>
+                    navigate(
+                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                    )
+                  }
+                  sx={{ borderStyle: "dashed" }}
+                >
+                  Add Widget
+                </Button>
+              </Box>
+            )}
           </>
         )}
       </Box>

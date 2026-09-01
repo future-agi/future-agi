@@ -240,7 +240,10 @@ class AnnotationQueueLabel(BaseModel):
         on_delete=models.CASCADE,
         related_name="queue_memberships",
     )
-    required = models.BooleanField(default=True)
+    # Labels are optional to fill unless a queue owner explicitly marks them
+    # required. Marking a label required is a gated feature, so the default
+    # must stay off — otherwise every plainly-added label trips the gate.
+    required = models.BooleanField(default=False)
     order = models.IntegerField(default=0)
 
     class Meta:
@@ -317,9 +320,7 @@ def user_has_annotation_queue_admin_access(queue, user):
         .order_by("-updated_at")
         .first()
     )
-    return bool(
-        membership and membership.level_or_legacy >= Level.WORKSPACE_ADMIN
-    )
+    return bool(membership and membership.level_or_legacy >= Level.WORKSPACE_ADMIN)
 
 
 def annotation_queue_effective_roles(queue, user, membership=None):
@@ -473,6 +474,34 @@ class QueueItem(BaseModel):
         null=True,
         blank=True,
     )
+    # Denormalized from the item's source project so the render/list CH reads can
+    # prune by the ``spans`` PK prefix (project_id) instead of scanning the whole
+    # multi-tenant table. Best-effort: a NULL project falls back to an unscoped
+    # read (correct, just slow). Deliberately NOT a source FK and kept out of
+    # SOURCE_TYPE_FK_MAP, so clean()'s mutual-exclusion never touches it.
+    project = models.ForeignKey(
+        "tracer.Project",
+        on_delete=models.SET_NULL,
+        related_name="+",
+        null=True,
+        blank=True,
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
+    )
+    # Denormalized render payload for the items grid, captured at add time from
+    # the source object the add path has already resolved (so it costs no extra
+    # read). Rendering a page used to mean one ``spans FINAL`` merge per page —
+    # ~1.5-2.3s on a large voice project — to show a name and two 200-char
+    # previews (TH-7211). Project-scoping alone does not fix it: the ``spans``
+    # PK is (project_id, observation_type, service_name, start_time) and only
+    # the first column is constrained, so every partition still merges.
+    #
+    # A queue item is a snapshot of a TERMINAL source (``add_items`` refuses a
+    # trace whose root span is still running), so this never goes stale in
+    # normal operation. It is a cache, not a source of truth: NULL means "not
+    # captured" and the serializer falls back to the live read, and the
+    # annotate/detail path always reads live so an opened item shows the truth
+    # even if its source was deleted after capture.
+    source_preview = models.JSONField(null=True, blank=True)
 
     class Meta:
         indexes = [

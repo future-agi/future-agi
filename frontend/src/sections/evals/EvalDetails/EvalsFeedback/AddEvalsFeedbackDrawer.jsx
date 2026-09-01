@@ -111,10 +111,14 @@ const AddEvalsFeedbackDrawerChild = ({
     return OUTPUT_TYPES.TEXT;
   }, [configData]);
 
+  const multiChoice = Boolean(configData?.multi_choice);
+  const isMultiSelect =
+    outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
+
   const { control, reset, handleSubmit, formState } = useForm({
     defaultValues: {
       actionType: "",
-      value: outputType === OUTPUT_TYPES.STR_LIST ? [] : "",
+      value: isMultiSelect ? [] : "",
       explanation: "",
     },
     resolver: zodResolver(createValidationSchema),
@@ -123,7 +127,7 @@ const AddEvalsFeedbackDrawerChild = ({
   useEffect(() => {
     if (existingFeedback && !isPending) {
       let parsedValue = existingFeedback.value || "";
-      if (outputType === OUTPUT_TYPES.STR_LIST) {
+      if (isMultiSelect) {
         try {
           parsedValue = JSON.parse(parsedValue);
         } catch {
@@ -138,7 +142,7 @@ const AddEvalsFeedbackDrawerChild = ({
         actionType: existingFeedback.action_type || "",
       });
     }
-  }, [existingFeedback, outputType, isPending, reset]);
+  }, [existingFeedback, outputType, isMultiSelect, isPending, reset]);
 
   const { mutate: submitFeedback, isPending: isSubmitting } = useMutation({
     mutationFn: ({ url, body }) => axios.post(url, body),
@@ -157,10 +161,9 @@ const AddEvalsFeedbackDrawerChild = ({
   const onSubmit = (payload) => {
     const { actionType, ...rest } = payload;
     const source = existingFeedback?.source || "eval_playground";
-    const feedbackValue =
-      outputType === OUTPUT_TYPES.STR_LIST
-        ? JSON.stringify(payload.value)
-        : payload.value;
+    const feedbackValue = isMultiSelect
+      ? JSON.stringify(payload.value)
+      : payload.value;
     // dataset + experiment endpoints reject "recalculate"; the drawer's
     // "Re-calculate and re-tune" option maps to their retune_recalculate.
     const structuredActionType =
@@ -244,6 +247,7 @@ const AddEvalsFeedbackDrawerChild = ({
       outputType={outputType}
       feedbackError={Boolean(feedbackError)}
       choices={configData?.choices}
+      multiChoice={multiChoice}
       handleSubmitForm={onSubmit}
       handleSubmit={handleSubmit}
       disabled={!formState.isValid || !canEdit}

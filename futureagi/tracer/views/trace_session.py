@@ -137,7 +137,9 @@ def _expand_session_group(analytics, canonical_session_id: str) -> tuple[str, ..
         "FROM trace_session_id_remap FINAL "
         "WHERE old_id = %(canonical_id)s"
     )
-    res = analytics.execute_ch_query(q, {"canonical_id": canonical_session_id}, timeout_ms=3000)
+    res = analytics.execute_ch_query(
+        q, {"canonical_id": canonical_session_id}, timeout_ms=3000
+    )
     ids = {canonical_session_id}
     for row in res.data or []:
         val = str(row.get("id") if isinstance(row, dict) else row[0])
@@ -203,6 +205,8 @@ def _resolve_ch_session_fields(request, trace_session_id):
         resolve_session_fields,
     )
 
+    # Workspace-scoped lookup — the project is discovered from the resolved
+    # fields below, so there's no single project_id to scope the read by here.
     session_fields = resolve_session_fields([trace_session_id]).get(
         str(trace_session_id)
     )
@@ -934,7 +938,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     resolve_session_fields,
                 )
 
-                session_fields = resolve_session_fields(session_ids)
+                session_fields = resolve_session_fields(
+                    session_ids, project_id=project_id
+                )
                 values = []
                 for row in result.data:
                     value = str(row["val"])
@@ -2217,6 +2223,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         end_user_map: dict = {}
         attr_result_data: list = []
         if session_ids_page:
+
             def _fetch_attrs():
                 try:
                     aq, ap = builder.build_span_attributes_query(session_ids_page)
@@ -2224,7 +2231,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         ar = analytics.execute_ch_query(aq, ap, timeout_ms=5000)
                         return ar.data
                 except Exception as exc:
-                    logger.warning("session_enrichment_attrs_failed", error=str(exc)[:200])
+                    logger.warning(
+                        "session_enrichment_attrs_failed", error=str(exc)[:200]
+                    )
                 return []
 
             # Submit the slow attrs query to a background thread (uses only
@@ -2239,13 +2248,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         session_ids_page, _curated_project_ids
                     )
                 except Exception as exc:
-                    logger.warning("session_enrichment_names_failed", error=str(exc)[:200])
+                    logger.warning(
+                        "session_enrichment_names_failed", error=str(exc)[:200]
+                    )
                 try:
                     end_user_map = self._fetch_end_user_info(
                         session_ids_page, analytics, _curated_project_ids
                     )
                 except Exception as exc:
-                    logger.warning("session_enrichment_end_user_failed", error=str(exc)[:200])
+                    logger.warning(
+                        "session_enrichment_end_user_failed", error=str(exc)[:200]
+                    )
                 attr_result_data = f_attrs.result()
 
             for entry in formatted:

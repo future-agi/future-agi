@@ -3,6 +3,7 @@ import uuid
 
 from django.db import transaction
 from django.db.models import Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 from rest_framework.fields import empty
 
@@ -33,7 +34,19 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
     resolve_source_preview,
 )
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
+
+_ROLE_LIST_SCHEMA = serializers.ListField(child=serializers.CharField())
+_COUNT_SCHEMA = serializers.IntegerField()
+
+
+class QueueItemAssignedUserSerializer(serializers.Serializer):
+    """One entry of ``QueueItemSerializer.assigned_users``."""
+
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True)
+    email = serializers.EmailField(allow_null=True)
 
 
 class QueueLabelNestedSerializer(serializers.ModelSerializer):
@@ -60,6 +73,7 @@ class QueueAnnotatorNestedSerializer(serializers.ModelSerializer):
         fields = ["id", "user_id", "name", "email", "role", "roles"]
         read_only_fields = ["id"]
 
+    @swagger_serializer_method(serializer_or_field=_ROLE_LIST_SCHEMA)
     def get_roles(self, obj):
         return obj.normalized_roles
 
@@ -98,7 +112,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     item_count = serializers.IntegerField(read_only=True, required=False)
     completed_count = serializers.IntegerField(read_only=True, required=False)
     created_by_name = serializers.CharField(
-        source="created_by.name", read_only=True, default=None
+        source="created_by.name", read_only=True, default=None, allow_null=True
     )
     viewer_roles = serializers.SerializerMethodField()
     viewer_role = serializers.SerializerMethodField()
@@ -307,6 +321,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             .first()
         )
 
+    @swagger_serializer_method(serializer_or_field=_ROLE_LIST_SCHEMA)
     def get_viewer_roles(self, obj):
         request = self.context.get("request")
         user = getattr(request, "user", None)
@@ -318,6 +333,9 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             membership=self._viewer_membership(obj, user),
         )
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_viewer_role(self, obj):
         roles = self.get_viewer_roles(obj)
         return primary_annotator_role(roles) if roles else None
@@ -448,7 +466,12 @@ class QueueItemListSerializer(serializers.ListSerializer):
 
     def to_representation(self, data):
         items = list(data)
-        self.context["ch_source_cache"] = CollectorSourceCache.for_items(items)
+        # Only items WITHOUT a captured preview need the CH read. Once a page is
+        # fully captured this collapses to zero reads, which is the whole point of
+        # QueueItem.source_preview (TH-7211) — building the cache unconditionally
+        # would keep paying the ``spans FINAL`` merge the capture exists to avoid.
+        uncaptured = [item for item in items if not item.source_preview]
+        self.context["ch_source_cache"] = CollectorSourceCache.for_items(uncaptured)
         return super().to_representation(items)
 
 
@@ -458,14 +481,14 @@ class QueueItemSerializer(serializers.ModelSerializer):
     workflow_status = serializers.SerializerMethodField()
     workflow_status_label = serializers.SerializerMethodField()
     assigned_to_name = serializers.CharField(
-        source="assigned_to.name", read_only=True, default=None
+        source="assigned_to.name", read_only=True, default=None, allow_null=True
     )
     assigned_users = serializers.SerializerMethodField()
     reserved_by_name = serializers.CharField(
-        source="reserved_by.name", read_only=True, default=None
+        source="reserved_by.name", read_only=True, default=None, allow_null=True
     )
     reviewed_by_name = serializers.CharField(
-        source="reviewed_by.name", read_only=True, default=None
+        source="reviewed_by.name", read_only=True, default=None, allow_null=True
     )
     comment_count = serializers.SerializerMethodField()
     open_feedback_count = serializers.SerializerMethodField()
@@ -502,6 +525,9 @@ class QueueItemSerializer(serializers.ModelSerializer):
         read_only_fields = ["queue"]
         list_serializer_class = QueueItemListSerializer
 
+    @swagger_serializer_method(
+        serializer_or_field=QueueItemAssignedUserSerializer(many=True)
+    )
     def get_assigned_users(self, obj):
         assignments = getattr(obj, "active_assignments", None)
         if assignments is None:
@@ -515,22 +541,32 @@ class QueueItemSerializer(serializers.ModelSerializer):
             for a in assignments
         ]
 
+    # Open-shaped by design: the keys differ per source_type (a dataset_row
+    # preview carries dataset_id/row_order, a span preview carries span_name
+    # etc.), so there is no one object shape to declare.
+    @swagger_serializer_method(serializer_or_field=JsonValueField())
     def get_source_preview(self, obj):
+        # Captured at add time for CH-backed sources, so rendering a page costs no
+        # ``spans FINAL`` merge (TH-7211). NULL means "not captured" — a row added
+        # before this existed, or a Postgres-backed source that was always cheap —
+        # and falls back to the live read, same shape either way.
+        if obj.source_preview:
+            return obj.source_preview
         return resolve_source_preview(obj, ch_cache=self.context.get("ch_source_cache"))
 
     def get_workflow_status(self, obj):
-        if (
-            obj.review_status == "pending_review"
-            and QueueItemReviewThread.objects.filter(
-                queue_item=obj,
-                blocking=True,
-                status=QueueItemReviewThread.STATUS_ADDRESSED,
-                deleted=False,
-            ).exists()
-        ):
-            return "resubmitted"
         if obj.review_status == "pending_review":
-            return "in_review"
+            # Annotated by QueueItemViewSet.get_queryset; the query is the fallback
+            # for callers that serialize an item they fetched themselves.
+            has_addressed = getattr(obj, "_has_addressed_review", None)
+            if has_addressed is None:
+                has_addressed = QueueItemReviewThread.objects.filter(
+                    queue_item=obj,
+                    blocking=True,
+                    status=QueueItemReviewThread.STATUS_ADDRESSED,
+                    deleted=False,
+                ).exists()
+            return "resubmitted" if has_addressed else "in_review"
         if obj.review_status == "rejected":
             return "needs_changes"
         return obj.status
@@ -547,14 +583,24 @@ class QueueItemSerializer(serializers.ModelSerializer):
             "skipped": "Skipped",
         }.get(status, status)
 
+    @swagger_serializer_method(serializer_or_field=_COUNT_SCHEMA)
     def get_comment_count(self, obj):
+        # Annotated by QueueItemViewSet.get_queryset; the query is the fallback
+        # for callers that serialize an item they fetched themselves.
+        annotated = getattr(obj, "annotated_comment_count", None)
+        if annotated is not None:
+            return annotated
         return QueueItemReviewComment.objects.filter(
             queue_item=obj,
             action=QueueItemReviewComment.ACTION_COMMENT,
             deleted=False,
         ).count()
 
+    @swagger_serializer_method(serializer_or_field=_COUNT_SCHEMA)
     def get_open_feedback_count(self, obj):
+        annotated = getattr(obj, "annotated_open_feedback_count", None)
+        if annotated is not None:
+            return annotated
         return QueueItemReviewThread.objects.filter(
             queue_item=obj,
             blocking=True,
@@ -582,7 +628,6 @@ class QueueItemSerializer(serializers.ModelSerializer):
                     source_id,
                     organization=organization,
                     workspace=workspace,
-                    allow_ch_fallback=True,
                 )
                 if source_obj:
                     # Store the soft id, not the FK object: a CH-resolved source
@@ -682,6 +727,10 @@ class AddItemsSerializer(StrictInputSerializer):
         required=False,
     )
     selection = SelectionSerializer(required=False)
+    # The project the enumerated items belong to (the add dialog is project-scoped, like
+    # filter mode). Lets the server scope the source-resolution reads to one tenant on
+    # the ClickHouse PK prefix; optional so existing clients keep working.
+    project_id = serializers.UUIDField(required=False)
 
     def validate_items(self, value):
         if not value:
@@ -752,7 +801,9 @@ class QueueDefaultRequestSerializer(StrictInputSerializer):
 
 class QueueLabelRequestSerializer(StrictInputSerializer):
     label_id = serializers.UUIDField()
-    required = serializers.BooleanField(required=False, default=True)
+    # Default off: adding a label makes it available to annotate with, not
+    # required. Required labels are a gated feature the caller opts into.
+    required = serializers.BooleanField(required=False, default=False)
 
 
 class QueueExportColumnMappingSerializer(StrictInputSerializer):
@@ -1784,6 +1835,12 @@ class AnnotateDetailSerializer(serializers.Serializer):
         labels = instance["labels"]
         annotations = instance["annotations"]
         progress = instance["progress"]
+        # Same page cache the view built, under the key ``get_source_preview``
+        # already uses. content and preview resolve the SAME tracer source, so
+        # without it they each did their own CH point-read (TH-7104).
+        ch_cache = self.context.get("ch_source_cache")
+        if ch_cache is None:
+            ch_cache = CollectorSourceCache.for_items([item])
 
         return {
             "item": {
@@ -1821,8 +1878,8 @@ class AnnotateDetailSerializer(serializers.Serializer):
                         "user"
                     )
                 ],
-                "source_content": resolve_source_content(item),
-                "source_preview": resolve_source_preview(item),
+                "source_content": resolve_source_content(item, ch_cache=ch_cache),
+                "source_preview": resolve_source_preview(item, ch_cache=ch_cache),
                 "review_notes": item.review_notes,
                 "reviewed_by_name": (
                     item.reviewed_by.name if item.reviewed_by else None

@@ -2,6 +2,7 @@ import CustomTraceRenderer from "./CustomRenderers/CustomTraceRenderer";
 import { getRandomId } from "src/utils/utils";
 import { avoidDuplicateFilterSet } from "../../ComplexFilter/common";
 import { AnnotationLabelTypes } from "src/utils/constants";
+import { SpanTypes } from "src/utils/constant";
 import {
   getAnnotationMetricFilterDefinition,
   getAttributesDefinition,
@@ -60,15 +61,7 @@ export const generateTraceFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
     {
@@ -141,15 +134,7 @@ export const generateSpanFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
   ];

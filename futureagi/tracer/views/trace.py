@@ -57,31 +57,33 @@ from tracer.serializers.filters import (
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
+    TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
-    TraceDetailResponseSerializer,
+    TraceObserveListResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
     UserCodeExampleResponseSerializer,
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
 )
+from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.services.clickhouse.v2.query_builders.user_list import (
-    UserListQueryBuilderV2,
+from tracer.services.clickhouse.v2.span_selectors import (
+    flatten_span_attributes_into_entry,
+    merge_content_rows,
 )
 from tracer.services.observability_providers import ObservabilityService
 from tracer.services.users_list_manager import UsersListManager
@@ -90,8 +92,12 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    eval_output_type_for_config,
+    flatten_eval_score_into_entry,
     get_annotation_labels_for_project,
     get_default_trace_config,
+    get_project_eval_configs,
+    select_eval_score,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -104,7 +110,6 @@ ERROR_RESPONSES = {
     400: ApiErrorResponseSerializer,
     500: ApiErrorResponseSerializer,
 }
-
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -561,12 +566,23 @@ def _simulation_context_for_voice_call(
     }
 
 
-def _build_annotation_map_from_scores(trace_ids, annotation_label_ids, label_types):
+def _build_annotation_map_from_scores(
+    trace_ids,
+    annotation_label_ids,
+    label_types,
+    span_trace_map=None,
+    project_id=None,
+    start_date=None,
+    end_date=None,
+):
     """Fetch annotation values from PG Score table and build annotation_map.
 
     Always reads from PG to guarantee read-after-write consistency —
     annotations are written to PG first and CDC replication to ClickHouse
     may lag, causing newly created annotations to be invisible.
+
+    ``project_id``/``start_date``/``end_date`` scope the span->trace CH
+    lookup when this builds the map itself (span_trace_map not supplied).
 
     Returns:
         Dict mapping trace_id -> label_id -> structured annotation data
@@ -574,9 +590,17 @@ def _build_annotation_map_from_scores(trace_ids, annotation_label_ids, label_typ
     """
     if not trace_ids or not annotation_label_ids:
         return {}
+    if span_trace_map is None:
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
+        span_trace_map = AnalyticsQueryService().get_span_trace_map(
+            trace_ids,
+            project_id=project_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
     return _build_annotation_map_from_scores_pg(
-        trace_ids, annotation_label_ids, label_types
+        trace_ids, annotation_label_ids, label_types, span_trace_map
     )
 
 
@@ -752,7 +776,9 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
     return annotation_map
 
 
-def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_types):
+def _build_annotation_map_from_scores_pg(
+    trace_ids, annotation_label_ids, label_types, span_trace_map=None
+):
     """PG fallback implementation of annotation map builder.
 
     Per-queue scoring means a single (trace, label, annotator) can now
@@ -765,24 +791,21 @@ def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_
     """
     from django.db.models import Q
 
+    span_trace_map = span_trace_map or {}
+    span_ids = list(span_trace_map.keys())
     annotation_map = {}
-    # Query scores linked directly to trace OR via observation_span → trace
+    # Trace- or span-linked scores by column id (no dropped-table JOIN).
     scores = Score.objects.filter(
-        Q(trace_id__in=trace_ids) | Q(observation_span__trace_id__in=trace_ids),
+        Q(trace_id__in=trace_ids) | Q(observation_span_id__in=span_ids),
         label_id__in=annotation_label_ids,
         deleted=False,
-    ).select_related("annotator", "observation_span")
+    ).select_related("annotator")
 
     for s in scores:
-        # Resolve trace_id — either directly set or via observation_span FK
         tid = (
             str(s.trace_id)
             if s.trace_id
-            else (
-                str(s.observation_span.trace_id)
-                if s.observation_span and s.observation_span.trace_id
-                else None
-            )
+            else span_trace_map.get(str(s.observation_span_id))
         )
         if not tid or tid == "None":
             continue
@@ -997,15 +1020,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 break
 
         agent_talk_percentage = None
+        bot_talk_pct = None
+        user_talk_pct = None
         if talk_ratio is not None:
             denominator = talk_ratio + 1
             if denominator > 0:
-                agent_talk_percentage = round((talk_ratio / denominator) * 100, 2)
+                raw_bot_pct = (talk_ratio / denominator) * 100
+                agent_talk_percentage = round(raw_bot_pct, 2)
+                # Integer split rendered by the FE (no client-side rounding).
+                bot_talk_pct = round(raw_bot_pct)
+                user_talk_pct = 100 - bot_talk_pct
 
         return {
             "turn_count": turn_count,
             "talk_ratio": talk_ratio,
             "agent_talk_percentage": agent_talk_percentage,
+            "bot_talk_pct": bot_talk_pct,
+            "user_talk_pct": user_talk_pct,
         }
 
     def get_queryset(self):
@@ -1080,6 +1111,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "evaluation_data",
             "error_message",
             "observation_span",
+            "call_logs",
+            "raw_log",
         }
     )
 
@@ -1214,11 +1247,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "turn_count": voice_metrics.get("turn_count"),
                 "talk_ratio": voice_metrics.get("talk_ratio"),
                 "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-                "avg_agent_latency_ms": attr("avg_agent_latency_ms"),
-                "user_wpm": attr(CallAttributes.USER_WPM),
-                "bot_wpm": attr(CallAttributes.BOT_WPM),
-                "user_interruption_count": attr("user_interruption_count"),
-                "ai_interruption_count": attr("ai_interruption_count"),
+                "bot_talk_pct": voice_metrics.get("bot_talk_pct"),
+                "user_talk_pct": voice_metrics.get("user_talk_pct"),
+                "avg_agent_latency_ms": self._round_metric(
+                    attr("avg_agent_latency_ms")
+                ),
+                "user_wpm": self._round_metric(attr(CallAttributes.USER_WPM)),
+                "bot_wpm": self._round_metric(attr(CallAttributes.BOT_WPM)),
+                "user_interruption_count": self._round_metric(
+                    attr("user_interruption_count")
+                ),
+                "ai_interruption_count": self._round_metric(
+                    attr("ai_interruption_count")
+                ),
             }
             if stored_duration is not None:
                 result["duration_seconds"] = stored_duration
@@ -1567,8 +1608,28 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # CH-only path. Legacy PG fallback removed: EvalLogger lives in
             # CH now and the PG `tracer_evallogger` table is destined for
             # deletion. If CH errors, propagate so the operator sees it.
-            eval_config_ids = analytics.get_eval_config_ids_with_data_ch(
-                str(project_id)
+            #
+            # Resolve this project's configs from PG (project FK), then ask CH
+            # which have EVER produced eval data via the candidate-id fast path.
+            # window_days=None on purpose: the eval-name/metric picker must not
+            # depend on 30-day recency — a historically-run eval must stay
+            # listable. The custom_eval_config_id IN (…) scope hits the eval
+            # table's leading sort key, so unbounded-in-time stays memory-safe
+            # (no OOM) unlike the old trace-join discovery.
+            project_config_ids = [
+                str(cid)
+                for cid in CustomEvalConfig.objects.filter(
+                    project_id=project_id, deleted=False
+                ).values_list("id", flat=True)
+            ]
+            eval_config_ids = (
+                analytics.get_eval_config_ids_with_data_ch(
+                    str(project_id),
+                    candidate_config_ids=project_config_ids,
+                    window_days=None,
+                )
+                if project_config_ids
+                else []
             )
 
             # Config lookup always from PG (small config table)
@@ -1963,7 +2024,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = metric["custom_eval_config__name"] + " - " + choice
+                                ] = (
+                                    metric["custom_eval_config__name"] + " - " + choice
+                                )
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -2327,7 +2390,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the trace id by index {str(e)}"
             )
 
-    @validated_request(query_serializer=TraceObserveListQuerySerializer)
+    @validated_request(
+        query_serializer=TraceObserveListQuerySerializer,
+        responses={200: TraceObserveListResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"])
     def list_traces_of_session(self, request, *args, **kwargs):
         """
@@ -2527,7 +2593,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             project_id = proj_result.data[0]["project_id"]
             if not Project.objects.filter(
                 id=project_id,
-                organization_id=request.user.organization_id,
+                organization=_get_request_organization(request),
             ).exists():
                 return self._gm.not_found("trace_id not found")
 
@@ -2569,13 +2635,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             attrs_number,
             attrs_bool,
             toJSONString(metadata) AS metadata_json
-        FROM spans
+        FROM spans FINAL
         WHERE project_id = toUUID(%(project_id)s)
           AND trace_id = %(trace_id)s
-          AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND observation_type = 'conversation'
         LIMIT 1
+        SETTINGS use_skip_indexes_if_final = 1
         """
         root_result = analytics.execute_ch_query(
             root_query,
@@ -2636,7 +2702,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
                 )
         simulation_context = _simulation_context_for_voice_call(
-            organization_id=request.user.organization_id,
+            organization_id=getattr(_get_request_organization(request), "id", None),
             span_attributes=span_attrs,
             eval_attributes=eval_attrs,
             raw_log=raw_log,
@@ -2675,13 +2741,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             toJSONString(metadata) AS metadata_json,
             status_message,
             tags
-        FROM spans
+        FROM spans FINAL
         WHERE project_id = toUUID(%(project_id)s)
           AND trace_id = %(trace_id)s
-          AND is_deleted = 0
           AND parent_span_id IS NOT NULL
         ORDER BY start_time ASC
         LIMIT 1 BY id
+        SETTINGS use_skip_indexes_if_final = 1
         """
         child_result = analytics.execute_ch_query(
             child_query,
@@ -2787,29 +2853,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if not processed_log.get("message_count"):
                     processed_log["message_count"] = len(stored)
 
-        # Fetch ALL non-deleted eval configs for the project so the drawer
-        # renders the same set of evals as the list columns. Missing scores
-        # become placeholder entries with `output=None`.
-        # Eval configs with results for this project's traces. CH25-safe: resolve
-        # via the CH eval table + trace_dict (PG `tracer_trace` is dropped),
-        # mirroring the trace-list path so the drawer shows the same eval set.
-        eval_table, eval_nd = eval_logger_source()
-        cfg_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        cfg_ids = [r.get("cid", "") for r in cfg_result.data if r.get("cid")]
-        if cfg_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=cfg_ids, deleted=False
-            ).select_related("eval_template")
-        else:
-            eval_configs = []
-        eval_config_ids = [str(c.id) for c in eval_configs]
+        # All non-deleted eval configs for the project so the drawer renders
+        # the same set of evals as the list columns; missing scores become
+        # placeholder entries with `output=None`. Read from PG (indexed) —
+        # replaces the unbounded CH dictGet discovery scan.
+        eval_configs, eval_config_ids = get_project_eval_configs(project_id)
 
         eval_outputs = {}
         trace_evals: dict[str, Any] = {}
@@ -2921,16 +2969,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
             "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-            "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms")
-            or attrs_num.get("avg_agent_latency_ms"),
-            "user_wpm": span_attrs.get(CallAttributes.USER_WPM)
-            or attrs_num.get(CallAttributes.USER_WPM),
-            "bot_wpm": span_attrs.get(CallAttributes.BOT_WPM)
-            or attrs_num.get(CallAttributes.BOT_WPM),
-            "user_interruption_count": span_attrs.get("user_interruption_count")
-            or attrs_num.get("user_interruption_count"),
-            "ai_interruption_count": span_attrs.get("ai_interruption_count")
-            or attrs_num.get("ai_interruption_count"),
+            "bot_talk_pct": voice_metrics.get("bot_talk_pct"),
+            "user_talk_pct": voice_metrics.get("user_talk_pct"),
+            "avg_agent_latency_ms": self._round_metric(
+                span_attrs.get("avg_agent_latency_ms")
+            ),
+            "user_wpm": self._round_metric(span_attrs.get(CallAttributes.USER_WPM)),
+            "bot_wpm": self._round_metric(span_attrs.get(CallAttributes.BOT_WPM)),
+            "user_interruption_count": self._round_metric(
+                span_attrs.get("user_interruption_count")
+            ),
+            "ai_interruption_count": self._round_metric(
+                span_attrs.get("ai_interruption_count")
+            ),
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
@@ -3422,24 +3473,39 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_table, eval_nd = eval_logger_source()
-            ch_result = analytics.execute_ch_query(
-                "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-                f"FROM {eval_table} FINAL "
-                f"WHERE {eval_nd} "
-                "AND dictGet('trace_dict', 'project_id', "
-                "trace_id) = toUUID(%(pid)s)",
-                {"pid": str(project_id)},
-                timeout_ms=30000,
-            )
-            ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-            if ch_ids:
-                eval_configs = CustomEvalConfig.objects.filter(
-                    id__in=ch_ids, deleted=False
+            # PERF: resolve this project's configs from PG first (indexed by
+            # the project FK), then ask CH which of them have recent data via
+            # a ``custom_eval_config_id IN (…)`` scope — the eval table's
+            # leading sort key, so CH prunes to just those configs. The old
+            # inline query ran ``FINAL`` over the ENTIRE eval table plus a
+            # per-row ``dictGet('trace_dict', 'project_id', …)`` call — a
+            # full-table merge + dictionary lookup per eval row that
+            # OOM-crashed the server at tens of millions of eval rows. See
+            # AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+            project_configs = list(
+                CustomEvalConfig.objects.filter(
+                    project_id=project_id, deleted=False
                 ).select_related("eval_template")
-                eval_config_ids = [str(c.id) for c in eval_configs]
-            else:
-                eval_configs = []
+            )
+            candidate_ids = [str(c.id) for c in project_configs]
+            # Discover eval columns over the requested window (cover
+            # [start, now]), not a fixed 30 days — so configs with data anywhere
+            # in the viewed range keep their columns. Bounded by candidate ids.
+            window_days = BuilderCls.window_days_covering(filters)
+            ids_with_data = (
+                set(
+                    analytics.get_eval_config_ids_with_data_ch(
+                        str(project_id),
+                        timeout_ms=30000,
+                        candidate_config_ids=candidate_ids,
+                        window_days=window_days,
+                    )
+                )
+                if candidate_ids
+                else set()
+            )
+            eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+            eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Annotation labels — skip in org-scoped mode (deferred enhancement)
         if org_scope:
@@ -3462,7 +3528,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Paginated traces (light columns only — no input/output)
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
+
+        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY trace_id` (its
+        # O(roots-in-window) full sort OOM-crashed CH — see
+        # TraceListQueryBuilder.build) and instead fetched the sorted prefix
+        # [0, offset + 2*page_size). De-dup the prefix by trace id and slice
+        # the page — every page is a disjoint slice of the same globally
+        # de-duplicated stream, so a trace (even a multi-root one whose roots
+        # sort pages apart) can never appear on two pages and none is
+        # skipped. See page_dedup.py.
+        result.data, _has_more = paginate_deduped(
+            result.data, "trace_id", page_number, page_size
+        )
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -3473,24 +3550,43 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 1b: Fetch heavy columns (input/output/attrs) for the page
         trace_ids = [str(row.get("trace_id", "")) for row in result.data]
-        content_map = {}
+        content_rows = []
         if trace_ids:
             content_query, content_params = builder.build_content_query(trace_ids)
             if content_query:
                 content_result = analytics.execute_ch_query(
                     content_query, content_params, timeout_ms=10000
                 )
-                for crow in content_result.data:
-                    content_map[str(crow.get("trace_id", ""))] = crow
+                content_rows = content_result.data
+                # Every in-window trace has a root span, so a shortfall means
+                # spans fell outside the 1-day window buffer (a trace running
+                # longer than the buffer, clock skew, or backfilled
+                # timestamps) and enrichment silently dropped them.
+                if len(content_rows) < len(trace_ids):
+                    logger.warning(
+                        "trace content enrichment returned fewer traces than requested",
+                        returned=len(content_rows),
+                        requested=len(trace_ids),
+                        project_id=str(project_id) if project_id else None,
+                    )
+        content_map = merge_content_rows(
+            result.data,
+            content_rows,
+            id_key="trace_id",
+            keys=(
+                "input",
+                "output",
+                "attrs_string",
+                "attrs_number",
+                "attrs_bool",
+                "attributes_extra",
+                "trace_tags",
+            ),
+        )
 
-        # Merge content into Phase 1 results
+        # metadata needs JSON-parsing from the raw CH column
         for row in result.data:
-            tid = str(row.get("trace_id", ""))
-            content = content_map.get(tid, {})
-            row["input"] = content.get("input", "")
-            row["output"] = content.get("output", "")
-            row["attrs_string"] = content.get("attrs_string", {})
-            row["attrs_number"] = content.get("attrs_number", {})
+            content = content_map.get(str(row.get("trace_id", "")), {})
             raw_meta = content.get("metadata", "{}")
             if isinstance(raw_meta, str):
                 try:
@@ -3499,7 +3595,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     row["metadata"] = {}
             else:
                 row["metadata"] = raw_meta or {}
-            row["trace_tags"] = content.get("trace_tags", [])
 
         user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
@@ -3516,9 +3611,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     list(eval_result.data[0].keys()) if eval_result.data else [],
                 )
 
-        # Phase 3: Annotations — fetch from PG Score (unified annotation system)
+        # Phase 3: Annotations — PG values, span->trace resolved via CH.
+        # In org-scoped mode the page spans multiple projects, so scope the
+        # map on the window only (a single project_id would drop other
+        # projects' spans).
+        span_trace_map = (
+            analytics.get_span_trace_map(
+                trace_ids,
+                project_id=None if org_scope else str(project_id),
+                start_date=builder.params.get("start_date"),
+                end_date=builder.params.get("end_date"),
+            )
+            if trace_ids and annotation_label_ids
+            else {}
+        )
         annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
+            trace_ids, annotation_label_ids, label_types, span_trace_map
         )
 
         # Phase 4: Aggregated span attributes for custom columns
@@ -3634,24 +3742,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
-                scores = trace_evals[config_id]
-                # CHOICES eval: spread per-choice percentages into
-                # separate columns keyed ``{config_id}**{choice}``.
-                if isinstance(scores, dict) and scores.get("per_choice"):
-                    for choice, pct in scores["per_choice"].items():
-                        entry[f"{config_id}**{choice}"] = pct
-                elif isinstance(scores, dict) and "avg_score" in scores:
-                    # Prefer ``avg_score`` when it's present. A plain
-                    # ``avg_score or pass_rate`` drops a legitimate 0.0
-                    # (Fail) because ``0.0`` is falsy — use an explicit
-                    # ``None`` check so Fail doesn't silently fall
-                    # through to ``pass_rate``.
-                    avg_val = scores.get("avg_score")
-                    entry[config_id] = (
-                        avg_val if avg_val is not None else scores.get("pass_rate")
-                    )
-                else:
-                    entry[config_id] = scores
+                flatten_eval_score_into_entry(
+                    entry,
+                    config_id,
+                    trace_evals[config_id],
+                    eval_output_type_for_config(config),
+                )
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})
@@ -3659,6 +3755,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 label_id = str(label.id)
                 if label_id in trace_annotations:
                     entry[label_id] = trace_annotations[label_id]
+
+            # Root-span attributes for custom columns (typed maps + attributes_extra)
+            flatten_span_attributes_into_entry(entry, row)
 
             # Include metadata for custom columns
             metadata = row.get("metadata") or {}
@@ -3711,26 +3810,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         page_size = validated_data.get("page_size", 30)
         page_number = page - 1  # Convert 1-based to 0-based
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
+        # Eval configs for the project, from PG (indexed) — replaces the
+        # unbounded CH dictGet discovery scan.
+        eval_configs, eval_config_ids = get_project_eval_configs(project_id)
 
         # Get annotation labels that have actual annotations/scores for this project
         annotation_labels = get_annotation_labels_for_project(project_id)
@@ -3763,10 +3845,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         #      typed-Map classifier.
         #   2. `attrs_string` / `attrs_number` / `attrs_bool` Maps — the
         #      common-case typed attributes (gen_ai.* keys for LLM spans).
-        # We SELECT all three and reconstruct the flat dict on the Python
-        # side, matching the pattern used by the trace-tree fetch above
-        # (~line 1195). `FINAL` collapses ReplacingMergeTree duplicates;
-        # the `idx_id` bloom filter keeps the PREWHERE scan cheap.
+        # We SELECT all three and reconstruct the flat dict on the Python side,
+        # matching the pattern used by the trace-tree fetch above (~line 1195).
+        # Dedup via `FINAL` + `use_skip_indexes_if_final = 1` (the CHSpanReader
+        # idiom): bare `FINAL` without the setting disables the `idx_id` skip
+        # index and full-scans the table; with it the skip index prunes. NB: no
+        # `is_deleted = 0` predicate — the two-arg ReplacingMergeTree(_version,
+        # is_deleted) engine already drops tombstones under FINAL, and pairing
+        # that predicate with the setting arms a resurrection bug (the is_deleted
+        # minmax index prunes tombstone granules before the merge). See
+        # `_FINAL_SKIP_INDEX_SETTINGS` in services/clickhouse/v2/span_reader.py.
+        # The ~900 KB `call_logs` blob lands in `attrs_string` (collector path,
+        # a JSON string) or in `attributes_extra` (backfill path, a list in the
+        # JSON overflow) — strip it from both at read so it's never transferred.
+        # `raw_log` / `metrics_data` stay (still read downstream).
         page_rows = result.data[:page_size]
         span_ids = [
             str(row.get("span_id", "")) for row in page_rows if row.get("span_id")
@@ -3775,12 +3867,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         if span_ids:
             attrs_result = analytics.execute_ch_query(
                 "SELECT id, provider, "
-                "attributes_extra AS span_attributes, "
-                "attrs_string, attrs_number, attrs_bool "
+                "concat('{', arrayStringConcat(arrayMap("
+                "kv -> concat('\"', kv.1, '\":', kv.2), "
+                "arrayFilter(kv -> kv.1 != 'call_logs', "
+                "JSONExtractKeysAndValuesRaw(attributes_extra))), ','), '}') "
+                "AS span_attributes, "
+                "mapFilter((k, v) -> k != 'call_logs', attrs_string) AS attrs_string, "
+                "attrs_number, attrs_bool "
                 "FROM spans FINAL "
-                "PREWHERE id IN %(span_ids)s "
-                "WHERE is_deleted = 0",
-                {"span_ids": tuple(span_ids)},
+                "PREWHERE id IN %(span_ids)s AND project_id = %(project_id)s "
+                "SETTINGS use_skip_indexes_if_final = 1",
+                {"span_ids": tuple(span_ids), "project_id": str(project_id)},
                 timeout_ms=10000,
             )
             for arow in attrs_result.data:
@@ -3829,7 +3926,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
         annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
+            trace_ids,
+            annotation_label_ids,
+            label_types,
+            project_id=str(project_id),
+            start_date=builder.params.get("start_date"),
+            end_date=builder.params.get("end_date"),
         )
 
         # Phase 4 (child spans) removed — observation_span is a detail-only field.
@@ -3895,11 +3997,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "turn_count": voice_metrics.get("turn_count"),
                 "talk_ratio": voice_metrics.get("talk_ratio"),
                 "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-                "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms"),
-                "user_wpm": span_attrs.get("call.user_wpm"),
-                "bot_wpm": span_attrs.get("call.bot_wpm"),
-                "user_interruption_count": span_attrs.get("user_interruption_count"),
-                "ai_interruption_count": span_attrs.get("ai_interruption_count"),
+                "bot_talk_pct": voice_metrics.get("bot_talk_pct"),
+                "user_talk_pct": voice_metrics.get("user_talk_pct"),
+                "avg_agent_latency_ms": self._round_metric(
+                    span_attrs.get("avg_agent_latency_ms")
+                ),
+                "user_wpm": self._round_metric(span_attrs.get("call.user_wpm")),
+                "bot_wpm": self._round_metric(span_attrs.get("call.bot_wpm")),
+                "user_interruption_count": self._round_metric(
+                    span_attrs.get("user_interruption_count")
+                ),
+                "ai_interruption_count": self._round_metric(
+                    span_attrs.get("ai_interruption_count")
+                ),
             }
             # Only override with voice_metrics if they have values —
             # otherwise keep the ones computed by process_raw_logs.
@@ -3909,6 +4019,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 entry["talk_ratio"] = voice_metrics["talk_ratio"]
             if voice_metrics.get("agent_talk_percentage") is not None:
                 entry["agent_talk_percentage"] = voice_metrics["agent_talk_percentage"]
+            if voice_metrics.get("bot_talk_pct") is not None:
+                entry["bot_talk_pct"] = voice_metrics["bot_talk_pct"]
+                entry["user_talk_pct"] = voice_metrics["user_talk_pct"]
             # Backfill response_time_ms from avg_agent_latency if VAPI didn't set it
             if not entry.get("response_time_ms") and entry.get("avg_agent_latency_ms"):
                 entry["response_time_ms"] = entry["avg_agent_latency_ms"]
@@ -3931,9 +4044,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 else []
             )
 
-            # Include span attributes for custom columns (skip heavy/nested values)
+            # Include span attributes for custom columns (skip heavy/nested values).
+            # provider_transcript / fi.conversation.transcript / metrics_data are
+            # detail-only transcript payloads — never in a list row.
             for key, value in span_attrs.items():
-                if key in ("raw_log", "call") or key in entry:
+                if key in (
+                    "raw_log",
+                    "call",
+                    "call_logs",
+                    "provider_transcript",
+                    "fi.conversation.transcript",
+                    "metrics_data",
+                ) or key in entry:
                     continue
                 if isinstance(value, (str, int, float, bool)):
                     entry[key] = value
@@ -3985,27 +4107,36 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             elif "str_list" in scores and scores["str_list"]:
                                 metric_entry["output"] = scores["str_list"]
                                 metric_entry["output_type"] = "str_list"
-                            elif "avg_score" in scores:
-                                score_val = scores.get("avg_score") or scores.get(
-                                    "pass_rate"
+                            elif "avg_score" in scores or "pass_rate" in scores:
+                                # PASS_FAIL → pass_rate, else → avg_score. Both
+                                # come pre-scaled (×100) from pivot_eval_results;
+                                # keep 0.0 (check is-not-None, not truthiness).
+                                score_val = select_eval_score(scores, output_type)
+                                metric_entry["output"] = (
+                                    round(score_val, 2)
+                                    if isinstance(score_val, (int, float))
+                                    else score_val
                                 )
-                                if output_type == "Pass/Fail":
-                                    metric_entry["output"] = (
-                                        "Pass"
-                                        if score_val and score_val > 0
-                                        else "Fail"
-                                    )
-                                else:
-                                    metric_entry["output"] = (
-                                        round(score_val, 2)
-                                        if isinstance(score_val, (int, float))
-                                        else score_val
-                                    )
                         else:
                             metric_entry["output"] = scores
                         metrics[config_id] = metric_entry
                 if metrics:
                     entry["eval_outputs"] = metrics
+
+                # Flatten eval values onto the row too. CHOICES columns read the
+                # flat key params.data["{config_id}**{choice}"] directly; score /
+                # pass-fail columns read params.data.eval_outputs[dataKey]. Without
+                # this flatten the per-choice columns stay blank in the UI.
+                for eval_config in eval_configs:
+                    cid = str(eval_config.id)
+                    if cid not in trace_evals:
+                        continue
+                    flatten_eval_score_into_entry(
+                        entry,
+                        cid,
+                        trace_evals[cid],
+                        eval_output_type_for_config(eval_config),
+                    )
 
             # Add annotation outputs — flatten onto the row for frontend grid compatibility
             # Frontend valueGetter reads params.data[labelId] directly
@@ -4068,26 +4199,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         project_id = str(project_version.project_id)
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": project_id},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+        # PERF: resolve this project's configs from PG first (indexed by the
+        # project FK), then ask CH which of them have recent data via a
+        # ``custom_eval_config_id IN (…)`` scope — the eval table's leading
+        # sort key. The old inline query ran ``FINAL`` over the ENTIRE eval
+        # table plus a per-row ``dictGet('trace_dict', …)`` — a full-table
+        # merge that OOM-crashed the server at tens of millions of eval rows.
+        # See AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+        project_configs = list(
+            CustomEvalConfig.objects.filter(
+                project_id=project_id, deleted=False
             ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
+        )
+        candidate_ids = [str(c.id) for c in project_configs]
+        # Discover eval columns over the requested window (cover [start, now]),
+        # not a fixed 30 days — so configs with data anywhere in the viewed range
+        # keep their columns. Bounded by candidate ids.
+        window_days = BuilderCls.window_days_covering(filters)
+        ids_with_data = (
+            set(
+                analytics.get_eval_config_ids_with_data_ch(
+                    str(project_id),
+                    timeout_ms=30000,
+                    candidate_config_ids=candidate_ids,
+                    window_days=window_days,
+                )
+            )
+            if candidate_ids
+            else set()
+        )
+        eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+        eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Get annotation labels that have actual annotations for this project
         annotation_labels = get_annotation_labels_for_project(
@@ -4109,7 +4251,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Get paginated traces
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
+
+        # Prefix-dedup pagination (Phase 1 fetches the sorted prefix
+        # [0, offset + 2*page_size); dedup by trace id + slice — see
+        # TraceListQueryBuilder.build and page_dedup.py).
+        result.data, _has_more = paginate_deduped(
+            result.data, "trace_id", page_number, page_size
+        )
+
+        # Phase 1b: heavy columns (input/output + root-span attrs) for the page.
+        # Root-span attrs feed custom columns; without this merge they render "-".
+        page_trace_ids = [str(row.get("trace_id", "")) for row in result.data]
+        if page_trace_ids:
+            content_query, content_params = builder.build_content_query(page_trace_ids)
+            if content_query:
+                content_result = analytics.execute_ch_query(
+                    content_query, content_params, timeout_ms=10000
+                )
+                merge_content_rows(
+                    result.data,
+                    content_result.data,
+                    id_key="trace_id",
+                    keys=(
+                        "input",
+                        "output",
+                        "trace_tags",
+                        "attrs_string",
+                        "attrs_number",
+                        "attrs_bool",
+                        "attributes_extra",
+                    ),
+                )
 
         # Get count
         count_query, count_params = builder.build_count_query()
@@ -4134,7 +4306,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
         annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
+            trace_ids,
+            annotation_label_ids,
+            label_types,
+            project_id=str(project_id),
+            start_date=builder.params.get("start_date"),
+            end_date=builder.params.get("end_date"),
         )
 
         user_id_map = builder.resolve_user_ids(trace_ids, analytics)
@@ -4180,14 +4357,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             trace_evals = eval_map.get(trace_id, {})
             for config in eval_configs:
                 config_id = str(config.id)
-                if config_id in trace_evals:
-                    scores = trace_evals[config_id]
-                    if isinstance(scores, dict) and "avg_score" in scores:
-                        entry[config_id] = scores.get("avg_score") or scores.get(
-                            "pass_rate"
-                        )
-                    else:
-                        entry[config_id] = scores
+                if config_id not in trace_evals:
+                    continue
+                flatten_eval_score_into_entry(
+                    entry,
+                    config_id,
+                    trace_evals[config_id],
+                    eval_output_type_for_config(config),
+                )
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})
@@ -4195,6 +4372,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 label_id = str(label.id)
                 if label_id in trace_annotations:
                     entry[label_id] = trace_annotations[label_id]
+
+            # Root-span attributes for custom columns (typed maps + attributes_extra)
+            flatten_span_attributes_into_entry(entry, row)
 
             table_data.append(entry)
 

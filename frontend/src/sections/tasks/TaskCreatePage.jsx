@@ -5,6 +5,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { useMutation } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { endOfToday, sub } from "date-fns";
+import { inferPresetForLegacy } from "src/sections/projects/legacyPresetInference";
 import { useNavigate } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
@@ -79,13 +80,29 @@ const TaskCreatePage = () => {
     startDate:
       preselectedStartDate || formatDate(sub(new Date(), { months: 12 })),
     endDate: preselectedEndDate || formatDate(endOfToday()),
+    // The default range above is twelve months; a preselected one isn't ours.
+    datePreset: preselectedStartDate || preselectedEndDate ? "Custom" : "12M",
     runType: "historical",
   };
+
+  // A draft without a preset would inherit the 12M default from the spread
+  // below, re-anchoring a hand-picked range. Add Evals still mints such drafts
+  // for any window it can't label, so this is not only a legacy path.
+  const draft =
+    draftValues && !draftValues.datePreset
+      ? {
+          ...draftValues,
+          datePreset: inferPresetForLegacy(
+            draftValues.startDate,
+            draftValues.endDate,
+          ),
+        }
+      : draftValues || {};
 
   const { control, handleSubmit, getValues, setValue, watch } = useForm({
     // Spread saved draft values OVER the defaults so any new fields
     // we add later still get their defaults when an old draft loads.
-    defaultValues: { ...baseDefaults, ...(draftValues || {}) },
+    defaultValues: { ...baseDefaults, ...draft },
     resolver: zodResolver(NewTaskValidationSchema()),
   });
 

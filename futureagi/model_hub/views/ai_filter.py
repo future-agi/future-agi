@@ -15,7 +15,7 @@ Three modes:
   - select_fields: returns just the relevant field ids for the query.
     Used as step 1 of frontend-orchestrated multi-step flows.
   - smart: agentic. Caller passes schema + project_id + source. Backend
-    runs a Haiku tool-use loop where the LLM autonomously calls
+    runs a Gemini tool-use loop where the LLM autonomously calls
     `get_field_values(field_id)` for the fields it needs to ground its
     answer, then submits the final filter via `submit_filter`. One HTTP
     round trip — LLM does the orchestration. Used by the trace filter.
@@ -680,10 +680,10 @@ def _run_smart_agent(query, schema, fetch_values):
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
 
-    haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
+    cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
     llm = LLM(
-        provider=haiku_cfg.provider,
-        model_name=haiku_cfg.model_name,
+        provider=cfg.provider,
+        model_name=cfg.model_name,
         temperature=0.0,
         max_tokens=800,
     )
@@ -1089,14 +1089,14 @@ class AIFilterView(APIView):
             )
 
             # Route through the in-house LLM wrapper (Agentcc gateway with
-            # litellm fallback) so we don't talk to Bedrock directly.
+            # litellm fallback).
             from agentic_eval.core.llm.llm import LLM
             from agentic_eval.core.utils.model_config import ModelConfigs
 
-            haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
+            cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
             llm = LLM(
-                provider=haiku_cfg.provider,
-                model_name=haiku_cfg.model_name,
+                provider=cfg.provider,
+                model_name=cfg.model_name,
                 temperature=0.0,
                 max_tokens=500,
             )

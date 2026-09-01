@@ -7,7 +7,7 @@ import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRendere
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
 
-const EvaluationCell = ({ value, column }) => {
+const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   const shouldReverse = column?.reverseOutput;
 
   // No eval value (missing / not yet evaluated) — render dash so callers
@@ -57,8 +57,12 @@ const EvaluationCell = ({ value, column }) => {
     return <NumericCell value={value} sx={{ padding: "0 12px" }} />;
   }
 
-  // Pass/Fail type
-  if (column?.outputType === "Pass/Fail") {
+  // Pass/Fail columns: a single span is always 0 or 100, so span-level cells
+  // render a binary "Pass"/"Fail" label. Aggregated trace/voice cells carry the
+  // averaged pass rate (a trace with 2 of 3 spans passing arrives as 66.67), so
+  // they fall through to the numeric-percentage path below ("66.67%") — a binary
+  // label there would drop the average across the trace's spans.
+  if (isSpanLevel && column?.outputType === "Pass/Fail") {
     if (isMissing) {
       return (
         <div
@@ -187,4 +191,5 @@ export default EvaluationCell;
 EvaluationCell.propTypes = {
   value: PropTypes.any,
   column: PropTypes.object,
+  isSpanLevel: PropTypes.bool,
 };

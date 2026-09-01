@@ -155,6 +155,20 @@ class ApiDetailErrorResponseSerializer(ApiTextErrorResponseSerializer):
     detail = serializers.CharField(required=True, allow_blank=True)
 
 
+# The contracted 413 "a cap was exceeded" codes. Declared on the ``code`` field
+# of the envelope below — the field the flat error actually carries the domain
+# code on — so the FE typed client pattern-matches a schema value, not a literal.
+TOO_LARGE_ERROR_CODES = ("export_too_large", "items_too_large")
+
+
+class ApiTooLargeErrorSerializer(ApiTextErrorResponseSerializer):
+    """413 cap-exceeded envelope with ``code`` narrowed to the contracted set."""
+
+    code = serializers.ChoiceField(
+        choices=TOO_LARGE_ERROR_CODES, required=False, allow_blank=True
+    )
+
+
 class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=("selection_too_large",))
     message = serializers.CharField()
@@ -198,6 +212,25 @@ class DeploymentInfoResultSerializer(serializers.Serializer):
 class DeploymentInfoResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = DeploymentInfoResultSerializer()
+
+
+class SetupCheckSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=("passed", "warning", "failed", "skipped"))
+    required = serializers.BooleanField()
+    detail = serializers.CharField(allow_blank=True)
+
+
+class SetupChecksResultSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("ok", "issues"))
+    mode = serializers.ChoiceField(choices=("live", "experiment"))
+    checks = SetupCheckSerializer(many=True)
+
+
+class SetupChecksResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SetupChecksResultSerializer()
 
 
 class LangfuseHealthResponseSerializer(serializers.Serializer):

@@ -102,6 +102,38 @@ make bench               # benchmark adapter + writer
 
 For OCB (the OTel Collector builder): the Makefile installs it if missing.
 
+## Pricing Configuration
+
+### FI_PRICING_JSON
+
+Optional path to a litellm `model_prices_and_context_window.json` file. When set, the
+collector uses the file at this path to price token-based cost; when empty or unset, the
+collector falls back to an embedded snapshot of the litellm pricing table (current at build time).
+If the file at this path can't be read or parsed, the collector logs an error and falls back to
+the embedded snapshot rather than disabling token-based pricing.
+
+Use this to refresh pricing without rebuilding the collector:
+
+```bash
+# Mount a newer pricing file (e.g., from a ConfigMap or shared volume)
+FI_PRICING_JSON=/etc/fi-collector/model_prices.json ./bin/fi-collector --config config/fi-collector-prod.yaml
+```
+
+Refresh the embedded snapshot by re-vendoring `fi-collector/pkg/pricing/model_prices.json` at build
+time (this is a compile-time `//go:embed`):
+
+```bash
+# Inside the repo
+curl -sSL https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json \
+  -o fi-collector/pkg/pricing/model_prices.json
+make build
+```
+
+**Note:** Token-based cost computation also includes a per-organization fallback (`CustomAIModel`)
+for models not in the litellm table. Custom model pricing is stored in the Django Postgres database
+(scoped by organization); the collector reads it on-demand and caches for 24 hours. When neither
+the litellm table nor custom pricing applies, the span's cost is 0.
+
 ## Operational backpressure model
 
 ```

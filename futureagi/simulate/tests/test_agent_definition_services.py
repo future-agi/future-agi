@@ -14,6 +14,7 @@ from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.agent_definition import (
     is_masked,
     resolve_api_key_for_version,
+    resolve_stored_api_key,
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
@@ -77,7 +78,6 @@ class TestIsMasked:
 
 
 class TestSyncProviderCredentials:
-
     def test_creates_vapi_credentials(self, agent_version):
         sync_provider_credentials(
             agent_version,
@@ -129,6 +129,39 @@ class TestSyncProviderCredentials:
         assert creds.agent_name == "test-agent"
         assert creds.max_concurrency == 10
 
+    def test_creates_vapi_credentials_with_concurrency(self, agent_version):
+        # Concurrency is generic across providers: a vapi target persists the
+        # submitted max_concurrency the same way livekit does (previously the
+        # vapi/retell branches discarded it).
+        sync_provider_credentials(
+            agent_version,
+            ProviderCredentialsInput(
+                provider="vapi",
+                api_key="sk-vapi-key",
+                assistant_id="asst_vapi",
+                livekit_max_concurrency=3,
+                provider_was_provided=True,
+            ),
+        )
+        creds = ProviderCredentials.objects.get(agent_version=agent_version)
+        assert creds.provider_type == ProviderCredentials.ProviderType.VAPI
+        assert creds.max_concurrency == 3
+
+    def test_creates_retell_credentials_with_concurrency(self, agent_version):
+        sync_provider_credentials(
+            agent_version,
+            ProviderCredentialsInput(
+                provider="retell",
+                api_key="sk-retell-key",
+                assistant_id="asst_retell",
+                livekit_max_concurrency=4,
+                provider_was_provided=True,
+            ),
+        )
+        creds = ProviderCredentials.objects.get(agent_version=agent_version)
+        assert creds.provider_type == ProviderCredentials.ProviderType.RETELL
+        assert creds.max_concurrency == 4
+
     def test_updates_existing_credentials(self, agent_version):
         sync_provider_credentials(
             agent_version,
@@ -151,7 +184,9 @@ class TestSyncProviderCredentials:
         creds = ProviderCredentials.objects.get(agent_version=agent_version)
         assert creds.get_api_key() == "updated-key"
         assert creds.assistant_id == "asst_updated"
-        assert ProviderCredentials.objects.filter(agent_version=agent_version).count() == 1
+        assert (
+            ProviderCredentials.objects.filter(agent_version=agent_version).count() == 1
+        )
 
     def test_switches_provider_clears_old_secrets(self, agent_version):
         sync_provider_credentials(
@@ -205,7 +240,9 @@ class TestSyncProviderCredentials:
                 provider_was_provided=False,
             ),
         )
-        assert not ProviderCredentials.objects.filter(agent_version=agent_version).exists()
+        assert not ProviderCredentials.objects.filter(
+            agent_version=agent_version
+        ).exists()
 
     def test_adopts_legacy_credentials(self, agent_version):
         agent = agent_version.agent_definition
@@ -255,3 +292,143 @@ class TestResolveApiKeyForVersion:
             api_key="sk-legacy-fallback-key",
         )
         assert resolve_api_key_for_version(agent_version) == "sk-legacy-fallback-key"
+
+
+# ============================================================================
+# Tests for resolve_stored_api_key()
+# ============================================================================
+
+
+class TestResolveStoredApiKey:
+    def test_returns_none_for_none_org(self):
+        assert resolve_stored_api_key(organization=None) is None
+
+    def test_returns_none_when_agent_not_found(self, organization):
+        assert (
+            resolve_stored_api_key(
+                organization=organization,
+                agent_id="00000000-0000-0000-0000-000000000000",
+            )
+            is None
+        )
+
+    def test_returns_key_when_no_masked_value(self, organization, agent_definition):
+        version = agent_definition.create_version(
+            description="v1",
+            commit_message="v1",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-12345",
+        )
+        key = resolve_stored_api_key(
+            organization=organization, agent_id=str(agent_definition.id)
+        )
+        assert key == "sk-real-key-12345"
+
+    def test_returns_key_when_masked_value_matches(
+        self, organization, agent_definition
+    ):
+        version = agent_definition.create_version(
+            description="v1",
+            commit_message="v1",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-12345",
+        )
+        key = resolve_stored_api_key(
+            organization=organization,
+            agent_id=str(agent_definition.id),
+            masked_value="sk-r...2345",
+        )
+        assert key == "sk-real-key-12345"
+
+    def test_returns_none_when_masked_value_mismatches(
+        self, organization, agent_definition
+    ):
+        version = agent_definition.create_version(
+            description="v1",
+            commit_message="v1",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-12345",
+        )
+        key = resolve_stored_api_key(
+            organization=organization,
+            agent_id=str(agent_definition.id),
+            masked_value="sk-r...9999",
+        )
+        assert key is None
+
+    def test_returns_none_when_no_key_and_masked_value_provided(
+        self, organization, agent_definition
+    ):
+        agent_definition.create_version(
+            description="v1",
+            commit_message="v1",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        key = resolve_stored_api_key(
+            organization=organization,
+            agent_id=str(agent_definition.id),
+            masked_value="sk-r...2345",
+        )
+        assert key is None
+
+
+# ============================================================================
+# Tests for AgentVersionResponseSerializer LiveKit credential surfacing
+# ============================================================================
+
+
+@pytest.mark.integration
+class TestAgentVersionResponseLiveKitCreds:
+    """The edit form reads LiveKit creds from the version-detail snapshot.
+
+    ``create_snapshot`` deliberately omits secrets, so the serializer surfaces
+    display-only masked values without persisting them.
+    """
+
+    def test_livekit_creds_surfaced_masked_in_snapshot(self, agent_version):
+        from simulate.serializers.response.agent_version import (
+            AgentVersionResponseSerializer,
+        )
+
+        sync_provider_credentials(
+            agent_version,
+            ProviderCredentialsInput(
+                provider="livekit",
+                livekit_api_key="APIabcdef123456",
+                livekit_api_secret="lk-secret-value",
+                livekit_url="https://livekit.example.com",
+                livekit_agent_name="test-agent",
+            ),
+        )
+        # The create/edit views re-snapshot after credentials sync so the
+        # non-secret LiveKit fields land in the snapshot.
+        agent_version.configuration_snapshot = agent_version.create_snapshot(
+            commit_message=""
+        )
+        agent_version.save(update_fields=["configuration_snapshot"])
+
+        data = AgentVersionResponseSerializer(agent_version).data
+        snapshot = data["configuration_snapshot"]
+
+        assert snapshot["livekit_url"] == "https://livekit.example.com"
+        assert snapshot["livekit_agent_name"] == "test-agent"
+        # Key is masked, secret is the "********" sentinel — never plaintext.
+        assert snapshot["livekit_api_key"] not in ("", "APIabcdef123456")
+        assert is_masked(snapshot["livekit_api_key"])
+        assert snapshot["livekit_api_secret"] == "********"
+        # The persisted snapshot must stay free of secrets (refactor invariant).
+        agent_version.refresh_from_db()
+        assert "livekit_api_key" not in agent_version.configuration_snapshot
+        assert "livekit_api_secret" not in agent_version.configuration_snapshot

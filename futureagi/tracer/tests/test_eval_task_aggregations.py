@@ -17,74 +17,24 @@ from django.utils import timezone
 # Break the import cycle (see test_eval_logger_schema.py for the
 # canonical comment).
 import model_hub.tasks  # noqa: F401
-from model_hub.models.evals_metric import EvalTemplate  # noqa: E402
-from tracer.models.custom_eval_config import CustomEvalConfig  # noqa: E402
-from tracer.models.eval_task import (  # noqa: E402
-    EvalTask,
-    EvalTaskStatus,
-    RunType,
-)
 from tracer.models.observation_span import (  # noqa: E402
     EvalLogger,
     EvalTargetType,
     ObservationSpan,
 )
 
+from tracer.tests.eval_task_factories import (  # noqa: E402
+    make_config as _config,
+    make_fresh_span as _fresh_span,
+    make_row as _row,
+    make_task as _task,
+    make_template as _template,
+)
+
 USAGE_URL = "/tracer/eval-task/get_usage/"
 
 
 # ── Test scaffolding ───────────────────────────────────────────────────
-
-
-def _template(*, organization, workspace, output_type_normalized, name=None):
-    return EvalTemplate.objects.create(
-        name=name or f"Template ({output_type_normalized})",
-        description="",
-        organization=organization,
-        workspace=workspace,
-        output_type_normalized=output_type_normalized,
-        config={
-            "output": {
-                "pass_fail": "Pass/Fail",
-                "percentage": "score",
-                "deterministic": "choices",
-            }[output_type_normalized]
-        },
-    )
-
-
-def _config(*, project, template, name):
-    return CustomEvalConfig.objects.create(
-        name=name,
-        project=project,
-        eval_template=template,
-        config={},
-        mapping={},
-        filters={},
-    )
-
-
-def _task(*, project, name="Agg task"):
-    return EvalTask.objects.create(
-        project=project,
-        name=name,
-        filters={},
-        sampling_rate=100,
-        run_type=RunType.CONTINUOUS,
-        status=EvalTaskStatus.PENDING,
-        spans_limit=100,
-    )
-
-
-def _row(*, span, cfg, task, **kwargs):
-    return EvalLogger.objects.create(
-        target_type=EvalTargetType.SPAN,
-        observation_span=span,
-        trace=span.trace,
-        custom_eval_config=cfg,
-        eval_task_id=str(task.id),
-        **kwargs,
-    )
 
 
 # ── eval_aggregation ───────────────────────────────────────────────────
@@ -111,7 +61,7 @@ class TestEvalAggregation:
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
         for v in (0.4, 0.6, 0.8):
-            _row(span=observation_span, cfg=cfg, task=task, output_float=v)
+            _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_float=v)
 
         body = self._get(auth_client, task).json()["result"]
         agg = body["eval_aggregation"]["Faithfulness"]
@@ -130,7 +80,7 @@ class TestEvalAggregation:
         cfg = _config(project=project, template=tpl, name="Toxicity Check")
         task = _task(project=project)
         for v in (True, True, True, False):
-            _row(span=observation_span, cfg=cfg, task=task, output_bool=v)
+            _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_bool=v)
 
         agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
             "Toxicity Check"
@@ -150,7 +100,12 @@ class TestEvalAggregation:
         task = _task(project=project)
         # 4 rows: A, B, AC, A → A in 3/4, B in 1/4, C in 1/4
         for lst in (["A"], ["B"], ["A", "C"], ["A"]):
-            _row(span=observation_span, cfg=cfg, task=task, output_str_list=lst)
+            _row(
+                span=_fresh_span(observation_span),
+                cfg=cfg,
+                task=task,
+                output_str_list=lst,
+            )
 
         agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
             "Sentiment"
@@ -212,12 +167,12 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
-        _row(span=observation_span, cfg=cfg, task=task, output_float=0.5)
-        _row(span=observation_span, cfg=cfg, task=task, output_float=0.5)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_float=0.5)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_float=0.5)
         # Adding an error row with a spurious output_float must not shift
         # the mean — the row is excluded entirely.
         _row(
-            span=observation_span,
+            span=_fresh_span(observation_span),
             cfg=cfg,
             task=task,
             error=True,
@@ -240,12 +195,12 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Toxicity")
         task = _task(project=project)
-        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
-        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_bool=True)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_bool=True)
         # A soft-deleted False row would drop pass-rate to 66% if counted;
         # excluding it keeps it at 100%.
         _row(
-            span=observation_span,
+            span=_fresh_span(observation_span),
             cfg=cfg,
             task=task,
             output_bool=False,
@@ -405,9 +360,23 @@ class TestSpanAggregation:
         assert list(sa.keys()) == [str(observation_span.id)]
         assert sa[str(observation_span.id)]["SpanEval"]["value"] is True
 
-    def test_latest_wins_when_same_span_eval_pair_has_multiple_rows(
+    def test_soft_deleted_predecessor_is_superseded_by_live_row(
         self, auth_client, project, organization, workspace, observation_span
     ):
+        """Re-evaluating a (task, span, cfg) triple soft-deletes the old row and
+        upserts a new live one; only the live value surfaces in the rollup.
+
+        The ``eval_logger_live_span_uniq`` constraint (scoped
+        ``eval_task_id__isnull=False``) makes two *live* rows for one triple
+        impossible, so for eval-*task* rollups "latest wins" reduces to
+        "soft-deleted predecessor is excluded" — which is all this can assert.
+
+        NOTE: the endpoint's created_at "latest wins" tie-break is only
+        reachable on the inline (task-less) path, where the unique constraint
+        does not apply and multiple live rows are representable. That branch is
+        unexercised here. TODO(TH-XXXX): add ordering coverage on the inline
+        path, or delete the now-unreachable ordering branch.
+        """
         tpl = _template(
             organization=organization,
             workspace=workspace,
@@ -415,18 +384,10 @@ class TestSpanAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
-        older = _row(span=observation_span, cfg=cfg, task=task, output_float=0.1)
-        newer = _row(span=observation_span, cfg=cfg, task=task, output_float=0.9)
-        # bump `older` further into the past so created_at ordering is
-        # deterministic regardless of intra-test timing.
-        from datetime import timedelta
-
-        from django.utils import timezone
-
-        EvalLogger.objects.filter(id=older.id).update(
-            created_at=timezone.now() - timedelta(hours=2)
-        )
-        EvalLogger.objects.filter(id=newer.id).update(created_at=timezone.now())
+        # Superseded row is soft-deleted (re-eval upserts it); the live row is
+        # the only survivor under the (task, span, cfg) unique constraint.
+        _row(span=observation_span, cfg=cfg, task=task, output_float=0.1, deleted=True)
+        _row(span=observation_span, cfg=cfg, task=task, output_float=0.9)
 
         sa = self._get(auth_client, task).json()["result"]["span_aggregation"]
         assert sa[str(observation_span.id)]["Faithfulness"]["value"] == pytest.approx(

@@ -29,7 +29,10 @@ import {
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
 import { devTracing, prodTracing } from "./newrelic";
-import { CURRENT_ENVIRONMENT } from "./config-global";
+import {
+  CURRENT_ENVIRONMENT,
+  REACT_QUERY_DEVTOOLS_ENABLED,
+} from "./config-global";
 import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
@@ -60,7 +63,8 @@ const _extractParts = (result) => {
   return String(result);
 };
 
-const extractErrorMessage = (result) => _extractParts(result) || "Something went wrong";
+const extractErrorMessage = (result) =>
+  _extractParts(result) || "Something went wrong";
 
 const handleError = (error, variable, context, mutation) => {
   if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
@@ -84,12 +88,15 @@ const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      // Data stays fresh for 30s — no refetch on remount/focus within this window
-      staleTime: 30 * 1000,
-      // Keep unused data in cache for 5 min (default)
-      gcTime: 5 * 60 * 1000,
-      // Don't refetch when browser tab regains focus
-      refetchOnWindowFocus: false,
+      // Data is fresh for 5s; after that remount/focus/reconnect refetch —
+      // the cached value is shown instantly, then updated in place
+      staleTime: 5 * 1000,
+      // Keep unused data in cache for 1 min
+      gcTime: 1 * 60 * 1000,
+      // Refetch when the tab regains focus, on remount, and on reconnect
+      refetchOnWindowFocus: true,
+      refetchOnMount: true,
+      refetchOnReconnect: true,
       // Retry once on failure
       retry: 1,
     },
@@ -211,7 +218,9 @@ export default function App() {
           </WorkspaceProvider>
         </OrganizationProvider>
       </AuthProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      {REACT_QUERY_DEVTOOLS_ENABLED && (
+        <ReactQueryDevtools initialIsOpen={false} />
+      )}
     </QueryClientProvider>
   );
 }

@@ -7,15 +7,22 @@ import { useTheme } from "@mui/material/styles";
 import { useDashboardQuery } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import {
-  DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  fromAxisConfigPayload,
   getAutoDecimals,
-  getSeriesAverage,
+  getSeriesScalar,
   getSuggestedUnitConfig,
+  getUnitRendering,
   getYAxisRangeWarning,
+  groupPieSeries,
+  makeSeriesKey,
+  resolveSavedSelection,
+  seriesHasDataPoints,
 } from "./widgetUtils";
+import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
+import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -30,6 +37,38 @@ const COLORS = [
   "#00CEC9", // teal
   "#A29BFE", // lavender
 ];
+
+const hashSeriesName = (name) => {
+  const s = String(name || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+};
+// Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
+// at 4 series. Walk each name once and, on a taken slot, advance to the next
+// free one — distinct up to palette size, stable for the common non-colliding case.
+const buildSeriesColorMap = (names) => {
+  const map = {};
+  const used = new Set();
+  (names || []).forEach((name) => {
+    const start = hashSeriesName(name) % COLORS.length;
+    let picked = start;
+    for (let i = 0; i < COLORS.length; i += 1) {
+      const candidate = (start + i) % COLORS.length;
+      if (!used.has(candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    used.add(picked);
+    map[name] = COLORS[picked];
+  });
+  return map;
+};
+const getSeriesColorFromMap = (map, name) =>
+  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
 
 function getApexType(chartType) {
   const map = {
@@ -60,7 +99,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
   }, [rawQueryConfig, globalDateRange]);
   const chartConfig = widget.chart_config || {};
   const chartType = chartConfig.chart_type || "line";
-  const axisConfig = chartConfig.axis_config || null;
+  const axisConfig = chartConfig.axis_config
+    ? fromAxisConfigPayload(chartConfig.axis_config)
+    : null;
 
   const apexType = getApexType(chartType);
   const isStacked = chartType.startsWith("stacked_");
@@ -68,10 +109,40 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+  const isLineChart = apexType === "line";
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
+
+  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
+  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
+  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
+  // plot therefore gets a negative top and is drawn above the canvas, where the
+  // widget card's `overflow: hidden` slices it. On these cards that is most of the
+  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
+  // (the chart's ResizeObserver then loses its height constraint and the canvas
+  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
+  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
+  // after it, even a frame later. Watching the attribute is what reliably catches
+  // the write, whenever Apex makes it.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const clampTooltips = () => {
+      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
+        const top = Number.parseFloat(tip.style.top);
+        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
+      });
+    };
+    const mo = new MutationObserver(clampTooltips);
+    mo.observe(el, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["style"],
+    });
+    return () => mo.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -85,9 +156,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  const pieChartRef = useRef(null);
-  const [pieConnectors, setPieConnectors] = useState([]);
 
   // Re-query whenever the effective query config changes (including
   // metric aggregation/value type), or when global date override changes.
@@ -105,7 +173,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const series = useMemo(() => {
     const s = [];
     if (result?.metrics) {
-      for (const metric of result.metrics) {
+      for (const [metricIndex, metric] of result.metrics.entries()) {
         for (const ms of metric.series || []) {
           const isSingleMetric = result.metrics.length === 1;
           let label;
@@ -118,6 +186,15 @@ export default function WidgetChart({ widget, globalDateRange }) {
           }
           s.push({
             name: label,
+            key: makeSeriesKey(metric, ms.name),
+            // Metric identity survives only inside `label`, which is a composite
+            // display string. Carry it explicitly so pie rendering can group
+            // series per metric and honour each metric's own aggregation.
+            metricIndex,
+            metricName: metric.name,
+            aggregation: metric.aggregation,
+            unit: metric.unit ?? "",
+            breakdownName: ms.name,
             data: (ms.data || []).map((point) => ({
               x: new Date(point.timestamp).getTime(),
               y: point.value != null ? Number(point.value) : null,
@@ -133,7 +210,21 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const MAX_CHART_SERIES = 10;
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible
 
+  // JSON-keyed so a re-created widget object doesn't needlessly re-run the effect.
+  const savedVisibleSeries = chartConfig.visible_series;
+  const savedVisibleKey = JSON.stringify(savedVisibleSeries ?? "__default__");
+
   useEffect(() => {
+    if (series.length === 0) return;
+
+    // Honor the editor's saved selection. Nothing saved, or a stale selection
+    // (saved keys that match no current series), falls through to the default.
+    const decision = resolveSavedSelection(savedVisibleSeries, series);
+    if (decision !== undefined) {
+      setVisibleSeries(decision);
+      return;
+    }
+
     if (series.length <= MAX_CHART_SERIES) {
       if (visibleSeries !== null) setVisibleSeries(null);
       return;
@@ -148,24 +239,58 @@ export default function WidgetChart({ widget, globalDateRange }) {
       ranked.slice(0, MAX_CHART_SERIES).map((r) => r.i),
     );
     setVisibleSeries(topIndices);
-  }, [series]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, savedVisibleKey]);
 
   const chartSeries = useMemo(() => {
     if (visibleSeries === null) return series;
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
+  // Build from the full `series` list (not filtered chartSeries) so a
+  // hidden series keeps its slot and its color stays put when unhidden.
+  const seriesColorMap = useMemo(
+    () => buildSeriesColorMap(series.map((s) => s.name)),
+    [series],
+  );
+  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+
+  // Pie slices are breakdown values, which repeat across metrics. Key their
+  // colours by the raw breakdown name so a given project is the same colour in
+  // every pie — the composite series label differs per metric.
+  const pieColorMap = useMemo(
+    () => buildSeriesColorMap([...new Set(series.map((s) => s.breakdownName))]),
+    [series],
+  );
+  const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
+
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
     [chartSeries, axisConfig],
   );
 
-  const pieValues = useMemo(
-    () =>
-      isPie
-        ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0)
-        : [],
-    [isPie, chartSeries],
+  const hasNoDataForRange = useMemo(
+    () => !seriesHasDataPoints(chartSeries),
+    [chartSeries],
+  );
+
+  // A pie needs a category to slice by. Detect that from the response rather
+  // than query_config: legacy widgets may omit `breakdowns`, and a declared
+  // breakdown that returns a single "total" series would still be a 100% circle.
+  const pieHasBreakdown = useMemo(
+    () => series.some((s) => s.breakdownName !== "total"),
+    [series],
+  );
+
+  // Built from the full `series` list, not the filtered `chartSeries`: a
+  // global cap can starve one metric of every slice, and groupPieSeries
+  // already caps per metric. `chartSeries` is filtered by either the automatic
+  // top-10 cap or a saved `visible_series`, and neither can be a pie user's
+  // choice — the editor gates that toggle UI on `!isPie`, so a pie only ever
+  // inherits a selection made under some other chart type.
+  const pieGroups = useMemo(
+    () => (isPie && pieHasBreakdown ? groupPieSeries(series) : []),
+    [isPie, pieHasBreakdown, series],
   );
 
   // Compute Y-axis precision once from the data range so all ticks use the
@@ -177,69 +302,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
+    const metricUnits = (result?.metrics || []).map((m) => m?.unit ?? "");
+    const isMixedUnits = new Set(metricUnits).size > 1;
+    const effectiveUnit = isMixedUnits ? "" : leftAxis.unit || suggested.unit;
     return {
       ...leftAxis,
-      unit: leftAxis.unit || suggested.unit,
-      prefixSuffix:
-        leftAxis.unit || !suggested.unit
-          ? leftAxis.prefixSuffix || "prefix"
-          : suggested.prefixSuffix,
+      unit: effectiveUnit,
+      prefixSuffix: effectiveUnit
+        ? leftAxis.prefixSuffix || suggested.prefixSuffix || "prefix"
+        : suggested.prefixSuffix,
     };
   }, [axisConfig?.leftY, result?.metrics]);
-
-  useEffect(() => {
-    if (!isPie || !pieValues.length) {
-      setPieConnectors([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const container = pieChartRef.current;
-      if (!container) return;
-      const w = container.offsetWidth;
-      const h = chartHeight;
-      const cx = w / 2;
-      const cy = h * 0.48 + 12;
-      const outerR = Math.min(w, h - 35) * 0.32;
-      const total = pieValues.reduce((a, b) => a + b, 0);
-      if (total === 0) return;
-      const items = [];
-      let cumAngle = -90;
-      pieValues.forEach((val, i) => {
-        const sliceAngle = (val / total) * 360;
-        const midAngle = cumAngle + sliceAngle / 2;
-        const midRad = (midAngle * Math.PI) / 180;
-        cumAngle += sliceAngle;
-        if (sliceAngle < 3) return;
-        const letter = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[i] || "";
-        const name = chartSeries[i]?.name || "";
-        const fv =
-          val >= 1000
-            ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-        const edgeX = cx + outerR * Math.cos(midRad);
-        const edgeY = cy + outerR * Math.sin(midRad);
-        const elbowDist = outerR + 18;
-        const elbowX = cx + elbowDist * Math.cos(midRad);
-        const elbowY = cy + elbowDist * Math.sin(midRad);
-        const isRight = Math.cos(midRad) >= 0;
-        const endX = isRight ? elbowX + 18 : elbowX - 18;
-        const textX = isRight ? endX + 4 : endX - 4;
-        items.push({
-          edgeX,
-          edgeY,
-          elbowX,
-          elbowY,
-          endX,
-          textX,
-          isRight,
-          line1: `${letter}. ${name}`,
-          line2: fv,
-        });
-      });
-      setPieConnectors(items);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [isPie, pieValues, chartSeries]);
 
   const isDark = theme.palette.mode === "dark";
   const makeFormatter =
@@ -306,8 +379,30 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
-  // Metric card
-  if (isMetricCard) {
+  if (hasNoDataForRange) {
+    return (
+      <Box
+        ref={containerRef}
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          px: 2,
+        }}
+      >
+        <Typography variant="body2" color="text.disabled">
+          {NO_DATA_FOR_RANGE_MESSAGE}
+        </Typography>
+      </Box>
+    );
+  }
+
+  // Metric card — also the fallback for a pie with nothing to slice by, where
+  // each metric would otherwise render as a meaningless 100%-full circle.
+  if (isMetricCard || (isPie && !pieHasBreakdown)) {
     return (
       <Stack
         ref={containerRef}
@@ -318,14 +413,20 @@ export default function WidgetChart({ widget, globalDateRange }) {
         sx={{ width: "100%", height: "100%", minHeight: 0 }}
       >
         {series.map((s, i) => {
-          const avg = getSeriesAverage(s.data);
+          // Honour the metric's own aggregation: a "max" metric must show the
+          // peak bucket, not the mean of the per-bucket maxima.
+          const value = getSeriesScalar(s.data, s.aggregation);
+          const cellConfig = s.unit
+            ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
+            : leftAxisFormatConfig;
           return (
             <Box key={i} sx={{ textAlign: "center" }}>
-              <Typography
-                variant="h3"
-                sx={{ color: COLORS[i % COLORS.length] }}
-              >
-                {avg == null ? "—" : formatVal(avg)}
+              <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
+                {value == null
+                  ? "—"
+                  : formatValueWithConfig(value, cellConfig, {
+                      fallbackDecimals: autoDecimals,
+                    })}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {s.name}
@@ -421,7 +522,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         width: 8,
                         height: 8,
                         borderRadius: "2px",
-                        bgcolor: COLORS[i % COLORS.length],
+                        bgcolor: colorFor(s.name),
                         display: "inline-block",
                         flexShrink: 0,
                       }}
@@ -433,7 +534,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                             queryConfig?.metrics?.[0]?.name ||
                             "Total"
                           : s.name;
-                      const unit = leftAxisFormatConfig?.unit;
+                      const unit = s.unit || leftAxisFormatConfig?.unit;
                       return unit ? `${label} (${unit})` : label;
                     })()}
                   </span>
@@ -471,6 +572,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
                   </td>
                   {series.map((s, si) => {
                     const val = s.data[ri]?.y;
+                    const cellConfig = s.unit
+                      ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
+                      : leftAxisFormatConfig;
                     return (
                       <td
                         key={si}
@@ -486,7 +590,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         }}
                       >
                         {val != null
-                          ? formatValueWithConfig(val, leftAxisFormatConfig, {
+                          ? formatValueWithConfig(val, cellConfig, {
                               fallbackDecimals: autoDecimals,
                             })
                           : "-"}
@@ -503,154 +607,31 @@ export default function WidgetChart({ widget, globalDateRange }) {
   }
 
   if (isPie) {
-    const isDarkPie = theme.palette.mode === "dark";
-    const txtColor = isDarkPie ? "#fff" : "#1a1a2e";
-    const pieTotal = pieValues.reduce((a, b) => a + b, 0);
-    const fmtTotal = formatValueWithConfig(pieTotal, leftAxisFormatConfig, {
-      fallbackDecimals: autoDecimals,
-    });
-    const pieOptions = {
-      chart: {
-        type: "donut",
-        toolbar: { show: false },
-        animations: { enabled: true, easing: "easeinout", speed: 400 },
-      },
-      labels: chartSeries.map((s) => s.name),
-      colors: COLORS,
-      plotOptions: {
-        pie: {
-          expandOnClick: false,
-          donut: {
-            size: "58%",
-            labels: {
-              show: true,
-              name: { show: false },
-              value: {
-                show: true,
-                fontSize: "28px",
-                fontWeight: 700,
-                color: txtColor,
-                offsetY: 10,
-                formatter: () => fmtTotal,
-              },
-              total: {
-                show: true,
-                showAlways: true,
-                fontSize: "28px",
-                fontWeight: 700,
-                color: txtColor,
-                label: "",
-                formatter: () => fmtTotal,
-              },
-            },
-          },
-        },
-      },
-      dataLabels: { enabled: false },
-      legend: { show: false, height: 0 },
-      stroke: { width: 4, colors: [isDarkPie ? "#1e1e2e" : "#fff"] },
-      states: {
-        hover: { filter: { type: "darken", value: 0.92 } },
-        active: { filter: { type: "none" } },
-      },
-      tooltip: {
-        theme: theme.palette.mode,
-        style: { fontSize: "12px" },
-        y: {
-          formatter: (val) =>
-            val >= 1000
-              ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-              : val.toLocaleString(undefined, { maximumFractionDigits: 2 }),
-        },
-      },
-    };
-    const pieLegendNames = chartSeries.map((s) => s.name);
-    const pieLegendH = pieLegendNames.length > 1 ? 28 : 0;
+    // The all-null case is answered inside WidgetPieCharts so the editor
+    // preview and the saved widget cannot drift apart.
     return (
       <Box
-        sx={{
-          width: "100%",
-          height: "100%",
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
+        ref={containerRef}
+        sx={{ width: "100%", height: "100%", minHeight: 0 }}
       >
-        {pieLegendNames.length > 1 && (
-          <ChartLegend items={pieLegendNames} colors={COLORS} />
-        )}
-        <Box
-          ref={(el) => {
-            pieChartRef.current = el;
-            containerRef.current = el;
-          }}
-          sx={{
-            position: "relative",
-            flex: 1,
-            minHeight: 0,
-          }}
-        >
-          <ReactApexChart
-            key={`pie-${axisConfig?.leftY?.unit}-${axisConfig?.leftY?.prefixSuffix}-${axisConfig?.leftY?.abbreviation}-${axisConfig?.leftY?.decimals}`}
-            options={pieOptions}
-            series={pieValues}
-            type="donut"
-            height={chartHeight - pieLegendH}
-          />
-          {pieConnectors.length > 0 && (
-            <svg
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                pointerEvents: "none",
-                overflow: "visible",
-              }}
-            >
-              {pieConnectors.map((c, i) => (
-                <g key={i}>
-                  <polyline
-                    points={`${c.edgeX},${c.edgeY} ${c.elbowX},${c.elbowY} ${c.endX},${c.elbowY}`}
-                    fill="none"
-                    stroke={
-                      isDarkPie ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.25)"
-                    }
-                    strokeWidth="1"
-                  />
-                  <text
-                    x={c.textX}
-                    y={c.elbowY - 5}
-                    textAnchor={c.isRight ? "start" : "end"}
-                    fill={txtColor}
-                    fontSize="11"
-                    fontWeight="500"
-                    fontFamily="inherit"
-                  >
-                    <tspan x={c.textX} dy="0">
-                      {c.line1}
-                    </tspan>
-                    <tspan x={c.textX} dy="14">
-                      {c.line2}
-                    </tspan>
-                  </text>
-                </g>
-              ))}
-            </svg>
-          )}
-        </Box>
+        <WidgetPieCharts
+          groups={pieGroups}
+          colorFor={pieColorFor}
+          baseFormatConfig={leftAxisFormatConfig}
+          fallbackDecimals={autoDecimals}
+        />
       </Box>
     );
   }
-
   // Bar chart — horizontal bar table
   if (isHorizontal) {
     const barRows = chartSeries.map((s) => {
-      const avg = getSeriesAverage(s.data);
+      // Same aggregation-aware value the metric card, table and pie use, so
+      // one widget cannot read differently per chart type.
+      const value = getSeriesScalar(s.data, s.aggregation);
       return {
-        value: avg,
-        numericValue: avg == null ? 0 : avg,
+        value,
+        numericValue: value == null ? 0 : value,
       };
     });
     const maxVal = Math.max(
@@ -684,7 +665,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                   width: 10,
                   height: 10,
                   borderRadius: "2px",
-                  bgcolor: COLORS[i % COLORS.length],
+                  bgcolor: colorFor(s.name),
                   flexShrink: 0,
                 }}
               />
@@ -740,7 +721,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
           {barRows.map((row, i) => {
             const val = row.numericValue;
-            const color = COLORS[i % COLORS.length];
+            const color = colorFor(chartSeries[i]?.name);
             const pct = maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
             const name = chartSeries[i]?.name || "";
             const shortName =
@@ -1071,10 +1052,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
       };
     })(),
     markers: {
-      size: apexType === "line" || apexType === "area" ? 4 : 0,
+      size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
       strokeWidth: 2,
       strokeColors: isDark ? theme.palette.background.paper : "#fff",
-      hover: { size: 6, sizeOffset: 3 },
+      hover: isLineChart
+        ? { size: 8, sizeOffset: 2 }
+        : { size: 6, sizeOffset: 3 },
     },
     states: {
       hover: {
@@ -1096,13 +1079,19 @@ export default function WidgetChart({ widget, globalDateRange }) {
             format: "MMM dd, yyyy",
           },
           y: {
-            formatter: formatVal,
+            formatter: (val, { seriesIndex } = {}) => {
+              const seriesUnit = chartSeries[seriesIndex]?.unit;
+              const cfg = seriesUnit
+                ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
+                : leftAxisFormatConfig;
+              return makeFormatter(cfg)(val);
+            },
           },
         }
       : {
           enabled: true,
           shared: false,
-          intersect: false,
+          intersect: isLineChart,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
             const color = w.globals.colors[seriesIndex] || "#6366F1";
@@ -1111,7 +1100,11 @@ export default function WidgetChart({ widget, globalDateRange }) {
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
             const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
             const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-            const fmtVal = formatVal(val);
+            const seriesUnit = chartSeries[seriesIndex]?.unit;
+            const perSeriesCfg = seriesUnit
+              ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
+              : leftAxisFormatConfig;
+            const fmtVal = makeFormatter(perSeriesCfg)(val);
             const bg = isDark ? "#1e1e2e" : "#fff";
             const _border = isDark
               ? "rgba(255,255,255,0.08)"
@@ -1146,7 +1139,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       xaxis: { lines: { show: false } },
       padding: { left: 8, right: 8 },
     },
-    colors: COLORS,
+    colors: chartSeries.map((s) => colorFor(s.name)),
     legend: { show: false, height: 0 },
   };
 
@@ -1184,7 +1177,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       {legendNames.length > 1 && (
         <ChartLegend
           items={legendNames}
-          colors={COLORS}
+          colors={chartSeries.map((s) => colorFor(s.name))}
           onHoverSeries={handleLegendHover}
           onLeaveSeries={handleLegendLeave}
         />

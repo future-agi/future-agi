@@ -215,7 +215,6 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             ifNotFinite(avg(output_float) * 100, NULL) AS value
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
@@ -265,7 +264,6 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
                 AS value
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
@@ -316,7 +314,6 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             {choice_select}
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s

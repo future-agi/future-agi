@@ -158,6 +158,37 @@ class TestEarlyExits:
 
 
 # =========================================================================
+# Runtime threshold override
+# =========================================================================
+
+
+class TestRuntimeThresholdOverride:
+    def test_runtime_threshold_takes_precedence_over_template(self):
+        template = _template(
+            output_type_normalized="percentage", pass_threshold=0.5
+        )
+        run, reason = should_run_error_localizer(
+            0.6, template, runtime_threshold=0.8
+        )
+        assert run is True
+        assert "0.80" in reason
+
+    def test_runtime_threshold_flips_high_score_to_pass(self):
+        template = _template(
+            output_type_normalized="percentage", pass_threshold=0.5
+        )
+        run, _ = should_run_error_localizer(0.4, template, runtime_threshold=0.3)
+        assert run is False
+
+    def test_runtime_threshold_none_falls_back_to_template(self):
+        template = _template(
+            output_type_normalized="percentage", pass_threshold=0.5
+        )
+        run, _ = should_run_error_localizer(0.2, template, runtime_threshold=None)
+        assert run is True
+
+
+# =========================================================================
 # The scorability helper, directly
 # =========================================================================
 

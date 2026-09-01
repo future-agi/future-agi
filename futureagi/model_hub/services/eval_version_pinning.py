@@ -7,6 +7,7 @@ so the view stays thin.
 import json
 
 from model_hub.models.evals_metric import EvalTemplateVersion
+from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.prompt_migration import config_to_prompt_messages
 
 
@@ -31,6 +32,7 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     req_config = request_data.get("config") or {}
     inner_config = req_config.get("config", {})
     run_config = req_config.get("run_config", {})
+    mapping = req_config.get("mapping") or (eval_metric.config or {}).get("mapping", {})
     resolved_model = (
         request_data.get("model") or eval_metric.model
         or tpl.model or ""
@@ -52,6 +54,8 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     criteria = rule_prompt or tpl.criteria or ""
     if rule_prompt:
         snap["messages"] = [{"role": "system", "content": rule_prompt}]
+
+    sync_required_keys_from_prompt(snap, mapping=mapping)
 
     # Dedup: skip if the full canonical snapshot matches the pinned version.
     # Sorting keys ensures stable comparison regardless of insertion order.

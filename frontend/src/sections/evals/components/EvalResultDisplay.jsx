@@ -11,6 +11,7 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import Iconify from "src/components/iconify";
 import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
@@ -603,6 +604,13 @@ const ErrorLocalizationSection = ({ result }) => {
     input_types: inputTypes,
   };
 
+  const allLocalizerEntries = entriesMap
+    ? Object.values(entriesMap).flat()
+    : entries || [];
+  const isAudioLocalization = allLocalizerEntries.some(
+    (entry) => entry?.orgSegment,
+  );
+
   // If no entries ended up with content, don't render anything - the eval
   // might have passed or the localizer might have found nothing to flag.
   const mapHasContent =
@@ -635,7 +643,12 @@ const ErrorLocalizationSection = ({ result }) => {
       >
         Error Localization
       </Typography>
-      {entriesMap ? (
+      {isAudioLocalization ? (
+        <AudioErrorCard
+          valueInfos={{ errorAnalysis: errorDetails }}
+          column={selectedInputKey || "input"}
+        />
+      ) : entriesMap ? (
         Object.entries(entriesMap)
           .filter(([, v]) => v && (Array.isArray(v) ? v.length > 0 : true))
           .map(([key, value]) => (

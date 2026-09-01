@@ -12,7 +12,7 @@ export const ITEM_SOURCE_FILTER_OPTIONS = [
   { value: "trace", label: "Trace" },
   { value: "observation_span", label: "Span" },
   { value: "trace_session", label: "Session" },
-  { value: "prototype_run", label: "Prototype" },
+  // { value: "prototype_run", label: "Prototype" },
   { value: "call_execution", label: "Simulation" },
 ];
 

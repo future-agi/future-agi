@@ -8,8 +8,9 @@ from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 import litellm
-import requests
 import structlog
+
+from tfc.utils.ssrf_guard import safe_fetch
 
 from tfc.ee_stub import _ee_stub
 
@@ -243,7 +244,10 @@ def handle_media(item: dict, model_name: str):
             if not url:
                 raise ValueError("Missing audio URL")
 
-            response = requests.get(url, timeout=120)
+            # SSRF-guarded: user-supplied URL; safe_fetch resolves + pins IP,
+            # blocks private/link-local hosts (including 169.254.169.254),
+            # and re-validates each redirect hop.
+            response = safe_fetch(url, method="GET", timeout=120)
             response.raise_for_status()
 
             bytes_data = response.content
@@ -258,8 +262,6 @@ def handle_media(item: dict, model_name: str):
                 "input_audio": {"data": encoded_string, "format": audio_type},
             }
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed for audio URL: {e}")
         except (KeyError, ValueError) as e:
             logger.error(f"Data processing error: {e}")
         except Exception as e:
@@ -555,7 +557,7 @@ class UploadFileView(APIView):
             return file_name
 
         try:
-            response = requests.head(url, timeout=10)
+            response = safe_fetch(url, method="HEAD", timeout=10)
             content_type = (
                 response.headers.get("Content-Type", "").split(";")[0].strip()
             )
@@ -563,8 +565,10 @@ class UploadFileView(APIView):
             if content_type in MIME_TO_EXT:
                 return f"{file_name}.{MIME_TO_EXT[content_type]}"
 
-        except requests.RequestException:
-            pass
+        except ValueError as e:
+            # SSRF rejection / bad URL / bad response — log and fall through
+            # to path-extension inspection so a bad HEAD doesn't drop the file.
+            logger.info(f"safe_fetch failed for file name extension check: {e}")
 
         path_extension = urlparse(url).path.rsplit(".", 1)[-1]
         if path_extension and "/" not in path_extension and len(path_extension) <= 8:
@@ -2126,13 +2130,19 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     config.eval_template.config,
                     config.config,
                 )
+                from model_hub.utils.eval_list import build_run_config_view
+
+                run_config = build_run_config_view(config)
                 response.append(
                     {
                         "id": str(config.id),
                         "eval_template_id": str(config.eval_template.id),
+                        "template_id": str(config.eval_template.id),
+                        "eval_type": config.eval_template.eval_type,
                         "name": config.name,
                         "mapping": config.mapping,
                         "config": config.eval_template.config,
+                        "run_config": run_config,
                         "params": params,
                         "function_params_schema": function_params_schema,
                         "eval_required_keys": config.eval_template.config.get(
@@ -2186,18 +2196,29 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             eval_id = new_config.get("id")
             is_run = request.data.get("is_run", False)
             version_to_run = request.data.get("version_to_run", [])
+            user_eval_id = request.data.get("user_eval_id")
 
             try:
-                eval_template = EvalTemplate.no_workspace_objects.get(id=eval_id)
+                eval_template = EvalTemplate.no_workspace_objects.get(
+                    Q(owner=OwnerChoices.SYSTEM.value)
+                    | Q(
+                        owner=OwnerChoices.USER.value,
+                        organization=template.organization,
+                    ),
+                    id=eval_id,
+                )
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(
                     f"Evaluation template with ID {eval_id} does not exist."
                 )
 
             eval_name = new_config.get("name")
-            if PromptEvalConfig.objects.filter(
+            name_clash_qs = PromptEvalConfig.objects.filter(
                 name=eval_name, prompt_template=template, deleted=False
-            ).exists():
+            )
+            if user_eval_id:
+                name_clash_qs = name_clash_qs.exclude(id=user_eval_id)
+            if name_clash_qs.exists():
                 return self._gm.bad_request(
                     get_error_message("PROMPT_EVAL_TEMPLATE_EXISTS")
                 )
@@ -2212,26 +2233,58 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     kb = KnowledgeBaseFile.objects.get(id=new_config.get("kb_id"))
                 except KnowledgeBaseFile.DoesNotExist:
                     pass
-            prompt_eval = PromptEvalConfig.objects.create(
-                name=eval_name,
-                prompt_template=template,
-                eval_template=eval_template,
-                mapping=new_config.get("mapping", {}),
-                config=normalize_eval_runtime_config(
-                    eval_template.config,
-                    {
-                        **(new_config.get("config", {}) or {}),
-                        "params": (
-                            new_config.get("params", {})
-                            if new_config.get("params", {})
-                            else (new_config.get("config", {}) or {}).get("params", {})
-                        ),
-                    },
-                ),
-                user=request.user,
-                kb=kb,
-                error_localizer=new_config.get("error_localizer", False),
+            normalized_config = normalize_eval_runtime_config(
+                eval_template.config,
+                {
+                    **(new_config.get("config", {}) or {}),
+                    "params": (
+                        new_config.get("params", {})
+                        if new_config.get("params", {})
+                        else (new_config.get("config", {}) or {}).get("params", {})
+                    ),
+                },
             )
+            if user_eval_id:
+                try:
+                    prompt_eval = PromptEvalConfig.objects.get(
+                        id=user_eval_id,
+                        prompt_template=template,
+                        deleted=False,
+                    )
+                except PromptEvalConfig.DoesNotExist:
+                    return self._gm.bad_request(
+                        f"Evaluation config with ID {user_eval_id} does not exist."
+                    )
+                prompt_eval.name = eval_name
+                prompt_eval.eval_template = eval_template
+                prompt_eval.mapping = new_config.get("mapping", {})
+                prompt_eval.config = normalized_config
+                prompt_eval.kb = kb
+                prompt_eval.error_localizer = new_config.get(
+                    "error_localizer", False
+                )
+                prompt_eval.save(
+                    update_fields=[
+                        "name",
+                        "eval_template",
+                        "mapping",
+                        "config",
+                        "kb",
+                        "error_localizer",
+                        "updated_at",
+                    ]
+                )
+            else:
+                prompt_eval = PromptEvalConfig.objects.create(
+                    name=eval_name,
+                    prompt_template=template,
+                    eval_template=eval_template,
+                    mapping=new_config.get("mapping", {}),
+                    config=normalized_config,
+                    user=request.user,
+                    kb=kb,
+                    error_localizer=new_config.get("error_localizer", False),
+                )
 
             # If is_run is true, run evaluations on specified versions
             if is_run:
@@ -2539,6 +2592,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         organization_id,
         template=None,
     ):
+        api_call_log_row = None
         try:
             eval_template = None
             try:
@@ -2564,12 +2618,15 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 if eval_template.config.get("eval_type_id") in FUTUREAGI_EVAL_TYPES
                 else False
             )
+            ws_id = getattr(template, "workspace_id", None) if template else None
             evaluation_runner = EvaluationRunner(
                 eval_template.config.get("eval_type_id"),
                 format_output=True,
                 futureagi_eval=futureagi_eval,
                 source="prompt_template",
                 source_id=eval_template.id,
+                organization_id=organization_id,
+                workspace_id=ws_id,
             )
             evaluation_runner.eval_template = eval_template
 
@@ -2616,9 +2673,13 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 else data_config.get("config", {}).copy()
             )
             config = evaluation_runner.update_config_list_values(config)
+            from evaluations.engine.instance import resolve_binding_model
+
             eval_instance = evaluation_runner._create_eval_instance(
                 config=config,
                 eval_class=eval_class,
+                model=resolve_binding_model(evaluation.config, eval_template),
+                kb_id=str(evaluation.kb_id) if evaluation.kb_id else None,
                 runtime_config=evaluation.config,
             )
             # Setup evaluation parameters using the helper method
@@ -2664,7 +2725,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 }
             )
             org = Organization.objects.get(id=organization_id)
-            api_call_log_row = None
             if log_and_deduct_cost_for_api_request is not None:
                 api_call_log_row = log_and_deduct_cost_for_api_request(
                     organization=org,
@@ -2694,24 +2754,35 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             partial_input_warning, _mapped_kwargs = validate_eval_inputs(
                 eval_template,
                 _mapped_kwargs,
-                mapped_keys=_mapped_kwargs.keys(),
+                mapped_keys=run_params.keys(),
             )
 
-            # Run evaluation
+            from model_hub.services.ground_truth_service import GroundTruthService
+
+            GroundTruthService.inject_context(
+                _mapped_kwargs,
+                eval_template,
+                organization_id=organization_id,
+                workspace_id=ws_id,
+            )
+
+            from model_hub.utils.function_eval_params import merge_code_eval_kwargs
+
+            _mapped_kwargs = merge_code_eval_kwargs(
+                _mapped_kwargs, eval_template, evaluation.config
+            )
+
+            if getattr(eval_template, "eval_type", "") == "code":
+                from evaluations.engine.preprocessing import preprocess_inputs
+
+                _mapped_kwargs = preprocess_inputs(eval_template.name, _mapped_kwargs)
+
             eval_result = eval_instance.run(**_mapped_kwargs)
 
-            # Format response
-            response = {
-                "name": eval_template.name,
-                "data": eval_result.eval_results[0].get("data"),
-                "failure": eval_result.eval_results[0].get("failure"),
-                "reason": eval_result.eval_results[0].get("reason"),
-                "runtime": eval_result.eval_results[0].get("runtime"),
-                "model": eval_result.eval_results[0].get("model"),
-                "metrics": eval_result.eval_results[0].get("metrics"),
-                "metadata": eval_result.eval_results[0].get("metadata", {}),
-                "output": eval_template.config.get("output"),
-            }
+            from evaluations.engine.formatting import extract_raw_result
+
+            response = extract_raw_result(eval_result, eval_template)
+            response["name"] = eval_template.name
             if partial_input_warning:
                 response["warnings"] = [partial_input_warning]
             metadata = response.get("metadata") or {}
@@ -2726,16 +2797,17 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 result_data=response, eval_template=eval_template
             )
 
-            config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
-            api_call_log_row.input_token_count = (
-                metadata.get("usage", {}).get("prompt_tokens") or 0
-            )
-            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                config_dict = json.loads(api_call_log_row.config)
+                config_dict.update(
+                    {"output": {"output": value, "reason": response["reason"]}}
+                )
+                api_call_log_row.input_token_count = (
+                    metadata.get("usage", {}).get("prompt_tokens") or 0
+                )
+                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                api_call_log_row.config = json.dumps(config_dict)
+                api_call_log_row.save()
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -2778,14 +2850,15 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             return value, response
 
         except Exception as e:
-            try:
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                config_dict = json.loads(api_call_log_row.config)
-                config_dict.update({"output": {"output": None, "reason": str(e)}})
-                api_call_log_row.config = json.dumps(config_dict)
-                api_call_log_row.save()
-            except Exception:
-                pass
+            if api_call_log_row is not None:
+                try:
+                    api_call_log_row.status = APICallStatusChoices.ERROR.value
+                    config_dict = json.loads(api_call_log_row.config)
+                    config_dict.update({"output": {"output": None, "reason": str(e)}})
+                    api_call_log_row.config = json.dumps(config_dict)
+                    api_call_log_row.save()
+                except Exception:
+                    pass
             logger.exception(f"{e} error")
             raise e
 

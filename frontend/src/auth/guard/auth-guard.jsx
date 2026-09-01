@@ -76,6 +76,7 @@ function Container({ children }) {
         const isRelativePath =
           returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//");
         if (isRelativePath) {
+          localStorage.setItem("initial-render", "done");
           localStorage.removeItem("redirectUrl");
           window.location.href = returnTo;
         } else {
