@@ -2,10 +2,14 @@ package a2a
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
 )
@@ -298,4 +302,71 @@ func TestTasksCancel(t *testing.T) {
 	if task.Status.State != TaskStatusCanceled {
 		t.Fatalf("expected canceled, got %s", task.Status.State)
 	}
+}
+
+func TestListAgentsConcurrentWithFetchCards(t *testing.T) {
+	cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(AgentCard{Name: "travel", Version: "1.0"})
+	}))
+	defer cardSrv.Close()
+
+	reg := NewRegistry(map[string]AgentConfig{
+		"travel": {URL: cardSrv.URL, Description: "Travel agent"},
+	})
+	s := NewServer(CardConfig{Name: "test"}, reg)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	var sawCard atomic.Bool
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			type agentInfo struct {
+				Name string     `json:"name"`
+				Card *AgentCard `json:"card"`
+			}
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					req := httptest.NewRequest("GET", "/v1/agents", nil)
+					w := httptest.NewRecorder()
+					s.ListAgents(w, req)
+					if w.Code != http.StatusOK {
+						t.Errorf("expected 200, got %d", w.Code)
+						return
+					}
+					var result []agentInfo
+					if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+						t.Errorf("decode: %v", err)
+						return
+					}
+					for _, info := range result {
+						if info.Card != nil {
+							sawCard.Store(true)
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 20; i++ {
+		reg.FetchCards(context.Background())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !sawCard.Load() {
+		if time.Now().After(deadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatal("timed out waiting for card in GET /v1/agents")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	close(stop)
+	wg.Wait()
 }
