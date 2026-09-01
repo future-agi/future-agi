@@ -101,6 +101,13 @@ class ModelConfigs:
         max_tokens=50000,
     )
 
+    VERTEX_GEMINI_2_5_FLASH_LITE: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-2.5-flash-lite",
+        temperature=0.2,
+        max_tokens=16000,
+    )
+
     # Claude Sonnet (used by EvalTextLLM defaults in constant.py today).
     CLAUDE_3_5_SONNET: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.ANTHROPIC.value,
@@ -297,4 +304,3 @@ class ModelConfigs:
         """Check if the model supports PDF inputs."""
         cfg = cls.get_config(model_name)
         return bool(cfg and cfg.supports_pdf)
-

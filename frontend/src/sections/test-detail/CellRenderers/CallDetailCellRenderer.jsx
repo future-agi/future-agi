@@ -2,17 +2,20 @@ import React from "react";
 import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import CallStatus from "../../test/CallLogs/CallStatus";
-import { CallStatus as CallStatusValues } from "../../test/CallLogs/common";
+// Used only by the disabled live-call "Listen" button below.
+// import { CallStatus as CallStatusValues } from "../../test/CallLogs/common";
 import { formatDuration } from "src/utils/format-time";
 import _ from "lodash";
 import { ShowComponent } from "../../../components/show";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
-import Iconify from "src/components/iconify";
+// Used only by the disabled live-call "Listen" button below.
+// import Iconify from "src/components/iconify";
 
 const CallDetailCellRenderer = (props) => {
   const data = props?.value;
-  const rowData = props?.data; // Full row data from AG Grid
+  // Used only by the disabled live-call "Listen" button below.
+  // const rowData = props?.data; // Full row data from AG Grid
   // const filteredTranscript = useMemo(() => {
   //   return data?.transcript?.filter((item) => item.speakerRole !== "system");
   // }, [data]);
@@ -22,7 +25,7 @@ const CallDetailCellRenderer = (props) => {
       ? AGENT_TYPES.CHAT
       : AGENT_TYPES.VOICE;
   const customerName = data?.customer_name;
-  const callId = data?.call_id;
+  // const callId = data?.call_id; // used only by the disabled Listen button
   const turnCount = data?.turn_count;
 
   const formattedStartTime = formatStartTimeByRequiredFormat(
@@ -50,6 +53,14 @@ const CallDetailCellRenderer = (props) => {
         </ShowComponent>
 
         <CallStatus value={data.status} />
+        {/*
+          Live-call "Listen" button disabled. It opens LiveCallMonitor, which
+          joins the call's LiveKit room via the listener-token endpoint
+          (provider_call_data.livekit.room_name). Hosted-runner sims don't
+          register that room during ONGOING, so the monitor would join an empty
+          room. Re-enable (and add a joinable-room gate) once hosted sims expose
+          one.
+
         {agentType === AGENT_TYPES.VOICE &&
           data.status === CallStatusValues.ONGOING &&
           (rowData?.id || callId) &&
@@ -86,6 +97,7 @@ const CallDetailCellRenderer = (props) => {
               Listen
             </Box>
           )}
+        */}
       </Box>
       <ShowComponent
         condition={data?.ended_reason && agentType === AGENT_TYPES.VOICE}

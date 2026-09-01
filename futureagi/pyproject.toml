@@ -114,7 +114,6 @@ dependencies = [
     "pdfminer.six<=20240706",
     "python-docx",
     "striprtf",
-    "pdfminer",
     "openpyxl>=3.1.0",
     "pdfplumber>=0.10.0",
     "beautifulsoup4>=4.12.0",
@@ -235,6 +234,7 @@ select = [
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
+    "TID251", # flake8-tidy-imports: banned-api
 ]
 ignore = [
     "E501",  # line too long (handled by black)
@@ -242,8 +242,13 @@ ignore = [
     "C901",  # too complex
 ]
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"accounts.services.token_service.issue_sos_tokens" = { msg = "SOS mints must be audited - use accounts.services.sos_service.start_sos_session." }
+
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports
+"accounts/services/sos_service.py" = ["TID251"]  # the one audited caller
+"conftest.py" = ["E402"]  # import order is load-bearing: env prep and EE stubs must precede app imports
 
 [tool.mypy]
 python_version = "3.11"
@@ -278,10 +283,12 @@ django_settings_module = "tfc.settings"
 
 [dependency-groups]
 dev = [
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "pytest>=8.4.1",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=6.2.1",
     "pytest-django>=4.11.1",
     "pytest-mock>=3.14.1",
+    "pytest-split>=0.11.0",
     "pytest-xdist>=3.8.0",
 ]

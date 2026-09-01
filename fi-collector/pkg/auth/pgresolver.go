@@ -29,6 +29,15 @@ func (r *ResolveResult) GetProject(name string) (string, bool) {
 	return id, ok
 }
 
+// GetProjectInWorkspace refuses to read a project mapping through any scope
+// other than the immutable workspace carried by this authentication result.
+func (r *ResolveResult) GetProjectInWorkspace(workspaceID, name string) (string, bool) {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return "", false
+	}
+	return r.GetProject(name)
+}
+
 // SetProject sets a single project mapping, thread-safe.
 func (r *ResolveResult) SetProject(name, id string) {
 	r.mu.Lock()
@@ -45,6 +54,50 @@ func (r *ResolveResult) SetProjects(projects map[string]string) {
 	}
 }
 
+// SetProjectsInWorkspace merges only when the caller proves the same
+// workspace scope as the authentication result.
+func (r *ResolveResult) SetProjectsInWorkspace(workspaceID string, projects map[string]string) bool {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Projects == nil {
+		r.Projects = make(map[string]string, len(projects))
+	}
+	for name, id := range projects {
+		r.Projects[name] = id
+	}
+	return true
+}
+
+// MissingProjectsInWorkspace prevents a cached name from one workspace from
+// satisfying a lookup for another workspace.
+func (r *ResolveResult) MissingProjectsInWorkspace(workspaceID string, names []string) ([]string, bool) {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return nil, false
+	}
+	return r.MissingProjects(names), true
+}
+
+// ProjectIDsInWorkspace snapshots the project IDs that were resolved through
+// this authentication result. The server uses it as an in-memory sidecar
+// proof before handing canonical rows to the optional property writer.
+func (r *ResolveResult) ProjectIDsInWorkspace(workspaceID string) (map[string]struct{}, bool) {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return nil, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make(map[string]struct{}, len(r.Projects))
+	for _, id := range r.Projects {
+		if id != "" {
+			result[id] = struct{}{}
+		}
+	}
+	return result, true
+}
+
 // MissingProjects returns project names not yet in the map, thread-safe.
 func (r *ResolveResult) MissingProjects(names []string) []string {
 	r.mu.RLock()
@@ -56,6 +109,21 @@ func (r *ResolveResult) MissingProjects(names []string) []string {
 		}
 	}
 	return missing
+}
+
+// DeleteProjectByID removes every name mapped to projectID, thread-safe.
+// Matching by id (not name) stays correct across orgs and same-name recreates.
+func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := false
+	for name, id := range r.Projects {
+		if id == projectID {
+			delete(r.Projects, name)
+			removed = true
+		}
+	}
+	return removed
 }
 
 // PGResolver validates API keys and resolves projects directly against PG.
@@ -131,13 +199,19 @@ func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) 
 		return nil, fmt.Errorf("validate key: %w", err)
 	}
 
-	res := &ResolveResult{
-		OrgID:    orgID,
-		KeyType:  keyType,
-		Projects: make(map[string]string),
-	}
+	effectiveWorkspace := ""
 	if workspaceID != nil {
-		res.WorkspaceID = *workspaceID
+		effectiveWorkspace = *workspaceID
+	}
+	if effectiveWorkspace == "" {
+		effectiveWorkspace, err = r.resolveDefaultWorkspace(ctx, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("validate key workspace: %w", err)
+		}
+	}
+	res := &ResolveResult{
+		OrgID: orgID, WorkspaceID: effectiveWorkspace,
+		KeyType: keyType, Projects: make(map[string]string),
 	}
 	if userID != nil {
 		res.UserID = *userID
@@ -145,18 +219,25 @@ func (r *PGResolver) ValidateKey(ctx context.Context, apiKey, secretKey string) 
 	return res, nil
 }
 
-// ResolveProjects batch-resolves project names to IDs for an org.
+const resolveProjectsQuery = `
+		SELECT id, name FROM tracer_project
+		WHERE organization_id = $1 AND workspace_id = $2
+		  AND name = ANY($3) AND deleted = false`
+
+// ResolveProjects batch-resolves project names to IDs for one exact
+// organization/workspace. A workspace-less lookup is always refused.
 // Returns a map of name → id for projects that exist.
-func (r *PGResolver) ResolveProjects(ctx context.Context, orgID string, names []string) (map[string]string, error) {
+func (r *PGResolver) ResolveProjects(
+	ctx context.Context, orgID, workspaceID string, names []string,
+) (map[string]string, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
+	if orgID == "" || workspaceID == "" {
+		return nil, fmt.Errorf("resolve projects requires organization and workspace scope")
+	}
 
-	const q = `
-		SELECT id, name FROM tracer_project
-		WHERE organization_id = $1 AND name = ANY($2) AND deleted = false`
-
-	rows, err := r.read.Query(ctx, q, orgID, names)
+	rows, err := r.read.Query(ctx, resolveProjectsQuery, orgID, workspaceID, names)
 	if err != nil {
 		return nil, fmt.Errorf("resolve projects: %w", err)
 	}
@@ -173,6 +254,39 @@ func (r *PGResolver) ResolveProjects(ctx context.Context, orgID string, names []
 	return result, rows.Err()
 }
 
+func (r *PGResolver) resolveDefaultWorkspace(ctx context.Context, orgID string) (string, error) {
+	if r == nil || r.read == nil || ctx == nil || orgID == "" {
+		return "", fmt.Errorf("default workspace resolution requires a resolver context")
+	}
+	const query = `SELECT id FROM accounts_workspace
+		WHERE organization_id = $1 AND is_default = true AND is_active = true AND deleted = false
+		ORDER BY id LIMIT 2`
+	rows, err := r.read.Query(ctx, query, orgID)
+	if err != nil {
+		return "", fmt.Errorf("resolve default workspace: %w", err)
+	}
+	defer rows.Close()
+	ids := make([]string, 0, 2)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", fmt.Errorf("scan default workspace: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return requireExactlyOneDefaultWorkspace(orgID, ids)
+}
+
+func requireExactlyOneDefaultWorkspace(orgID string, ids []string) (string, error) {
+	if orgID == "" || len(ids) != 1 || ids[0] == "" {
+		return "", fmt.Errorf("org %s requires exactly one active default workspace", orgID)
+	}
+	return ids[0], nil
+}
+
 // GetOrCreateProject creates a project if it doesn't exist (via write pool)
 // and returns its ID. Mirrors the Django get_or_create_project() in
 // tracer/utils/otel.py — same defaults, same unique constraint.
@@ -181,17 +295,13 @@ func (r *PGResolver) GetOrCreateProject(ctx context.Context, orgID, workspaceID,
 		traceType = "observe"
 	}
 
-	// If no workspace provided, resolve the org's default workspace (same as Django).
+	// Legacy null-workspace callers resolve the one unambiguous active default
+	// workspace. Zero or multiple defaults fail closed.
 	if workspaceID == "" {
-		const wsQ = `SELECT id FROM accounts_workspace
-			WHERE organization_id = $1 AND is_default = true AND is_active = true AND deleted = false
-			LIMIT 1`
-		err := r.read.QueryRow(ctx, wsQ, orgID).Scan(&workspaceID)
-		if err == pgx.ErrNoRows {
-			return "", fmt.Errorf("org %s has no default workspace", orgID)
-		}
+		var err error
+		workspaceID, err = r.resolveDefaultWorkspace(ctx, orgID)
 		if err != nil {
-			return "", fmt.Errorf("resolve default workspace: %w", err)
+			return "", err
 		}
 	}
 

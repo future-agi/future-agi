@@ -16,6 +16,10 @@
 .PARAMETER NoUp
   Bootstrap .env only; don't pull or start the stack.
 
+.PARAMETER WipeVolumes
+  Explicitly stop this Compose project and remove only its inventoried named
+  volumes, including Kafka and collector spool state. Existing data is deleted.
+
 .PARAMETER NonInteractive
   CI / unattended. Reads FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME,
   FAGI_ADMIN_PASSWORD from env if you want a user auto-created.
@@ -24,6 +28,7 @@
   .\bin\install.ps1
   .\bin\install.ps1 -Full
   .\bin\install.ps1 -NoUp
+  .\bin\install.ps1 -WipeVolumes
   .\bin\install.ps1 -NonInteractive
 #>
 
@@ -32,6 +37,7 @@ param(
   [switch]$Full,
   [switch]$SkipUserCreation,
   [switch]$NoUp,
+  [switch]$WipeVolumes,
   [switch]$NonInteractive
 )
 
@@ -190,6 +196,52 @@ function New-HexSecret {
 
 function Test-Placeholder { param([string]$Var) ((Get-EnvValue $Var) -match '^CHANGEME-') }
 
+# Persistent-state inventory. Deletion happens only behind the explicit
+# -WipeVolumes switch and targets exact Compose volume names; no wildcard or
+# broad Docker cleanup command is used.
+$projectName = Get-EnvValue 'COMPOSE_PROJECT_NAME'
+if (-not $projectName) { $projectName = 'futureagi' }
+$persistentVolumeSuffixes = @(
+  'postgres-data',
+  'clickhouse-data',
+  'minio-data',
+  'redis-data',
+  'rabbitmq-data',
+  'peerdb-catalog-data',
+  'peerdb-minio-data',
+  'property-catalog-kafka-data',
+  'property-catalog-sequencer-data',
+  'fi-collector-data'
+)
+$existingVolumes = @()
+foreach ($suffix in $persistentVolumeSuffixes) {
+  $volumeName = "${projectName}_${suffix}"
+  & docker volume inspect $volumeName *> $null
+  if ($LASTEXITCODE -eq 0) { $existingVolumes += $volumeName }
+}
+
+if ($WipeVolumes) {
+  if ($existingVolumes.Count -eq 0) {
+    Ok "No existing project volumes found; nothing to wipe"
+  } else {
+    Step "Wiping explicitly requested project volumes"
+    Invoke-Compose down --remove-orphans
+    if ($LASTEXITCODE -ne 0) {
+      Die "Could not stop the existing Compose project before the requested volume wipe."
+    }
+    foreach ($volumeName in $existingVolumes) {
+      $removeOutput = & docker volume rm $volumeName 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        Die "Could not remove requested volume $volumeName`: $removeOutput"
+      }
+      Append-Log @("removed volume: $volumeName")
+    }
+    Ok "Removed $($existingVolumes.Count) inventoried project volume(s), including Kafka/spool state when present"
+  }
+} elseif ($existingVolumes.Count -gt 0 -and ((Test-Placeholder 'PG_PASSWORD') -or (Test-Placeholder 'MINIO_ROOT_PASSWORD'))) {
+  Die "Existing project volumes use prior credentials. Set matching passwords or explicitly re-run with -WipeVolumes."
+}
+
 foreach ($var in 'SECRET_KEY','PG_PASSWORD','MINIO_ROOT_PASSWORD','AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN') {
   if (Test-Placeholder $var) {
     Set-EnvValue $var (New-HexSecret 32)
@@ -242,6 +294,7 @@ $portsToCheck = [ordered]@{
   'MINIO_API_PORT'       = 9005
   'MINIO_CONSOLE_PORT'   = 9006
   'TEMPORAL_PORT'        = 7233
+  'PROPERTY_CATALOG_KAFKA_PORT' = 29092
 }
 if ($Full) {
   $portsToCheck['PEERDB_UI_PORT'] = 3001
@@ -299,7 +352,7 @@ function Read-Plain {
 if (-not $SkipUserCreation -and -not $NonInteractive) {
   Step "Create your first account"
   Say "  Press Enter on email to skip and create the user later via:"
-  Say "    docker compose exec backend python manage.py create_user"
+  Say "    docker exec -it futureagi-backend-1 python manage.py create_user"
   Say ""
 
   while ($true) {
@@ -345,8 +398,18 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
 
 # ---- pull ----
 Step "Pulling images"
-Append-Log @("running: $DcCmd $($DcArgs -join ' ') pull")
-Invoke-Compose pull
+$pullArgs = @('pull')
+$pullHelp = (& $DcCmd @DcArgs pull --help 2>&1 | Out-String)
+if ($pullHelp -match '--ignore-buildable') {
+  $pullArgs += '--ignore-buildable'
+} else {
+  $activeServices = @(& $DcCmd @DcArgs config --services)
+  $pullArgs += @($activeServices | Where-Object {
+    $_ -and $_ -notin @('fi-collector', 'fi-property-catalog-sequencer', 'fi-property-catalog-consumer')
+  })
+}
+Append-Log @("running: $DcCmd $($DcArgs -join ' ') $($pullArgs -join ' ')")
+Invoke-Compose @pullArgs
 if ($LASTEXITCODE -ne 0) {
   Die "docker compose pull failed. Check disk space (docker system df) and try again."
 }
@@ -367,25 +430,165 @@ while ($true) {
 }
 Ok "Containers started"
 
-# ---- health wait ----
-Step "Waiting for backend to become healthy"
+# ---- readiness wait ----
+Step "Waiting for the application and property catalog to become ready"
+
+function Get-BoundedEnvInt {
+  param(
+    [string]$Var,
+    [int]$Default,
+    [int]$Min,
+    [int]$Max
+  )
+  $raw = Get-EnvValue $Var
+  if (-not $raw) { $raw = [string]$Default }
+  $value = 0
+  if (-not [int]::TryParse($raw, [ref]$value) -or $value -lt $Min -or $value -gt $Max) {
+    Die "$Var must be an integer in [$Min,$Max] (got '$raw')"
+  }
+  return $value
+}
+
+function Get-ComposeServiceSnapshot {
+  param([string]$Service)
+  $containerId = (& $DcCmd @DcArgs ps -a -q $Service 2>$null | Select-Object -First 1)
+  if (-not $containerId) {
+    return [pscustomobject]@{
+      Id = 'missing'; Status = 'missing'; ExitCode = -1; RestartCount = 0
+      Health = 'none'; StartedAt = 'never'
+    }
+  }
+  $format = '{{.State.Status}}|{{.State.ExitCode}}|{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.StartedAt}}'
+  $raw = (& docker inspect --format $format $containerId 2>$null | Select-Object -First 1)
+  if (-not $raw) {
+    return [pscustomobject]@{
+      Id = $containerId; Status = 'missing'; ExitCode = -1; RestartCount = 0
+      Health = 'none'; StartedAt = 'never'
+    }
+  }
+  $parts = $raw -split '\|', 5
+  return [pscustomobject]@{
+    Id = $containerId
+    Status = $parts[0]
+    ExitCode = [int]$parts[1]
+    RestartCount = [int]$parts[2]
+    Health = $parts[3]
+    StartedAt = $parts[4]
+  }
+}
+
+function Save-ReadinessDiagnostics {
+  $services = @(
+    'property-catalog-kafka',
+    'property-catalog-kafka-volume-init',
+    'property-catalog-runtime-volume-init',
+    'property-catalog-topic-init',
+    'property-catalog-clickhouse-bootstrap',
+    'property-catalog-postgres-bootstrap',
+    'fi-collector',
+    'fi-property-catalog-sequencer',
+    'fi-property-catalog-consumer',
+    'property-catalog-supervisor',
+    'backend'
+  )
+  $psOutput = @(& $DcCmd @DcArgs ps -a 2>&1 | ForEach-Object { [string]$_ })
+  Append-Log @('', '--- compose ps -a ---')
+  Append-Log $psOutput
+  $logOutput = @(& $DcCmd @DcArgs logs --tail 80 @services 2>&1 | ForEach-Object { [string]$_ })
+  Append-Log @('', '--- readiness logs ---')
+  Append-Log $logOutput
+}
+
 $BackendPort = Get-EnvValue 'BACKEND_PORT'
 if (-not $BackendPort) { $BackendPort = 8000 }
-$deadline = (Get-Date).AddSeconds(600)
+$readyTimeout = Get-BoundedEnvInt 'INSTALL_READY_TIMEOUT_SECONDS' 600 60 1800
+$stabilitySeconds = Get-BoundedEnvInt 'INSTALL_STABILITY_SECONDS' 15 5 120
+$deadline = (Get-Date).AddSeconds($readyTimeout)
+$readySince = $null
+$lastReadySignature = ''
+$catalogJobs = @(
+  'property-catalog-kafka-volume-init',
+  'property-catalog-runtime-volume-init',
+  'property-catalog-topic-init',
+  'property-catalog-clickhouse-bootstrap',
+  'property-catalog-postgres-bootstrap'
+)
+$catalogServices = @(
+  'fi-collector',
+  'fi-property-catalog-sequencer',
+  'fi-property-catalog-consumer',
+  'property-catalog-supervisor'
+)
+
 while ($true) {
+  $now = Get-Date
+  $allReady = $true
+  $fatalReason = $null
+  $signatureParts = @()
+
+  foreach ($service in $catalogJobs) {
+    $snapshot = Get-ComposeServiceSnapshot $service
+    if ($snapshot.Status -eq 'exited' -and $snapshot.ExitCode -eq 0) { continue }
+    $allReady = $false
+    if ($snapshot.Status -eq 'dead' -or ($snapshot.Status -eq 'exited' -and $snapshot.ExitCode -ne 0)) {
+      $fatalReason = "$service failed with status=$($snapshot.Status) exit_code=$($snapshot.ExitCode)"
+      break
+    }
+  }
+
+  if (-not $fatalReason) {
+    $kafka = Get-ComposeServiceSnapshot 'property-catalog-kafka'
+    $signatureParts += "kafka:$($kafka.Id):$($kafka.RestartCount):$($kafka.StartedAt)"
+    if ($kafka.Status -ne 'running' -or $kafka.Health -ne 'healthy') {
+      $allReady = $false
+      if ($kafka.Status -eq 'dead') { $fatalReason = 'property-catalog-kafka entered dead state' }
+    }
+  }
+
+  if (-not $fatalReason) {
+    foreach ($service in $catalogServices) {
+      $snapshot = Get-ComposeServiceSnapshot $service
+      $signatureParts += "$service`:$($snapshot.Id):$($snapshot.RestartCount):$($snapshot.StartedAt)"
+      if ($snapshot.Status -ne 'running' -or ($service -eq 'property-catalog-supervisor' -and $snapshot.Health -ne 'healthy')) {
+        $allReady = $false
+        if ($snapshot.Status -eq 'dead') { $fatalReason = "$service entered dead state" }
+      }
+    }
+  }
+
   try {
     $null = Invoke-WebRequest -Uri "http://localhost:$BackendPort/health/" `
       -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-    Ok "Backend healthy at http://localhost:$BackendPort"
-    break
   } catch {
-    if ((Get-Date) -ge $deadline) {
-      Warn "Backend did not pass /health/ within 10 minutes. The stack may still be migrating."
-      Warn "Tail the logs: $DcCmd $($DcArgs -join ' ') logs -f backend"
+    $allReady = $false
+  }
+
+  if ($fatalReason) {
+    Save-ReadinessDiagnostics
+    Die "$fatalReason. Relevant service logs were appended to $LogFile"
+  }
+
+  $readySignature = $signatureParts -join ';'
+  if ($allReady) {
+    if ($readySignature -ne $lastReadySignature) {
+      $lastReadySignature = $readySignature
+      $readySince = $now
+    } elseif ($readySince -and ($now - $readySince).TotalSeconds -ge $stabilitySeconds) {
+      Ok "Kafka healthy; candidate and ordered topics plus catalog bootstraps completed"
+      Ok "Collector, sequencer, property-catalog consumer, and supervisor stable for ${stabilitySeconds}s"
+      Ok "Backend healthy at http://localhost:$BackendPort"
       break
     }
-    Start-Sleep -Seconds 5
+  } else {
+    $readySince = $null
+    $lastReadySignature = ''
   }
+
+  if ($now -ge $deadline) {
+    Save-ReadinessDiagnostics
+    Die "Stack did not become fully ready within ${readyTimeout}s. Relevant service logs were appended to $LogFile"
+  }
+  Start-Sleep -Seconds 5
 }
 
 # ---- create user ----
@@ -402,7 +605,7 @@ if ($UserEmail) {
     Warn "create_user failed (exit $cuRc). Last 6 lines:"
     ($cuOut | Out-String).Split([char]10) | Select-Object -Last 6 | ForEach-Object { Say "      $_" }
     Warn "Run it manually after the stack settles:"
-    Warn "  $DcCmd $($DcArgs -join ' ') exec -it backend python manage.py create_user"
+    Warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
   }
 }
 
@@ -423,6 +626,10 @@ Say "    Backend     ->  http://localhost:$BackendPort"
 if ($Full) {
   Say "    PeerDB UI   ->  http://localhost:3001  (peerdb / peerdb)"
 }
+Say ""
+Say "  Existing-data catalog backfill"
+Say "    Restarts do not scan historical data automatically. After an upgrade:"
+Say "    .\bin\property-catalog-backfill.ps1 -Execute"
 if ($UserEmail) {
   Say ""
   Say "  Sign in as $UserEmail"

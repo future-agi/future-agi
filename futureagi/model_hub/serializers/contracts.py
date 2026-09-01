@@ -1,5 +1,6 @@
 import json
 
+from django.conf import settings
 from rest_framework import serializers
 
 from model_hub.constants import MAX_EMPTY_DATASET_ROWS
@@ -11,6 +12,7 @@ from model_hub.serializers.optimize_dataset import (
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
+from model_hub.services.dataset_validators import MAX_PAGE_SIZE as DATASET_MAX_PAGE_SIZE
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
 from tfc.utils.serializer_fields import StringOrObjectField
 from tracer.serializers.filters import (
@@ -21,6 +23,11 @@ from tracer.serializers.filters import (
     json_object_query_param_field,
     parse_filter_list_payload,
 )
+
+_EVAL_LOG_DEFAULT_PAGE_SIZE = settings.EVAL_LOG_DEFAULT_PAGE_SIZE
+_EVAL_LOG_MAX_PAGE_SIZE = settings.INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE
+_EVAL_METRIC_MAX_WINDOW_DAYS = settings.EVAL_METRIC_MAX_WINDOW_DAYS
+_ANALYTICS_DEFAULT_LOOKBACK_DAYS = settings.ANALYTICS_DEFAULT_LOOKBACK_DAYS
 
 
 class ModelHubEmptyRequestSerializer(StrictInputSerializer):
@@ -515,11 +522,44 @@ class PromptMetricsMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
 
 
+class PromptMetricFieldConfigSerializer(serializers.Serializer):
+    """Typed prompt-table definition carrying its stable registry identity."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+    group_by = serializers.CharField(required=False, allow_null=True)
+    output_type = serializers.CharField(required=False, allow_null=True)
+    reverse_output = serializers.BooleanField(required=False, allow_null=True)
+    annotation_label_type = serializers.CharField(required=False, allow_null=True)
+    choices = serializers.ListField(
+        child=serializers.JSONField(allow_null=True),
+        required=False,
+        allow_null=True,
+    )
+    settings = serializers.JSONField(required=False, allow_null=True)
+    choices_map = serializers.JSONField(required=False, allow_null=True)
+    eval_template_id = serializers.UUIDField(required=False, allow_null=True)
+    annotators = serializers.JSONField(required=False, allow_null=True)
+    source_field = serializers.CharField(required=False, allow_null=True)
+    parent_eval_id = serializers.CharField(required=False, allow_null=True)
+    property_id = serializers.CharField()
+    property_kind = serializers.ChoiceField(choices=["system_attribute", "eval_config"])
+    property_source = serializers.CharField()
+    filter_type = serializers.ChoiceField(
+        choices=["number", "text", "datetime", "boolean", "array"],
+        required=False,
+    )
+    supported_filter_ops = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+
+
 class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
     table = serializers.ListField(child=serializers.JSONField())
-    config = serializers.JSONField()
+    config = PromptMetricFieldConfigSerializer(many=True)
     metadata = PromptMetricsMetadataSerializer()
 
 
@@ -528,14 +568,25 @@ class PromptMetricsResponseSerializer(serializers.Serializer):
     result = PromptMetricsResultSerializer()
 
 
-class PromptMetricsQuerySerializer(serializers.Serializer):
+class PromptMetricsBaseQuerySerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
-    search_term = serializers.CharField(required=False, allow_blank=True, default="")
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
         required=False, default=10, min_value=1, max_value=100
     )
+
+
+class PromptAggregateMetricsQuerySerializer(PromptMetricsBaseQuerySerializer):
+    """Aggregate prompt metrics do not implement free-text search."""
+
+
+class PromptSpanMetricsQuerySerializer(PromptMetricsBaseQuerySerializer):
+    search_term = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class PromptMetricsQuerySerializer(PromptSpanMetricsQuerySerializer):
+    """Deprecated compatibility alias for the historical span query schema."""
 
 
 class PromptMetricsEmptyScreenResultSerializer(serializers.Serializer):
@@ -719,6 +770,50 @@ class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
     page_number = serializers.IntegerField(required=False, default=0)
     page_size = serializers.IntegerField(required=False, default=10)
 
+    def validate_sort(self, value):
+        """Reject a null/empty ``column_id`` here so it fails with the same 400
+        the view returns for an unknown one, instead of sorting nothing."""
+        for item in value:
+            if isinstance(item, dict) and item.get("column_id", "") in (None, ""):
+                raise serializers.ValidationError(
+                    "Sort column_id cannot be null or empty."
+                )
+        return value
+
+
+class LegacyKnowledgeBaseBulkDeleteRequestSerializer(serializers.Serializer):
+    """Body of ``DELETE /model-hub/knowledge-base/``.
+
+    Documentation-only: the view reads ``request.data`` directly and the
+    decorator is wired with ``strict_request_validation=False``, so this
+    declares the contract without changing which payloads are accepted.
+    """
+
+    kb_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+
+
+class LegacyKnowledgeBaseFileDeleteRequestSerializer(serializers.Serializer):
+    """Body of ``DELETE /model-hub/knowledge-base/files/``.
+
+    Every field is optional because the endpoint accepts three shapes: explicit
+    ``file_ids``, explicit ``file_names``, or ``delete_all`` with optional
+    ``excluded_file_ids``. Documentation-only, as above.
+    """
+
+    kb_id = serializers.UUIDField(required=False, allow_null=True)
+    delete_all = serializers.BooleanField(required=False, default=False)
+    file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    excluded_file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    file_names = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
+
 
 class LegacyKnowledgeBaseSortQueryParamField(serializers.Field):
     def to_internal_value(self, data):
@@ -742,6 +837,10 @@ class LegacyKnowledgeBaseSortQueryParamField(serializers.Field):
             if "column_id" not in item or "type" not in item:
                 raise serializers.ValidationError(
                     "Each sort item requires column_id and type."
+                )
+            if item["column_id"] in (None, ""):
+                raise serializers.ValidationError(
+                    "Sort column_id cannot be null or empty."
                 )
             if item["type"] not in ("ascending", "descending"):
                 raise serializers.ValidationError(
@@ -1540,16 +1639,91 @@ class DatasetTableQuerySerializer(StrictInputSerializer):
     filters = filter_list_query_param_field(required=False, default=list)
     sort = DatasetSortListQueryParamField(required=False, default=list)
     search = json_object_query_param_field(required=False, default=dict)
-    page_size = serializers.IntegerField(required=False, default=10, min_value=1)
+    page_size = serializers.IntegerField(
+        required=False,
+        default=10,
+        min_value=1,
+    )
     current_page_index = serializers.IntegerField(
         required=False, default=0, min_value=0
     )
     column_config_only = serializers.BooleanField(required=False, default=False)
+    exact_snapshot = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Start an exact MVCC-bound dataset read. Exact reads start at page 0 "
+            "and return a signed next_cursor when more rows remain."
+        ),
+    )
+    cursor = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=4096,
+        help_text=(
+            "Signed next_cursor from the preceding exact dataset page. Keep the "
+            "same page_size and current_page_index sequence."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        page_size = int(attrs.get("page_size", 10))
+        exact_read = bool(attrs.get("exact_snapshot") or attrs.get("cursor"))
+        if exact_read and page_size > DATASET_MAX_PAGE_SIZE:
+            raise serializers.ValidationError(
+                {
+                    "page_size": (
+                        f"Exact dataset pages cannot exceed "
+                        f"{DATASET_MAX_PAGE_SIZE} rows."
+                    )
+                }
+            )
+        # Preserve the legacy grid contract, which historically clamped large
+        # requests. Only the signed exact-import flow requires a hard error.
+        if not exact_read:
+            attrs["page_size"] = min(page_size, DATASET_MAX_PAGE_SIZE)
+        return attrs
+
+
+class ExperimentDatasetTableQuerySerializer(StrictInputSerializer):
+    """Finite numbered-page contract for the legacy experiment grid."""
+
+    page_size = serializers.IntegerField(
+        required=False,
+        default=_EVAL_LOG_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=_EVAL_LOG_MAX_PAGE_SIZE,
+    )
+    current_page_index = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+    )
+
+
+class ExperimentTableRowsQuerySerializer(ExperimentDatasetTableQuerySerializer):
+    """Finite query contract for the current experiment rows endpoint."""
+
+    column_config_only = serializers.BooleanField(required=False, default=False)
+    get_diff = serializers.BooleanField(required=False, default=False)
+    search = serializers.CharField(
+        required=False,
+        default="",
+        allow_blank=True,
+        trim_whitespace=True,
+        max_length=512,
+    )
 
 
 class EvalApiLogTableQuerySerializer(StrictInputSerializer):
     eval_template_id = serializers.UUIDField()
-    page_size = serializers.IntegerField(required=False, default=10, min_value=1)
+    page_size = serializers.IntegerField(
+        required=False,
+        default=10,
+        min_value=1,
+        max_value=100,
+    )
     current_page_index = serializers.IntegerField(
         required=False, default=0, min_value=0
     )
@@ -1565,7 +1739,15 @@ class EvalApiLogTableQuerySerializer(StrictInputSerializer):
 
 class EvalMetricQuerySerializer(StrictInputSerializer):
     eval_template_id = serializers.UUIDField()
-    filters = filter_list_query_param_field(required=False, default=list)
+    filters = filter_list_query_param_field(
+        required=False,
+        default=list,
+        help_text=(
+            "Optional created_at datetime filters. The default window is "
+            f"{_ANALYTICS_DEFAULT_LOOKBACK_DAYS} days; "
+            f"the maximum supported window is {_EVAL_METRIC_MAX_WINDOW_DAYS} days."
+        ),
+    )
 
 
 class EvalTemplateBulkDeleteRequestSerializer(serializers.Serializer):
@@ -1585,6 +1767,18 @@ class EvalTemplateListChartsItemSerializer(serializers.Serializer):
 
 class EvalTemplateListChartsResponseResultSerializer(serializers.Serializer):
     charts = serializers.DictField(child=EvalTemplateListChartsItemSerializer())
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=["complete", "stale", "degraded"])
+    query_sampled = serializers.BooleanField()
+    query_error_code = serializers.ChoiceField(
+        choices=[
+            "read_budget_exceeded",
+            "template_limit_exceeded",
+            "query_failed",
+        ],
+        required=False,
+    )
+    data_stale = serializers.BooleanField()
 
 
 class EvalTemplateListChartsResponseSerializer(serializers.Serializer):
@@ -1721,8 +1915,11 @@ class EvalUsageQuerySerializer(serializers.Serializer):
     # Optional explicit date range — when provided, overrides the period
     # string. Sent by the frontend for Today, Yesterday, and Custom date
     # picker selections.
-    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    start_date = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    refresh = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         # Both or neither. Half a range silently falling back to `period`
@@ -1876,10 +2073,25 @@ class EvalUsageTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
 class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     template_id = serializers.UUIDField()
     is_composite = serializers.BooleanField()
+    completeness = serializers.ChoiceField(
+        choices=["complete", "degraded", "pending"], required=False
+    )
+    unavailable_fields = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
     table = serializers.ListField(child=EvalUsageTableRowSerializer())
     logs = EvalUsagePaginationSerializer()
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "degraded", "pending"], required=False
+    )
+    query_sampled = serializers.BooleanField(required=False)
+    query_completed_at = serializers.DateTimeField(required=False)
+    query_cached = serializers.BooleanField(required=False)
+    query_refresh_failed = serializers.BooleanField(required=False)
+    query_refreshing = serializers.BooleanField(required=False)
 
 
 class EvalUsageStatsResponseSerializer(serializers.Serializer):
@@ -1960,6 +2172,14 @@ class EvalApiLogRowResponseSerializer(serializers.Serializer):
 class EvalApiLogTableMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
     total_pages = serializers.IntegerField()
+    current_page_index = serializers.IntegerField(min_value=0)
+    page_size = serializers.IntegerField(
+        min_value=1,
+        max_value=_EVAL_LOG_MAX_PAGE_SIZE,
+    )
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=["complete"])
+    query_sampled = serializers.BooleanField()
 
 
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
@@ -1983,11 +2203,32 @@ class EvalMetricAverageSerializer(serializers.Serializer):
     avg_graph_data = serializers.JSONField(required=False, allow_null=True)
 
 
+class EvalMetricMetadataSerializer(serializers.Serializer):
+    window_start = serializers.DateTimeField()
+    window_end = serializers.DateTimeField()
+    interval = serializers.ChoiceField(choices=["day"])
+    bucket_count = serializers.IntegerField(
+        min_value=0,
+        max_value=_EVAL_METRIC_MAX_WINDOW_DAYS + 1,
+    )
+    valid_output_count = serializers.IntegerField(min_value=0)
+    invalid_output_count = serializers.IntegerField(min_value=0)
+    output_type = serializers.CharField()
+    query_complete = serializers.BooleanField()
+    query_sampled = serializers.BooleanField()
+    has_more = serializers.BooleanField()
+    max_window_days = serializers.IntegerField(
+        min_value=1,
+        max_value=_EVAL_METRIC_MAX_WINDOW_DAYS,
+    )
+
+
 class EvalMetricResponseResultSerializer(serializers.Serializer):
     base_eval_template_id = serializers.UUIDField()
     api_call_count = EvalMetricCountSerializer()
     average = EvalMetricAverageSerializer()
     error_rate = serializers.JSONField(required=False, allow_null=True)
+    metadata = EvalMetricMetadataSerializer()
 
 
 class EvalMetricResponseSerializer(serializers.Serializer):
@@ -2756,7 +2997,15 @@ class GroundTruthEmbedResponseSerializer(serializers.Serializer):
 
 class EvalMetricRequestSerializer(StrictInputSerializer):
     eval_template_id = serializers.UUIDField()
-    filters = filter_list_field(required=False, default=list)
+    filters = filter_list_field(
+        required=False,
+        default=list,
+        help_text=(
+            "Optional created_at datetime filters. The default window is "
+            f"{_ANALYTICS_DEFAULT_LOOKBACK_DAYS} days; "
+            f"the maximum supported window is {_EVAL_METRIC_MAX_WINDOW_DAYS} days."
+        ),
+    )
 
 
 class EvalTemplateNamesRequestSerializer(serializers.Serializer):
@@ -3022,7 +3271,10 @@ class DatasetUpdateColumnTypeRequestSerializer(serializers.Serializer):
 
 class DatasetRowDataRequestSerializer(StrictInputSerializer):
     filters = filter_list_field(required=False, default=list)
-    sort = DatasetSortListField(required=False, default=list)
+    # Row navigation can express one stable scalar key plus the row UUID
+    # tie-breaker. Multiple independent cell sorts do not have a bounded
+    # continuation predicate and were never applied consistently here.
+    sort = DatasetSortListField(required=False, default=list, max_length=1)
     row_id = serializers.UUIDField()
 
 

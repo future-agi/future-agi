@@ -1,14 +1,120 @@
 import os
 import re
+import threading
+import time
 import uuid
+import weakref
 from datetime import datetime
 from pprint import pprint
+from typing import Any
 
 import clickhouse_driver
-
 import structlog
 
+from tracer.services.clickhouse.server_readonly import ensure_read_statement
+
 logger = structlog.get_logger(__name__)
+
+
+# The vector store keeps its own native client because it is also responsible
+# for DDL and embedding writes, and because its connection is sourced directly
+# from CH_* environment variables.  Ordinary reads still need the same finite
+# application envelope as the analytics transport.  Keep that policy local so
+# a read can never be silently rerouted to a differently configured database.
+_VECTOR_READ_TIMEOUT_SECONDS = 9.5
+_VECTOR_READ_MAX_BYTES = 36 * 1024 * 1024 * 1024
+_VECTOR_READ_MAX_THREADS = 4
+_VECTOR_READ_MAX_RESULT_ROWS = 1_000_000
+_VECTOR_READ_MAX_RESULT_BYTES = 512 * 1024 * 1024
+_VECTOR_READ_ADMISSION_SLOTS = 4
+_VECTOR_NATIVE_CLIENT_LOCKS_GUARD = threading.Lock()
+_VECTOR_NATIVE_CLIENT_LOCKS = weakref.WeakKeyDictionary()
+_VECTOR_UNWEAKREFABLE_NATIVE_CLIENT_LOCK = threading.Lock()
+
+
+def _vector_native_client_read_lock(client):
+    """Return the process-wide read mutex for one native driver client."""
+
+    with _VECTOR_NATIVE_CLIENT_LOCKS_GUARD:
+        try:
+            lock = _VECTOR_NATIVE_CLIENT_LOCKS.get(client)
+        except TypeError:
+            return _VECTOR_UNWEAKREFABLE_NATIVE_CLIENT_LOCK
+        if lock is None:
+            lock = threading.Lock()
+            _VECTOR_NATIVE_CLIENT_LOCKS[client] = lock
+        return lock
+
+
+def _ensure_vector_read_statement(query: str) -> None:
+    """Reject non-read SQL before it reaches the write-capable native client."""
+
+    try:
+        ensure_read_statement(query)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Only read statements are allowed for guarded ClickHouse vector reads."
+        ) from exc
+
+
+def _finite_read_setting(
+    settings: dict[str, Any], name: str, default: int, ceiling: int
+) -> int:
+    requested = int(settings.get(name, 0) or 0)
+    return default if requested <= 0 else min(requested, ceiling)
+
+
+def _guarded_vector_read_settings(
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the finite settings envelope for one native vector SELECT."""
+
+    normalized = dict(settings or {})
+    # Row-scan caps made valid sparse/dense reads fail before their bounded
+    # result could be produced.  Bytes, time, result size and admission remain
+    # finite instead.
+    normalized.pop("max_rows_to_read", None)
+    normalized["readonly"] = 2
+    normalized["max_memory_usage"] = _finite_read_setting(
+        normalized,
+        "max_memory_usage",
+        _VECTOR_READ_MAX_BYTES,
+        _VECTOR_READ_MAX_BYTES,
+    )
+    normalized["max_bytes_to_read"] = _finite_read_setting(
+        normalized,
+        "max_bytes_to_read",
+        _VECTOR_READ_MAX_BYTES,
+        _VECTOR_READ_MAX_BYTES,
+    )
+    normalized["max_threads"] = _finite_read_setting(
+        normalized,
+        "max_threads",
+        _VECTOR_READ_MAX_THREADS,
+        _VECTOR_READ_MAX_THREADS,
+    )
+    normalized["max_result_rows"] = _finite_read_setting(
+        normalized,
+        "max_result_rows",
+        _VECTOR_READ_MAX_RESULT_ROWS,
+        _VECTOR_READ_MAX_RESULT_ROWS,
+    )
+    normalized["max_result_bytes"] = _finite_read_setting(
+        normalized,
+        "max_result_bytes",
+        _VECTOR_READ_MAX_RESULT_BYTES,
+        _VECTOR_READ_MAX_RESULT_BYTES,
+    )
+    normalized["result_overflow_mode"] = "throw"
+    normalized["timeout_overflow_mode"] = "throw"
+
+    requested_timeout = float(normalized.get("max_execution_time", 0) or 0)
+    normalized["max_execution_time"] = (
+        _VECTOR_READ_TIMEOUT_SECONDS
+        if requested_timeout <= 0
+        else min(requested_timeout, _VECTOR_READ_TIMEOUT_SECONDS)
+    )
+    return normalized
 
 
 def get_clickhouse_client_kwargs() -> dict[str, str | int]:
@@ -92,7 +198,7 @@ def sanitize_sql_value(value: str) -> str:
     - Wrapping reserved SQL keywords in backticks (`` ` ``).
     - Handling null characters and any unexpected special characters.
     """
-    value=str(value)
+    value = str(value)
     # Escape single quotes
     value = value.replace("'", "''")
 
@@ -118,7 +224,7 @@ def sanitize_sql_value(value: str) -> str:
         "GROUP",
         "ORDER",
         "HAVING",
-        "DISTINCT"
+        "DISTINCT",
         # Add more SQL reserved keywords as needed
     ]
     if value.upper() in reserved_keywords:
@@ -161,11 +267,165 @@ class ClickHouseVectorDB:
     # for its lifetime, so the probe can run once per process and re-use the
     # answer across every instance.
     _is_clustered_cached: bool | None = None
+    _read_admission = threading.BoundedSemaphore(_VECTOR_READ_ADMISSION_SLOTS)
 
     def __init__(
         self,
     ):
         self.client = clickhouse_driver.Client(**get_clickhouse_client_kwargs())
+
+    @staticmethod
+    def _execute_native_read_with_deadline(
+        client,
+        query: str,
+        params: dict[str, Any],
+        *,
+        settings: dict[str, Any],
+        deadline: float,
+    ):
+        """Execute on the existing native client inside the remaining wall.
+
+        ``max_execution_time`` bounds server work, but the driver's default
+        socket timeout can otherwise leave an API request waiting for minutes.
+        A clickhouse-driver connection is exclusive while ``execute`` runs, so
+        temporarily narrowing its connect/socket timeout is safe and avoids
+        changing the transport used by any write call.
+
+        Lightweight test doubles do not expose a native ``Connection``.  They
+        still receive the guarded server settings and follow the normal path.
+        """
+
+        connection = getattr(client, "connection", None)
+        connected = getattr(connection, "connected", None)
+        if connected not in {True, False}:
+            return client.execute(query, params, settings=settings)
+
+        original_connect_timeout = getattr(connection, "connect_timeout", None)
+        original_send_receive_timeout = getattr(
+            connection, "send_receive_timeout", None
+        )
+        socket = getattr(connection, "socket", None)
+        original_socket_timeout = socket.gettimeout() if socket is not None else None
+        try:
+            if connected is False:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("ClickHouse vector read deadline exhausted")
+                if original_connect_timeout is not None:
+                    connection.connect_timeout = min(
+                        float(original_connect_timeout), remaining
+                    )
+                if original_send_receive_timeout is not None:
+                    connection.send_receive_timeout = min(
+                        float(original_send_receive_timeout), remaining
+                    )
+                connection.connect()
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("ClickHouse vector read deadline exhausted")
+            if original_send_receive_timeout is not None:
+                connection.send_receive_timeout = min(
+                    float(original_send_receive_timeout), remaining
+                )
+            socket = getattr(connection, "socket", None)
+            if socket is not None:
+                if original_socket_timeout is None:
+                    original_socket_timeout = original_send_receive_timeout
+                socket.settimeout(remaining)
+
+            settings["max_execution_time"] = min(
+                float(settings["max_execution_time"]), remaining
+            )
+            return client.execute(query, params, settings=settings)
+        finally:
+            if socket is not None and original_socket_timeout is not None:
+                try:
+                    socket.settimeout(original_socket_timeout)
+                except Exception:
+                    pass
+            if original_connect_timeout is not None:
+                connection.connect_timeout = original_connect_timeout
+            if original_send_receive_timeout is not None:
+                connection.send_receive_timeout = original_send_receive_timeout
+
+    @classmethod
+    def _execute_read_on_client(
+        cls,
+        client,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+    ):
+        """Execute one read on this vector client's exact database/credentials."""
+
+        _ensure_vector_read_statement(query)
+        guarded_settings = _guarded_vector_read_settings(settings)
+        wall_seconds = float(guarded_settings["max_execution_time"])
+        deadline = time.monotonic() + wall_seconds
+        acquired = cls._read_admission.acquire(timeout=wall_seconds)
+        if not acquired:
+            raise TimeoutError("ClickHouse vector read admission deadline exhausted")
+        client_lock = None
+        client_lock_acquired = False
+
+        try:
+            client_lock = _vector_native_client_read_lock(client)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not client_lock.acquire(timeout=remaining):
+                raise TimeoutError("ClickHouse vector client read deadline exhausted")
+            client_lock_acquired = True
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("ClickHouse vector read deadline exhausted")
+            guarded_settings["max_execution_time"] = min(wall_seconds, remaining)
+            return cls._execute_native_read_with_deadline(
+                client,
+                query,
+                params or {},
+                settings=guarded_settings,
+                deadline=deadline,
+            )
+        finally:
+            if client_lock_acquired:
+                client_lock.release()
+            cls._read_admission.release()
+
+    def execute_read(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+        max_result_rows: int | None = None,
+    ):
+        """Run a guarded read on this instance's exact CH_* connection.
+
+        Vector and clustering tables can live in a database that differs from
+        Django's analytics client.  Keeping the public read on the same native
+        client as the workflow's writes prevents a successful write followed
+        by a false-empty read from another database.
+        """
+
+        normalized = dict(settings or {})
+        if max_result_rows is not None:
+            requested_rows = int(max_result_rows)
+            if requested_rows <= 0:
+                raise ValueError("max_result_rows must be positive")
+            existing_rows = int(normalized.get("max_result_rows", 0) or 0)
+            normalized["max_result_rows"] = (
+                requested_rows
+                if existing_rows <= 0
+                else min(existing_rows, requested_rows)
+            )
+        return self._execute_read_on_client(
+            self.client,
+            query,
+            params,
+            settings=normalized,
+        )
 
     @classmethod
     def is_clustered(cls, client) -> bool:
@@ -187,8 +447,8 @@ class ClickHouseVectorDB:
         if cls._is_clustered_cached is not None:
             return cls._is_clustered_cached
         try:
-            rows = client.execute(
-                "SELECT count() FROM system.clusters WHERE replica_num > 1"
+            rows = cls._execute_read_on_client(
+                client, "SELECT count() FROM system.clusters WHERE replica_num > 1"
             )
         except Exception:
             # Only cache successful probes: a transient CH outage on the very
@@ -203,7 +463,7 @@ class ClickHouseVectorDB:
     def _is_clustered(self) -> bool:
         return self.is_clustered(self.client)
 
-    def drop_table(self,table_name: str) -> None:
+    def drop_table(self, table_name: str) -> None:
         """
         DROPS a table after use is over. DO NOT USE if not required.
         """
@@ -222,6 +482,7 @@ class ClickHouseVectorDB:
         *,
         cluster: str | None = None,
         database: str | None = None,
+        keeper_table_name: str | None = None,
     ) -> None:
         """Create a vector table. Replicated engine on clustered CH, plain otherwise.
 
@@ -239,13 +500,16 @@ class ClickHouseVectorDB:
         `<default_replica_path>/clickhouse/tables/{shard}/{database}/{table}</default_replica_path>`
         convention so two replicated tables with the same short name in
         different databases do not coordinate on the same znode.
+
+        `keeper_table_name` overrides the Keeper path component (default: the
+        table name), so the conversion swap can keep the canonical path.
         """
         clustered = self._is_clustered()
         cluster_name = cluster or get_clickhouse_cluster_name()
         qualified = f"{database}.{table_name}" if database else table_name
         engine, on_cluster = build_replicated_engine(
             "ReplacingMergeTree()",
-            table_name,
+            keeper_table_name or table_name,
             clustered=clustered,
             database=database,
             cluster=cluster_name,
@@ -275,7 +539,9 @@ class ClickHouseVectorDB:
         logger.info(
             "ch_vector_create_table_done",
             table=qualified,
-            engine="ReplicatedReplacingMergeTree" if clustered else "ReplacingMergeTree",
+            engine="ReplicatedReplacingMergeTree"
+            if clustered
+            else "ReplacingMergeTree",
             cluster=cluster_name if clustered else None,
             elapsed_sec=round(elapsed_time, 3),
         )
@@ -287,15 +553,12 @@ class ClickHouseVectorDB:
         start_time = datetime.now()
 
         table_exists_query = f"EXISTS TABLE {table_name}"
-        table_exists = self.client.execute(table_exists_query)
+        table_exists = self.execute_read(table_exists_query)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
         if not table_exists:
             self.create_table(table_name)
-
-
-
 
     def upsert_vector(
         self,
@@ -366,7 +629,7 @@ class ClickHouseVectorDB:
         select_query = f"SELECT id, vector, arrayJoin(metadata.key) AS key, arrayJoin(metadata.value) AS value FROM {table_name} WHERE id = '{id}' AND deleted = 0"
         start_time = datetime.now()
 
-        result = self.client.execute(select_query)
+        result = self.execute_read(select_query)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"SELECT query took {elapsed_time:.2f} seconds to execute")
@@ -397,7 +660,7 @@ class ClickHouseVectorDB:
             ]
             select_query += " AND " + " AND ".join(metadata_filter)
 
-        results = self.client.execute(select_query)
+        results = self.execute_read(select_query)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"select query took {elapsed_time:.2f} seconds to execute")
@@ -411,7 +674,7 @@ class ClickHouseVectorDB:
     def fetch_vectors_by_query(self, query: str):
         start_time = datetime.now()
 
-        results = self.client.execute(query)
+        results = self.execute_read(query)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"fetch query took {elapsed_time:.2f} seconds to execute")
@@ -432,7 +695,7 @@ class ClickHouseVectorDB:
         metadata_column_not_null: str | None = None,
         dataset_id: str | None = None,
         top_k: int | None = None,
-        threshold: float = 0.75
+        threshold: float = 0.75,
     ):
         """
         tracebacka similarity search against vectors in the specified table using cosine distance.
@@ -497,26 +760,30 @@ class ClickHouseVectorDB:
         """
         # Execute the query
         try:
-            results = self.client.execute(query)
+            results = self.execute_read(query)
         except clickhouse_driver.errors.PartiallyConsumedQueryError as e:
             logger.error(f"PartiallyConsumedQueryError: {e}")
             self.close()
             raise
         except Exception as e:
-            logger.info(f"Error executing query vector_similarity_search_with_threshold: {e}")
+            logger.info(
+                f"Error executing query vector_similarity_search_with_threshold: {e}"
+            )
             return None
 
         similarities = []
         for row in results:
             id, dataset_id, vector, keys, values, _, similarity = row
             metadata = dict(zip(keys, values, strict=False))
-            similarities.append({
-                "id": id,
-                "dataset_id": dataset_id,
-                "vector": vector,
-                "metadata": metadata,
-                "similarity": similarity
-            })
+            similarities.append(
+                {
+                    "id": id,
+                    "dataset_id": dataset_id,
+                    "vector": vector,
+                    "metadata": metadata,
+                    "similarity": similarity,
+                }
+            )
 
         return similarities
 
@@ -528,7 +795,7 @@ class ClickHouseVectorDB:
         metadata_column_not_null: str | None = None,
         eval_id: str | None = None,
         top_k: int = 5,
-        syn_data_flag=False
+        syn_data_flag=False,
     ):
         """
         Performs a similarity search against vectors in the specified table using cosine distance.
@@ -580,9 +847,10 @@ class ClickHouseVectorDB:
         results = None
         # Execute the query
         try:
-            results = self.client.execute(query)
+            results = self.execute_read(query)
         except Exception:
             import traceback
+
             traceback.print_exc()
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
@@ -601,7 +869,7 @@ class ClickHouseVectorDB:
         Closes the ClickHouse connection and releases resources.
         Should be called when the database connection is no longer needed.
         """
-        if hasattr(self, 'client') and self.client is not None:
+        if hasattr(self, "client") and self.client is not None:
             self.client.disconnect()
             self.client = None
 
@@ -609,9 +877,11 @@ class ClickHouseVectorDB:
         ids_sql = ", ".join(f"'{u}'" for u in doc_ids)
 
         query = f"SELECT COUNT(*) FROM {table_name} WHERE id IN ({ids_sql})"
-        return self.client.execute(query)
+        return self.execute_read(query)
 
-    def get_random_examples(self, doc_ids: list[str], table_name: str, limit: int) -> list:
+    def get_random_examples(
+        self, doc_ids: list[str], table_name: str, limit: int
+    ) -> list:
         """
         Get random examples from the table for a specific doc_id.
 
@@ -628,7 +898,7 @@ class ClickHouseVectorDB:
         ORDER BY rand()
         LIMIT {limit}
         """
-        return self.client.execute(query)
+        return self.execute_read(query)
 
     def bulk_upsert_vectors(
         self,
@@ -654,30 +924,45 @@ class ClickHouseVectorDB:
             List of IDs for the newly inserted vectors
         """
         if len(vectors) != len(metadata_list):
-            raise ValueError("Number of vectors must match number of metadata dictionaries")
+            raise ValueError(
+                "Number of vectors must match number of metadata dictionaries"
+            )
 
         # Generate IDs for all vectors
         new_ids = [str(uuid.uuid4()) for _ in range(len(vectors))]
 
         # Sanitize all metadata and keys
-        sanitized_metadata_list = [sanitize_metadata(metadata) for metadata in metadata_list]
+        sanitized_metadata_list = [
+            sanitize_metadata(metadata) for metadata in metadata_list
+        ]
         unique_keys = sanitize_keys(unique_keys)
         if exclude_keys:
             exclude_keys = sanitize_keys(exclude_keys)
 
         # Build the update query to mark existing entries as deleted
-        update_query = f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE deleted = 0 AND "
+        update_query = (
+            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE deleted = 0 AND "
+        )
 
         # For bulk operations, we need to handle the uniqueness check differently
         # We'll create a condition that checks if any of the new entries would match
         metadata_filter = []
         for unique_key in unique_keys:
             # Get all unique values for this key across all metadata dictionaries
-            unique_values = {metadata[unique_key] for metadata in sanitized_metadata_list if unique_key in metadata}
+            unique_values = {
+                metadata[unique_key]
+                for metadata in sanitized_metadata_list
+                if unique_key in metadata
+            }
 
             # Create a condition that checks if any of these values match
-            value_conditions = [f"metadata.value[indexOf(metadata.key, '{unique_key}')] = '{value}'" for value in unique_values]
-            metadata_filter.append(f"has(metadata.key, '{unique_key}') AND ({' OR '.join(value_conditions)})")
+            value_conditions = [
+                f"metadata.value[indexOf(metadata.key, '{unique_key}')] = '{value}'"
+                for value in unique_values
+            ]
+            metadata_filter.append(
+                f"has(metadata.key, '{unique_key}') AND ({' OR '.join(value_conditions)})"
+            )
 
         if exclude_keys:
             for exclude_key in exclude_keys:
@@ -698,10 +983,14 @@ class ClickHouseVectorDB:
 
         # Prepare the data for bulk insert
         insert_data = []
-        for i, (vector, metadata) in enumerate(zip(vectors, sanitized_metadata_list, strict=False)):
+        for i, (vector, metadata) in enumerate(
+            zip(vectors, sanitized_metadata_list, strict=False)
+        ):
             metadata_keys = list(metadata.keys())
             metadata_values = list(metadata.values())
-            insert_data.append((new_ids[i], eval_id, vector, metadata_keys, metadata_values))
+            insert_data.append(
+                (new_ids[i], eval_id, vector, metadata_keys, metadata_values)
+            )
 
         # Execute the bulk insert
         start_time = datetime.now()

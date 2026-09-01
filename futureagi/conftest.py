@@ -3,6 +3,9 @@ Root conftest.py for core-backend tests.
 Provides common fixtures for all test modules.
 """
 
+import ipaddress
+import os
+import re
 import sys
 import types
 from pathlib import Path
@@ -10,6 +13,39 @@ from pathlib import Path
 _project_root = Path(__file__).parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+# Stub live-service credentials so import-time constructors do not fail during collection.
+os.environ.setdefault("VAPI_API_KEY", "test-api-key-for-testing")
+os.environ.setdefault("VAPI_API_BASE_URL", "https://test.vapi.local")
+
+from tfc.ee_loader import has_ee
+from tfc.logging.config import configure_structlog
+
+EE_AVAILABLE = has_ee("ee")
+
+_EE_CLOUD_DIR = _project_root / "ee" / "cloud"
+
+
+def pytest_ignore_collect(collection_path, config):
+    """Keep cloud-only suites out of non-cloud test runs.
+
+    ee/cloud tests exercise Django apps (ee.cloud.control_plane, cloud
+    billing/temporal) that only cloud-mode settings install. Collecting
+    them under tfc.settings.test fails at import time ("Model class ...
+    isn't in an application in INSTALLED_APPS"), so ignore the tree unless
+    the control-plane app is installed.
+    """
+    try:
+        Path(collection_path).relative_to(_EE_CLOUD_DIR)
+    except ValueError:
+        return None
+    try:
+        from django.apps import apps
+
+        return not apps.is_installed("ee.cloud.control_plane")
+    except Exception:
+        # Apps registry not ready — the cloud suites can't import either.
+        return True
 
 
 def _install_ee_usage_stubs_if_missing() -> None:
@@ -20,6 +56,8 @@ def _install_ee_usage_stubs_if_missing() -> None:
     def _make(name: str) -> types.ModuleType:
         mod = types.ModuleType(name)
         mod.__path__ = []
+        # Keep __spec__ unset/None so importlib.find_spec stays falsy.
+        mod.__spec__ = None
         sys.modules[name] = mod
         if "." in name:
             parent_name, child_name = name.rsplit(".", 1)
@@ -31,6 +69,8 @@ def _install_ee_usage_stubs_if_missing() -> None:
     _make("ee")
     _make("ee.usage")
     _make("ee.usage.services")
+    _make("ee.usage.schemas")
+    _make("ee.usage.utils")
 
     entitlements = _make("ee.usage.services.entitlements")
 
@@ -48,12 +88,61 @@ def _install_ee_usage_stubs_if_missing() -> None:
     metering = _make("ee.usage.services.metering")
 
     def check_usage(*args, **kwargs):
-        return {"allowed": True}
+        return types.SimpleNamespace(allowed=True, reason="")
 
     metering.check_usage = check_usage
 
     emitter = _make("ee.usage.services.emitter")
     emitter.emit = lambda *args, **kwargs: None
+
+    # Patch targets for tracer eval dual-write (_emit_eval_billing) and
+    # tracer/tests/test_eval_credits_emit.py — OSS-safe mocks only.
+    config = _make("ee.usage.services.config")
+
+    class BillingConfig:
+        @classmethod
+        def get(cls):
+            return cls()
+
+        def get_eval_per_run_fee(self):
+            return 0.0
+
+        def calculate_ai_credits(self, cost_usd):
+            try:
+                return float(cost_usd or 0) * 100.0
+            except (TypeError, ValueError):
+                return 0.0
+
+    config.BillingConfig = BillingConfig
+
+    events = _make("ee.usage.schemas.events")
+
+    class UsageEvent:
+        def __init__(self, org_id, event_type, amount=0, properties=None, **kwargs):
+            self.org_id = org_id
+            self.event_type = event_type
+            self.amount = amount
+            self.properties = properties or {}
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    events.UsageEvent = UsageEvent
+
+    event_properties = _make("ee.usage.utils.event_properties")
+
+    def token_usage_properties(token_usage):
+        if not token_usage:
+            return {}
+        return {
+            "prompt_tokens": token_usage.get("prompt_tokens", 0),
+            "completion_tokens": token_usage.get("completion_tokens", 0),
+            "total_tokens": token_usage.get("total_tokens", 0),
+        }
+
+    event_properties.token_usage_properties = token_usage_properties
+
+    usage_entries = _make("ee.usage.utils.usage_entries")
+    usage_entries.log_and_deduct_cost_for_api_request = None
 
 
 _install_ee_usage_stubs_if_missing()
@@ -72,8 +161,81 @@ def pytest_configure(config):
     _apply_ch25_schema_for_tests()
 
 
+def _strict_ch25_apply() -> bool:
+    import os as _os
+
+    return _os.getenv("FI_CH25_SCHEMA_APPLY_STRICT", "").lower() in ("1", "true", "yes")
+
+
+class UnsafeClickHouseTestTarget(RuntimeError):
+    """Raised before a test helper can mutate an unsafe ClickHouse target."""
+
+
+_CLICKHOUSE_DATABASE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CLICKHOUSE_TEST_DATABASE_NAME = re.compile(r"^_?test_[a-z0-9_]+$", re.IGNORECASE)
+
+
+def _is_loopback_ch25_host(host: str) -> bool:
+    """Return true only for explicit loopback names or literal addresses.
+
+    Hostnames are deliberately not DNS-resolved here: a mutable DNS answer must
+    not be able to turn a non-local test target into an implicitly trusted one.
+    """
+
+    normalized = str(host or "").strip().lower().rstrip(".")
+    if normalized == "localhost":
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return bool(mapped and mapped.is_loopback)
+
+
+def _require_safe_ch25_test_target(*, host: str, database: str) -> None:
+    """Fail closed before pytest issues ClickHouse DDL or mutation commands.
+
+    Literal loopback targets are trusted for local development. A Docker/CI
+    sidecar addressed by a non-loopback hostname must be opted into explicitly
+    with ``FI_ALLOW_NONLOCAL_CH25_TEST_MUTATIONS=true`` and must use a database
+    beginning with ``test_`` (or ``_test_``). Never set that opt-in for a shared
+    or production ClickHouse service.
+    """
+
+    normalized_host = str(host or "").strip()
+    normalized_database = str(database or "").strip()
+    if not normalized_host:
+        raise UnsafeClickHouseTestTarget(
+            "Refusing ClickHouse test mutations without an explicit host."
+        )
+    if not _CLICKHOUSE_DATABASE_NAME.fullmatch(normalized_database):
+        raise UnsafeClickHouseTestTarget(
+            "Refusing ClickHouse test mutations without a valid database name."
+        )
+    if _is_loopback_ch25_host(normalized_host):
+        return
+
+    opted_in = (
+        os.getenv("FI_ALLOW_NONLOCAL_CH25_TEST_MUTATIONS", "").strip().lower() == "true"
+    )
+    if not opted_in or not _CLICKHOUSE_TEST_DATABASE_NAME.fullmatch(
+        normalized_database
+    ):
+        raise UnsafeClickHouseTestTarget(
+            "Refusing ClickHouse test mutations on non-loopback host "
+            f"{normalized_host!r} with database {normalized_database!r}. "
+            "An isolated sidecar requires "
+            "FI_ALLOW_NONLOCAL_CH25_TEST_MUTATIONS=true and a test_* database."
+        )
+
+
 def _apply_ch25_schema_for_tests():
-    """Apply CH 25.3 v2 schema (002-013) to the test ClickHouse BEFORE
+    """Apply the CH 25.3 v2 schema to the test ClickHouse BEFORE
     Django app startup runs `model_hub.apps._ensure_analytics_schema`.
 
     The legacy analytics path creates a `spans` table with the old
@@ -89,7 +251,9 @@ def _apply_ch25_schema_for_tests():
     have that entrypoint, so we hook it in here.
 
     Skipped if not running tests with a configured CH host, or if
-    `FI_SKIP_CH25_SCHEMA_APPLY=1`.
+    `FI_SKIP_CH25_SCHEMA_APPLY=1`. Apply failures print a warning and
+    continue unless `FI_CH25_SCHEMA_APPLY_STRICT=1`, which re-raises them
+    (CI sets this so a broken schema apply fails the session loudly).
     """
     import os as _os
 
@@ -98,7 +262,10 @@ def _apply_ch25_schema_for_tests():
 
     # Outside Docker, the `clickhouse` hostname from the dev .env doesn't
     # resolve; force the test sidecar at localhost:18123.
-    is_test = _os.getenv("DJANGO_SETTINGS_MODULE", "").endswith(".test") or _os.getenv("TESTING") == "true"
+    is_test = (
+        _os.getenv("DJANGO_SETTINGS_MODULE", "").endswith(".test")
+        or _os.getenv("TESTING") == "true"
+    )
     ch_host = _os.getenv("CH25_HOST")
     if not ch_host:
         env_host = _os.getenv("CH_HOST")
@@ -110,15 +277,19 @@ def _apply_ch25_schema_for_tests():
         return
 
     ch_http_port = int(
-        _os.getenv("CH25_HTTP_PORT")
-        or _os.getenv("CH_HTTP_PORT")
-        or 18123
+        _os.getenv("CH25_HTTP_PORT") or _os.getenv("CH_HTTP_PORT") or 18123
     )
     ch_user = _os.getenv("CH25_USER") or _os.getenv("CH_USERNAME") or "default"
     ch_db = _os.getenv("CH25_DATABASE") or _os.getenv("CH_DATABASE") or "test_tfc"
     ch_password = _os.getenv("CH25_PASSWORD") or _os.getenv("CH_PASSWORD") or ""
 
-    schema_dir = Path(__file__).parent / "tracer" / "services" / "clickhouse" / "v2" / "schema"
+    # This must remain outside the broad schema-apply error handler below. A
+    # safety-policy failure is never a best-effort warning.
+    _require_safe_ch25_test_target(host=ch_host, database=ch_db)
+
+    schema_dir = (
+        Path(__file__).parent / "tracer" / "services" / "clickhouse" / "v2" / "schema"
+    )
     if not schema_dir.is_dir():
         return
 
@@ -127,21 +298,34 @@ def _apply_ch25_schema_for_tests():
 
         from tracer.services.clickhouse.v2 import apply_schema as _v2_apply
 
-        rc = _v2_apply.main([
-            "--schema-dir", str(schema_dir),
-            "--ch-host", ch_host,
-            "--ch-http-port", str(ch_http_port),
-            "--ch-user", ch_user,
-            "--ch-database", ch_db,
-        ])
+        rc = _v2_apply.main(
+            [
+                "--schema-dir",
+                str(schema_dir),
+                "--ch-host",
+                ch_host,
+                "--ch-http-port",
+                str(ch_http_port),
+                "--ch-user",
+                ch_user,
+                "--ch-database",
+                ch_db,
+            ]
+        )
         if rc not in (0, 2):
+            if _strict_ch25_apply():
+                raise RuntimeError(f"CH25 schema apply failed with rc={rc}")
             import sys as _sys
+
             print(
                 f"⚠️  CH25 schema apply returned rc={rc} during pytest_configure",
                 file=_sys.stderr,
             )
     except Exception as exc:
+        if _strict_ch25_apply():
+            raise
         import sys as _sys
+
         print(
             f"⚠️  CH25 schema apply skipped during pytest_configure: {exc}",
             file=_sys.stderr,
@@ -183,24 +367,65 @@ def _load_ch25_skip_set():
     return frozenset(ids)
 
 
-def pytest_collection_modifyitems(config, items):
-    """Auto-skip known-broken tests inventoried during the CH25 migration audit.
+_QUARANTINE_PATH = Path(__file__).parent / ".test_quarantine.json"
+_QUARANTINE_REQUIRED_KEYS = ("id", "reason", "owner", "expires")
 
-    The frozen list at tracer/tests/_ch25_skip.txt was captured 2026-05-26.
-    Follow-up PRs will whittle it down; see MIGRATION_TEST_DEBT.md for the plan.
-    """
+
+def _load_quarantine_entries():
+    """Active (unexpired), well-formed quarantine entries. Fail-open: any
+    problem reading the file disables quarantine rather than breaking
+    collection, and a malformed entry is dropped rather than taking the whole
+    session down when the marker code subscripts it."""
+    import datetime as _dt
+    import json as _json
+
+    try:
+        raw = _json.loads(_QUARANTINE_PATH.read_text())
+        today = _dt.date.today().isoformat()
+        return [
+            e
+            for e in raw["entries"]
+            if all(isinstance(e.get(k), str) for k in _QUARANTINE_REQUIRED_KEYS)
+            and e["expires"] >= today
+        ]
+    except Exception:
+        return []
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip requires_ee tests when ee/ is absent + the CH25 frozen skip list."""
     import pytest as _pytest
 
     skip_ids = _load_ch25_skip_set()
-    if not skip_ids:
-        return
-    marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON)
+    ch25_marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON) if skip_ids else None
+    ee_marker = (
+        _pytest.mark.skip(reason="requires ee/ (skipped in OSS lane)")
+        if not EE_AVAILABLE
+        else None
+    )
+    quarantine = _load_quarantine_entries()
+
     for item in items:
-        if item.nodeid in skip_ids:
-            item.add_marker(marker)
+        if ch25_marker is not None and item.nodeid in skip_ids:
+            item.add_marker(ch25_marker)
+        if ee_marker is not None and item.get_closest_marker("requires_ee") is not None:
+            item.add_marker(ee_marker)
+        for entry in quarantine:
+            sel = entry["id"]
+            if item.nodeid == sel or item.nodeid.startswith(sel + "::"):
+                reason = f"quarantined: {entry['reason']} (owner {entry['owner']})"
+                if entry.get("mode", "run") == "skip":
+                    item.add_marker(_pytest.mark.skip(reason=reason))
+                else:
+                    # Strict unless the entry opts out with a literal JSON
+                    # ``false``; a quarantined test that starts passing then
+                    # fails the run as XPASS and the entry has to be removed.
+                    # ``is not False`` always yields a bool, so a hand-edited
+                    # non-bool value cannot crash the session.
+                    strict = entry.get("strict", True) is not False
+                    item.add_marker(_pytest.mark.xfail(reason=reason, strict=strict))
+                break
 
-
-from unittest.mock import patch
 
 import pytest
 from rest_framework.test import APIClient
@@ -221,16 +446,16 @@ def _drop_legacy_ch_spans_mvs():
     drop sticks; the same MVs are not re-created by anything else.
     """
     try:
-        import os as _os
+        import clickhouse_connect
 
         from tracer.services.clickhouse.v2 import get_v2_config
-        import clickhouse_connect
 
         cfg = get_v2_config()
         host = cfg["host"]
         # `clickhouse` is the dev compose hostname; in tests force localhost.
         if host == "clickhouse":
             host = "localhost"
+        _require_safe_ch25_test_target(host=host, database=cfg["database"])
         client = clickhouse_connect.get_client(
             host=host,
             port=cfg["http_port"],
@@ -243,10 +468,65 @@ def _drop_legacy_ch_spans_mvs():
                 client.command(f"DROP VIEW IF EXISTS {mv}")
         finally:
             client.close()
+    except UnsafeClickHouseTestTarget:
+        # Never let the fixture's best-effort cleanup behavior swallow the
+        # fail-closed target policy.
+        raise
     except Exception:
         # Don't fail the suite if the CH test sidecar isn't reachable; the
         # tests that actually need CH will fail with a clearer error.
         pass
+    yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_test_score_tenant_column():
+    """Mirror the deployed Score tenant column in disposable CH25 tests only.
+
+    Production and dev already have ``model_hub_score.tracer_project_id``.
+    The legacy schema constant used to bootstrap a fresh CI sidecar does not,
+    and changing that production bootstrap is outside this no-schema-change
+    release. This fixture runs only under pytest and inherits the same
+    fail-closed test-target policy as all other ClickHouse test mutations.
+    """
+    try:
+        import clickhouse_connect
+        from tracer.services.clickhouse.schema import CDC_MODEL_HUB_SCORE
+        from tracer.services.clickhouse.v2 import get_v2_config
+
+        cfg = get_v2_config()
+        host = cfg["host"]
+        if host == "clickhouse":
+            host = "localhost"
+        _require_safe_ch25_test_target(host=host, database=cfg["database"])
+        client = clickhouse_connect.get_client(
+            host=host,
+            port=cfg["http_port"],
+            username=cfg["user"],
+            password=cfg["password"],
+            database=cfg["database"],
+        )
+        try:
+            # The CH25 SQL set owns direct-write span tables only; a pristine
+            # CI sidecar therefore needs the legacy CDC Score table bootstrapped
+            # explicitly before its deployed tenant column can be mirrored.
+            client.command(CDC_MODEL_HUB_SCORE)
+            client.command(
+                "ALTER TABLE model_hub_score "
+                "ADD COLUMN IF NOT EXISTS tracer_project_id UUID"
+            )
+        finally:
+            client.close()
+    except UnsafeClickHouseTestTarget:
+        raise
+    except Exception as exc:
+        # A missing sidecar is handled by the tests that require ClickHouse;
+        # the integration fixture repeats this parity ALTER after its schema
+        # bootstrap so fixture ordering cannot hide a missing column.
+        print(
+            f"⚠️  Score tenant-column test parity skipped: {exc}",
+            file=sys.stderr,
+        )
     yield
 
 
@@ -457,6 +737,20 @@ def clean_workspace_context():
     clear_workspace_context()
     yield
     clear_workspace_context()
+
+
+@pytest.fixture(autouse=True)
+def _structlog_capturable():
+    """Uncached structlog before each test so capture_logs()/caplog survive
+    global reconfig leaked by other tests in a full session (some suites reset
+    structlog defaults per test - hence function scope). The logging.disable
+    reset undoes a global stdlib disable that a few collected integration test
+    scripts apply at import; no product code calls logging.disable, so it masks
+    nothing."""
+    import logging
+
+    configure_structlog(cache_logger_on_first_use=False)
+    logging.disable(logging.NOTSET)
 
 
 @pytest.fixture(autouse=True)

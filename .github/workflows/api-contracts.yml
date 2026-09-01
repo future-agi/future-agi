@@ -36,6 +36,7 @@ on:
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
+      - "futureagi/tfc/deployment_telemetry/**"
       - ".github/workflows/api-contracts.yml"
   push:
     branches: [main, develop, dev]
@@ -72,6 +73,7 @@ on:
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
+      - "futureagi/tfc/deployment_telemetry/**"
       - ".github/workflows/api-contracts.yml"
   workflow_dispatch:
 
@@ -85,6 +87,7 @@ jobs:
     env:
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,24 +103,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: future-agi/ee
-          path: futureagi/ee
+          path: futureagi/ee/cloud
           token: ${{ env.EE_REPO_READ_TOKEN }}
           persist-credentials: true
           fetch-depth: 1
 
       - name: Use matching EE branch when available
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
+          # EE's default branch trails its own dev, so never settle for whatever
+          # the checkout landed on: walk the same candidate chain backend-ci
+          # and the SDK compatibility workflow use and take the first branch
+          # that exists.
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              echo "::notice::Using EE branch ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
+          exit 1
 
       - name: Drop EE checkout credentials
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Node.js
@@ -194,6 +207,7 @@ jobs:
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -235,24 +249,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: future-agi/ee
-          path: futureagi/ee
+          path: futureagi/ee/cloud
           token: ${{ env.EE_REPO_READ_TOKEN }}
           persist-credentials: true
           fetch-depth: 1
 
       - name: Use matching EE branch when available
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
+          # EE's default branch trails its own dev, so never settle for whatever
+          # the checkout landed on: walk the same candidate chain backend-ci
+          # and the SDK compatibility workflow use and take the first branch
+          # that exists.
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              echo "::notice::Using EE branch ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
+          exit 1
 
       - name: Drop EE checkout credentials
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Python
@@ -289,6 +313,7 @@ jobs:
           TESTING: "true"
         run: >
           uv run pytest -q --tb=line
+          --ds=tfc.settings.openapi
           tracer/tests/test_filter_contract.py
           tracer/tests/test_filter_api_contract.py
           tracer/tests/test_validate_filters_helper.py
@@ -296,9 +321,9 @@ jobs:
           model_hub/tests/test_annotation_api_contract.py
           model_hub/tests/test_annotation_workflow_api.py
           tfc/tests/test_falcon_api_contract_debt.py
-          tfc/tests/test_usage_api_contract_debt.py
+          ee/cloud/tests/test_usage_api_contract_debt.py
           ee/usage/tests/test_events_schema.py
-          ee/usage/tests/test_billing_api.py
+          ee/cloud/tests/test_billing_api.py
           tfc/tests/test_api_contracts.py
           tfc/tests/test_accounts_api_contract_debt.py
           tfc/tests/test_core_api_contract_debt.py
@@ -317,3 +342,4 @@ jobs:
           simulate/tests/test_simulator_agent_api_contract.py
           simulate/tests/test_test_execution_api_contract.py
           tracer/tests/test_tracer_feed_api_contract.py
+          tfc/deployment_telemetry/tests/test_schema_contract.py

@@ -31,14 +31,14 @@ const TYPE_CFG = {
   agent: {
     label: "Agent",
     icon: "mdi:robot-outline",
-    color: "#16a34a",
+    color: "accent.pass",
     bg: "rgba(22,163,74,0.1)",
   },
   llm: {
     label: "LLM",
     icon: "mdi:brain",
-    color: "#7c4dff",
-    bg: "rgba(124,77,255,0.1)",
+    color: "accent.brand",
+    bg: "rgba(120,87,252,0.1)",
   },
 };
 
@@ -97,8 +97,8 @@ const EvalRow = ({
     ? {
         label: "Composite",
         icon: "mdi:layers-outline",
-        color: "#6366f1",
-        bg: "rgba(99,102,241,0.1)",
+        color: "accent.violet",
+        bg: "rgba(139,92,246,0.1)",
       }
     : getType(item.evalType || item.eval_type || "agent");
   const rawStatus = (item.status || "").toLowerCase();
@@ -221,7 +221,7 @@ const EvalRow = ({
               <Iconify
                 icon="mdi:check-circle"
                 width={14}
-                sx={{ color: "#16a34a", flexShrink: 0 }}
+                sx={{ color: "accent.pass", flexShrink: 0 }}
               />
             </Box>
           </Tooltip>
@@ -232,7 +232,7 @@ const EvalRow = ({
               <Iconify
                 icon="mdi:alert-circle"
                 width={14}
-                sx={{ color: "#dc2626", flexShrink: 0 }}
+                sx={{ color: "accent.fail", flexShrink: 0 }}
               />
             </Box>
           </Tooltip>

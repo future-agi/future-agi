@@ -24,8 +24,13 @@ describe("OpenAPI runtime contract", () => {
   });
 
   it("finds endpoints across the full Management API surface", () => {
-    expect(findOpenApiEndpoint("/usage/ee/licenses/", "get")).toMatchObject({
-      template: "/usage/ee/licenses/",
+    expect(
+      findOpenApiEndpoint(
+        "/v1/internal/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599",
+        "get",
+      ),
+    ).toMatchObject({
+      template: "/v1/internal/licenses/{grant_id}",
       method: "get",
     });
     expect(
@@ -263,20 +268,25 @@ describe("OpenAPI runtime contract", () => {
 
   it("does not infer an empty query contract when backend has not declared one", () => {
     const result = validateContractedRequestConfig({
-      url: "/usage/ee/licenses/?legacy=true",
+      url: "/v1/internal/licenses?legacy=true",
       method: "post",
-      data: { band: "team", billing_interval: "monthly" },
+      data: {
+        customer_name: "Test Corp",
+        license_type: "production",
+        band: "team",
+        expires_at: "2027-01-01T00:00:00Z",
+      },
     });
 
     expect(result).toMatchObject({ ok: true });
   });
 
-  it("does not enforce inferred legacy contracts until the endpoint is runtime-backed", () => {
+  it("enforces the bounded project-list query contract", () => {
     const endpoint = findOpenApiEndpoint(
       "/tracer/project/list_projects/",
       "get",
     );
-    expect(endpoint.contract.runtimeRequestValidation).toBe(false);
+    expect(endpoint.contract.runtimeRequestValidation).toBe(true);
 
     expect(
       validateContractedRequestConfig({
@@ -288,7 +298,21 @@ describe("OpenAPI runtime contract", () => {
           page_size: 25,
         },
       }),
-    ).toMatchObject({ ok: true, skipped: true });
+    ).toMatchObject({ ok: true });
+
+    for (const params of [
+      { project_type: "observe", page_number: -1, page_size: 25 },
+      { project_type: "observe", page_number: 0, page_size: 101 },
+      { project_type: "observe", page: 1, limit: 25 },
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url: "/tracer/project/list_projects/",
+          method: "get",
+          params,
+        }).ok,
+      ).toBe(false);
+    }
   });
 
   it("validates list query params the way DRF query serializers receive them", () => {
@@ -396,7 +420,10 @@ describe("OpenAPI runtime contract", () => {
   it("does not unwrap response envelopes to hide schema drift", () => {
     const response = {
       status: 200,
-      config: { url: "/usage/ee/licenses/", method: "get" },
+      config: {
+        url: "/v1/internal/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599",
+        method: "get",
+      },
       data: {
         result: {
           licenses: [],
@@ -410,14 +437,14 @@ describe("OpenAPI runtime contract", () => {
     expect(result.error.message).toContain(
       "response contract validation failed",
     );
-    expect(result.error.message).toContain("status");
+    expect(result.error.message).toContain("result");
   });
 
   it("validates default error responses instead of falling back to success schemas", () => {
     const response = {
       status: 404,
       config: {
-        url: "/usage/ee/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599/revoke/",
+        url: "/v1/internal/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599/status",
         method: "post",
       },
       data: {
@@ -429,7 +456,7 @@ describe("OpenAPI runtime contract", () => {
     expect(validateContractedResponse(response)).toMatchObject({
       ok: true,
       endpoint: {
-        template: "/usage/ee/licenses/{grant_id}/revoke/",
+        template: "/v1/internal/licenses/{grant_id}/status",
         method: "post",
       },
     });
@@ -514,6 +541,8 @@ describe("OpenAPI runtime contract", () => {
             metrics: [
               {
                 name: "eval-template-id",
+                property_id: "eval_template:eval-template-id",
+                property_kind: "eval_template",
                 display_name: "Choices eval",
                 category: "eval_metric",
                 source: "all",
@@ -579,6 +608,188 @@ describe("OpenAPI runtime contract", () => {
     expect(
       validateContractedResponse(
         tracesOfSessionResponse([{ trace_id: undefined }]),
+      ),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("accepts array span attributes and JSON scalar picker values", () => {
+    const readState = {
+      query_complete: true,
+      query_status: "complete",
+      query_window_start: "2026-01-01T00:00:00Z",
+      query_window_end: "2026-01-08T00:00:00Z",
+    };
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-keys/?project_id=p1",
+          method: "get",
+        },
+        data: {
+          result: [{ key: "json_choices", type: "array", count: 4 }],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-values/?project_id=p1&key=json_choices",
+          method: "get",
+        },
+        data: {
+          result: [
+            { value: "Rejected", type: "array", count: 4 },
+            { value: 7, type: "array", count: 3 },
+            { value: false, type: "array", count: 2 },
+            { value: null, type: "array", count: 1 },
+          ],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts either project or workspace scope for span-attribute keys", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-keys/",
+        method: "get",
+        params: { workspace_scope: true, page_size: 50 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-keys/",
+        method: "get",
+        params: { project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f" },
+      }),
+    ).toMatchObject({ ok: true });
+
+    // The workspace widening belongs only to key inventory. The detail
+    // endpoint remains project-scoped and must keep its required project_id.
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-detail/",
+        method: "get",
+        params: { key: "historical.attribute" },
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("accepts every JSON value shape in dashboard filter-picker options", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.DashboardFilterValueOption.properties.value[
+        "x-json-value"
+      ],
+    ).toBe(true);
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/tracer/dashboard/filter_values/?metric_name=final_status",
+          method: "get",
+        },
+        data: {
+          status: true,
+          result: {
+            values: [
+              { value: "Rechazado", label: "Rechazado" },
+              { value: 7, label: "7" },
+              { value: false, label: "false" },
+              { value: ["nested", 1], label: "nested array" },
+              { value: { nested: true }, label: "nested object" },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts queue items with null names, listed assignees, and a null source preview", () => {
+    // Regression: method fields and nullable name fields carried no declared
+    // type, so drf-yasg typed them all as required strings — an unassigned,
+    // unreserved, unreviewed item raised 175 warnings on a single items/ page.
+    const queueItemsResponse = (item) => ({
+      status: 200,
+      config: {
+        url: "/model-hub/annotation-queues/7d1f0c4e-0000-4000-8000-000000000001/items/?page=1",
+        method: "get",
+      },
+      data: {
+        count: 1,
+        next: null,
+        previous: null,
+        results: [item],
+      },
+    });
+
+    const unassignedItem = {
+      id: "1f2e3d4c-0000-4000-8000-000000000002",
+      queue: "7d1f0c4e-0000-4000-8000-000000000001",
+      source_type: "trace",
+      source_id: "trace-1",
+      status: "pending",
+      workflow_status: "pending",
+      workflow_status_label: "Pending Annotation",
+      priority: 0,
+      order: 1,
+      metadata: {},
+      assigned_to: null,
+      assigned_to_name: null,
+      assigned_users: [
+        {
+          id: "9a8b7c6d-0000-4000-8000-000000000003",
+          name: null,
+          email: null,
+        },
+      ],
+      reserved_by: null,
+      reserved_by_name: null,
+      reservation_expires_at: null,
+      review_status: null,
+      reviewed_by: null,
+      reviewed_by_name: null,
+      reviewed_at: null,
+      review_notes: null,
+      source_preview: null,
+      comment_count: 0,
+      open_feedback_count: 0,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    expect(
+      validateContractedResponse(queueItemsResponse(unassignedItem)),
+    ).toMatchObject({ ok: true });
+
+    // source_preview is x-json-value, so any valid JSON shape passes.
+    expect(
+      validateContractedResponse(
+        queueItemsResponse({
+          ...unassignedItem,
+          assigned_to_name: "Ada Lovelace",
+          assigned_users: [
+            {
+              id: "9a8b7c6d-0000-4000-8000-000000000003",
+              name: "Ada Lovelace",
+              email: "ada@example.com",
+            },
+          ],
+          source_preview: { input: "hello", tags: ["a", null] },
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    // The endpoint really is validated here — a count sent as a string fails,
+    // so the null-tolerance above is not just an unmatched-route skip.
+    expect(
+      validateContractedResponse(
+        queueItemsResponse({ ...unassignedItem, comment_count: "0" }),
       ),
     ).toMatchObject({ ok: false });
   });

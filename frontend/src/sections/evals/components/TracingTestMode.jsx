@@ -2,6 +2,7 @@
 import {
   Autocomplete,
   Box,
+  Button,
   Chip,
   CircularProgress,
   IconButton,
@@ -25,9 +26,20 @@ import React, {
 import { useQuery } from "@tanstack/react-query";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { canonicalEntries } from "src/utils/utils";
+import {
+  collectExactListRows,
+  createListCursorProtocolError,
+  isListCursorProtocolError,
+  listCursorBoundaryIdentity,
+  listContinuationParams,
+  rememberBoundedListCursorIdentity,
+  requestListWithLegacyCursorFallback,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
 
 import {
   InlineAudio,
@@ -55,6 +67,23 @@ import {
 } from "../utils/rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import {
+  getAttributeLookupMessage,
+  getQueryReadMessage,
+  getQueryReadState,
+} from "src/utils/queryReadState";
+import {
+  mergeTracingFieldNames,
+  useExactEvalAttributeFields,
+} from "./useExactEvalAttributeFields";
+import {
+  parseAxiosResult,
+  parseSessionObserveListResponse,
+  parseSpanObserveListResponse,
+  parseTraceObserveListResponse,
+  parseVoiceCallDetailResponse,
+  parseVoiceCallListResponse,
+} from "src/api/project/observe-contracts";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -216,7 +245,34 @@ export const buildTracingPreviewListParams = ({
   page_number: 0,
   page_size: 50,
   filters: JSON.stringify(effectiveFilters || []),
+  cursor_mode: true,
 });
+
+// eslint-disable-next-line react-refresh/only-export-components
+export const buildTracingVoicePreviewListParams = ({
+  selectedProjectId,
+  effectiveFilters,
+}) => ({
+  project_id: selectedProjectId,
+  page: 1,
+  page_size: 50,
+  filters: JSON.stringify(effectiveFilters || []),
+  cursor_mode: true,
+});
+
+const tracingPreviewRowIdentity = (rowType, row) => {
+  if (rowType === "VoiceCall") {
+    return row?.call_id || row?.id || row?.trace_id || null;
+  }
+  if (rowType === "Session") {
+    return row?.session_id || row?.id || null;
+  }
+  if (rowType === "Trace") {
+    return row?.trace_id || row?.id || null;
+  }
+  const id = row?.span_id || row?.id;
+  return id ? `${row?.trace_id || ""}:${id}:${row?.start_time || ""}` : null;
+};
 
 const TracingTestMode = React.forwardRef(
   (
@@ -332,8 +388,21 @@ const TracingTestMode = React.forwardRef(
     const [columns, setColumns] = useState([]);
     const [rows, setRows] = useState([]);
     const [totalRows, setTotalRows] = useState(0);
+    const [totalRowsIsLowerBound, setTotalRowsIsLowerBound] = useState(false);
+    const [listReadState, setListReadState] = useState("complete");
+    const [listFailureRetryable, setListFailureRetryable] = useState(false);
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [listCursorRevision, advanceListCursor] = useState(0);
+    const [listContinuationPending, setListContinuationPending] =
+      useState(false);
+    const listContinuationRef = useRef({
+      signature: null,
+      cursor: null,
+      cursorIdentity: null,
+      rows: [],
+      requestedCursorIdentities: [],
+    });
     // Key the last-completed fetch so we can derive "is the current
     // selection stale w.r.t. the last fetch" at render time. React
     // effects run *after* paint, so tracking a `hasFetched` boolean
@@ -342,11 +411,21 @@ const TracingTestMode = React.forwardRef(
     // against the last-fetched key tells us synchronously — in the same
     // render that the props changed — that new data is on the way.
     const [lastFetchedKey, setLastFetchedKey] = useState(null);
+    const effectiveFilterKey = JSON.stringify(effectiveFilters || []);
     const currentFetchKey = selectedProjectId
-      ? `${selectedProjectId}:${rowType}`
+      ? `${selectedProjectId}:${rowType}:${effectiveFilterKey}`
       : null;
     const isPendingNewFetch =
       !!currentFetchKey && lastFetchedKey !== currentFetchKey;
+    const continueListSearch = useCallback(() => {
+      if (!listContinuationRef.current.cursor) return;
+      setListContinuationPending(false);
+      advanceListCursor((revision) => revision + 1);
+    }, []);
+    const retryListRead = useCallback(() => {
+      setListFailureRetryable(false);
+      advanceListCursor((revision) => revision + 1);
+    }, []);
 
     // Columns/Value table — user-resizable key column. Drag the divider
     // between key and value to widen long dotted paths. Ref holds the
@@ -378,6 +457,32 @@ const TracingTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+    const [mappingSearch, setMappingSearch] = useState("");
+    const {
+      data: exactAttributeFields,
+      queryReadState: exactAttributeReadState,
+      isFetching: isFetchingExactAttributes,
+      fetchNextPage: fetchNextAttributePage,
+      hasNextPage: hasNextAttributePage,
+      isFetchingNextPage: isFetchingNextAttributePage,
+      isFetchNextPageError: isNextAttributePageError,
+    } = useExactEvalAttributeFields({
+      projectId: selectedProjectId,
+      rowType,
+      search: mappingSearch,
+      // Task mappings for every row type discover the same retained span-map
+      // keys. The hook maps each raw key into the resolver's canonical path
+      // grammar (including indexed trace/session prefixes).
+      enabled: allowCustomFieldPath,
+    });
+
+    // ── Map-from-table: assign a column's path straight into a variable ──
+    // Shared across every mapping surface — see useMapToVariable.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
 
     // Template ID ref (updated via imperative handle for first-test flow)
     const templateIdRef = useRef(templateId);
@@ -444,71 +549,295 @@ const TracingTestMode = React.forwardRef(
     // ── Fetch data when project or rowType changes ──
     useEffect(() => {
       if (!selectedProjectId) {
+        listContinuationRef.current = {
+          signature: null,
+          cursor: null,
+          cursorIdentity: null,
+          rows: [],
+          requestedCursorIdentities: [],
+        };
         setColumns([]);
         setRows([]);
         setTotalRows(0);
+        setTotalRowsIsLowerBound(false);
         setCurrentRowIndex(0);
         setLastFetchedKey(null);
+        setListReadState("complete");
+        setListFailureRetryable(false);
+        setListContinuationPending(false);
         return;
       }
 
       setLoading(true);
+      setListReadState("complete");
+      setListFailureRetryable(false);
+      setTotalRowsIsLowerBound(false);
+      setListContinuationPending(false);
       let cancelled = false;
-      const fetchKey = `${selectedProjectId}:${rowType}`;
-
+      const requestController = new AbortController();
+      const fetchKey = `${selectedProjectId}:${rowType}:${effectiveFilterKey}`;
+      if (listContinuationRef.current.signature !== fetchKey) {
+        listContinuationRef.current = {
+          signature: fetchKey,
+          cursor: null,
+          cursorIdentity: null,
+          rows: [],
+          requestedCursorIdentities: [],
+        };
+      }
+      const startingCursor = listContinuationRef.current.cursor;
+      const startingRows = startingCursor
+        ? listContinuationRef.current.rows || []
+        : [];
+      const continuationSnapshot = startingCursor
+        ? {
+            signature: fetchKey,
+            cursor: startingCursor,
+            cursorIdentity: listContinuationRef.current.cursorIdentity,
+            rows: [...startingRows],
+            requestedCursorIdentities: [
+              ...(listContinuationRef.current.requestedCursorIdentities || []),
+            ],
+          }
+        : null;
+      const requestedCursorIdentities = new Set(
+        listContinuationRef.current.requestedCursorIdentities || [],
+      );
       const fetchData = async () => {
-        setRows([]);
+        if (!startingCursor) setRows([]);
         try {
+          if (startingCursor) {
+            const startingCursorIdentity =
+              listContinuationRef.current.cursorIdentity ||
+              listCursorBoundaryIdentity({ next_cursor: startingCursor });
+            rememberBoundedListCursorIdentity(
+              requestedCursorIdentities,
+              startingCursorIdentity,
+            );
+          }
+          const recordContinuation = (metadata) => {
+            const nextCursor = metadata?.next_cursor;
+            const nextCursorIdentity = listCursorBoundaryIdentity(metadata);
+            if (typeof nextCursor !== "string" || nextCursor.length === 0) {
+              throw createListCursorProtocolError(
+                "List API returned a repeated continuation cursor",
+              );
+            }
+            rememberBoundedListCursorIdentity(
+              requestedCursorIdentities,
+              nextCursorIdentity,
+            );
+          };
+          const requestList = (
+            endpoint,
+            params,
+            { voice = false, parser, signal = requestController.signal } = {},
+          ) =>
+            requestListWithLegacyCursorFallback({
+              request: (nextParams) =>
+                axios.get(endpoint, { params: nextParams, signal }),
+              params,
+              pageParam: voice ? "page" : "page_number",
+              firstPage: voice ? 1 : 0,
+            }).then((response) => parseAxiosResult(response, parser));
           if (rowType === "VoiceCall") {
-            const { data } = await axios.get(endpoints.project.getCallLogs, {
-              params: {
-                project_id: selectedProjectId,
-                page: 1,
-                page_size: 50,
-                filters: JSON.stringify(effectiveFilters || []),
-              },
+            const requestParams = buildTracingVoicePreviewListParams({
+              selectedProjectId,
+              effectiveFilters,
             });
+            const initialParams = startingCursor
+              ? listContinuationParams(requestParams, startingCursor)
+              : requestParams;
+            const response = await requestList(
+              endpoints.project.getCallLogs,
+              initialParams,
+              { voice: true, parser: parseVoiceCallListResponse },
+            );
+            const exactRows = await collectExactListRows({
+              initialResponse: response,
+              initialRows: startingRows,
+              targetRowCount: requestParams.page_size,
+              rowsFromResponse: (nextResponse) => nextResponse.data.results,
+              metadataFromResponse: (nextResponse) => nextResponse.data,
+              cancellationSignal: requestController.signal,
+              nextResponse: (cursor, signal) =>
+                requestList(
+                  endpoints.project.getCallLogs,
+                  listContinuationParams(requestParams, cursor),
+                  {
+                    voice: true,
+                    parser: parseVoiceCallListResponse,
+                    signal,
+                  },
+                ),
+              rowIdentity: (row) => tracingPreviewRowIdentity(rowType, row),
+              onContinuation: recordContinuation,
+              isCurrent: () => !cancelled,
+            });
+            const { data } = exactRows.response;
             if (cancelled) return;
-            const result = data?.result || data || {};
-            const rowsOut = result.results || result.data || result.calls || [];
-            setColumns([]);
+            const result = data;
+            const rowsOut = exactRows.rows;
+            if (exactRows.pending) {
+              listContinuationRef.current = {
+                signature: fetchKey,
+                cursor: exactRows.nextCursor,
+                cursorIdentity: exactRows.nextCursorIdentity,
+                rows: rowsOut,
+                requestedCursorIdentities: [...requestedCursorIdentities],
+              };
+              setColumns([]);
+              setRows(rowsOut);
+              setTotalRows(rowsOut.length);
+              setTotalRowsIsLowerBound(true);
+              setCurrentRowIndex(0);
+              setListContinuationPending(true);
+              return;
+            }
+            listContinuationRef.current = {
+              signature: fetchKey,
+              cursor: null,
+              cursorIdentity: null,
+              rows: [],
+              requestedCursorIdentities: [],
+            };
+            const nextReadState = getQueryReadState(data);
+            setListReadState(
+              rowsOut.length > 0 || nextReadState === "sampled"
+                ? "complete"
+                : nextReadState,
+            );
+            setColumns(result.config);
             setRows(rowsOut);
-            setTotalRows(result.total_count || result.total || rowsOut.length);
+            setTotalRows(result.count);
+            setTotalRowsIsLowerBound(result.count_is_lower_bound === true);
             setCurrentRowIndex(0);
+            setListContinuationPending(false);
             return;
           }
 
           let endpoint;
+          let responseParser;
           const params = buildTracingPreviewListParams({
             selectedProjectId,
             effectiveFilters,
           });
+          const initialParams = startingCursor
+            ? listContinuationParams(params, startingCursor)
+            : params;
 
           if (rowType === "Span") {
             endpoint = endpoints.project.getSpansForObserveProject();
+            responseParser = parseSpanObserveListResponse;
           } else if (rowType === "Trace") {
             endpoint = endpoints.project.getTracesForObserveProject();
+            responseParser = parseTraceObserveListResponse;
           } else {
             endpoint = endpoints.project.projectSessionList();
+            responseParser = parseSessionObserveListResponse;
           }
 
-          const { data } = await axios.get(endpoint, { params });
+          const response = await requestList(endpoint, initialParams, {
+            parser: responseParser,
+          });
+          const exactRows = await collectExactListRows({
+            initialResponse: response,
+            initialRows: startingRows,
+            targetRowCount: params.page_size,
+            rowsFromResponse: (nextResponse) => nextResponse.data.table,
+            metadataFromResponse: (nextResponse) => nextResponse.data.metadata,
+            cancellationSignal: requestController.signal,
+            nextResponse: (cursor, signal) =>
+              requestList(endpoint, listContinuationParams(params, cursor), {
+                parser: responseParser,
+                signal,
+              }),
+            rowIdentity: (row) => tracingPreviewRowIdentity(rowType, row),
+            onContinuation: recordContinuation,
+            isCurrent: () => !cancelled,
+          });
+          const { data } = exactRows.response;
           if (cancelled) return;
-          const res = data?.result || {};
+          const res = data;
 
-          const cols = res.config || [];
-          const tableRows = res.table || [];
-          const total = res.metadata?.total_rows || tableRows.length;
+          const cols = res.config;
+          const tableRows = exactRows.rows;
+          if (exactRows.pending) {
+            listContinuationRef.current = {
+              signature: fetchKey,
+              cursor: exactRows.nextCursor,
+              cursorIdentity: exactRows.nextCursorIdentity,
+              rows: tableRows,
+              requestedCursorIdentities: [...requestedCursorIdentities],
+            };
+            setColumns(cols);
+            setRows(tableRows);
+            setTotalRows(tableRows.length);
+            setTotalRowsIsLowerBound(true);
+            setCurrentRowIndex(0);
+            setListContinuationPending(true);
+            return;
+          }
+          listContinuationRef.current = {
+            signature: fetchKey,
+            cursor: null,
+            cursorIdentity: null,
+            rows: [],
+            requestedCursorIdentities: [],
+          };
+          const nextReadState = getQueryReadState(data);
+          setListReadState(
+            tableRows.length > 0 || nextReadState === "sampled"
+              ? "complete"
+              : nextReadState,
+          );
+          const total = res.metadata?.total_rows ?? tableRows.length;
 
           setColumns(cols);
           setRows(tableRows);
           setTotalRows(total);
+          setTotalRowsIsLowerBound(
+            res.metadata?.total_rows_is_lower_bound === true,
+          );
           setCurrentRowIndex(0);
-        } catch {
+          setListContinuationPending(false);
+        } catch (error) {
           if (cancelled) return;
+          if (continuationSnapshot && !isListCursorProtocolError(error)) {
+            // A transport failure does not invalidate rows and a checkpoint
+            // already proven by earlier bounded reads. Restore the exact
+            // pre-attempt snapshot (including the requested-cursor set before
+            // `startingCursor` was added) so an explicit retry can safely
+            // request the same saved checkpoint once more.
+            listContinuationRef.current = continuationSnapshot;
+            setListReadState("error");
+            setListFailureRetryable(true);
+            setRows(continuationSnapshot.rows);
+            setTotalRows(continuationSnapshot.rows.length);
+            setTotalRowsIsLowerBound(true);
+            setCurrentRowIndex((index) =>
+              Math.min(
+                index,
+                Math.max(0, continuationSnapshot.rows.length - 1),
+              ),
+            );
+            setListContinuationPending(true);
+            return;
+          }
+          listContinuationRef.current = {
+            signature: fetchKey,
+            cursor: null,
+            cursorIdentity: null,
+            rows: [],
+            requestedCursorIdentities: [],
+          };
+          setListReadState("error");
+          setListFailureRetryable(!isListCursorProtocolError(error));
           setColumns([]);
           setRows([]);
           setTotalRows(0);
+          setTotalRowsIsLowerBound(false);
+          setListContinuationPending(false);
         } finally {
           if (!cancelled) {
             setLoading(false);
@@ -520,9 +849,10 @@ const TracingTestMode = React.forwardRef(
       fetchData();
       return () => {
         cancelled = true;
+        requestController.abort();
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProjectId, rowType, JSON.stringify(effectiveFilters || [])]);
+    }, [selectedProjectId, rowType, effectiveFilterKey, listCursorRevision]);
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
@@ -606,7 +936,7 @@ const TracingTestMode = React.forwardRef(
                 endpoints.project.getVoiceCallDetail,
                 { params: { trace_id: traceId } },
               );
-              const voiceResult = data?.result || data?.data || data || {};
+              const voiceResult = parseVoiceCallDetailResponse(data);
               // Spread row-list fields first as a fallback so we never
               // lose data that was only present on the list row.
               detailData = { ...currentRow, ...voiceResult };
@@ -795,9 +1125,11 @@ const TracingTestMode = React.forwardRef(
     // column keys before the detail has loaded.
     const fieldNames = useMemo(() => {
       const base = walkedFromDetail?.paths;
-      if (base?.length) return [...base, ...deepenedPaths];
-      return rowFields.map((f) => f?.colId || f?.key);
-    }, [walkedFromDetail, deepenedPaths, rowFields]);
+      const genericFields = base?.length
+        ? [...base, ...deepenedPaths]
+        : rowFields.map((f) => f?.colId || f?.key);
+      return mergeTracingFieldNames(genericFields, exactAttributeFields);
+    }, [walkedFromDetail, deepenedPaths, rowFields, exactAttributeFields]);
 
     const truncatedSet = useMemo(() => {
       const merged = new Set(walkedFromDetail?.truncated || []);
@@ -811,6 +1143,7 @@ const TracingTestMode = React.forwardRef(
     // on demand here — their spans stay unknown, resolved silently).
     const handleMappingInputChange = useCallback(
       (_event, inputValue) => {
+        setMappingSearch(inputValue || "");
         if (!inputValue?.endsWith(".")) return;
         const prefix = inputValue.slice(0, -1);
         if (!truncatedSet.has(prefix)) return;
@@ -1018,16 +1351,18 @@ const TracingTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          // A successful HTTP response can still carry a failed evaluation.
+          // Do not treat the result payload as user-safe: provider, query, and
+          // infrastructure errors have historically been returned here.
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1261,6 +1596,39 @@ const TracingTestMode = React.forwardRef(
           </Box>
         )}
 
+        {selectedProjectId &&
+          listContinuationPending &&
+          !loading &&
+          !isPendingNewFetch && (
+            <Box
+              role="status"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+                px: 1.5,
+                py: 1,
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "6px",
+                bgcolor: "action.hover",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                Preparing exact results. Continue from the saved position to
+                search the next bounded batch.
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={continueListSearch}
+              >
+                Continue search
+              </Button>
+            </Box>
+          )}
+
         {/* Row navigator */}
         {selectedProjectId &&
           (rows?.length ?? 0) > 0 &&
@@ -1290,7 +1658,8 @@ const TracingTestMode = React.forwardRef(
                       ml: 0.5,
                     }}
                   >
-                    ({totalRows} matching total)
+                    ({totalRowsIsLowerBound ? "≥" : ""}
+                    {totalRows} matching total)
                   </Typography>
                 )}
               </Typography>
@@ -1466,6 +1835,8 @@ const TracingTestMode = React.forwardRef(
                         borderColor: "divider",
                         "&:last-child": { borderBottom: "none" },
                         "&:hover": { backgroundColor: "action.hover" },
+                        // Reveal the map/copy action only on row hover.
+                        ...rowHoverSx,
                       }}
                     >
                       <CustomTooltip
@@ -1573,6 +1944,7 @@ const TracingTestMode = React.forwardRef(
                           </Tooltip>
                         )}
                       </Box>
+                      {renderRowMapAction(key)}
                     </Box>
                   );
                 })}
@@ -1592,6 +1964,49 @@ const TracingTestMode = React.forwardRef(
         {selectedProjectId &&
           !loading &&
           !isPendingNewFetch &&
+          !listContinuationPending &&
+          getQueryReadMessage(listReadState) && (
+            <Box
+              role="status"
+              sx={(theme) => ({
+                px: 1.5,
+                py: 1,
+                mb: rows.length > 0 ? 1 : 0,
+                borderRadius: "6px",
+                border: "1px solid",
+                borderColor: alpha(theme.palette.warning.main, 0.35),
+                backgroundColor: alpha(theme.palette.warning.main, 0.08),
+              })}
+            >
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                }}
+              >
+                <Typography variant="caption" color="warning.main">
+                  {getQueryReadMessage(listReadState)}
+                </Typography>
+                {listReadState === "error" && listFailureRetryable && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={retryListRead}
+                  >
+                    Retry
+                  </Button>
+                )}
+              </Box>
+            </Box>
+          )}
+
+        {selectedProjectId &&
+          !loading &&
+          !isPendingNewFetch &&
+          !listContinuationPending &&
+          listReadState === "complete" &&
           totalRows === 0 && (
             <Box
               sx={{
@@ -1629,10 +2044,16 @@ const TracingTestMode = React.forwardRef(
           (() => {
             const isFetchingColumns =
               !!selectedProjectId &&
-              (loading || isPendingNewFetch || loadingDetail);
+              (loading ||
+                isPendingNewFetch ||
+                loadingDetail ||
+                isFetchingExactAttributes);
             const mappingDisabledTooltip = isFetchingColumns
               ? "Columns are being fetched"
               : "";
+            const exactAttributeReadMessage = getAttributeLookupMessage(
+              exactAttributeReadState,
+            );
             return (
               <Box>
                 <Typography
@@ -1642,6 +2063,43 @@ const TracingTestMode = React.forwardRef(
                 >
                   Variable Mapping
                 </Typography>
+                {exactAttributeReadMessage && (
+                  <Box
+                    role="status"
+                    sx={(theme) => ({
+                      px: 1,
+                      py: 0.5,
+                      mb: 0.75,
+                      borderRadius: "4px",
+                      border: "1px solid",
+                      borderColor: alpha(theme.palette.warning.main, 0.35),
+                      backgroundColor: alpha(theme.palette.warning.main, 0.08),
+                    })}
+                  >
+                    <Typography variant="caption" color="warning.main">
+                      {exactAttributeReadMessage}
+                    </Typography>
+                  </Box>
+                )}
+                {allowCustomFieldPath && hasNextAttributePage && (
+                  <Box sx={{ mb: 0.75 }}>
+                    <Button
+                      size="small"
+                      variant="text"
+                      disabled={isFetchingNextAttributePage}
+                      onClick={() =>
+                        fetchNextAttributePage?.()?.catch?.(() => undefined)
+                      }
+                      sx={{ px: 0, minWidth: 0, fontSize: 11 }}
+                    >
+                      {isFetchingNextAttributePage
+                        ? "Loading more attributes…"
+                        : isNextAttributePageError
+                          ? "Retry loading attributes"
+                          : "Load more attributes"}
+                    </Button>
+                  </Box>
+                )}
                 <Box
                   sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}
                 >
@@ -1658,6 +2116,11 @@ const TracingTestMode = React.forwardRef(
                             : fieldNames
                         }
                         value={mapping[variable] || null}
+                        onOpen={() => {
+                          if (allowCustomFieldPath) {
+                            setMappingSearch(mapping[variable] || variable);
+                          }
+                        }}
                         onChange={(_, val) =>
                           setMapping((prev) => ({
                             ...prev,
@@ -1821,6 +2284,9 @@ const TracingTestMode = React.forwardRef(
               </Box>
             );
           })()}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
 
         {/* Result */}
         {result && (

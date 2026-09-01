@@ -1,7 +1,11 @@
 package config
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -16,6 +20,7 @@ type Config struct {
 	Providers     map[string]ProviderConfig `yaml:"providers" json:"providers"`
 	ModelMap      map[string]string         `yaml:"model_map" json:"model_map"`
 	Auth          AuthConfig                `yaml:"auth" json:"auth"`
+	LicenseAuth   LicenseAuthConfig         `yaml:"license_auth" json:"license_auth"`
 	CostTracking  CostTrackingConfig        `yaml:"cost_tracking" json:"cost_tracking"`
 	RateLimiting  RateLimitConfig           `yaml:"rate_limiting" json:"rate_limiting"`
 	Cache         CacheConfig               `yaml:"cache" json:"cache"`
@@ -257,6 +262,24 @@ type AuthConfig struct {
 	Keys    []AuthKeyConfig `yaml:"keys" json:"keys"`
 }
 
+type LicenseAuthConfig struct {
+	Enabled              bool                   `yaml:"enabled" json:"enabled"`
+	PublicKey            string                 `yaml:"public_key" json:"-"`
+	PublicKeys           []LicenseAuthPublicKey `yaml:"public_keys" json:"-"`
+	Issuer               string                 `yaml:"issuer" json:"issuer"`
+	Audience             string                 `yaml:"audience" json:"audience"`
+	TokenType            string                 `yaml:"token_type" json:"token_type"`
+	ClockSkewSeconds     int                    `yaml:"clock_skew_seconds" json:"clock_skew_seconds"`
+	RuntimeStateRequired bool                   `yaml:"runtime_state_required" json:"runtime_state_required"`
+	RateLimitRPM         int                    `yaml:"rate_limit_rpm" json:"rate_limit_rpm"`
+	MonthlyUsageLimit    int                    `yaml:"monthly_usage_limit" json:"monthly_usage_limit"`
+}
+
+type LicenseAuthPublicKey struct {
+	KID       string `yaml:"kid" json:"kid"`
+	PublicKey string `yaml:"public_key" json:"-"`
+}
+
 // AuthKeyConfig is a single API key definition in config.
 type AuthKeyConfig struct {
 	Name          string                    `yaml:"name" json:"name"`
@@ -301,9 +324,18 @@ type ServerConfig struct {
 }
 
 type ProviderConfig struct {
-	BaseURL        string            `yaml:"base_url" json:"base_url"`
-	APIKey         string            `yaml:"api_key" json:"-"`
-	APIFormat      string            `yaml:"api_format" json:"api_format"`
+	BaseURL   string `yaml:"base_url" json:"base_url"`
+	APIKey    string `yaml:"api_key" json:"-"`
+	APIFormat string `yaml:"api_format" json:"api_format"`
+
+	// APIPathPrefix is the version segment placed between base_url and each
+	// endpoint — "/v1" unless the provider says otherwise. Set it to "" for an
+	// upstream that serves /chat/completions with no version (Perplexity's
+	// Sonar API), or to something else entirely (DeepInfra uses /v1/openai).
+	//
+	// nil takes the preset's value, or "/v1". A pointer because "" is a
+	// meaningful setting distinct from unset. openai-format providers only.
+	APIPathPrefix  *string           `yaml:"api_path_prefix" json:"api_path_prefix"`
 	DefaultTimeout time.Duration     `yaml:"default_timeout" json:"default_timeout"`
 	MaxConcurrent  int               `yaml:"max_concurrent" json:"max_concurrent"`
 	ConnPoolSize   int               `yaml:"conn_pool_size" json:"conn_pool_size"`
@@ -348,9 +380,9 @@ type RequestLoggingConfig struct {
 
 // CostTrackingConfig controls per-request cost calculation.
 type CostTrackingConfig struct {
-	Enabled          bool                       `yaml:"enabled" json:"enabled"`
-	CustomPricing    map[string]CustomPricing   `yaml:"custom_pricing" json:"custom_pricing"`
-	AliasCostFactors map[string]float64         `yaml:"alias_cost_factors" json:"alias_cost_factors"`
+	Enabled          bool                     `yaml:"enabled" json:"enabled"`
+	CustomPricing    map[string]CustomPricing `yaml:"custom_pricing" json:"custom_pricing"`
+	AliasCostFactors map[string]float64       `yaml:"alias_cost_factors" json:"alias_cost_factors"`
 }
 
 // CustomPricing allows overriding model pricing.
@@ -735,9 +767,71 @@ type AuditSinkConfig struct {
 type OTelConfig struct {
 	Enabled     bool              `yaml:"enabled" json:"enabled"`
 	ServiceName string            `yaml:"service_name" json:"service_name"`
-	Exporter    string            `yaml:"exporter" json:"exporter"` // "stdout"
+	Exporter    string            `yaml:"exporter" json:"exporter"` // "stdout" | "otlp"
 	SampleRate  float64           `yaml:"sample_rate" json:"sample_rate"`
 	Attributes  map[string]string `yaml:"attributes" json:"attributes"`
+
+	// Endpoint is the OTLP collector base URL, e.g. "http://otel-collector:4318".
+	// Required when Exporter is "otlp". "/v1/traces" is appended when the URL
+	// carries no path of its own.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+
+	// Protocol selects the OTLP transport. Only "http/protobuf" is supported;
+	// empty means "http/protobuf".
+	Protocol string `yaml:"protocol" json:"protocol"`
+
+	// Headers are sent on every OTLP request. Hosted collectors authenticate
+	// this way, so write credentials as ${VAR} and keep them in the
+	// environment rather than in this file.
+	Headers map[string]string `yaml:"headers" json:"-"`
+
+	// TracePropagation makes the gateway honour an inbound W3C `traceparent`
+	// header: its trace id is adopted and its span id becomes this span's
+	// parent, so the gateway span nests under the caller's span instead of
+	// standing alone as a second root.
+	//
+	// Off by default, and deliberately so. A trace whose root span lives in a
+	// different backend has no root here, and consumers that key a trace off
+	// its root span will not list it. Enable when the caller exports its spans
+	// to the same destination as this gateway.
+	TracePropagation bool `yaml:"trace_propagation" json:"trace_propagation"`
+
+	// IncludeBodies attaches the prompt and completion to each span. Off by
+	// default: it sends user content to the collector, and it is a separate
+	// decision from logging.request_logging.include_bodies because the two
+	// go to different places and are signed off separately. Content is
+	// redacted with the org's privacy config exactly as the request log is.
+	IncludeBodies bool `yaml:"include_bodies" json:"include_bodies"`
+
+	// MetadataAttributes additionally emits every caller-supplied metadata key
+	// as its own `agentcc.metadata.<key>` span attribute, next to the `metadata`
+	// JSON object that is always written. Flat attributes are what a trace
+	// backend can filter and group on; the JSON object is one opaque string.
+	// nil = default true.
+	MetadataAttributes *bool `yaml:"metadata_attributes" json:"metadata_attributes"`
+
+	// CaptureHeaders lists request headers to copy onto the span as
+	// `http.request.header.<name>`. Names are matched case-insensitively and a
+	// trailing `*` is a prefix wildcard, so "x-acme-*" takes a whole namespace.
+	//
+	// Empty by default, and an allowlist rather than a blocklist on purpose.
+	// Request headers carry credentials — the gateway itself copies x-api-key
+	// into Authorization before a span exists — and a trace goes somewhere
+	// wider than a log does. A blocklist is a list you can only be wrong about
+	// once. Credential headers stay denied even when a wildcard matches them.
+	CaptureHeaders []string `yaml:"capture_headers" json:"capture_headers"`
+
+	// BodyAttributes emits the request body's unknown top-level fields as
+	// `agentcc.body.<key>` — an SDK's extra_body, and every OpenAI parameter
+	// newer than the field list the request struct knows about
+	// (reasoning_effort, parallel_tool_calls, store...). On by default: those
+	// are ordinary request knobs, and a span that cannot be filtered by them is
+	// missing something the caller assumes is recorded.
+	//
+	// Scalars only, so a nested object — the shape credentials arrive in when
+	// someone passes service-account JSON through extra_body — is never
+	// exported. Values are redacted with the privacy config. nil = default true.
+	BodyAttributes *bool `yaml:"body_attributes" json:"body_attributes"`
 }
 
 // PrometheusConfig controls the Prometheus metrics endpoint.
@@ -863,8 +957,15 @@ func DefaultConfig() *Config {
 			MaxRequestBodySize:    50 * 1024 * 1024, // 50MB
 			DefaultRequestTimeout: 60 * time.Second,
 		},
-		Providers:    make(map[string]ProviderConfig),
-		ModelMap:     make(map[string]string),
+		Providers: make(map[string]ProviderConfig),
+		ModelMap:  make(map[string]string),
+		LicenseAuth: LicenseAuthConfig{
+			Issuer:               "https://licenses.futureagi.com",
+			Audience:             "futureagi-agentcc-gateway",
+			TokenType:            "futureagi-managed-service-token",
+			ClockSkewSeconds:     300,
+			RuntimeStateRequired: true,
+		},
 		CostTracking: CostTrackingConfig{Enabled: true},
 		RateLimiting: RateLimitConfig{Enabled: true},
 		Cache: CacheConfig{
@@ -1058,15 +1159,191 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validateLicenseAuth(); err != nil {
+		return err
+	}
+
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
 	}
 
+	if err := c.validateOTel(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateOTel checks the OTLP exporter settings. Misconfiguration here is
+// caught at startup rather than silently degrading to stdout, because a
+// collector that never receives spans looks identical to a quiet gateway.
+func (c *Config) validateOTel() error {
+	if !c.OTel.Enabled {
+		return nil
+	}
+	if strings.ToLower(c.OTel.Exporter) != "otlp" {
+		return nil
+	}
+	if c.OTel.Endpoint == "" {
+		return fmt.Errorf("otel.endpoint is required when otel.exporter is %q", "otlp")
+	}
+	u, err := url.Parse(c.OTel.Endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("otel.endpoint must be an absolute http(s) URL, got %q", c.OTel.Endpoint)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("otel.endpoint scheme must be http or https, got %q", u.Scheme)
+	}
+	// An empty header value is almost always an unset ${VAR}. Sending it
+	// blindly means the collector 401s and every span is silently discarded,
+	// which is indistinguishable from a gateway with no traffic.
+	for k, v := range c.OTel.Headers {
+		if k == "" {
+			return fmt.Errorf("otel.headers has an entry with an empty name")
+		}
+		if v == "" {
+			return fmt.Errorf("otel.headers[%q] is empty; if it references an environment variable, that variable is not set", k)
+		}
+	}
+	switch strings.ToLower(c.OTel.Protocol) {
+	case "", "http/protobuf":
+		return nil
+	case "grpc", "http/json":
+		return fmt.Errorf("otel.protocol %q is not supported; use \"http/protobuf\"", c.OTel.Protocol)
+	default:
+		return fmt.Errorf("otel.protocol must be \"http/protobuf\", got %q", c.OTel.Protocol)
+	}
+}
+
+func (c *Config) validateLicenseAuth() error {
+	cfg := c.LicenseAuth
+	if !cfg.Enabled {
+		return nil
+	}
+	if !cfg.RuntimeStateRequired {
+		return fmt.Errorf("license_auth.runtime_state_required must be true")
+	}
+	if !c.Redis.Enabled || c.Redis.Address == "" {
+		return fmt.Errorf("license_auth requires enabled Redis with an address")
+	}
+	if cfg.Issuer == "" || cfg.Audience == "" || cfg.TokenType == "" {
+		return fmt.Errorf("license_auth issuer, audience, and token_type are required")
+	}
+	if cfg.ClockSkewSeconds < 0 {
+		return fmt.Errorf("license_auth.clock_skew_seconds must be non-negative")
+	}
+
+	keyCount := 0
+	if cfg.PublicKey != "" {
+		if err := validateLicenseRSAPublicKey(cfg.PublicKey); err != nil {
+			return fmt.Errorf("license_auth.public_key: %w", err)
+		}
+		keyCount++
+	}
+	seen := make(map[string]struct{}, len(cfg.PublicKeys))
+	for _, entry := range cfg.PublicKeys {
+		if entry.KID == "" {
+			return fmt.Errorf("license_auth.public_keys entries require kid")
+		}
+		if _, ok := seen[entry.KID]; ok {
+			return fmt.Errorf("license_auth.public_keys contains duplicate kid %q", entry.KID)
+		}
+		seen[entry.KID] = struct{}{}
+		if err := validateLicenseRSAPublicKey(entry.PublicKey); err != nil {
+			return fmt.Errorf("license_auth.public_keys[%s]: %w", entry.KID, err)
+		}
+		keyCount++
+	}
+	if keyCount == 0 {
+		return fmt.Errorf("license_auth requires at least one RSA public key")
+	}
+	return nil
+}
+
+func validateLicenseRSAPublicKey(raw string) error {
+	block, _ := pem.Decode([]byte(raw))
+	if block == nil {
+		return fmt.Errorf("invalid PEM public key")
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		if _, pkcs1Err := x509.ParsePKCS1PublicKey(block.Bytes); pkcs1Err != nil {
+			return err
+		}
+		return nil
+	}
+	if _, ok := parsed.(*rsa.PublicKey); !ok {
+		return fmt.Errorf("public key is not RSA")
+	}
 	return nil
 }
 
 // Addr returns the listen address.
 func (c *Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
+}
+
+// DefaultAPIPathPrefix is the version segment assumed for an OpenAI-format
+// provider that does not state one.
+const DefaultAPIPathPrefix = "/v1"
+
+// EffectiveAPIPathPrefix returns the version segment for this provider,
+// normalised to a leading slash and no trailing one.
+func (c *ProviderConfig) EffectiveAPIPathPrefix() string {
+	if c.APIPathPrefix == nil {
+		return DefaultAPIPathPrefix
+	}
+	return normalizePathPrefix(*c.APIPathPrefix)
+}
+
+// EndpointURL builds an upstream URL for a versioned path such as
+// "/v1/chat/completions", replacing the caller's assumed "/v1" with whatever
+// this provider actually uses.
+//
+// A base_url that already ends in the prefix keeps it rather than repeating it:
+// "https://api.cohere.ai/compatibility/v1" resolves to ".../compatibility/v1/
+// chat/completions", not ".../v1/v1/...".
+func (c *ProviderConfig) EndpointURL(path string) string {
+	return JoinEndpoint(c.BaseURL, c.EffectiveAPIPathPrefix(), path)
+}
+
+// JoinEndpoint is EndpointURL for callers holding a base URL rather than a
+// config — the registry builds probe URLs before any provider exists.
+func JoinEndpoint(baseURL, prefix, path string) string {
+	base := strings.TrimRight(baseURL, "/")
+	path = trimDefaultPrefix(path)
+	if prefix == "" {
+		return base + path
+	}
+	if strings.HasSuffix(base, prefix) {
+		return base + path
+	}
+	return base + prefix + path
+}
+
+// trimDefaultPrefix removes the "/v1" the call sites hardcode, but only when it
+// is a whole path segment. A blind TrimPrefix eats the "/v1" out of "/v10/models"
+// and "/v1beta/models", leaving "0/models" to be re-prefixed into "/v20/models".
+// Only the proxy endpoints take a caller-supplied path, so that is where a
+// non-"/v1" version segment can actually arrive.
+func trimDefaultPrefix(path string) string {
+	if path == DefaultAPIPathPrefix {
+		return ""
+	}
+	if strings.HasPrefix(path, DefaultAPIPathPrefix+"/") {
+		return strings.TrimPrefix(path, DefaultAPIPathPrefix)
+	}
+	return path
+}
+
+func normalizePathPrefix(prefix string) string {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		return ""
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	return prefix
 }

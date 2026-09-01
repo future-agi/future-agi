@@ -20,6 +20,7 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 
 // ----------------------------------------------------------------------
 //
@@ -136,11 +137,11 @@ axiosInstance.interceptors.response.use(
         setSession(newAccessToken, organizationId);
 
         // 🔄 Re-apply per-tab headers from sessionStorage (survives refresh)
-        const wsId = sessionStorage.getItem("workspaceId");
+        const wsId = sessionStorage.getItem(SS_KEY_WORKSPACE_ID);
         if (wsId) {
           axiosInstance.defaults.headers.common["X-Workspace-Id"] = wsId;
         }
-        const orgId = sessionStorage.getItem("organizationId");
+        const orgId = sessionStorage.getItem(SS_KEY_ORG_ID);
         if (orgId) {
           axiosInstance.defaults.headers.common["X-Organization-Id"] = orgId;
         }
@@ -213,6 +214,9 @@ axiosInstance.interceptors.response.use(
     const customError = {
       ...errData,
       statusCode: error.response?.status,
+      // Keep Axios' transport classification without overwriting a semantic
+      // API error code from the response body (for example snapshot_changed).
+      transportCode: error.code,
     };
 
     return Promise.reject(customError);
@@ -590,6 +594,9 @@ export const endpoints = {
         apiPath("/usage/v2/payment-methods/{pm_id}/", { pm_id: pmId }),
       deploymentInfo: apiPath("/api/deployment-info/"),
     },
+  },
+  ossSetup: {
+    setupChecks: apiPath("/api/setup-checks/"),
   },
   tools: {
     create: apiPath("/model-hub/tools/"),
@@ -1502,10 +1509,17 @@ export const endpoints = {
   runTests: {
     list: apiPath("/simulate/run-tests/"),
     create: apiPath("/simulate/run-tests/create/"),
+    validateLiveKitCredentials: apiPath(
+      "/simulate/api/livekit/validate-credentials/",
+    ),
     detail: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/", { run_test_id: id }),
     detailExecutions: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/executions/", {
+        run_test_id: id,
+      }),
+    previewExecutions: (id) =>
+      apiPath("/simulate/run-tests/{run_test_id}/preview-executions/", {
         run_test_id: id,
       }),
     detailScenarios: (id) =>
@@ -1573,6 +1587,10 @@ export const endpoints = {
       }),
   },
   testExecutions: {
+    previewCalls: (id) =>
+      apiPath("/simulate/test-executions/{test_execution_id}/preview-calls/", {
+        test_execution_id: id,
+      }),
     callDetail: (id) =>
       apiPath("/simulate/call-executions/{call_execution_id}/", {
         call_execution_id: id,

@@ -63,6 +63,7 @@ import DateRangePill, {
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import { apiPath } from "src/api/contracts/api-surface";
+import { ModelHubDevelopsGetDatasetTableListResponse } from "src/generated/api-contracts/api.zod";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import {
   getPickerOptionLabel,
@@ -71,6 +72,10 @@ import {
 } from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
+import {
+  formatSelectionCount,
+  getListTotalState,
+} from "src/sections/projects/LLMTracing/listTotalMetadata";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useDebounce } from "src/hooks/use-debounce";
 import { PROJECT_SOURCE } from "src/utils/constants";
@@ -93,6 +98,25 @@ import {
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
 import { summarizeAddResults, addResultToast } from "./add-items-results";
+import {
+  ExactSelectorContinuationNotice,
+  useExactSelectorDataSource,
+} from "./exact-selector-pagination";
+import {
+  parseSessionSelectorPage,
+  parseSpanSelectorPage,
+  parseTraceSelectorPage,
+  sessionSelectorMetadataFromResponse,
+  sessionSelectorRowIdentity,
+  sessionSelectorRowsFromResponse,
+  spanSelectorMetadataFromResponse,
+  spanSelectorRowIdentity,
+  spanSelectorRowsFromResponse,
+  traceSelectorMetadataFromResponse,
+  traceSelectorRowIdentity,
+  traceSelectorRowsFromResponse,
+} from "./telemetry-selector-contract";
+import { spanSourceIdsFromPhysicalRowIds } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -177,6 +201,139 @@ function renderProjectAutocompleteOption(props, option, state) {
 const DATASET_ROWS_LIMIT = 10;
 const TRACE_ROWS_LIMIT = 20;
 const DEFAULT_MIN_WIDTH = 300;
+const createEmptyVoiceSelectionMeta = () => ({
+  isAllOnPageSelected: false,
+  currentPageSize: 0,
+  totalPages: 1,
+  pageLimit: 25,
+  totalMatching: null,
+  totalMatchingIsLowerBound: false,
+});
+
+export const getSelectorPageTotalState = (metadata, loadedLowerBound) => {
+  const totalState = getListTotalState(metadata);
+  const normalizedLoadedLowerBound = Math.max(0, Number(loadedLowerBound) || 0);
+  if (totalState.totalRowCountIsLowerBound) {
+    return {
+      totalRowCount: null,
+      totalRowCountLowerBound: Math.max(
+        totalState.totalRowCountLowerBound || 0,
+        normalizedLoadedLowerBound,
+      ),
+      totalRowCountIsLowerBound: true,
+      selectorHasMore: metadata?.has_more === true,
+    };
+  }
+
+  return {
+    totalRowCount: Math.max(
+      totalState.totalRowCount || 0,
+      normalizedLoadedLowerBound,
+    ),
+    totalRowCountLowerBound: null,
+    totalRowCountIsLowerBound: false,
+    selectorHasMore: metadata?.has_more === true,
+  };
+};
+
+export const getSelectorSelectAllTotalState = (context, visibleCount = 0) => {
+  const isLowerBound = context?.totalRowCountIsLowerBound === true;
+  const reportedTotal = isLowerBound
+    ? context?.totalRowCountLowerBound
+    : context?.totalRowCount;
+  const numericTotal = Number(reportedTotal);
+  return {
+    totalCount: Math.max(
+      Number.isFinite(numericTotal) ? numericTotal : 0,
+      Number(visibleCount) || 0,
+    ),
+    totalCountIsLowerBound: isLowerBound,
+    hasMore: context?.selectorHasMore === true,
+  };
+};
+
+export const shouldShowSelectorSelectAll = (selectionMeta) =>
+  Boolean(
+    selectionMeta &&
+      (selectionMeta.totalCountIsLowerBound ||
+        selectionMeta.totalCount > selectionMeta.visibleCount),
+  );
+
+export const getVoiceSelectorTotalState = (selectionMeta = {}) => {
+  const visibleCount = Math.max(0, Number(selectionMeta.currentPageSize) || 0);
+  const totalPages = Math.max(1, Number(selectionMeta.totalPages) || 1);
+  const pageLimit = Math.max(1, Number(selectionMeta.pageLimit) || 1);
+  const hasReportedTotal =
+    selectionMeta.totalMatching !== null &&
+    selectionMeta.totalMatching !== undefined &&
+    selectionMeta.totalMatching !== "" &&
+    Number.isFinite(Number(selectionMeta.totalMatching)) &&
+    Number(selectionMeta.totalMatching) >= 0;
+  const totalCount = Math.max(
+    visibleCount,
+    hasReportedTotal
+      ? Number(selectionMeta.totalMatching)
+      : totalPages * pageLimit,
+  );
+  const totalCountIsLowerBound =
+    selectionMeta.totalMatchingIsLowerBound === true || !hasReportedTotal;
+
+  return {
+    totalCount,
+    totalCountIsLowerBound,
+    hasMore:
+      totalCountIsLowerBound || totalPages > 1 || totalCount > visibleCount,
+  };
+};
+
+export const getSelectorStatusState = ({
+  context,
+  displayedRowCount,
+  lastDisplayedRowIndex,
+}) => {
+  const loadedRows = Math.max(0, Number(lastDisplayedRowIndex) + 1 || 0);
+  if (context?.totalRowCountIsLowerBound === true) {
+    return {
+      loadedRows,
+      totalRows: Math.max(
+        loadedRows,
+        Number(context?.totalRowCountLowerBound) || 0,
+      ),
+      totalRowsIsLowerBound: true,
+    };
+  }
+
+  return {
+    loadedRows,
+    totalRows: Math.max(
+      0,
+      Number(context?.totalRowCount ?? displayedRowCount) || 0,
+    ),
+    totalRowsIsLowerBound: false,
+  };
+};
+
+export const retryExactSelectorRead = (api) => {
+  if (api?.retryServerSideLoads) {
+    api.retryServerSideLoads();
+    return;
+  }
+  api?.refreshServerSide?.({ purge: false });
+};
+
+const updateSelectorPageMetadata = (exactPage, params) => {
+  const loadedLowerBound =
+    (Number(params.request?.startRow) || 0) + exactPage.rows.length;
+  const totalState = getSelectorPageTotalState(
+    exactPage.metadata,
+    loadedLowerBound,
+  );
+  const context = params.api.getGridOption("context") || {};
+  params.api.setGridOption("context", {
+    ...context,
+    ...totalState,
+  });
+};
 
 const DATASET_GRID_THEME_PARAMS = {
   columnBorder: true,
@@ -372,6 +529,34 @@ export function buildSimulationSelectorFilterFields(columnOrder = []) {
 // ---------------------------------------------------------------------------
 const MAX_PAGINATION_PAGES = 100;
 
+export const assertExactEnumerationComplete = ({ hasMore, sourceLabel }) => {
+  if (!hasMore) return;
+  throw new Error(
+    `All matching ${sourceLabel} could not be resolved safely. Narrow the filters and retry.`,
+  );
+};
+
+const parseDatasetEnumerationPage = (response) => {
+  const parsed = ModelHubDevelopsGetDatasetTableListResponse.parse(
+    response?.data,
+  );
+  if (parsed.status !== true) {
+    throw new Error("Dataset list response was not successful");
+  }
+  const result = parsed.result;
+  if (!Array.isArray(result.table)) {
+    throw new Error("Dataset list response is missing table rows");
+  }
+  if (
+    !result.metadata ||
+    !Number.isInteger(result.metadata.total_rows) ||
+    result.metadata.total_rows < 0
+  ) {
+    throw new Error("Dataset list response is missing an exact row count");
+  }
+  return { rows: result.table, totalRows: result.metadata.total_rows };
+};
+
 async function fetchAllDatasetRowIds(
   queryClient,
   datasetId,
@@ -396,105 +581,29 @@ async function fetchAllDatasetRowIds(
       { enabled: true, staleTime: 30000, pageSize: DATASET_ROWS_LIMIT },
     );
     const data = await queryClient.fetchQuery(queryOptions);
-    const rows = data?.data?.result?.table ?? [];
-    const totalRows = data?.data?.result?.metadata?.total_rows ?? 0;
+    const { rows, totalRows } = parseDatasetEnumerationPage(data);
 
     rows.forEach((row) => {
-      if (row.row_id && !excludedIds.has(row.row_id)) {
+      if (typeof row?.row_id !== "string" || row.row_id.length === 0) {
+        throw new Error("Dataset list returned a row without an identity");
+      }
+      if (!excludedIds.has(row.row_id)) {
         allIds.push(row.row_id);
       }
     });
 
     page += 1;
     hasMore = page * DATASET_ROWS_LIMIT < totalRows;
+    if (hasMore && rows.length === 0) {
+      throw new Error("Dataset list pagination did not make progress");
+    }
   }
 
+  assertExactEnumerationComplete({ hasMore, sourceLabel: "dataset rows" });
   return allIds;
 }
 
 const SPAN_ROWS_LIMIT = 20;
-
-// ---------------------------------------------------------------------------
-// Fetch all trace IDs / span IDs matching the current filters, paginating
-// through the list endpoints. Mirrors fetchAllDatasetRowIds — used by the
-// selectAll enumeration path when the backend filter-mode resolver isn't
-// available for a source type.
-// ---------------------------------------------------------------------------
-async function fetchAllTraceIds(
-  projectId,
-  excludedIds,
-  filters,
-  projectVersionId,
-) {
-  const serializedFilters = JSON.stringify(filters || []);
-  const allIds = [];
-  const excluded = excludedIds || new Set();
-  let page = 0;
-  let hasMore = true;
-
-  while (hasMore && page < MAX_PAGINATION_PAGES) {
-    const resp = await axios.get(endpoints.project.getTraceList(), {
-      params: {
-        project: projectId,
-        project_version_id: projectVersionId,
-        page_number: page,
-        page_size: TRACE_ROWS_LIMIT,
-        filters: serializedFilters,
-      },
-    });
-    const res = resp?.data?.result;
-    const rows = res?.table ?? [];
-    const totalRows = res?.metadata?.totalRows ?? 0;
-
-    rows.forEach((row) => {
-      const id = row.rowId || row.trace_id || row.id;
-      if (id && !excluded.has(id)) allIds.push(id);
-    });
-
-    page += 1;
-    hasMore = page * TRACE_ROWS_LIMIT < totalRows;
-  }
-
-  return allIds;
-}
-
-async function fetchAllSpanIds(
-  projectId,
-  excludedIds,
-  filters,
-  projectVersionId,
-) {
-  const serializedFilters = JSON.stringify(filters || []);
-  const allIds = [];
-  const excluded = excludedIds || new Set();
-  let page = 0;
-  let hasMore = true;
-
-  while (hasMore && page < MAX_PAGINATION_PAGES) {
-    const resp = await axios.get(endpoints.project.getSpanList(), {
-      params: {
-        project: projectId,
-        project_version_id: projectVersionId,
-        page_number: page,
-        page_size: SPAN_ROWS_LIMIT,
-        filters: serializedFilters,
-      },
-    });
-    const res = resp?.data?.result;
-    const rows = res?.table ?? [];
-    const totalRows = res?.metadata?.totalRows ?? 0;
-
-    rows.forEach((row) => {
-      const id = row.rowId || row.span_id || row.id;
-      if (id && !excluded.has(id)) allIds.push(id);
-    });
-
-    page += 1;
-    hasMore = page * SPAN_ROWS_LIMIT < totalRows;
-  }
-
-  return allIds;
-}
 
 // ---------------------------------------------------------------------------
 // Main component – Drawer-based
@@ -518,10 +627,17 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
 
+  const selectionCountIsLowerBound =
+    selectionMode === "selectAll" &&
+    selectAllInfo?.totalCountIsLowerBound === true;
   const selectionCount =
     selectionMode === "selectAll" && selectAllInfo
-      ? selectAllInfo.totalCount - selectAllInfo.excludedIds.size
+      ? Math.max(selectAllInfo.totalCount - selectAllInfo.excludedIds.size, 0)
       : selectedIds.size;
+  const selectionCountLabel = formatSelectionCount({
+    count: selectionCount,
+    isLowerBound: selectionCountIsLowerBound,
+  });
 
   const handleSetSelection = useCallback((ids) => {
     setSelectionMode("manual");
@@ -556,6 +672,12 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           sourceType === "call_execution");
 
       if (isBackendFilterMode) {
+        const excludedIds =
+          sourceType === "observation_span"
+            ? spanSourceIdsFromPhysicalRowIds(
+                Array.from(selectAllInfo.excludedIds || []),
+              )
+            : Array.from(selectAllInfo.excludedIds || []);
         addItems(
           {
             queueId,
@@ -564,7 +686,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               source_type: sourceType,
               project_id: selectAllInfo.projectId,
               filter: selectAllInfo.filters || [],
-              exclude_ids: Array.from(selectAllInfo.excludedIds || []),
+              exclude_ids: excludedIds,
               ...(sourceType === "trace" && isVoiceTraceSelection
                 ? { is_voice_call: true }
                 : {}),
@@ -587,67 +709,35 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
 
       let itemsToAdd;
       if (selectionMode === "selectAll" && selectAllInfo) {
-        // Dataset-row selectAll still enumerates client-side — no backend
-        // filter-mode resolver for datasets yet.
+        // Every telemetry source was handled by backend filter mode above.
+        // Dataset rows still need client-side enumeration; that enumerator
+        // fails closed if it cannot prove it reached the terminal page.
+        if (sourceType !== "dataset_row") {
+          throw new Error("This selection cannot be resolved exactly");
+        }
         setIsResolving(true);
         try {
-          let allIds;
-          if (sourceType === "dataset_row") {
-            allIds = await fetchAllDatasetRowIds(
-              queryClient,
-              selectAllInfo.datasetId,
-              selectAllInfo.excludedIds,
-              selectAllInfo.filters,
-              selectAllInfo.search,
-            );
-            itemsToAdd = allIds.map((id) => ({
-              source_type: "dataset_row",
-              source_id: id,
-            }));
-          } else if (sourceType === "observation_span") {
-            allIds = await fetchAllSpanIds(
-              selectAllInfo.projectId,
-              selectAllInfo.excludedIds,
-              selectAllInfo.filters,
-              selectAllInfo.projectVersionId,
-            );
-            itemsToAdd = allIds.map((id) => ({
-              source_type: "observation_span",
-              source_id: id,
-            }));
-          } else {
-            // sourceType === "trace": fetch trace IDs then convert to root spans
-            const traceIds = await fetchAllTraceIds(
-              selectAllInfo.projectId,
-              selectAllInfo.excludedIds,
-              selectAllInfo.filters,
-              selectAllInfo.projectVersionId,
-            );
-            const rootSpanMap = await fetchRootSpans(
-              traceIds,
-              selectAllInfo.projectId ? [selectAllInfo.projectId] : [],
-            );
-            const mappedIds = traceIds
-              .map((traceId) => rootSpanMap[traceId])
-              .filter(Boolean);
-            const droppedCount = traceIds.length - mappedIds.length;
-            if (droppedCount > 0) {
-              enqueueSnackbar(
-                `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-                { variant: "warning" },
-              );
-            }
-            itemsToAdd = mappedIds.map((id) => ({
-              source_type: "observation_span",
-              source_id: id,
-            }));
-          }
+          const allIds = await fetchAllDatasetRowIds(
+            queryClient,
+            selectAllInfo.datasetId,
+            selectAllInfo.excludedIds,
+            selectAllInfo.filters,
+            selectAllInfo.search,
+          );
+          itemsToAdd = allIds.map((id) => ({
+            source_type: "dataset_row",
+            source_id: id,
+          }));
         } finally {
           setIsResolving(false);
         }
       } else {
         let ids = Array.from(selectedIds);
         let effectiveSourceType = sourceType;
+
+        if (sourceType === "observation_span") {
+          ids = spanSourceIdsFromPhysicalRowIds(ids);
+        }
 
         // Voice/simulator projects keep `source_type: "trace"` — matches
         // the "Add to queue" flow on the voice observability page so the
@@ -912,7 +1002,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             >
               {selectionCount === 0
                 ? "No rows selected"
-                : `${selectionCount} selected`}
+                : `${selectionCountLabel} selected`}
             </Typography>
             <Button
               variant="outlined"
@@ -936,7 +1026,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               sx={{ minWidth: 140, flexShrink: 0 }}
             >
               {selectionCount > 0
-                ? `(${selectionCount}) Add to queue`
+                ? `(${selectionCountLabel}) Add to queue`
                 : "Add to queue"}
             </Button>
           </Box>
@@ -1213,14 +1303,20 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
 function StatusBar({ api }) {
   const [loadedRows, setLoadedRows] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
+  const [totalRowsIsLowerBound, setTotalRowsIsLowerBound] = useState(false);
 
   useEffect(() => {
     if (!api) return;
     const updateCounts = () => {
       const context = api.getGridOption?.("context");
-      const total = context?.totalRowCount ?? api.getDisplayedRowCount();
-      setTotalRows(total);
-      setLoadedRows(api.getLastDisplayedRowIndex() + 1);
+      const nextState = getSelectorStatusState({
+        context,
+        displayedRowCount: api.getDisplayedRowCount(),
+        lastDisplayedRowIndex: api.getLastDisplayedRowIndex(),
+      });
+      setTotalRows(nextState.totalRows);
+      setLoadedRows(nextState.loadedRows);
+      setTotalRowsIsLowerBound(nextState.totalRowsIsLowerBound);
     };
     updateCounts();
     const events = ["modelUpdated", "viewportChanged", "firstDataRendered"];
@@ -1234,13 +1330,48 @@ function StatusBar({ api }) {
 
   return (
     <Box sx={{ px: 2, py: 1, fontSize: 13, color: "text.secondary" }}>
-      Showing Rows: {loadedRows} / Total Rows: {totalRows}
+      Showing Rows: {loadedRows} /{" "}
+      {totalRowsIsLowerBound ? "Matching Rows: at least" : "Total Rows:"}{" "}
+      {totalRows}
     </Box>
   );
 }
 
 StatusBar.propTypes = {
   api: PropTypes.object,
+};
+
+export function ExactSelectorReadFailureNotice({ failed, onRetry }) {
+  if (!failed) return null;
+
+  return (
+    <Box
+      role="status"
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 1,
+        px: 1.5,
+        py: 0.75,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        bgcolor: "action.hover",
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">
+        Rows are temporarily unavailable.
+      </Typography>
+      <Button size="small" variant="outlined" onClick={onRetry}>
+        Retry
+      </Button>
+    </Box>
+  );
+}
+
+ExactSelectorReadFailureNotice.propTypes = {
+  failed: PropTypes.bool,
+  onRetry: PropTypes.func.isRequired,
 };
 
 function FieldLoadingAdornment({ loading }) {
@@ -1567,7 +1698,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexWrap: "wrap",
           flexShrink: 0,
@@ -1579,7 +1710,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           label="Dataset"
           value={datasetId}
           onChange={handleDatasetChange}
-          sx={{ minWidth: 220, flex: "1 1 260px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
           required
           SelectProps={{
             MenuProps: {
@@ -1791,6 +1922,48 @@ const traceDefaultFilterBase = {
   },
 };
 
+export function AnnotationTelemetryFilterPanel({
+  selectorType,
+  isVoiceProject = false,
+  sessionFilterFields,
+  ...panelProps
+}) {
+  const isSession = selectorType === "session";
+  const isSpan = selectorType === "span";
+  const isVoice = selectorType === "trace" && isVoiceProject;
+
+  return (
+    <TraceFilterPanel
+      {...panelProps}
+      source={isSession ? "sessions" : "traces"}
+      tab={
+        isSession
+          ? undefined
+          : isSpan
+            ? "spans"
+            : isVoice
+              ? "voiceCalls"
+              : "trace"
+      }
+      propertyNamespace={
+        isSession ? "sessions" : isVoice ? "voice_calls" : "traces"
+      }
+      // Session rows keep their own list/value transport, but custom keys are
+      // stored on the underlying spans just like the Users and Tasks surfaces.
+      attributeSource={isSession || isSpan || isVoice ? "spans" : "traces"}
+      isSpansView={isSpan}
+      isSimulator={isVoice}
+      filterFields={isSession ? sessionFilterFields : undefined}
+    />
+  );
+}
+
+AnnotationTelemetryFilterPanel.propTypes = {
+  selectorType: PropTypes.oneOf(["trace", "span", "session"]).isRequired,
+  isVoiceProject: PropTypes.bool,
+  sessionFilterFields: PropTypes.array,
+};
+
 function TraceSelector({
   onSetSelection,
   onSelectAll,
@@ -1818,12 +1991,9 @@ function TraceSelector({
   const filtersRef = useRef([]);
   // CallLogsGrid client-side paginated selection meta (for the voice
   // branch below). Drives the SelectAllBanner's visibility + count.
-  const [simCallMeta, setSimCallMeta] = useState({
-    isAllOnPageSelected: false,
-    currentPageSize: 0,
-    totalPages: 1,
-    pageLimit: 25,
-  });
+  const [simCallMeta, setSimCallMeta] = useState(createEmptyVoiceSelectionMeta);
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const [traceReadFailed, setTraceReadFailed] = useState(false);
 
   const {
     data: projects,
@@ -1899,6 +2069,7 @@ function TraceSelector({
     metricType: "annotation_metric",
     projectIds: projectId ? [projectId] : [],
     source: "traces",
+    pageSize: 10,
     enabled: hasAnnotatorChip && !!projectId,
   });
   const filterChipLabelMap = useMemo(
@@ -1933,56 +2104,61 @@ function TraceSelector({
     filtersRef.current = validatedFilters;
   }, [validatedFilters]);
 
-  // Server-side datasource (same pattern as TraceGrid)
-  const dataSource = useMemo(
+  const traceQuerySignature = JSON.stringify({
+    projectId,
+    versionId,
+    filters: validatedFilters,
+  });
+  const getTraceBaseParams = useCallback(
     () => ({
-      getRows: async (params) => {
-        try {
-          const { request } = params;
-          const pageSize = request.endRow - request.startRow;
-          const pageNumber = Math.floor(request.startRow / pageSize);
-
-          const apiParams = {
-            project_id: projectId,
-            page_number: pageNumber,
-            page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(
-              stripUiFilterKeys(filtersRef.current || []),
-            ),
-          };
-          if (versionId) {
-            apiParams.project_version_id = versionId;
-          }
-          const results = await axios.get(
-            endpoints.project.getTracesForObserveProject(),
-            { params: apiParams },
-          );
-          const res = results?.data?.result;
-
-          // Update columns from response config (same as TraceGrid)
-          const newCols = normalizeConfigKeys(res?.config);
-          if (newCols) {
-            setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
-          }
-
-          const totalRows = res?.metadata?.total_rows;
-          const ctx = params.api.getGridOption("context") || {};
-          params.api.setGridOption("context", {
-            ...ctx,
-            totalRowCount: totalRows,
-          });
-          params.success({
-            rowData: res?.table,
-            rowCount: totalRows,
-          });
-        } catch {
-          params.fail();
-        }
-      },
+      project_id: projectId,
+      ...(versionId ? { project_version_id: versionId } : {}),
+      filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, versionId, validatedFilters],
+    [projectId, versionId],
   );
+  const requestTracePage = useCallback(
+    (requestParams, signal) =>
+      axios.get(endpoints.project.getTracesForObserveProject(), {
+        params: requestParams,
+        signal,
+      }),
+    [],
+  );
+  const onTracePageLoaded = useCallback((exactPage, params) => {
+    setTraceReadFailed(false);
+    const newColumns = normalizeConfigKeys(
+      parseTraceSelectorPage(exactPage.response).config,
+    );
+    if (newColumns) {
+      setColumns((previous) =>
+        isEqual(previous, newColumns) ? previous : newColumns,
+      );
+    }
+    updateSelectorPageMetadata(exactPage, params);
+  }, []);
+  const onTracePageFailure = useCallback(() => {
+    setTraceReadFailed(true);
+  }, []);
+  const {
+    dataSource,
+    continuationPending: traceContinuationPending,
+    continueSearch: continueTraceSearch,
+  } = useExactSelectorDataSource({
+    querySignature: traceQuerySignature,
+    targetRowCount: TRACE_ROWS_LIMIT,
+    getBaseParams: getTraceBaseParams,
+    request: requestTracePage,
+    rowsFromResponse: traceSelectorRowsFromResponse,
+    metadataFromResponse: traceSelectorMetadataFromResponse,
+    rowIdentity: traceSelectorRowIdentity,
+    onPageLoaded: onTracePageLoaded,
+    onFailure: onTracePageFailure,
+  });
+
+  useEffect(() => {
+    setTraceReadFailed(false);
+  }, [traceQuerySignature]);
 
   // Build column defs from server config (same as TraceGrid)
   const columnDefs = useMemo(() => {
@@ -2054,7 +2230,28 @@ function TraceSelector({
   // the parent in *manual* selection for just the visible page; the
   // SelectAllBanner then offers the user an explicit "Select all N
   // matching your filter" opt-in before we flip to filter-mode.
-  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const resetTraceScopedSelection = useCallback(() => {
+    setPageSelectAllMeta(null);
+    setSimCallMeta(createEmptyVoiceSelectionMeta());
+    onSetSelection([]);
+  }, [onSetSelection]);
+  const previousTraceQuerySignatureRef = useRef(traceQuerySignature);
+  useEffect(() => {
+    if (previousTraceQuerySignatureRef.current === traceQuerySignature) return;
+    previousTraceQuerySignatureRef.current = traceQuerySignature;
+    resetTraceScopedSelection();
+  }, [resetTraceScopedSelection, traceQuerySignature]);
+
+  const retryTraceRead = useCallback(() => {
+    setTraceReadFailed(false);
+    retryExactSelectorRead(gridApi);
+  }, [gridApi]);
+
+  const voiceSelectAllState = useMemo(
+    () => getVoiceSelectorTotalState(simCallMeta),
+    [simCallMeta],
+  );
+
   const onSelectionChanged = useCallback(
     (event) => {
       const selectionState = event.api.getServerSideSelectionState();
@@ -2067,17 +2264,20 @@ function TraceSelector({
         // `forEachNodeAfterFilterAndSort` would yield for a client-
         // side grid).
         const excludedIds = new Set(selectionState.toggledNodes || []);
-        const totalCount =
-          (event.api.getGridOption("context") || {}).totalRowCount ?? 0;
+        const context = event.api.getGridOption("context") || {};
         const visibleRowIds = [];
         const rendered = event.api.getRenderedNodes?.() || [];
         rendered.forEach((node) => {
           const rowId = node?.data?.trace_id ?? node?.data?.traceId ?? node?.id;
           if (rowId && !excludedIds.has(rowId)) visibleRowIds.push(rowId);
         });
+        const totalState = getSelectorSelectAllTotalState(
+          context,
+          visibleRowIds.length,
+        );
         onSetSelection(visibleRowIds);
         setPageSelectAllMeta({
-          totalCount,
+          ...totalState,
           excludedIds,
           visibleCount: visibleRowIds.length,
         });
@@ -2095,6 +2295,8 @@ function TraceSelector({
     if (!pageSelectAllMeta) return;
     onSelectAll({
       totalCount: pageSelectAllMeta.totalCount,
+      totalCountIsLowerBound: pageSelectAllMeta.totalCountIsLowerBound,
+      hasMore: pageSelectAllMeta.hasMore,
       excludedIds: pageSelectAllMeta.excludedIds,
       projectId,
       projectVersionId: versionId || undefined,
@@ -2109,16 +2311,17 @@ function TraceSelector({
   );
 
   const handleProjectChange = (e) => {
+    resetTraceScopedSelection();
     setProjectId(e.target.value);
     setVersionId("");
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
-    onSetSelection([]);
   };
 
   const handleVersionChange = (e) => {
+    resetTraceScopedSelection();
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
@@ -2150,7 +2353,7 @@ function TraceSelector({
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -2193,7 +2396,7 @@ function TraceSelector({
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -2203,7 +2406,7 @@ function TraceSelector({
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2277,14 +2480,13 @@ function TraceSelector({
       {/* New trace filter popover — same component as the main LLM Tracing
           page (ObserveToolbar mounts it via `setIsPrimaryFilterOpen`). */}
       {canShowGrid && (
-        <TraceFilterPanel
+        <AnnotationTelemetryFilterPanel
+          selectorType="trace"
+          isVoiceProject={isVoiceProject}
           anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
-          source="traces"
-          tab="trace"
-          isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
@@ -2390,14 +2592,20 @@ function TraceSelector({
         >
           <SelectAllBanner
             visible={
-              simCallMeta.isAllOnPageSelected && simCallMeta.totalPages > 1
+              simCallMeta.isAllOnPageSelected && voiceSelectAllState.hasMore
             }
             visibleCount={simCallMeta.currentPageSize}
-            totalMatching={simCallMeta.totalPages * simCallMeta.pageLimit}
+            totalMatching={voiceSelectAllState.totalCount}
+            totalMatchingIsLowerBound={
+              voiceSelectAllState.totalCountIsLowerBound
+            }
             noun="call"
             onSelectAll={() => {
               onSelectAll({
-                totalCount: simCallMeta.totalPages * simCallMeta.pageLimit,
+                totalCount: voiceSelectAllState.totalCount,
+                totalCountIsLowerBound:
+                  voiceSelectAllState.totalCountIsLowerBound,
+                hasMore: voiceSelectAllState.hasMore,
                 excludedIds: new Set(),
                 projectId,
                 projectVersionId: versionId || undefined,
@@ -2435,10 +2643,7 @@ function TraceSelector({
           }}
         >
           <SelectAllBanner
-            visible={
-              !!pageSelectAllMeta &&
-              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
-            }
+            visible={shouldShowSelectorSelectAll(pageSelectAllMeta)}
             visibleCount={pageSelectAllMeta?.visibleCount || 0}
             totalMatching={
               pageSelectAllMeta
@@ -2449,8 +2654,19 @@ function TraceSelector({
                   )
                 : 0
             }
+            totalMatchingIsLowerBound={
+              pageSelectAllMeta?.totalCountIsLowerBound === true
+            }
             noun="trace"
             onSelectAll={commitFilterModeSelectAll}
+          />
+          <ExactSelectorReadFailureNotice
+            failed={traceReadFailed}
+            onRetry={retryTraceRead}
+          />
+          <ExactSelectorContinuationNotice
+            pending={traceContinuationPending}
+            onContinue={continueTraceSearch}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
             <AgGridReact
@@ -2485,7 +2701,6 @@ function TraceSelector({
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setFilterOpen}
       />
     </Box>
   );
@@ -2521,6 +2736,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const [spanReadFailed, setSpanReadFailed] = useState(false);
 
   const {
     data: projects,
@@ -2573,6 +2790,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     metricType: "annotation_metric",
     projectIds: projectId ? [projectId] : [],
     source: "traces",
+    pageSize: 10,
     enabled: hasAnnotatorChip && !!projectId,
   });
   const filterChipLabelMap = useMemo(
@@ -2604,57 +2822,61 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     filtersRef.current = validatedFilters;
   }, [validatedFilters]);
 
-  // Server-side datasource (same pattern as SpanGrid)
-  const dataSource = useMemo(
+  const spanQuerySignature = JSON.stringify({
+    projectId,
+    versionId,
+    filters: validatedFilters,
+  });
+  const getSpanBaseParams = useCallback(
     () => ({
-      getRows: async (params) => {
-        try {
-          const { request } = params;
-          const pageSize = request.endRow - request.startRow;
-          const pageNumber = Math.floor(request.startRow / pageSize);
-
-          const apiParams = {
-            project_id: projectId,
-            page_number: pageNumber,
-            page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(
-              stripUiFilterKeys(filtersRef.current || []),
-            ),
-          };
-          if (versionId) {
-            apiParams.project_version_id = versionId;
-          }
-
-          const results = await axios.get(
-            endpoints.project.getSpansForObserveProject(),
-            { params: apiParams },
-          );
-          const res = results?.data?.result;
-
-          // Update columns from response config
-          const newCols = normalizeConfigKeys(res?.config);
-          if (newCols) {
-            setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
-          }
-
-          const totalRows = res?.metadata?.total_rows;
-          const ctx = params.api.getGridOption("context") || {};
-          params.api.setGridOption("context", {
-            ...ctx,
-            totalRowCount: totalRows,
-          });
-          params.success({
-            rowData: res?.table,
-            rowCount: totalRows,
-          });
-        } catch {
-          params.fail();
-        }
-      },
+      project_id: projectId,
+      ...(versionId ? { project_version_id: versionId } : {}),
+      filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, versionId, validatedFilters],
+    [projectId, versionId],
   );
+  const requestSpanPage = useCallback(
+    (requestParams, signal) =>
+      axios.get(endpoints.project.getSpansForObserveProject(), {
+        params: requestParams,
+        signal,
+      }),
+    [],
+  );
+  const onSpanPageLoaded = useCallback((exactPage, params) => {
+    setSpanReadFailed(false);
+    const newColumns = normalizeConfigKeys(
+      parseSpanSelectorPage(exactPage.response).config,
+    );
+    if (newColumns) {
+      setColumns((previous) =>
+        isEqual(previous, newColumns) ? previous : newColumns,
+      );
+    }
+    updateSelectorPageMetadata(exactPage, params);
+  }, []);
+  const onSpanPageFailure = useCallback(() => {
+    setSpanReadFailed(true);
+  }, []);
+  const {
+    dataSource,
+    continuationPending: spanContinuationPending,
+    continueSearch: continueSpanSearch,
+  } = useExactSelectorDataSource({
+    querySignature: spanQuerySignature,
+    targetRowCount: SPAN_ROWS_LIMIT,
+    getBaseParams: getSpanBaseParams,
+    request: requestSpanPage,
+    rowsFromResponse: spanSelectorRowsFromResponse,
+    metadataFromResponse: spanSelectorMetadataFromResponse,
+    rowIdentity: spanSelectorRowIdentity,
+    onPageLoaded: onSpanPageLoaded,
+    onFailure: onSpanPageFailure,
+  });
+
+  useEffect(() => {
+    setSpanReadFailed(false);
+  }, [spanQuerySignature]);
 
   // Build column defs from server config (reuse getTraceListColumnDefs — same renderers)
   const columnDefs = useMemo(() => {
@@ -2722,24 +2944,42 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
   // Opt-in for cross-page select-all — same pattern as
   // TraceSelector above (mirrors LLMTracingView's span tab, Phase 5).
-  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const resetSpanScopedSelection = useCallback(() => {
+    setPageSelectAllMeta(null);
+    onSetSelection([]);
+  }, [onSetSelection]);
+  const previousSpanQuerySignatureRef = useRef(spanQuerySignature);
+  useEffect(() => {
+    if (previousSpanQuerySignatureRef.current === spanQuerySignature) return;
+    previousSpanQuerySignatureRef.current = spanQuerySignature;
+    resetSpanScopedSelection();
+  }, [resetSpanScopedSelection, spanQuerySignature]);
+
+  const retrySpanRead = useCallback(() => {
+    setSpanReadFailed(false);
+    retryExactSelectorRead(gridApi);
+  }, [gridApi]);
+
   const onSelectionChanged = useCallback(
     (event) => {
       const selectionState = event.api.getServerSideSelectionState();
 
       if (selectionState.selectAll) {
         const excludedIds = new Set(selectionState.toggledNodes || []);
-        const totalCount =
-          (event.api.getGridOption("context") || {}).totalRowCount ?? 0;
+        const context = event.api.getGridOption("context") || {};
         const visibleRowIds = [];
         const rendered = event.api.getRenderedNodes?.() || [];
         rendered.forEach((node) => {
-          const rowId = node?.data?.span_id ?? node?.data?.spanId ?? node?.id;
+          const rowId = spanSelectorRowIdentity(node?.data);
           if (rowId && !excludedIds.has(rowId)) visibleRowIds.push(rowId);
         });
+        const totalState = getSelectorSelectAllTotalState(
+          context,
+          visibleRowIds.length,
+        );
         onSetSelection(visibleRowIds);
         setPageSelectAllMeta({
-          totalCount,
+          ...totalState,
           excludedIds,
           visibleCount: visibleRowIds.length,
         });
@@ -2756,6 +2996,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     if (!pageSelectAllMeta) return;
     onSelectAll({
       totalCount: pageSelectAllMeta.totalCount,
+      totalCountIsLowerBound: pageSelectAllMeta.totalCountIsLowerBound,
+      hasMore: pageSelectAllMeta.hasMore,
       excludedIds: pageSelectAllMeta.excludedIds,
       projectId,
       projectVersionId: versionId || undefined,
@@ -2770,6 +3012,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   );
 
   const handleProjectChange = (e) => {
+    resetSpanScopedSelection();
     setProjectId(e.target.value);
     setVersionId("");
     setColumns([]);
@@ -2779,6 +3022,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   };
 
   const handleVersionChange = (e) => {
+    resetSpanScopedSelection();
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
@@ -2807,7 +3051,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -2850,7 +3094,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -2860,7 +3104,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -2932,14 +3176,12 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
       </Box>
 
       {canShowGrid && (
-        <TraceFilterPanel
+        <AnnotationTelemetryFilterPanel
+          selectorType="span"
           anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
-          source="traces"
-          tab="spans"
-          isSpansView
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
@@ -3023,10 +3265,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           }}
         >
           <SelectAllBanner
-            visible={
-              !!pageSelectAllMeta &&
-              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
-            }
+            visible={shouldShowSelectorSelectAll(pageSelectAllMeta)}
             visibleCount={pageSelectAllMeta?.visibleCount || 0}
             totalMatching={
               pageSelectAllMeta
@@ -3037,8 +3276,19 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
                   )
                 : 0
             }
+            totalMatchingIsLowerBound={
+              pageSelectAllMeta?.totalCountIsLowerBound === true
+            }
             noun="span"
             onSelectAll={commitFilterModeSelectAll}
+          />
+          <ExactSelectorReadFailureNotice
+            failed={spanReadFailed}
+            onRetry={retrySpanRead}
+          />
+          <ExactSelectorContinuationNotice
+            pending={spanContinuationPending}
+            onContinue={continueSpanSearch}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
             <AgGridReact
@@ -3059,7 +3309,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
               context={{ disableCellNavigation: true }}
-              getRowId={(d) => d?.data?.span_id ?? d?.data?.spanId}
+              getRowId={(d) => spanSelectorRowIdentity(d?.data)}
               animateRows={false}
               blockLoadDebounceMillis={300}
             />
@@ -3073,7 +3323,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setFilterOpen}
       />
     </Box>
   );
@@ -3107,6 +3356,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
+  const [sessionReadFailed, setSessionReadFailed] = useState(false);
 
   const {
     data: projects,
@@ -3160,6 +3410,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     metricType: "annotation_metric",
     projectIds: projectId ? [projectId] : [],
     source: "sessions",
+    pageSize: 10,
     enabled: hasAnnotatorChip && !!projectId,
   });
   const filterChipLabelMap = useMemo(
@@ -3176,61 +3427,67 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     filtersRef.current = validatedFilters;
   }, [validatedFilters]);
 
-  // Server-side datasource (same pattern as Session-grid)
-  const dataSource = useMemo(
-    () => ({
-      getRows: async (params) => {
-        try {
-          const { request } = params;
-          const pageSize = request.endRow - request.startRow;
-          const pageNumber = Math.floor(request.startRow / pageSize);
-
-          const results = await axios.get(
-            endpoints.project.projectSessionList(),
-            {
-              params: {
-                project_id: projectId,
-                ...(versionId ? { project_version_id: versionId } : {}),
-                page_number: pageNumber,
-                page_size: SESSION_ROWS_LIMIT,
-                sort_params: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    direction: sort,
-                  })),
-                ),
-                filters: JSON.stringify(
-                  stripUiFilterKeys(filtersRef.current || []),
-                ),
-              },
-            },
-          );
-          const res = results?.data?.result;
-
-          // Update columns from response config
-          const newCols = normalizeConfigKeys(res?.config);
-          if (newCols) {
-            setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
-          }
-
-          const totalRows = res?.metadata?.total_rows;
-          const ctx = params.api.getGridOption("context") || {};
-          params.api.setGridOption("context", {
-            ...ctx,
-            totalRowCount: totalRows,
-          });
-          params.success({
-            rowData: res?.table,
-            rowCount: totalRows,
-          });
-        } catch {
-          params.fail();
-        }
-      },
+  const sessionQuerySignature = JSON.stringify({
+    projectId,
+    versionId,
+    filters: validatedFilters,
+  });
+  const getSessionBaseParams = useCallback(
+    (request) => ({
+      project_id: projectId,
+      ...(versionId ? { project_version_id: versionId } : {}),
+      sort_params: JSON.stringify(
+        request?.sortModel?.map(({ colId, sort }) => ({
+          column_id: colId,
+          direction: sort,
+        })) || [],
+      ),
+      filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, versionId, validatedFilters],
+    [projectId, versionId],
   );
+  const requestSessionPage = useCallback(
+    (requestParams, signal) =>
+      axios.get(endpoints.project.projectSessionList(), {
+        params: requestParams,
+        signal,
+      }),
+    [],
+  );
+  const onSessionPageLoaded = useCallback((exactPage, params) => {
+    setSessionReadFailed(false);
+    const newColumns = normalizeConfigKeys(
+      parseSessionSelectorPage(exactPage.response).config,
+    );
+    if (newColumns) {
+      setColumns((previous) =>
+        isEqual(previous, newColumns) ? previous : newColumns,
+      );
+    }
+    updateSelectorPageMetadata(exactPage, params);
+  }, []);
+  const onSessionPageFailure = useCallback(() => {
+    setSessionReadFailed(true);
+  }, []);
+  const {
+    dataSource,
+    continuationPending: sessionContinuationPending,
+    continueSearch: continueSessionSearch,
+  } = useExactSelectorDataSource({
+    querySignature: sessionQuerySignature,
+    targetRowCount: SESSION_ROWS_LIMIT,
+    getBaseParams: getSessionBaseParams,
+    request: requestSessionPage,
+    rowsFromResponse: sessionSelectorRowsFromResponse,
+    metadataFromResponse: sessionSelectorMetadataFromResponse,
+    rowIdentity: sessionSelectorRowIdentity,
+    onPageLoaded: onSessionPageLoaded,
+    onFailure: onSessionPageFailure,
+  });
+
+  useEffect(() => {
+    setSessionReadFailed(false);
+  }, [sessionQuerySignature]);
 
   // Build column defs from server config (same as Session-grid)
   const columnDefs = useMemo(() => {
@@ -3301,7 +3558,25 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     }
   }, [dataSource, gridApi, projectId]);
 
+  const retrySessionRead = useCallback(() => {
+    setSessionReadFailed(false);
+    retryExactSelectorRead(gridApi);
+  }, [gridApi]);
+
   const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+
+  const resetSessionScopedSelection = useCallback(() => {
+    setPageSelectAllMeta(null);
+    onSetSelection([]);
+  }, [onSetSelection]);
+  const previousSessionQuerySignatureRef = useRef(sessionQuerySignature);
+  useEffect(() => {
+    if (previousSessionQuerySignatureRef.current === sessionQuerySignature) {
+      return;
+    }
+    previousSessionQuerySignatureRef.current = sessionQuerySignature;
+    resetSessionScopedSelection();
+  }, [resetSessionScopedSelection, sessionQuerySignature]);
 
   // Handle row selection. Session rows use the backend `session_id` field as
   // the row id; filter-mode select-all sends the same canonical ids to the API.
@@ -3310,7 +3585,12 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
       const selectionState = event.api.getServerSideSelectionState?.() || {};
 
       if (selectionState.selectAll) {
-        const selectAllMeta = buildSessionSelectAllMeta(event.api);
+        const baseMeta = buildSessionSelectAllMeta(event.api);
+        const totalState = getSelectorSelectAllTotalState(
+          event.api.getGridOption("context") || {},
+          baseMeta?.visibleCount || 0,
+        );
+        const selectAllMeta = baseMeta ? { ...baseMeta, ...totalState } : null;
         onSetSelection(selectAllMeta?.visibleRowIds || []);
         setPageSelectAllMeta(selectAllMeta);
         return;
@@ -3327,6 +3607,8 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     if (!pageSelectAllMeta) return;
     onSelectAll({
       totalCount: pageSelectAllMeta.totalCount,
+      totalCountIsLowerBound: pageSelectAllMeta.totalCountIsLowerBound,
+      hasMore: pageSelectAllMeta.hasMore,
       excludedIds: pageSelectAllMeta.excludedIds,
       projectId,
       projectVersionId: versionId || undefined,
@@ -3341,24 +3623,22 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   );
 
   const handleProjectChange = (e) => {
+    resetSessionScopedSelection();
     setProjectId(e.target.value);
     setVersionId("");
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
-    setPageSelectAllMeta(null);
-    onSetSelection([]);
   };
 
   const handleVersionChange = (e) => {
+    resetSessionScopedSelection();
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
-    setPageSelectAllMeta(null);
-    onSetSelection([]);
   };
 
   // For prototype projects, require a version to be selected before showing grid
@@ -3382,7 +3662,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -3425,7 +3705,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             />
           )}
           ListboxProps={{ style: { maxHeight: 300 } }}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
         />
 
         {isPrototype && (
@@ -3435,7 +3715,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             label="Version"
             value={versionId}
             onChange={handleVersionChange}
-            sx={{ minWidth: 180, flex: "1 1 220px" }}
+            sx={{ minWidth: 540, flex: "0 1 220px" }}
             required
             InputProps={{
               endAdornment: (
@@ -3518,14 +3798,13 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
       </Box>
 
       {canShowGrid && (
-        <TraceFilterPanel
+        <AnnotationTelemetryFilterPanel
+          selectorType="session"
+          sessionFilterFields={sessionFilterFields}
           anchorEl={filterAnchorEl || filterButtonRef.current}
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
-          source="sessions"
-          properties={sessionFilterFields}
-          categories={[]}
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
@@ -3609,10 +3888,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           }}
         >
           <SelectAllBanner
-            visible={
-              !!pageSelectAllMeta &&
-              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
-            }
+            visible={shouldShowSelectorSelectAll(pageSelectAllMeta)}
             visibleCount={pageSelectAllMeta?.visibleCount || 0}
             totalMatching={
               pageSelectAllMeta
@@ -3623,8 +3899,19 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                   )
                 : 0
             }
+            totalMatchingIsLowerBound={
+              pageSelectAllMeta?.totalCountIsLowerBound === true
+            }
             noun="session"
             onSelectAll={commitFilterModeSelectAll}
+          />
+          <ExactSelectorReadFailureNotice
+            failed={sessionReadFailed}
+            onRetry={retrySessionRead}
+          />
+          <ExactSelectorContinuationNotice
+            pending={sessionContinuationPending}
+            onContinue={continueSessionSearch}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
             <AgGridReact
@@ -4441,7 +4728,7 @@ function SimulationSelector({ onSetSelection }) {
         sx={{
           py: 2,
           display: "flex",
-          alignItems: "center",
+          alignItems: "start",
           gap: 2,
           flexShrink: 0,
           flexWrap: "wrap",
@@ -4453,7 +4740,7 @@ function SimulationSelector({ onSetSelection }) {
           label="Test"
           value={testId}
           onChange={handleTestChange}
-          sx={{ minWidth: 220, flex: "1 1 280px" }}
+          sx={{ minWidth: 540, flex: "0 1 280px" }}
           required
           InputLabelProps={{ shrink: true }}
           InputProps={{
@@ -4485,7 +4772,7 @@ function SimulationSelector({ onSetSelection }) {
             </MenuItem>
           )}
           {tests.map((t) => (
-            <MenuItem key={t.id} value={t.id} sx={{ width: "100%" }}>
+            <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 540 }}>
               <CustomTooltip
                 size="small"
                 arrow
@@ -4522,7 +4809,7 @@ function SimulationSelector({ onSetSelection }) {
             label="Execution run"
             value={executionRunId}
             onChange={handleExecutionRunChange}
-            sx={{ minWidth: 220, flex: "1 1 320px" }}
+            sx={{ minWidth: 540, flex: "0 1 280px" }}
             required
             InputLabelProps={{ shrink: true }}
             InputProps={{
@@ -4561,7 +4848,7 @@ function SimulationSelector({ onSetSelection }) {
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
-                <MenuItem key={run.id} value={run.id} sx={{ width: "100%" }}>
+                <MenuItem key={run.id} value={run.id} sx={{ maxWidth: 540 }}>
                   <CustomTooltip
                     size="small"
                     arrow

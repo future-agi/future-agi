@@ -20,6 +20,9 @@ export const extractVariables = (content, templateFormat) => {
 
   for (const item of content) {
     if (item.type === "text") {
+      if (typeof item.text !== "string") {
+        continue;
+      }
       if (templateFormat === "jinja") {
         // Jinja2 AST-based extraction (excludes loop/set scoped vars)
         extractJinjaVariables(item.text).forEach((v) => {
@@ -59,7 +62,7 @@ export function isContentNotEmpty(contentArray) {
 
   return contentArray?.some((item) => {
     if (item.type === "text") {
-      return item.text.trim() !== "";
+      return (item.text ?? "").trim() !== "";
     }
     if (item.type === "image_url") {
       return item.image_url?.url?.trim() !== "";

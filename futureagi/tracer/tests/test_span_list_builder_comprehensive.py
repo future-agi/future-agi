@@ -21,6 +21,8 @@ These are pure query-string / pivot-logic tests — NO ClickHouse, NO DB.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from django.test import override_settings
 
@@ -138,9 +140,9 @@ class TestBuild:
         # `AND ...` predicate (model is an always-selected column, so its bare
         # presence proves nothing — the compiled predicate + param value do).
         # `model` is a case-insensitive column, so equals compiles to
-        # `lower(model) = %(...)s` and the value is lower-cased.
+        # `lowerUTF8(toString(model)) = %(...)s` and the value is lower-cased.
         assert "gpt-4o-mini" in params.values()
-        assert "lower(model) = %(" in sql
+        assert "lowerUTF8(toString(model)) = %(" in sql
 
     def test_project_version_fragment(self):
         sql, params = _make_builder(project_version_id="pv-1").build()
@@ -247,6 +249,33 @@ class TestBuildIdQuery:
         assert "ORDER BY" not in sql
         assert "LIMIT %(id_limit)s" not in sql
         assert "id_limit" not in params
+
+    def test_continuous_floor_windows_on_created_at(self):
+        floor = datetime(2026, 8, 1, 12, 0)
+        sql, params = _make_builder().build_id_query(created_at_floor=floor)
+        # Arrival floor replaces the start_time window (spans can start long ago).
+        assert "created_at >= %(created_at_floor)s" in sql
+        assert "start_time >= %(start_date)s" not in sql
+        assert params["created_at_floor"] == floor
+
+    def test_continuous_ceiling_upper_bounds_arrival(self):
+        floor = datetime(2026, 8, 1, 12, 0)
+        ceil = datetime(2026, 8, 1, 12, 5)
+        sql, params = _make_builder().build_id_query(
+            created_at_floor=floor, created_at_ceiling=ceil
+        )
+        assert "created_at >= %(created_at_floor)s" in sql
+        assert "created_at < %(created_at_ceiling)s" in sql
+        assert params["created_at_ceiling"] == ceil
+
+    def test_ceiling_ignored_without_floor(self):
+        # The ceiling only applies inside the continuous (floor) branch; the
+        # UI/historical None path stays on the start_time window.
+        sql, params = _make_builder().build_id_query(
+            created_at_ceiling=datetime(2026, 8, 1, 12, 5)
+        )
+        assert "created_at_ceiling" not in params
+        assert "start_time >= %(start_date)s" in sql
 
 
 # --------------------------------------------------------------------------- #
@@ -358,7 +387,10 @@ class TestBuildEvalQuery:
         assert "tracer_eval_logger FINAL" not in sql  # no table-level FINAL
         assert "ORDER BY _peerdb_version DESC" in sql
         assert "LIMIT 1 BY id" in sql
-        assert "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)" in sql
+        assert "_peerdb_is_deleted AS latest_state_0" in sql
+        assert "deleted AS latest_state_1" in sql
+        assert "latest_state_0 = 0" in sql
+        assert "(latest_state_1 = 0 OR latest_state_1 IS NULL)" in sql
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_v2_table_uses_is_deleted(self):
@@ -370,7 +402,8 @@ class TestBuildEvalQuery:
         assert "FROM tracer_eval_logger_v2" in sql
         assert "tracer_eval_logger_v2 FINAL" not in sql  # no table-level FINAL
         assert "LIMIT 1 BY id" in sql
-        assert "is_deleted = 0" in sql
+        assert "is_deleted AS latest_state_0" in sql
+        assert "latest_state_0 = 0" in sql
 
 
 # --------------------------------------------------------------------------- #
@@ -409,8 +442,10 @@ class TestBuildAnnotationQuery:
         sql, _ = _make_builder(annotation_label_ids=[LABEL_ID]).build_annotation_query(
             span_ids=["s1"]
         )
-        assert "_peerdb_is_deleted = 0" in sql
-        assert "deleted = false" in sql
+        assert "_peerdb_is_deleted AS latest_cdc_deleted" in sql
+        assert "deleted AS latest_soft_deleted" in sql
+        assert "latest_cdc_deleted = 0" in sql
+        assert "latest_soft_deleted = false" in sql
 
 
 # --------------------------------------------------------------------------- #

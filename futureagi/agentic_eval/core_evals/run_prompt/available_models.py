@@ -4161,8 +4161,13 @@ OSS_AVAILABLE_MODELS = [
         "use_case": ["marketing assets", "creative iteration", "in-app image gen"],
         "cutoff": "04-2026",
         "latency": 90,
-        "pricing": {"input_per_1M_tokens": 0.25, "output_per_1M_tokens": 1.5},
-        "notes": "Gemini 3.1 Flash image generation (Nano Banana 2 tier); 64K input context.",
+        # Gemini bills image output in tokens; 1K (~1MP) ≈ $0.067/image on the
+        # Gemini API paid tier. Catalog uses per_image so image_generation cost
+        # paths (images_generated) meter correctly — token keys would win the
+        # calculate_total_cost branch and ignore images_generated.
+        "pricing": {"per_image": 0.067},
+        "notes": "Gemini 3.1 Flash image generation (Nano Banana 2 tier); 64K input "
+        "context. per_image is the 1K (~1MP) equivalent ($0.045/512, $0.101/2K, $0.151/4K).",
     },
     {
         "model_name": "gemini/gemini-2.5-flash-image",
@@ -4173,8 +4178,11 @@ OSS_AVAILABLE_MODELS = [
         "use_case": ["batch image generation", "creative iteration"],
         "cutoff": "01-2025",
         "latency": 100,
-        "pricing": {"input_per_1M_tokens": 0.3, "output_per_1M_tokens": 2.5},
-        "notes": "GA Gemini 2.5 Flash image generation; 32K input context.",
+        # Same shape as imagen/dall-e: per_image for image_generation metering.
+        # 1K (~1MP) ≈ $0.039/image on the Gemini API paid tier.
+        "pricing": {"per_image": 0.039},
+        "notes": "GA Gemini 2.5 Flash image generation; 32K input context. "
+        "per_image is the 1K (~1MP) equivalent.",
     },
     {
         "model_name": "command-r",

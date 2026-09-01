@@ -16,6 +16,8 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
+from tracer.views import eval_task as eval_task_views
+from tracer.views.eval_task import EvalTaskView
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -66,6 +68,20 @@ def make_custom_eval_config_for_project(project, custom_eval_config, name):
     )
 
 
+_PRIVATE_DB_ERROR = "Code: 159. DB::Exception: private stack and query text"
+
+
+def _raise_private_db_error(*_args, **_kwargs):
+    raise RuntimeError(_PRIVATE_DB_ERROR)
+
+
+def _assert_sanitized(response, expected_message: str, status_code: int = 400):
+    rendered = response.content.decode()
+    assert response.status_code == status_code
+    assert expected_message in rendered
+    assert _PRIVATE_DB_ERROR not in rendered
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestEvalTaskCreateAPI:
@@ -100,6 +116,33 @@ class TestEvalTaskCreateAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert "id" in data
+
+    def test_create_internal_error_is_sanitized(
+        self, auth_client, project, custom_eval_config, monkeypatch
+    ):
+        monkeypatch.setattr(
+            EvalTaskView,
+            "_invalid_eval_ids_for_project",
+            _raise_private_db_error,
+        )
+
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": "Sanitized create",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+
+        _assert_sanitized(
+            response,
+            "Evaluation task could not be created",
+            status.HTTP_400_BAD_REQUEST,
+        )
 
     def test_create_eval_task_missing_project(self, auth_client):
         """Create eval task fails without project."""
@@ -223,6 +266,95 @@ class TestEvalTaskCreateAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_eval_task_accepts_and_canonicalizes_json_object_filter(
+        self, auth_client, project, custom_eval_config
+    ):
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": "Structured attribute task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "filters": {
+                    "span_attributes_filters": [
+                        {
+                            "column_id": "customer.context",
+                            "filter_config": {
+                                "col_type": "SPAN_ATTRIBUTE",
+                                "filter_type": "json",
+                                "filter_op": "contains",
+                                "filter_value": {"tier": "vip", "attempt": 2},
+                            },
+                        }
+                    ]
+                },
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        task = EvalTask.objects.get(id=get_result(response)["id"])
+        saved_items = [
+            *task.filters.get("filters", []),
+            *task.filters.get("span_attributes_filters", []),
+        ]
+        saved = next(
+            item for item in saved_items if item["column_id"] == "customer.context"
+        )
+        assert saved["filter_config"]["filter_type"] == "map"
+        assert saved["filter_config"]["filter_value"] == {
+            "attempt": 2,
+            "tier": "vip",
+        }
+
+    @pytest.mark.parametrize(
+        "filter_value",
+        [
+            {"nested": {"tier": "vip"}},
+            {"nested": ["vip"]},
+            {"nullable": None},
+            {f"key-{index}": index for index in range(33)},
+        ],
+    )
+    def test_create_eval_task_rejects_invalid_map_before_clickhouse(
+        self,
+        auth_client,
+        project,
+        custom_eval_config,
+        filter_value,
+    ):
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": "Invalid structured attribute task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "filters": {
+                    "span_attributes_filters": [
+                        {
+                            "column_id": "customer.context",
+                            "filter_config": {
+                                "col_type": "SPAN_ATTRIBUTE",
+                                "filter_type": "map",
+                                "filter_op": "contains",
+                                "filter_value": filter_value,
+                            },
+                        }
+                    ]
+                },
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        rendered = response.content.decode()
+        assert "DB::Exception" not in rendered
+        assert "ClickHouse" not in rendered
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -301,6 +433,20 @@ class TestEvalTaskListWithProjectNameAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert "metadata" in data or "table" in data
+
+    def test_list_internal_error_is_sanitized(self, auth_client, project, monkeypatch):
+        monkeypatch.setattr(EvalTaskView, "get_queryset", _raise_private_db_error)
+
+        response = auth_client.get(
+            "/tracer/eval-task/list_eval_tasks_with_project_name/",
+            {"page_number": "0", "page_size": "25"},
+        )
+
+        _assert_sanitized(
+            response,
+            "Evaluation tasks could not be loaded",
+            status.HTTP_400_BAD_REQUEST,
+        )
 
     def test_list_with_project_name_rejects_grid_param_drift(
         self, auth_client, project
@@ -695,6 +841,31 @@ class TestEvalTaskUpdateAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_update_internal_error_is_sanitized(
+        self, auth_client, eval_task, monkeypatch
+    ):
+        monkeypatch.setattr(
+            EvalTaskView,
+            "_scope_eval_task_queryset",
+            _raise_private_db_error,
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "name": "Sanitized update",
+                "edit_type": "fresh_run",
+            },
+            format="json",
+        )
+
+        _assert_sanitized(
+            response,
+            "Evaluation task could not be updated",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
     def test_update_eval_task_not_found(self, auth_client):
         """Update non-existent eval task fails."""
         response = auth_client.patch(
@@ -793,6 +964,99 @@ class TestEvalTaskGetDetailsAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert data["name"] == eval_task.name
+
+    def test_get_details_internal_error_is_sanitized(
+        self, auth_client, eval_task, monkeypatch
+    ):
+        monkeypatch.setattr(
+            EvalTaskView,
+            "_scope_eval_task_queryset",
+            _raise_private_db_error,
+        )
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/",
+            {"eval_id": str(eval_task.id)},
+        )
+
+        _assert_sanitized(
+            response,
+            "Evaluation task details could not be loaded",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_usage_internal_error_is_sanitized(
+        self, auth_client, eval_task, monkeypatch
+    ):
+        monkeypatch.setattr(
+            EvalTaskView,
+            "_scope_eval_task_queryset",
+            _raise_private_db_error,
+        )
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "page": 1,
+                "page_size": 25,
+                "period": "30d",
+            },
+        )
+
+        _assert_sanitized(
+            response,
+            "Evaluation task usage could not be loaded",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_usage_internal_value_error_is_sanitized(
+        self, auth_client, eval_task, monkeypatch
+    ):
+        def raise_internal_value_error(*_args, **_kwargs):
+            raise ValueError(_PRIVATE_DB_ERROR)
+
+        monkeypatch.setattr(
+            eval_task_views,
+            "_compute_eval_aggregation",
+            raise_internal_value_error,
+        )
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "page": 1,
+                "page_size": 25,
+                "eval_aggregation": "true",
+            },
+        )
+
+        _assert_sanitized(
+            response,
+            "Evaluation task usage could not be loaded",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_usage_invalid_aggregation_date_is_bad_request(
+        self, auth_client, eval_task
+    ):
+        response = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "page": 1,
+                "page_size": 25,
+                "eval_aggregation": "true",
+                "start_date": "not-an-iso-date",
+            },
+        )
+
+        _assert_sanitized(
+            response,
+            "start_date",
+            status.HTTP_400_BAD_REQUEST,
+        )
 
     def test_get_details_missing_task_returns_not_found(self, auth_client):
         """A missing eval task is a 404, not a retriable bad request."""
@@ -903,9 +1167,7 @@ class TestEvalTaskRowTypePersistence:
         data = get_result(response)
         assert data["row_type"] == "traces"
 
-    def test_update_eval_task_rejects_row_type_change(
-        self, auth_client, eval_task
-    ):
+    def test_update_eval_task_rejects_row_type_change(self, auth_client, eval_task):
         """row_type is immutable after task creation.
 
         Pins the API contract: clients can't change row_type on an
@@ -970,7 +1232,9 @@ class TestCompositeEvalAcrossRowTypes:
             config={"type": "pass_fail", "criteria": "ok"},
             pass_threshold=0.5,
         )
-        CompositeEvalChild.objects.create(parent=parent, child=child, order=0, weight=1.0)
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, weight=1.0
+        )
         return CustomEvalConfig.objects.create(
             name="Composite custom config",
             project=project,

@@ -93,6 +93,33 @@ class DatasetTableMetadataSerializer(serializers.Serializer):
     experiment_name = serializers.CharField(required=False)
     total_rows = serializers.IntegerField(required=False)
     total_pages = serializers.IntegerField(required=False)
+    page_size = serializers.IntegerField(
+        required=False, help_text="Row limit used for this page."
+    )
+    current_page_index = serializers.IntegerField(
+        required=False, help_text="Zero-based page index returned by the server."
+    )
+    has_more = serializers.BooleanField(
+        required=False, help_text="Whether an exact continuation page remains."
+    )
+    next_page_index = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text="Next zero-based page index, or null at exact exhaustion.",
+    )
+    next_cursor = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="Signed exact continuation cursor, or null at exhaustion.",
+    )
+    is_exact = serializers.BooleanField(
+        required=False,
+        help_text="True only for a successful exact, revision-bound page.",
+    )
+    snapshot_bound = serializers.BooleanField(
+        required=False,
+        help_text="Whether this page is bound to the signed MVCC revision.",
+    )
     error_messages = serializers.ListField(
         child=serializers.CharField(), required=False
     )
@@ -126,9 +153,7 @@ class DatasetTableRowSerializer(serializers.Serializer):
 class DatasetTableResultSerializer(serializers.Serializer):
     metadata = DatasetTableMetadataSerializer(required=False)
     column_config = DatasetTableColumnSerializer(many=True)
-    table = serializers.ListField(
-        child=DatasetTableRowSerializer(), required=False
-    )
+    table = serializers.ListField(child=DatasetTableRowSerializer(), required=False)
     dataset_config = serializers.JSONField(required=False)
     synthetic_dataset = serializers.BooleanField(required=False)
     synthetic_dataset_percentage = serializers.FloatField(
@@ -199,9 +224,7 @@ class DatasetCellMetadataSerializer(serializers.Serializer):
     token_count = serializers.IntegerField(required=False, allow_null=True)
     cost = serializers.JSONField(required=False, allow_null=True)
     cell_metadata = DatasetCellInnerMetadataSerializer(required=False)
-    reason = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
-    )
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class DatasetCellValueSerializer(serializers.Serializer):
@@ -307,9 +330,7 @@ class RunPromptColumnPreviewResponseSerializer(serializers.Serializer):
 
 
 class DatasetDerivedVariablesResultSerializer(serializers.Serializer):
-    derived_variables = serializers.DictField(
-        child=DerivedVariableDetailSerializer()
-    )
+    derived_variables = serializers.DictField(child=DerivedVariableDetailSerializer())
 
 
 class DatasetDerivedVariablesResponseSerializer(serializers.Serializer):
@@ -447,7 +468,9 @@ class DatasetCreationProgressResultSerializer(serializers.Serializer):
     estimated_rows = serializers.IntegerField(required=False, allow_null=True)
     estimated_columns = serializers.IntegerField(required=False, allow_null=True)
     queued_at = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    started_at = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    started_at = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
     completed_at = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -581,9 +604,7 @@ class CompareDatasetMetadataSerializer(serializers.Serializer):
 
 class CompareDatasetResultSerializer(serializers.Serializer):
     metadata = CompareDatasetMetadataSerializer(required=False)
-    column_config = serializers.ListField(
-        child=serializers.JSONField(), required=False
-    )
+    column_config = serializers.ListField(child=serializers.JSONField(), required=False)
     table = serializers.ListField(child=serializers.JSONField(), required=False)
 
 

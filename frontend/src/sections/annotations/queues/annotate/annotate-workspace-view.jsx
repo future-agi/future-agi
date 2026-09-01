@@ -11,12 +11,12 @@ import {
   Box,
   Alert,
   Button,
-  CircularProgress,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "notistack";
 import axios from "src/utils/axios";
@@ -60,6 +60,7 @@ import {
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
 const MAX_HISTORY = 50;
 
@@ -270,7 +271,7 @@ export default function AnnotateWorkspaceView() {
   const currentUserId = String(
     user?.id ||
       (typeof window !== "undefined"
-        ? window.sessionStorage.getItem("currentUserId")
+        ? window.sessionStorage.getItem(SS_KEY_USER_ID)
         : "") ||
       "",
   );
@@ -1421,18 +1422,7 @@ export default function AnnotateWorkspaceView() {
     isWaitingForAnnotatorSelection ||
     isInitialDetailLoading
   ) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "80vh",
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "80vh" }} />;
   }
 
   // Reservation conflict

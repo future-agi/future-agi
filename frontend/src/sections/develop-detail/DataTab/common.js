@@ -522,7 +522,7 @@ const getMainMenuItems =
       // use the underlying eval / eval_reason column ids, so the old
       // `column.id` key no longer matched what was stored and the
       // "Hide Reasoning" state was lost.
-      const key = column?.sourceId || column?.id;
+      const key = column?.source_id || column?.id;
       extraMenuItems.push({
         name: showSummary.includes(key) ? "Hide Reasoning" : "Show Reasoning",
         action: () => {
@@ -816,6 +816,10 @@ export const normalizeEvalCellValue = (value) => {
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
+  // Scored choices evals emit {score, choice} / {score, choices} as the bucket
+  // key, which would otherwise stringify to "[object Object]".
+  const choiceLabel = extractChoiceLabel(parsed);
+  if (choiceLabel !== null) return choiceLabel;
   return String(parsed ?? value);
 };
 
@@ -902,9 +906,14 @@ export const normalizeEvalResult = (value, outputType) => {
       items = [v];
     }
     items = items
-      .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
-      )
+      .flatMap((x) => {
+        if (!x || typeof x !== "object") return [x];
+        return (
+          extractChoiceArray(x) ?? [
+            extractChoiceLabel(x) ?? x.label ?? x.value ?? "",
+          ]
+        );
+      })
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };

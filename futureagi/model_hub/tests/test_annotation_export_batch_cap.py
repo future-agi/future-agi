@@ -18,17 +18,17 @@ from django.test.utils import CaptureQueriesContext, override_settings
 from rest_framework import status
 
 from model_hub.models.annotation_queues import (
+    FULL_ACCESS_QUEUE_ROLES,
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
-    FULL_ACCESS_QUEUE_ROLES,
     QueueItem,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
     AnnotatorRole,
-    DataTypeChoices,
     DatasetSourceChoices,
+    DataTypeChoices,
     QueueItemSourceType,
     QueueItemStatus,
     SourceChoices,
@@ -198,9 +198,7 @@ def test_export_rejects_oversize_queue_before_resolving(
 
 @pytest.mark.django_db
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=3)
-def test_export_at_cap_boundary_succeeds(
-    auth_client, organization, workspace, user
-):
+def test_export_at_cap_boundary_succeeds(auth_client, organization, workspace, user):
     seed = _build_dataset_queue(
         organization=organization, workspace=workspace, user=user, n_rows=3
     )
@@ -212,9 +210,7 @@ def test_export_at_cap_boundary_succeeds(
 
 
 @pytest.mark.django_db
-def test_dataset_cells_by_row_batches_and_preseeds(
-    organization, workspace, user
-):
+def test_dataset_cells_by_row_batches_and_preseeds(organization, workspace, user):
     seed = _build_dataset_queue(
         organization=organization, workspace=workspace, user=user, n_rows=3
     )
@@ -263,11 +259,15 @@ def test_resolve_source_content_uses_cell_cache_then_falls_back(
         fresh = resolve_source_content(item)
     assert len(_cell_queries(cap)) == 1
 
-    assert cached["fields"] == fresh["fields"] == {
-        "col_0": "r0c0",
-        "col_1": "r0c1",
-        "col_2": "r0c2",
-    }
+    assert (
+        cached["fields"]
+        == fresh["fields"]
+        == {
+            "col_0": "r0c0",
+            "col_1": "r0c1",
+            "col_2": "r0c2",
+        }
+    )
 
 
 def _make_root_chspan(*, project_id, trace_id):
@@ -324,7 +324,7 @@ class _TraceRootsReaderCM:
         return False
 
     def roots_by_trace_ids(
-        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None, **_
     ):
         return [self._roots[str(t)] for t in trace_ids if str(t) in self._roots]
 
@@ -402,9 +402,10 @@ def test_export_trace_items_no_project_n_plus_one(
         organization=organization, workspace=workspace, user=user, n_items=5
     )
     reader = _TraceRootsReaderCM(seed["roots"])
-    with mock.patch(
-        "tracer.services.clickhouse.v2.get_reader", return_value=reader
-    ), CaptureQueriesContext(connection) as cap:
+    with (
+        mock.patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
+        CaptureQueriesContext(connection) as cap,
+    ):
         resp = auth_client.get(
             EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
         )

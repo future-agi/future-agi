@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS = {
   },
   numeric: { min: 0, max: 10, step_size: 1, display_type: "slider" },
   text: {
-    placeholder: "Enter your feedback...",
+    placeholder: "",
     max_length: 500,
     min_length: 0,
   },

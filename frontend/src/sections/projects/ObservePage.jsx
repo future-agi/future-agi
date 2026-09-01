@@ -1,7 +1,11 @@
 import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
+import { Box, Paper, useTheme, Alert, Button } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { ErrorBoundary } from "react-error-boundary";
+import { logger } from "src/utils/logger";
+import { isChunkError } from "src/utils/lazyWithRetry";
 
 import { useObserveHeader } from "../project/context/ObserveHeaderContext";
 import { useUrlState } from "src/routes/hooks/use-url-state";
@@ -23,31 +27,67 @@ import {
 } from "./SessionsView/ReplaySessions/store";
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
+import { withLiveGridApi } from "src/utils/gridApi";
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen
+    variant="orbit"
+    sx={{ minHeight: "60vh", backgroundColor: "background.paper" }}
+  />
 );
 
-// Error boundary component
-const TabErrorBoundary = ({ children }) => {
+const TAB_ERROR_MESSAGE = "Could not load this tab";
+
+const TabContentError = ({ error, resetErrorBoundary }) => {
+  // Chunk load errors bubble to the app-level boundary's silent reload.
+  if (isChunkError(error)) throw error;
+
+  // A full reload actually changes state, unlike resetErrorBoundary() alone.
+  const handleRetry = () => {
+    resetErrorBoundary();
+    window.location.reload();
+  };
+
   return (
-    <React.Suspense fallback={<TabContentLoader />}>{children}</React.Suspense>
+    <Box sx={{ p: 2, backgroundColor: "background.paper" }}>
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={handleRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {TAB_ERROR_MESSAGE}
+      </Alert>
+    </Box>
+  );
+};
+
+TabContentError.propTypes = {
+  error: PropTypes.instanceOf(Error),
+  resetErrorBoundary: PropTypes.func.isRequired,
+};
+
+// Contains a tab's render errors to the tab, so one bad cell cannot blank the page.
+const TabErrorBoundary = ({ children, resetKey }) => {
+  return (
+    <ErrorBoundary
+      FallbackComponent={TabContentError}
+      resetKeys={[resetKey]}
+      onError={(error) => logger.error("Observe tab render failed", error)}
+    >
+      <React.Suspense fallback={<TabContentLoader />}>
+        {children}
+      </React.Suspense>
+    </ErrorBoundary>
   );
 };
 
 TabErrorBoundary.propTypes = {
   children: PropTypes.node.isRequired,
+  resetKey: PropTypes.string,
 };
 
 // Map observe tab keys to route + URL params
@@ -308,7 +348,7 @@ const ObservePage = React.memo(() => {
       resetSessionsGridStore();
       resetTraceGridStore();
       resetTabStore();
-      headerConfig?.gridApi?.deselectAll();
+      withLiveGridApi(headerConfig?.gridApi, (api) => api.deselectAll?.());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeId]);
@@ -359,7 +399,7 @@ const ObservePage = React.memo(() => {
 
       {/* Content Section */}
       <Box sx={contentStyles}>
-        <TabErrorBoundary>
+        <TabErrorBoundary resetKey={currentRouteSegment}>
           <Outlet />
         </TabErrorBoundary>
       </Box>

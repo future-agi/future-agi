@@ -13,7 +13,11 @@ from tracer.models.monitor import (
 )
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
-from tracer.serializers.filters import StrictInputSerializer, filter_list_field
+from tracer.serializers.filters import (
+    StrictInputSerializer,
+    filter_list_field,
+    filter_list_query_param_field,
+)
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
 
@@ -28,6 +32,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
+        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -242,6 +247,114 @@ class UserAlertMonitorPreviewGraphSerializer(UserAlertMonitorSerializer):
     name = serializers.CharField(required=False, allow_blank=True)
 
 
+class UserAlertMonitorGraphPointSerializer(serializers.Serializer):
+    """One bucket from a saved or preview monitor graph."""
+
+    timestamp = serializers.CharField()
+    value = serializers.FloatField()
+
+
+class UserAlertMonitorAlertBarPointSerializer(serializers.Serializer):
+    """One threshold-status interval from a percentage-change graph."""
+
+    start_timestamp = serializers.CharField()
+    end_timestamp = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=("healthy", "warning", "critical", "insufficient_data")
+    )
+
+
+class UserAlertMonitorPercentageGraphResultSerializer(serializers.Serializer):
+    graph_data = UserAlertMonitorGraphPointSerializer(many=True)
+    alert_bar_data = UserAlertMonitorAlertBarPointSerializer(many=True)
+
+
+_MONITOR_GRAPH_POINT_SCHEMA = {
+    "type": "object",
+    "required": ["timestamp", "value"],
+    "properties": {
+        "timestamp": {"type": "string"},
+        "value": {"type": "number"},
+    },
+    "additionalProperties": False,
+}
+_MONITOR_ALERT_BAR_POINT_SCHEMA = {
+    "type": "object",
+    "required": ["start_timestamp", "end_timestamp", "status"],
+    "properties": {
+        "start_timestamp": {"type": "string"},
+        "end_timestamp": {"type": "string"},
+        "status": {
+            "type": "string",
+            "enum": ["healthy", "warning", "critical", "insufficient_data"],
+        },
+    },
+    "additionalProperties": False,
+}
+_STATIC_MONITOR_GRAPH_RESULT_SCHEMA = {
+    "type": "array",
+    "items": _MONITOR_GRAPH_POINT_SCHEMA,
+}
+_PERCENTAGE_MONITOR_GRAPH_RESULT_SCHEMA = {
+    "type": "object",
+    "required": ["graph_data", "alert_bar_data"],
+    "properties": {
+        "graph_data": _STATIC_MONITOR_GRAPH_RESULT_SCHEMA,
+        "alert_bar_data": {
+            "type": "array",
+            "items": _MONITOR_ALERT_BAR_POINT_SCHEMA,
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+class UserAlertMonitorGraphResultField(serializers.JSONField):
+    """Validate both legacy monitor graph result shapes.
+
+    Swagger 2.0 has no native ``oneOf``. The standard schema documents the
+    structured percentage-change result, while ``x-one-of`` preserves the full
+    static-array/percentage-object union for contract-aware consumers.
+    """
+
+    class Meta:
+        swagger_schema_fields = {
+            **_PERCENTAGE_MONITOR_GRAPH_RESULT_SCHEMA,
+            "description": (
+                "Static monitors return an array of graph points; percentage-change "
+                "monitors return graph_data and alert_bar_data arrays."
+            ),
+            "x-one-of": [
+                _STATIC_MONITOR_GRAPH_RESULT_SCHEMA,
+                _PERCENTAGE_MONITOR_GRAPH_RESULT_SCHEMA,
+            ],
+        }
+
+    def to_internal_value(self, data):
+        if isinstance(data, list):
+            serializer = UserAlertMonitorGraphPointSerializer(data=data, many=True)
+        elif isinstance(data, dict):
+            serializer = UserAlertMonitorPercentageGraphResultSerializer(data=data)
+        else:
+            raise serializers.ValidationError(
+                "Expected static graph points or a percentage-change graph object."
+            )
+        serializer.is_valid(raise_exception=True)
+        return serializer.validated_data
+
+    def to_representation(self, value):
+        if isinstance(value, list):
+            return UserAlertMonitorGraphPointSerializer(value, many=True).data
+        return UserAlertMonitorPercentageGraphResultSerializer(value).data
+
+
+class UserAlertMonitorGraphResponseSerializer(serializers.Serializer):
+    """GeneralMethods success envelope for monitor graph endpoints."""
+
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorGraphResultField()
+
+
 class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
     resolved_by = UserSerializer(read_only=True)
 
@@ -409,9 +522,118 @@ class FetchGraphMetricConfigField(serializers.Field):
 
 class FetchGraphSerializer(StrictInputSerializer):
     interval = serializers.CharField()
-    filters = filter_list_field(required=False, default=list)
+    filters = filter_list_query_param_field(required=False, default=list)
     property = serializers.CharField(
         required=False, allow_blank=True, default="average"
     )
     req_data_config = FetchGraphMetricConfigField()
     project_id = serializers.UUIDField()
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Aggregate graph results are always exact."
+        ),
+    )
+    refresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Recompute and atomically replace the last complete exact result.",
+    )
+
+
+_FETCH_GRAPH_POINT_SCHEMA = {
+    "type": "object",
+    "required": ["timestamp", "value"],
+    "properties": {
+        "timestamp": {"type": "string"},
+        "value": {"type": "number"},
+        "primary_traffic": {"type": "number"},
+    },
+    "additionalProperties": True,
+}
+_FETCH_GRAPH_METADATA_PROPERTIES = {
+    "query_complete": {"type": "boolean"},
+    "query_status": {
+        "type": "string",
+        "enum": ["complete", "pending", "sampled", "degraded"],
+    },
+    "query_sampled": {"type": "boolean"},
+    "query_refreshing": {"type": "boolean"},
+    "query_exact": {"type": "boolean"},
+    "query_provenance": {"type": "string"},
+    "query_count": {"type": "integer"},
+    "query_elapsed_ms": {"type": "number"},
+    "query_rows_returned": {"type": "integer"},
+}
+_FETCH_GRAPH_SERIES_SCHEMA = {
+    "type": "object",
+    "required": ["data", "query_complete", "query_status", "query_sampled"],
+    "properties": {
+        "metric_name": {"type": "string"},
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "data": {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA},
+        **_FETCH_GRAPH_METADATA_PROPERTIES,
+    },
+}
+_FETCH_ALL_SYSTEM_METRICS_SCHEMA = {
+    "type": "object",
+    "required": [
+        "latency",
+        "tokens",
+        "cost",
+        "traffic",
+        "query_complete",
+        "query_status",
+        "query_sampled",
+    ],
+    "properties": {
+        **{
+            metric: {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA}
+            for metric in ("latency", "tokens", "cost", "traffic")
+        },
+        **_FETCH_GRAPH_METADATA_PROPERTIES,
+    },
+    "additionalProperties": True,
+}
+_FETCH_EVAL_GRAPH_SERIES_SCHEMA = {
+    "type": "array",
+    "items": _FETCH_GRAPH_SERIES_SCHEMA,
+}
+
+
+class FetchGraphResultField(serializers.JSONField):
+    """Document the three legacy chart result branches without changing the wire."""
+
+    class Meta:
+        swagger_schema_fields = {
+            **_FETCH_GRAPH_SERIES_SCHEMA,
+            "description": (
+                "A single system-metric series, an all-system-metrics bundle, "
+                "or an array of evaluation series."
+            ),
+            "x-one-of": [
+                _FETCH_GRAPH_SERIES_SCHEMA,
+                _FETCH_ALL_SYSTEM_METRICS_SCHEMA,
+                _FETCH_EVAL_GRAPH_SERIES_SCHEMA,
+            ],
+        }
+
+    def to_internal_value(self, data):
+        if not isinstance(data, (dict, list)):
+            raise serializers.ValidationError(
+                "Expected a graph series, metrics bundle, or evaluation-series array."
+            )
+        return data
+
+    def to_representation(self, value):
+        return value
+
+
+class FetchGraphResponseSerializer(serializers.Serializer):
+    """GeneralMethods success envelope for the legacy charts graph union."""
+
+    status = serializers.BooleanField(default=True)
+    result = FetchGraphResultField()

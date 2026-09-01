@@ -3,14 +3,27 @@ import re
 import threading
 import unicodedata
 import uuid
+from collections.abc import Mapping
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 
 import structlog
 from django.conf import settings
-from django.db import transaction
-from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
+from django.db import DatabaseError, connection, transaction
+from django.db.models import (
+    Count,
+    Exists,
+    Max,
+    OuterRef,
+    Prefetch,
+    Q,
+    Subquery,
+    Value,
+)
 from django.db.models.functions import Coalesce, Lower, TruncDate
+from django.db.utils import OperationalError
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
@@ -126,6 +139,7 @@ from model_hub.utils.annotation_queue_helpers import (
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
     is_source_available_for_annotation,
+    preview_payload_for_source,
     resolve_source_content,
     resolve_source_object,
     resolve_source_objects_bulk,
@@ -136,7 +150,6 @@ from simulate.utils.stored_transcript_roles import get_displayable_transcript_ro
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
-    ApiSelectionTooLargeErrorSerializer,
     ApiTextErrorResponseSerializer,
     ApiTooLargeErrorSerializer,
     EmptyRequestSerializer,
@@ -148,6 +161,15 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
+from tracer.services.clickhouse.list_cursor import (
+    ListCursorError,
+    cursor_scope_for_request,
+    decode_list_cursor,
+    encode_list_cursor,
+    list_cursor_boundary_fingerprint,
+)
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -159,24 +181,96 @@ ERROR_RESPONSES = {
     500: ApiTextErrorResponseSerializer,
 }
 
-# Shared cap for filter-mode bulk add. Phase 11 may introduce an async job
-# path for selections exceeding this; until then, the endpoint errors with
-# ``selection_too_large`` so the UI can prompt the user to narrow the filter.
-MAX_SELECTION_CAP = 10_000
+# Shared per-request batch cap for filter-mode bulk add. Larger exact selections
+# continue through an opaque signed cursor instead of being rejected.
+MAX_SELECTION_CAP = settings.BULK_SELECTION_MAX_CAP
+
+# Finish the request-owned backend transaction before the separately configured
+# browser transport wall, leaving response/network headroom.
+ADD_ITEMS_FILTER_MODE_WALL_MS = settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+ADD_ITEMS_DEADLINE_CHECK_INTERVAL = settings.ANNOTATION_QUEUE_DEADLINE_CHECK_INTERVAL
+_ADD_ITEMS_FILTER_DEADLINE_ATTR = "_annotation_queue_add_items_filter_deadline"
+
+
+def _with_add_items_filter_deadline(view_func):
+    """Inject the filter request wall before ``validated_request`` runs.
+
+    ``wraps`` deliberately preserves DRF ``@action`` and drf-yasg metadata on
+    the outermost callable. Enumerated payloads never receive or enforce this
+    deadline, so their existing request path is unchanged.
+    """
+
+    @wraps(view_func)
+    def wrapper(self, request, *args, **kwargs):
+        raw_data = request.data
+        if isinstance(raw_data, Mapping) and "selection" in raw_data:
+            setattr(
+                request,
+                _ADD_ITEMS_FILTER_DEADLINE_ATTR,
+                ReadDeadline.start(ADD_ITEMS_FILTER_MODE_WALL_MS),
+            )
+        return view_func(self, request, *args, **kwargs)
+
+    return wrapper
+
+
+def _add_items_deadline_checkpoint(
+    deadline: ReadDeadline | None,
+    *,
+    index: int | None = None,
+) -> None:
+    if deadline is not None and (
+        index is None or index % ADD_ITEMS_DEADLINE_CHECK_INTERVAL == 0
+    ):
+        deadline.remaining_ms(floor_ms=1)
+
+
+@contextmanager
+def _bounded_add_items_postgres(deadline: ReadDeadline):
+    """Give every filter-mode PostgreSQL statement the shrinking request wall."""
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        remaining_ms = deadline.remaining_ms(floor_ms=1)
+        try:
+            # Use the underlying DB cursor so this SET LOCAL does not recurse
+            # through the execute wrapper. The caller owns one outer atomic
+            # block, so every subsequent statement inherits only its current
+            # remaining request budget and any timeout rolls back all writes.
+            context["cursor"].cursor.execute(
+                "SELECT set_config('statement_timeout', %s, true)",
+                (str(remaining_ms),),
+            )
+            result = execute(sql, params, many, context)
+        except OperationalError as exc:
+            raise ReadDeadlineExceeded(
+                "Annotation queue add-items PostgreSQL deadline exceeded"
+            ) from exc
+        deadline.remaining_ms(floor_ms=1)
+        return result
+
+    with connection.execute_wrapper(execute_with_remaining_timeout):
+        yield
+        deadline.remaining_ms(floor_ms=1)
+
 
 # Enumerated add-items is synchronous: the whole payload is resolved (one CH
 # IN-list per kind) and inserted in one request. The FE chunks at 500, so cap the
 # raw payload at 2x that — an SDK/API caller can otherwise POST a pathological
 # list that becomes one giant CH IN(...) plus a long sequential INSERT run under
 # the gateway timeout. Filter-mode has its own MAX_SELECTION_CAP.
-ADD_ITEMS_SYNC_MAX = 1_000
+ADD_ITEMS_SYNC_MAX = settings.ANNOTATION_QUEUE_ADD_ITEMS_SYNC_MAX
 
 # Synchronous export materializes and resolves full content for every item in one
 # HTTP request. Past this size it can't reliably finish under the gateway timeout,
 # and the ClickHouse content reads over very wide (voice) rows risk OOM-ing the
 # shared cluster, so cap it and let the caller narrow the set (a background export
 # lifts the ceiling). Conservative default; override via settings to tune in prod.
-EXPORT_SYNC_MAX_ITEMS = 1_000
+EXPORT_SYNC_MAX_ITEMS = settings.ANNOTATION_QUEUE_EXPORT_SYNC_MAX_ITEMS
 
 
 def _queue_item_export_prefetches():
@@ -1282,14 +1376,26 @@ def _reopen_items_missing_required_labels(queue):
     )
 
 
-def _span_notes_target_for_queue_item(item):
+def _span_notes_target_for_queue_item(item, *, ch_cache=None):
     """Return the span that stores whole-item notes for queue annotation.
 
     CH-native: span-source items resolve the span from CH by its soft id;
     trace-source items pick the trace's root span from CH (lean) — preference
     order ``observation_type="conversation"`` root (voice) → first root span →
     ``None``. Downstream only reads ``.id``. Never query PG (tables are dropped).
+
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): reads the already-resolved
+    source off the page/item cache — same root-pick rule, so the same span — instead
+    of its own unscoped CH point-read. Callers that resolve the item's source anyway
+    should pass it; the bare read stays for callers that don't.
     """
+    if ch_cache is not None:
+        if item.source_type == "observation_span":
+            return ch_cache.span(item.observation_span_id)
+        if item.source_type == "trace":
+            return ch_cache.trace_root(item.trace_id)
+        return None
+
     from tracer.services.clickhouse.v2 import get_reader
 
     if item.source_type == "observation_span" and item.observation_span_id:
@@ -2705,10 +2811,10 @@ def _ensure_default_queue_member_can_manage(queue, user):
 
 # Cap the rows per INSERT / UPDATE round-trip so a large add (thousands of items) can't
 # build one oversized statement — the FE already chunks add-items requests at 500.
-_BULK_ADD_BATCH_SIZE = 500
+_BULK_ADD_BATCH_SIZE = settings.ANNOTATION_QUEUE_DEADLINE_BULK_BATCH_SIZE
 
 
-def _finalize_bulk_add(queue, items_to_create):
+def _finalize_bulk_add(queue, items_to_create, *, deadline=None):
     """Bulk-create QueueItems, run auto-assign, flip queue status if needed.
 
     Shared by both the enumerated ``items`` branch and the filter-mode
@@ -2723,20 +2829,62 @@ def _finalize_bulk_add(queue, items_to_create):
     created = []
     if items_to_create:
         with transaction.atomic():
-            created = QueueItem.objects.bulk_create(
-                items_to_create, batch_size=_BULK_ADD_BATCH_SIZE
-            )
+            if deadline is None:
+                created = QueueItem.objects.bulk_create(
+                    items_to_create, batch_size=_BULK_ADD_BATCH_SIZE
+                )
+            else:
+                # Resetting the PostgreSQL timeout happens in the outer execute
+                # wrapper for every INSERT. Chunk explicitly so Python work and
+                # each database round-trip receive a fresh remaining-wall check.
+                for start in range(0, len(items_to_create), _BULK_ADD_BATCH_SIZE):
+                    _add_items_deadline_checkpoint(deadline)
+                    created.extend(
+                        QueueItem.objects.bulk_create(
+                            items_to_create[start : start + _BULK_ADD_BATCH_SIZE],
+                            batch_size=_BULK_ADD_BATCH_SIZE,
+                        )
+                    )
+                _add_items_deadline_checkpoint(deadline)
 
     # Auto-assign: when auto_assign is True, assign all items to all annotators
     # (each item gets no specific assigned_to — all members can work on any
     # item). When using round-robin/load-balanced strategy, distribute items.
     if created and queue.assignment_strategy != "manual":
-        auto_assign_items(queue, created)
-        QueueItem.objects.bulk_update(
-            created, ["assigned_to"], batch_size=_BULK_ADD_BATCH_SIZE
-        )
+        _add_items_deadline_checkpoint(deadline)
+        if deadline is None:
+            auto_assign_items(queue, created)
+        else:
+            auto_assign_items(
+                queue,
+                created,
+                deadline_check=lambda: _add_items_deadline_checkpoint(deadline),
+            )
+        _add_items_deadline_checkpoint(deadline)
+        if deadline is None:
+            QueueItem.objects.bulk_update(
+                created, ["assigned_to"], batch_size=_BULK_ADD_BATCH_SIZE
+            )
+        else:
+            for start in range(0, len(created), _BULK_ADD_BATCH_SIZE):
+                _add_items_deadline_checkpoint(deadline)
+                QueueItem.objects.bulk_update(
+                    created[start : start + _BULK_ADD_BATCH_SIZE],
+                    ["assigned_to"],
+                    batch_size=_BULK_ADD_BATCH_SIZE,
+                )
+        _add_items_deadline_checkpoint(deadline)
     elif created and queue.auto_assign:
-        assign_items_to_all_annotators(queue, created)
+        _add_items_deadline_checkpoint(deadline)
+        if deadline is None:
+            assign_items_to_all_annotators(queue, created)
+        else:
+            assign_items_to_all_annotators(
+                queue,
+                created,
+                deadline_check=lambda: _add_items_deadline_checkpoint(deadline),
+            )
+        _add_items_deadline_checkpoint(deadline)
 
     # Re-activate the queue if it was completed and new items were added
     new_status = queue.status
@@ -2744,9 +2892,12 @@ def _finalize_bulk_add(queue, items_to_create):
         len(created) > 0
         and queue.status == AnnotationQueueStatusChoices.COMPLETED.value
     ):
+        _add_items_deadline_checkpoint(deadline)
         queue.status = AnnotationQueueStatusChoices.ACTIVE.value
         queue.save()
         new_status = queue.status
+
+    _add_items_deadline_checkpoint(deadline)
 
     return len(created), new_status
 
@@ -2857,20 +3008,34 @@ def _check_annotation_queue_create_limit(org, workspace=None):
         raise
 
 
-def _review_workflow_entitlement_denial(request):
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        return None
+def _related_count_subquery(manager, fk_field, **filters):
+    """Live rows of *manager* pointing at the outer row, as a correlated scalar
+    subquery: one indexed aggregate on ``fk_field``, never a join the outer
+    GROUP BY has to de-duplicate, and never a query per rendered row.
 
-    org = getattr(request, "organization", None) or request.user.organization
-    feat_check = Entitlements.check_feature(
-        str(org.id),
-        "has_review_workflow",
+    The CALLER picks the manager, because the correct one differs by call site
+    and the difference is invisible in tests:
+
+    * ``no_workspace_objects`` reproduces a joined ``Count()`` — a JOIN carries
+      no workspace predicate, so the aggregate it replaces never had one.
+    * ``objects`` reproduces a per-object ``Model.objects.filter(...).count()``
+      — ``BaseModelManager`` folds the ambient thread-local workspace in, so
+      that count always did have one.
+
+    Picking the wrong one changes counts only under a non-default workspace,
+    which neither the API test client nor ``manage.py`` ever sets — so it will
+    not fail a test, it will just be wrong in production.
+    """
+    lookups = {fk_field: OuterRef("pk"), "deleted": False, **filters}
+    return Coalesce(
+        Subquery(
+            manager.filter(**lookups)
+            .values(fk_field)
+            .annotate(count=Count("id"))
+            .values("count")[:1]
+        ),
+        Value(0),
     )
-    if not feat_check.allowed:
-        return feat_check.reason
-    return None
 
 
 class AnnotationQueuePagination(ExtendedPageNumberPagination):
@@ -2955,41 +3120,26 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             queryset = queryset.filter(name__icontains=search)
 
         if include_counts:
+            # Correlated subqueries, NOT Count() over joins. Counting three
+            # multi-valued relations in one GROUP BY multiplies them into a
+            # labels x annotators x items cartesian the COUNT(DISTINCT)s then
+            # have to sort back down — a voice queue's item count is the
+            # multiplier, so the page spills to disk and takes seconds
+            # (TH-7104). Each subquery is an indexed aggregate on queue_id.
             queryset = queryset.annotate(
-                label_count=Coalesce(
-                    Count(
-                        "queue_labels",
-                        filter=Q(queue_labels__deleted=False),
-                        distinct=True,
-                    ),
-                    0,
+                label_count=_related_count_subquery(
+                    AnnotationQueueLabel.no_workspace_objects, "queue"
                 ),
-                annotator_count=Coalesce(
-                    Count(
-                        "queue_annotators",
-                        filter=Q(queue_annotators__deleted=False),
-                        distinct=True,
-                    ),
-                    0,
+                annotator_count=_related_count_subquery(
+                    AnnotationQueueAnnotator.no_workspace_objects, "queue"
                 ),
-                item_count=Coalesce(
-                    Count(
-                        "items",
-                        filter=Q(items__deleted=False),
-                        distinct=True,
-                    ),
-                    0,
+                item_count=_related_count_subquery(
+                    QueueItem.no_workspace_objects, "queue"
                 ),
-                completed_count=Coalesce(
-                    Count(
-                        "items",
-                        filter=Q(
-                            items__deleted=False,
-                            items__status="completed",
-                        ),
-                        distinct=True,
-                    ),
-                    0,
+                completed_count=_related_count_subquery(
+                    QueueItem.no_workspace_objects,
+                    "queue",
+                    status=QueueItemStatus.COMPLETED.value,
                 ),
             )
 
@@ -3009,16 +3159,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         try:
             serializer.is_valid(raise_exception=True)
 
-            from tfc.ee_gating import (
-                EEFeature,
-                check_ee_feature,
-            )
-
             requires_review = _is_truthy(
                 serializer.validated_data.get("requires_review", False)
             )
             if requires_review:
-                check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
+                from tfc.ee_gating import check_ee_feature
+
+                check_ee_feature("review_workflow", org_id=str(org.id))
             _check_annotation_queue_create_limit(
                 org, getattr(request, "workspace", None)
             )
@@ -3052,10 +3199,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if requires_review_requested is not None and _is_truthy(
             requires_review_requested
         ):
-            from tfc.ee_gating import EEFeature, check_ee_feature
+            from tfc.ee_gating import check_ee_feature
 
             org = getattr(request, "organization", None) or request.user.organization
-            check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
+            check_ee_feature("review_workflow", org_id=str(org.id))
 
         try:
             return super().update(request, *args, **kwargs)
@@ -4631,6 +4778,44 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     to_attr="active_assignments",
                 ),
             )
+            # comment_count / open_feedback_count were a .count() per rendered
+            # item — two extra queries per row, so a page cost 2N+12 queries and
+            # ?limit=1000 cost 2012 (TH-7104). Annotated here they cost nothing
+            # extra. ``objects``, not ``no_workspace_objects``: the per-object
+            # counts these replace went through the workspace-filtering manager,
+            # so keeping it preserves their semantics exactly.
+            .annotate(
+                annotated_comment_count=_related_count_subquery(
+                    QueueItemReviewComment.objects,
+                    "queue_item",
+                    action=QueueItemReviewComment.ACTION_COMMENT,
+                ),
+                annotated_open_feedback_count=_related_count_subquery(
+                    QueueItemReviewThread.objects,
+                    "queue_item",
+                    blocking=True,
+                    status__in=[
+                        QueueItemReviewThread.STATUS_OPEN,
+                        QueueItemReviewThread.STATUS_REOPENED,
+                    ],
+                ),
+                # workflow_status and workflow_status_label each resolved this same
+                # lookup per rendered item, so a page of items awaiting review cost
+                # 2 extra queries per row on top of the base — 55 queries for 25
+                # items vs 15 for 5 (TH-7211). It was already annotated below, but
+                # only when the caller filtered by in_review/resubmitted, and the
+                # serializer never read it. Annotating unconditionally makes the
+                # status flat for every page and for a single-item retrieve; the
+                # status filters below read this same alias.
+                _has_addressed_review=Exists(
+                    QueueItemReviewThread.objects.filter(
+                        queue_item_id=OuterRef("pk"),
+                        blocking=True,
+                        status=QueueItemReviewThread.STATUS_ADDRESSED,
+                        deleted=False,
+                    )
+                ),
+            )
         )
         queue_id = self.kwargs.get("queue_id")
         if queue_id:
@@ -4650,20 +4835,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         if statuses:
             status_q = Q()
-            addressed_threads = QueueItemReviewThread.objects.filter(
-                queue_item_id=OuterRef("pk"),
-                blocking=True,
-                status=QueueItemReviewThread.STATUS_ADDRESSED,
-                deleted=False,
-            )
-            if any(
-                workflow_status in statuses
-                for workflow_status in ("in_review", "resubmitted")
-            ):
-                queryset = queryset.annotate(
-                    _has_addressed_review=Exists(addressed_threads)
-                )
-
             for item_status in statuses:
                 if item_status == "in_review":
                     status_q |= Q(
@@ -4791,11 +4962,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @_with_add_items_filter_deadline
     @validated_request(
         request_serializer=AddItemsSerializer,
         responses={
             200: QueueAddItemsResponseSerializer,
-            400: ApiSelectionTooLargeErrorSerializer,
+            400: ApiTextErrorResponseSerializer,
             403: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
             413: ApiTooLargeErrorSerializer,
@@ -4804,6 +4976,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="add-items")
     def add_items(self, request, queue_id=None):
+        data = request.validated_data
+        selection = data.get("selection")
+        if selection:
+            return self._add_items_filter_mode_request(
+                request,
+                queue_id,
+                selection,
+                deadline=getattr(request, _ADD_ITEMS_FILTER_DEADLINE_ATTR),
+            )
+
         try:
             queue = AnnotationQueue.objects.get(
                 pk=queue_id,
@@ -4816,10 +4998,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         denied = self._require_queue_manager(queue, request)
         if denied is not None:
             return denied
-
-        data = request.validated_data
-        if data.get("selection"):
-            return self._add_items_filter_mode(request, queue, data["selection"])
 
         items = data["items"]
         if len(items) > ADD_ITEMS_SYNC_MAX:
@@ -4836,6 +5014,61 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         return self._add_items_enumerated(
             request, queue, items, project_id=data.get("project_id")
         )
+
+    def _add_items_filter_mode_request(
+        self,
+        request,
+        queue_id,
+        selection,
+        *,
+        deadline,
+    ):
+        """Own one deadline and atomic commit for a filter-mode add request."""
+
+        try:
+            with transaction.atomic(), _bounded_add_items_postgres(deadline):
+                # Every page commits independently, and clients may retry a page
+                # after an unknown transport outcome. Serialize all mutations for
+                # one queue before duplicate detection and order allocation so two
+                # managers cannot both observe the same empty suffix and race the
+                # conditional source-identity constraints during bulk_create.
+                # The workspace-aware manager may add nullable workspace joins.
+                # Lock only the queue row: PostgreSQL rejects an unscoped
+                # ``FOR UPDATE`` when the query includes the nullable side of an
+                # outer join.
+                queue = AnnotationQueue.objects.select_for_update(of=("self",)).get(
+                    pk=queue_id,
+                    organization=request.organization,
+                    deleted=False,
+                )
+                denied = self._require_queue_manager(queue, request)
+                if denied is not None:
+                    return denied
+                response = self._add_items_filter_mode(
+                    request,
+                    queue,
+                    selection,
+                    deadline=deadline,
+                )
+                deadline.remaining_ms(floor_ms=1)
+                return response
+        except AnnotationQueue.DoesNotExist:
+            return self._gm.not_found("Queue not found.")
+        except ReadDeadlineExceeded as exc:
+            logger.warning(
+                "queue_add_items_filter_mode_deadline_exceeded",
+                queue_id=str(queue_id),
+                source_type=str(selection.get("source_type") or ""),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                result=(
+                    "Adding matching items took too long. Nothing was added. "
+                    "Please retry."
+                ),
+                code="add_items_deadline_exceeded",
+            )
 
     def _add_items_enumerated(self, request, queue, items_data, project_id=None):
         """Add QueueItems from an explicit list of (source_type, source_id) dicts.
@@ -4931,6 +5164,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     organization=organization,
                     workspace=workspace or queue.workspace,
                     project_id=getattr(source_obj, "project_id", None),
+                    # Captured from the source we already resolved above, so the
+                    # items grid never re-reads CH to render this row (TH-7211).
+                    source_preview=preview_payload_for_source(source_type, source_obj),
                     order=max_order,
                     **{f"{fk_field}_id": source_pk},
                 )
@@ -4947,7 +5183,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
-    def _add_items_filter_mode(self, request, queue, selection):
+    def _add_items_filter_mode(self, request, queue, selection, *, deadline=None):
         """Add QueueItems for every source row matching ``selection.filter``
         in ``selection.project_id``, minus ``selection.exclude_ids``.
         """
@@ -4955,6 +5191,23 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         project_id = selection["project_id"]
         filter_payload = selection.get("filter", [])
         exclude_ids = set(selection.get("exclude_ids", []))
+        cursor_token = selection.get("cursor")
+        cursor_scope = cursor_scope_for_request(
+            request,
+            project_ids=[str(project_id)],
+        )
+        cursor_query = {
+            "queue_id": str(queue.id),
+            "mode": selection["mode"],
+            "source_type": source_type,
+            "project_id": str(project_id),
+            "filters": filter_payload,
+            "exclude_ids": sorted(str(value) for value in exclude_ids),
+            "is_voice_call": bool(selection.get("is_voice_call", False)),
+            "remove_simulation_calls": bool(
+                selection.get("remove_simulation_calls", False)
+            ),
+        }
 
         resolver = FILTER_MODE_RESOLVERS.get(source_type)
         if resolver is None:
@@ -4965,6 +5218,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
 
         try:
+            cursor_state = None
+            if cursor_token:
+                cursor_state = decode_list_cursor(
+                    cursor_token,
+                    resource=f"annotation_queue_bulk_{source_type}",
+                    scope=cursor_scope,
+                    query=cursor_query,
+                    page_size=MAX_SELECTION_CAP,
+                )
             resolver_kwargs = {
                 "project_id": project_id,
                 "filters": filter_payload,
@@ -4973,6 +5235,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "workspace": getattr(request, "workspace", None),
                 "cap": MAX_SELECTION_CAP,
                 "user": request.user,
+                "cursor": cursor_state,
+                "resumable": True,
+                "deadline": deadline,
             }
             # Voice-call flags are only honored by the trace resolver.
             # Other resolvers don't accept these kwargs, so gate on
@@ -4985,10 +5250,19 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     selection.get("remove_simulation_calls", False)
                 )
             result = resolver(**resolver_kwargs)
+            _add_items_deadline_checkpoint(deadline)
         except Project.DoesNotExist:
             return self._gm.not_found("Project not found in organization.")
+        except ListCursorError as exc:
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                result=str(exc),
+                code=exc.code,
+            )
         except ValueError as e:
             return self._gm.bad_request(str(e))
+        except ReadDeadlineExceeded:
+            raise
         except Exception as exc:  # noqa: BLE001 — CH driver raises many subclasses
             # The filter-mode resolvers are ClickHouse-only (no PG fallback), so a
             # CH outage/timeout propagates here. Return a structured, retryable 503
@@ -5012,43 +5286,65 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 code="source_resolve_unavailable",
             )
 
-        if result.truncated:
-            message = (
-                f"Selection matches {result.total_matching} items, "
-                f"which exceeds the {MAX_SELECTION_CAP}-item cap. "
-                "Narrow the filter and retry."
+        next_cursor = None
+        next_cursor_fingerprint = None
+        if result.continuation is not None:
+            continuation = result.continuation
+            next_cursor = encode_list_cursor(
+                resource=f"annotation_queue_bulk_{source_type}",
+                scope=cursor_scope,
+                query=cursor_query,
+                page_size=MAX_SELECTION_CAP,
+                window_start=continuation.window_start,
+                window_end=continuation.window_end,
+                order=continuation.order,
+                seen_rows=continuation.seen_rows,
+                scan_slice_start=continuation.scan_slice_start,
+                scan_slice_end=continuation.scan_slice_end,
+                scan_before_start_time=continuation.scan_before_start_time,
+                scan_before_id=continuation.scan_before_id,
             )
-            return Response(
-                {
-                    "status": False,
-                    "result": None,
-                    "type": "selection_too_large",
-                    "code": "selection_too_large",
-                    "detail": message,
-                    "message": message,
-                    "error": {
-                        "type": "selection_too_large",
-                        "message": message,
-                        "total_matching": result.total_matching,
-                        "cap": MAX_SELECTION_CAP,
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            next_cursor_fingerprint = list_cursor_boundary_fingerprint(next_cursor)
+        elif result.truncated:
+            # Every endpoint-owned resolver supports resumable mode. Refuse a
+            # silent partial write if a future resolver forgets that contract.
+            logger.error(
+                "queue_add_items_filter_mode_missing_continuation",
+                queue_id=str(queue.id),
+                source_type=source_type,
+            )
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                result="Could not continue the selection safely. Nothing was added.",
+                code="source_resolve_unavailable",
             )
 
         resolved_ids = result.ids
         fk_field = get_fk_field_name(source_type)
-        (
-            available_ids,
-            unavailable_count,
-            unavailable_error,
-        ) = filter_available_source_ids_for_annotation(
-            source_type,
-            resolved_ids,
-            organization=request.organization,
-            workspace=getattr(request, "workspace", None),
-            project_id=project_id,
+        _add_items_deadline_checkpoint(deadline)
+        remaining_ms = (
+            deadline.remaining_ms(floor_ms=1) if deadline is not None else None
         )
+        with ch_query_settings(
+            **(
+                {"max_execution_time": remaining_ms / 1000}
+                if remaining_ms is not None
+                else {}
+            )
+        ):
+            (
+                available_ids,
+                unavailable_count,
+                unavailable_error,
+                previews_by_id,
+            ) = filter_available_source_ids_for_annotation(
+                source_type,
+                resolved_ids,
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+                project_id=project_id,
+            )
+        _add_items_deadline_checkpoint(deadline)
         errors = [unavailable_error] if unavailable_error else []
 
         # Duplicate detection in a single IN query — cheaper than per-row
@@ -5061,6 +5357,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 **{f"{fk_field}_id__in": available_ids},
             ).values_list(f"{fk_field}_id", flat=True)
         }
+        _add_items_deadline_checkpoint(deadline)
         fresh_ids = [tid for tid in available_ids if tid not in existing_ids]
         duplicates = len(existing_ids)
 
@@ -5071,20 +5368,32 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             .first()
             or 0
         )
-        items_to_create = [
-            QueueItem(
-                queue=queue,
-                source_type=source_type,
-                organization=request.organization,
-                workspace=getattr(request, "workspace", None) or queue.workspace,
-                project_id=project_id,
-                order=max_order + i,
-                **{f"{fk_field}_id": tid},
+        _add_items_deadline_checkpoint(deadline)
+        items_to_create = []
+        for i, tid in enumerate(fresh_ids, start=1):
+            _add_items_deadline_checkpoint(deadline, index=i)
+            items_to_create.append(
+                QueueItem(
+                    queue=queue,
+                    source_type=source_type,
+                    organization=request.organization,
+                    workspace=(getattr(request, "workspace", None) or queue.workspace),
+                    project_id=project_id,
+                    # Built from roots the availability check already read, so
+                    # the grid never re-reads CH to render this row (TH-7211).
+                    source_preview=previews_by_id.get(tid),
+                    order=max_order + i,
+                    **{f"{fk_field}_id": tid},
+                )
             )
-            for i, tid in enumerate(fresh_ids, start=1)
-        ]
+        _add_items_deadline_checkpoint(deadline)
 
-        added, new_status = _finalize_bulk_add(queue, items_to_create)
+        added, new_status = _finalize_bulk_add(
+            queue,
+            items_to_create,
+            deadline=deadline,
+        )
+        _add_items_deadline_checkpoint(deadline)
 
         logger.info(
             "queue_add_items_filter_mode",
@@ -5092,6 +5401,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             project_id=str(project_id),
             source_type=source_type,
             total_matching=result.total_matching,
+            has_more=result.continuation is not None,
             exclude_count=len(exclude_ids),
             unavailable_count=unavailable_count,
             added=added,
@@ -5105,6 +5415,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "errors": errors,
                 "queue_status": new_status,
                 "total_matching": result.total_matching,
+                "total_matching_is_lower_bound": result.truncated,
+                "has_more": result.continuation is not None,
+                "next_cursor": next_cursor,
+                "next_cursor_fingerprint": next_cursor_fingerprint,
             }
         )
 
@@ -5391,14 +5705,22 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
+        # One read for every label in the payload; this was a .get() per label
+        # in the annotator's inner loop (TH-7211).
+        labels_by_id = {
+            label.pk: label
+            for label in AnnotationsLabels.objects.filter(
+                pk__in=[ann["label_id"] for ann in annotations_data], deleted=False
+            )
+        }
+
         annotations_to_save = []
         for ann_data in annotations_data:
             label_id = ann_data["label_id"]
             value = ann_data["value"]
 
-            try:
-                label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
-            except AnnotationsLabels.DoesNotExist:
+            label = labels_by_id.get(label_id)
+            if label is None:
                 continue
 
             # Validate label belongs to this queue
@@ -5413,41 +5735,139 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 return self._gm.bad_request(str(exc))
             annotations_to_save.append((ann_data, label, value))
 
-        for ann_data, label, value in annotations_to_save:
-            per_label_notes = (
-                ann_data.get("notes", label_notes_fallback) if label.allow_notes else ""
-            )
+        # A payload may repeat a label_id. The sequential update_or_create this
+        # replaces created then updated the same row, so the LAST entry won;
+        # bulk_create(ignore_conflicts) would keep the FIRST and drop the rest.
+        # Collapse to the last entry per label to preserve that.
+        if len({label.pk for _, label, _ in annotations_to_save}) != len(
+            annotations_to_save
+        ):
+            deduped = {}
+            for ann_data, label, value in annotations_to_save:
+                deduped[label.pk] = (ann_data, label, value)
+            annotations_to_save = list(deduped.values())
 
-            # Upsert Score (unified annotation primitive)
-            # Use no_workspace_objects + _id fields to avoid the LEFT JOIN
-            # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
-            # cannot be applied to the nullable side of an outer join".
-            if source_id and source_fk_field:
-                # Scope the upsert by queue_item so each queue review context
-                # owns its own Score row even when the same annotator scores
-                # the same label across multiple queues.
-                score, _ = Score.no_workspace_objects.update_or_create(
+        # Upsert every Score in three statements instead of update_or_create per
+        # label, which cost a SELECT, an INSERT/UPDATE and its own savepoint each
+        # — ~8 queries per label in the annotator's inner loop (TH-7211).
+        #
+        # Use no_workspace_objects + _id fields to avoid the LEFT JOIN on the
+        # nullable workspace FK that triggers PostgreSQL's "FOR UPDATE cannot be
+        # applied to the nullable side of an outer join".
+        if source_id and source_fk_field and annotations_to_save:
+            request_workspace = getattr(request, "workspace", None)
+            # _id, not the object: item.workspace would lazy-load the FK.
+            score_workspace_id = (
+                request_workspace.id if request_workspace else item.workspace_id
+            )
+            # Scoped by queue_item so each queue review context owns its own Score
+            # row even when the same annotator scores the same label across queues.
+            existing_by_label = {
+                score.label_id: score
+                for score in Score.no_workspace_objects.filter(
                     **{f"{source_fk_field}_id": source_id},
-                    label_id=label.pk,
+                    label_id__in=[label.pk for _, label, _ in annotations_to_save],
                     annotator_id=request.user.pk,
                     queue_item=item,
                     deleted=False,
-                    defaults={
-                        "source_type": item.source_type,
-                        "value": value,
-                        "score_source": "human",
-                        "notes": per_label_notes,
-                        "organization": request.organization,
-                        # Denormalized tracer project id (QueueItem.project is the
-                        # tracer.Project; null for non-tracer sources).
-                        **(
-                            {"tracer_project_id": item.project_id}
-                            if item.project_id
-                            else {}
-                        ),
-                    },
                 )
-                submitted += 1
+            }
+            now = timezone.now()
+            to_create, to_update = [], []
+            for ann_data, label, value in annotations_to_save:
+                per_label_notes = (
+                    ann_data.get("notes", label_notes_fallback)
+                    if label.allow_notes
+                    else ""
+                )
+                score = existing_by_label.get(label.pk)
+                if score is None:
+                    to_create.append(
+                        Score(
+                            **{f"{source_fk_field}_id": source_id},
+                            label_id=label.pk,
+                            annotator_id=request.user.pk,
+                            queue_item=item,
+                            source_type=item.source_type,
+                            value=value,
+                            score_source="human",
+                            notes=per_label_notes,
+                            organization=request.organization,
+                            # bulk_create skips the post_save tenancy backfill.
+                            # With a request workspace this is the value that
+                            # backfill would have written; with none it writes
+                            # item.workspace_id where the old path left NULL —
+                            # a deliberate improvement, not an equivalence, and
+                            # the same expression QueueItemNote uses below.
+                            workspace_id=score_workspace_id,
+                            # Denormalized tracer project id (QueueItem.project is
+                            # the tracer.Project; null for non-tracer sources).
+                            tracer_project_id=item.project_id or None,
+                        )
+                    )
+                else:
+                    # Score.save() writes value_history and bulk_update bypasses
+                    # it. The row just read IS the previous version, so the entry
+                    # is built here rather than re-reading it as save() must.
+                    if score.value != value:
+                        score.value_history = Score.appended_value_history(
+                            score.value,
+                            score.value_history,
+                            score.updated_at or score.created_at,
+                        )
+                    score.source_type = item.source_type
+                    score.value = value
+                    score.score_source = "human"
+                    score.notes = per_label_notes
+                    score.organization = request.organization
+                    if item.project_id:
+                        score.tracer_project_id = item.project_id
+                    # bulk_update does not honour auto_now.
+                    score.updated_at = now
+                    to_update.append(score)
+
+            # no_workspace_objects for the writes too, not just the read above:
+            # bulk_update filters through the manager's queryset, and the default
+            # manager scopes by the request workspace — which would silently skip
+            # exactly the NULL/mismatched-workspace rows this manager exists to
+            # reach, reporting them as submitted.
+            #
+            # The old per-label update_or_create took a FOR UPDATE row lock and
+            # serialised concurrent writers; this read is unlocked. Only the same
+            # annotator can collide (annotator_id is in every applicable unique
+            # key), so the exposure is one user double-submitting an item: the
+            # update path is last-writer-wins and can lose one value_history
+            # entry, and the create path drops the loser's value below.
+            with transaction.atomic():
+                if to_create:
+                    # A concurrent submit of the same label can win the race; the
+                    # partial unique index on (source, label, annotator,
+                    # queue_item) WHERE NOT deleted makes that a no-op, not a 500.
+                    Score.no_workspace_objects.bulk_create(
+                        to_create, ignore_conflicts=True
+                    )
+                if to_update:
+                    Score.no_workspace_objects.bulk_update(
+                        to_update,
+                        [
+                            "source_type",
+                            "value",
+                            "value_history",
+                            "score_source",
+                            "notes",
+                            "organization",
+                            "tracer_project_id",
+                            "updated_at",
+                        ],
+                    )
+            # Labels accepted for this item. Every one of them ends up with a
+            # live Score row, so this is not inflated by the ignore_conflicts
+            # drop above — but in that race the surviving row holds the
+            # concurrent request's value, not this one's. Deliberately not
+            # verified with a COUNT: that would add a query to the inner loop
+            # this change exists to shrink, to correct a number only a
+            # self-conflicting double-submit can skew.
+            submitted = len(annotations_to_save)
 
         if item_notes is not None:
             if item_notes:
@@ -5958,10 +6378,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             is_reviewer=is_reviewer,
         )
 
+        # One CH read for the whole workspace. The notes target, the rendered
+        # content and the preview all resolve the SAME tracer source, and each
+        # used to do its own point-read — three unscoped `spans FINAL` scans per
+        # open on a voice trace (TH-7104). The cache reads once, pruned to the
+        # item's denormalized project_id, and the serializer reuses it.
+        ch_cache = CollectorSourceCache.for_items([item])
+
         existing_notes = ""
         span_notes = []
         span_notes_source_id = None
-        span_notes_target = _span_notes_target_for_queue_item(item)
+        span_notes_target = _span_notes_target_for_queue_item(item, ch_cache=ch_cache)
         if span_notes_target is not None:
             span_notes_source_id = span_notes_target.id
         span_notes = _item_note_payloads(
@@ -6093,7 +6520,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             "prev_item_id": str(prev_item) if prev_item else None,
         }
 
-        serializer = AnnotateDetailSerializer(data, context={"request": request})
+        serializer = AnnotateDetailSerializer(
+            data, context={"request": request, "ch_source_cache": ch_cache}
+        )
         return self._gm.success_response(serializer.data)
 
     @validated_request(
@@ -6225,14 +6654,31 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 deleted=True,
             ).update(deleted=False, deleted_at=None)
 
-        # Update legacy FK to first assigned user (backward compat)
-        for item_pk in item_pks:
-            first_assignment = (
-                QueueItemAssignment.objects.filter(queue_item_id=item_pk, deleted=False)
-                .values_list("user_id", flat=True)
-                .first()
+        # Update legacy FK to first assigned user (backward compat).
+        # Was a SELECT plus an UPDATE per item — the whole N+1 on this endpoint.
+        # Now one SELECT for the batch, then one UPDATE per distinct assignee.
+        # order_by("pk") is load-bearing, not tidiness: the per-item .first() it
+        # replaces ran on an unordered queryset, and QuerySet.first() falls back
+        # to order_by("pk") in that case, so the old code deterministically
+        # picked the lowest-pk assignment. Reading the batch in the same order
+        # and keeping the first row per item reproduces that exactly; without it
+        # assigned_to would follow scan order and could differ between two
+        # identical calls.
+        first_by_item = {}
+        for qi_id, user_id in (
+            QueueItemAssignment.objects.filter(
+                queue_item_id__in=item_pks, deleted=False
             )
-            QueueItem.objects.filter(pk=item_pk).update(assigned_to_id=first_assignment)
+            .order_by("pk")
+            .values_list("queue_item_id", "user_id")
+        ):
+            first_by_item.setdefault(qi_id, user_id)
+
+        pks_by_assignee = {}
+        for item_pk in item_pks:
+            pks_by_assignee.setdefault(first_by_item.get(item_pk), []).append(item_pk)
+        for user_id, assignee_pks in pks_by_assignee.items():
+            QueueItem.objects.filter(pk__in=assignee_pks).update(assigned_to_id=user_id)
 
         return self._gm.success_response({"assigned": len(item_pks) * len(user_ids)})
 
@@ -6816,10 +7262,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="bulk-review")
     def bulk_review(self, request, queue_id=None):
         """Approve or send back multiple pending-review items."""
-        entitlement_denial = _review_workflow_entitlement_denial(request)
-        if entitlement_denial:
-            return self._gm.forbidden_response(entitlement_denial)
-
         if not _has_queue_role(
             queue_id,
             request.user,
@@ -6858,9 +7300,46 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         reviewed = []
         now = timezone.now()
         workspace = getattr(request, "workspace", None)
+        is_approve = review_action == QueueItemReviewComment.ACTION_APPROVE
 
+        # Validation was 4 queries per item (label set refetched per row despite
+        # being one queue, two score .exists(), a blocking-thread .exists()).
+        # Three queries for the whole request now (TH-7211).
+        item_pks = [item.id for item in items]
+        label_ids = (
+            list(
+                items[0]
+                .queue.queue_labels.filter(deleted=False)
+                .values_list("label_id", flat=True)
+            )
+            if items
+            else []
+        )
+        # {queue_item_id: {annotator_id}} — same per-queue scoping as
+        # _scores_for_queue_item, which this replaces for the bulk path.
+        annotators_by_item: dict = {}
+        if label_ids and item_pks:
+            for qi_id, annotator_id in Score.objects.filter(
+                queue_item_id__in=item_pks,
+                label_id__in=label_ids,
+                deleted=False,
+            ).values_list("queue_item_id", "annotator_id"):
+                annotators_by_item.setdefault(qi_id, set()).add(annotator_id)
+        blocked_pks = (
+            set(
+                QueueItemReviewThread.objects.filter(
+                    queue_item_id__in=item_pks,
+                    blocking=True,
+                    status__in=OPEN_REVIEW_THREAD_STATUSES,
+                    deleted=False,
+                ).values_list("queue_item_id", flat=True)
+            )
+            if item_pks
+            else set()
+        )
+
+        eligible = []
         for item in items:
-            item_scores = _scores_for_queue_item(item)
             if item.review_status != "pending_review":
                 errors.append(
                     {
@@ -6869,7 +7348,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
-            if not item_scores.exists():
+            item_annotators = annotators_by_item.get(item.id, set())
+            if not item_annotators:
                 errors.append(
                     {
                         "item_id": str(item.id),
@@ -6877,7 +7357,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
-            if item_scores.filter(annotator=request.user).exists():
+            if request.user.pk in item_annotators:
                 errors.append(
                     {
                         "item_id": str(item.id),
@@ -6885,10 +7365,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
-            if (
-                review_action == QueueItemReviewComment.ACTION_APPROVE
-                and _open_blocking_review_threads(item).exists()
-            ):
+            if is_approve and item.id in blocked_pks:
                 errors.append(
                     {
                         "item_id": str(item.id),
@@ -6896,48 +7373,84 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
+            eligible.append(item)
 
-            if review_action == QueueItemReviewComment.ACTION_APPROVE:
+        # Resolve prior threads for every approved item in one statement, before
+        # any new thread exists — the replacement threads are created RESOLVED
+        # and would not match this filter anyway, but doing it first keeps that
+        # independent of the new thread's status.
+        if is_approve and eligible:
+            QueueItemReviewThread.objects.filter(
+                queue_item_id__in=[item.id for item in eligible],
+                status__in=[
+                    QueueItemReviewThread.STATUS_OPEN,
+                    QueueItemReviewThread.STATUS_REOPENED,
+                    QueueItemReviewThread.STATUS_ADDRESSED,
+                ],
+                deleted=False,
+            ).update(
+                status=QueueItemReviewThread.STATUS_RESOLVED,
+                resolved_by=request.user,
+                resolved_at=now,
+                updated_at=now,
+            )
+
+        # Two bulk_creates instead of two INSERTs per item; client-generated
+        # UUID pks let a comment reference its thread before either is written.
+        # workspace/organization passed explicitly because bulk_create skips the
+        # post_save backfill in tfc/utils/signals.py — same values either way.
+        new_threads, new_comments = [], []
+        for item in eligible:
+            if is_approve:
                 item.status = QueueItemStatus.COMPLETED.value
                 item.review_status = "approved"
                 comment_text = notes or "Approved."
                 thread_status = QueueItemReviewThread.STATUS_RESOLVED
-                QueueItemReviewThread.objects.filter(
-                    queue_item=item,
-                    status__in=[
-                        QueueItemReviewThread.STATUS_OPEN,
-                        QueueItemReviewThread.STATUS_REOPENED,
-                        QueueItemReviewThread.STATUS_ADDRESSED,
-                    ],
-                    deleted=False,
-                ).update(
-                    status=QueueItemReviewThread.STATUS_RESOLVED,
-                    resolved_by=request.user,
-                    resolved_at=now,
-                    updated_at=now,
-                )
             else:
                 item.status = QueueItemStatus.IN_PROGRESS.value
                 item.review_status = "rejected"
                 comment_text = notes
                 thread_status = QueueItemReviewThread.STATUS_OPEN
 
-            created_comment = _create_review_thread_comment(
-                item=item,
-                reviewer=request.user,
+            thread = QueueItemReviewThread(
+                queue_item=item,
+                created_by=request.user,
                 action=review_action,
-                comment=comment_text,
-                organization=request.organization,
-                workspace=workspace,
+                scope=_review_thread_scope(None, None),
                 blocking=review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES,
                 status=thread_status,
+                organization=request.organization,
+                workspace=workspace,
+            )
+            new_threads.append(thread)
+            new_comments.append(
+                QueueItemReviewComment(
+                    thread=thread,
+                    queue_item=item,
+                    reviewer=request.user,
+                    action=review_action,
+                    comment=comment_text,
+                    organization=request.organization,
+                    workspace=workspace,
+                )
             )
             item.reviewed_by = request.user
             item.reviewed_at = now
             item.review_notes = comment_text
             self._clear_reservation(item)
-            item.save(
-                update_fields=[
+            # bulk_update does not honour auto_now, so updated_at is set here to
+            # match what save() would have written.
+            item.updated_at = now
+            reviewed.append(str(item.id))
+
+        if new_threads:
+            QueueItemReviewThread.objects.bulk_create(new_threads, batch_size=500)
+            QueueItemReviewComment.objects.bulk_create(new_comments, batch_size=500)
+
+        if eligible:
+            QueueItem.objects.bulk_update(
+                eligible,
+                [
                     "status",
                     "review_status",
                     "reviewed_by",
@@ -6947,10 +7460,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     "reserved_at",
                     "reservation_expires_at",
                     "updated_at",
-                ]
+                ],
             )
-            _notify_annotation_discussion(item, created_comment, created_comment.thread)
-            reviewed.append(str(item.id))
+
+        # Broadcast only, deliberately. _notify_annotation_discussion's email
+        # step is unreachable here — no mentions, and the just-created thread's
+        # only participant is the actor — so it spent two queries per item
+        # proving recipients were empty. If that path is ever made to fire for
+        # approve/request-changes, wiring it in should be a deliberate call
+        # about one mail per item, not inherited silently.
+        for item, comment in zip(eligible, new_comments, strict=True):
+            _broadcast_annotation_discussion_update(item, comment, comment.thread)
 
         if reviewed:
             self._maybe_auto_complete_queue(queue_id)
@@ -6971,10 +7491,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
         """Approve, request changes, or leave reviewer feedback on an item."""
-        entitlement_denial = _review_workflow_entitlement_denial(request)
-        if entitlement_denial:
-            return self._gm.forbidden_response(entitlement_denial)
-
         # Verify requesting user has reviewer or manager role
         if not _has_queue_role(
             queue_id,
@@ -7401,10 +7917,115 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         return self._gm.success_response({"imported": imported})
 
 
+class AutomationRulePagination(ExtendedPageNumberPagination):
+    """Bound one automation-rule page without changing shared pagination."""
+
+    page_size = settings.ANNOTATION_QUEUE_AUTOMATION_DEFAULT_PAGE_SIZE
+    max_page_size = settings.ANNOTATION_QUEUE_AUTOMATION_MAX_PAGE_SIZE
+
+
+_AUTOMATION_RULE_READ_WALL_MS = settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+_AUTOMATION_RULE_READ_MAX_RESPONSE_UNITS = (
+    settings.ANNOTATION_QUEUE_AUTOMATION_MAX_RESPONSE_UNITS
+)
+
+
+class AutomationRuleReadLimitExceeded(RuntimeError):
+    """A rule page/detail cannot fit inside one interactive response."""
+
+
+def _ensure_automation_rule_response_bounded(value):
+    remaining = _AUTOMATION_RULE_READ_MAX_RESPONSE_UNITS
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, bool):
+            remaining -= 4
+        elif isinstance(item, str):
+            remaining -= 4 * len(item) + 2
+        elif isinstance(item, int | float):
+            remaining -= 32
+        elif isinstance(item, dict):
+            remaining -= 2 + 2 * len(item)
+            for key, child in item.items():
+                remaining -= 4 * len(str(key)) + 2
+                stack.append(child)
+        elif isinstance(item, list | tuple):
+            remaining -= 2 + len(item)
+            stack.extend(item)
+        else:
+            remaining -= 4 * len(str(item)) + 2
+        if remaining < 0:
+            raise AutomationRuleReadLimitExceeded
+
+
+def _execute_automation_rule_query_with_deadline(
+    deadline, execute, sql, params, many, context
+):
+    remaining_ms = deadline.remaining_ms(floor_ms=1)
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(remaining_ms),),
+    )
+    result = execute(sql, params, many, context)
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+@contextmanager
+def _bounded_automation_rule_postgres(deadline):
+    """Apply one shrinking wall to count, page, prefetch, and detail reads."""
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        return _execute_automation_rule_query_with_deadline(
+            deadline, execute, sql, params, many, context
+        )
+
+    with transaction.atomic():
+        with connection.execute_wrapper(execute_with_remaining_timeout):
+            yield
+            deadline.remaining_ms(floor_ms=1)
+
+
+def _bounded_automation_rule_read(view_method):
+    @wraps(view_method)
+    def wrapped(view, request, *args, **kwargs):
+        deadline = ReadDeadline.start(_AUTOMATION_RULE_READ_WALL_MS)
+        try:
+            with _bounded_automation_rule_postgres(deadline):
+                response = view_method(view, request, *args, **kwargs)
+                if getattr(response, "status_code", 500) < 400:
+                    _ensure_automation_rule_response_bounded(response.data)
+            deadline.remaining_ms(floor_ms=1)
+            return response
+        except (
+            ReadDeadlineExceeded,
+            DatabaseError,
+            AutomationRuleReadLimitExceeded,
+        ) as exc:
+            logger.warning(
+                "automation_rule_read_unavailable",
+                action=view_method.__name__,
+                error_type=type(exc).__name__,
+            )
+            return view._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Automation rules are temporarily unavailable. Please retry.",
+                code="automation_rule_read_unavailable",
+            )
+
+    return wrapped
+
+
 class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = AutomationRuleSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ExtendedPageNumberPagination
+    pagination_class = AutomationRulePagination
     queryset = AutomationRule.objects.all()
     _gm = GeneralMethods()
 
@@ -7431,7 +8052,15 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         queue_id = self.kwargs.get("queue_id")
         if queue_id:
             queryset = queryset.filter(queue_id=queue_id)
-        return queryset.order_by("-created_at")
+        return queryset.order_by("-created_at", "-id")
+
+    @_bounded_automation_rule_read
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @_bounded_automation_rule_read
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         manager_error = self._queue_manager_error(request)
@@ -7548,6 +8177,7 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             )
 
         from model_hub.utils.annotation_queue_helpers import (
+            AUTOMATION_RULE_MATCH_LIMIT,
             RULE_RUN_SYNC_THRESHOLD,
         )
 
@@ -7573,7 +8203,11 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         if not peek.get("truncated"):
             # Small enough to handle inline — user sees the result
             # immediately, no email overhead.
-            result = evaluate_rule(rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD)
+            result = evaluate_rule(
+                rule,
+                user=request.user,
+                cap=AUTOMATION_RULE_MATCH_LIMIT,
+            )
             return self._gm.success_response(result)
 
         # Large run — hand off to Temporal. The workflow id is stable per rule,
@@ -7629,7 +8263,9 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 "status": "scheduled",
                 "workflow_id": workflow_id,
                 "message": (
-                    "We're preparing your data. You'll get an email when it's ready."
+                    "Run scheduled. Automation rules support up to 10,000 matching "
+                    "items per run. If this rule exceeds that limit, nothing will "
+                    "be added and the completion email will explain how to retry."
                 ),
             },
             status=status.HTTP_202_ACCEPTED,

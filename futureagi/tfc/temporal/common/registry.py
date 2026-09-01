@@ -7,6 +7,7 @@ to avoid sandbox validation issues.
 """
 
 from collections.abc import Callable
+from importlib import import_module
 
 # =============================================================================
 # Registry Storage
@@ -66,6 +67,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.scenario_tasks",
     "simulate.services.test_executor",
     "simulate.tasks.chat_sim",
+    "simulate.tasks.alk_sim",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -77,7 +79,9 @@ TEMPORAL_ACTIVITY_MODULES = [
     # Self-hosted deployment registration and usage heartbeat
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
-    "ee.usage.services.deployment_telemetry_integrations",
+    "ee.cloud.telemetry.deployment_telemetry_integrations",
+    # Default-off isolated DEV unified property catalog reconciliation
+    "tfc.temporal.schedules.property_catalog",
 ]
 
 
@@ -122,6 +126,50 @@ def register_for_queues(
 # =============================================================================
 # Lazy Loading (separate for workflows and activities)
 # =============================================================================
+
+
+def _load_usage_temporal_registry(name: str) -> Callable[[], list] | None:
+    """Load cloud usage Temporal hooks, with legacy EE compatibility."""
+    for module_name in ("ee.cloud.temporal", "ee.usage.temporal"):
+        try:
+            temporal_module = import_module(module_name)
+        except ModuleNotFoundError as exc:
+            # Treat only the candidate module (or one of its parents) as
+            # optional.  A missing dependency imported *by* that module is a
+            # real packaging error and must remain visible at worker startup.
+            if not exc.name or not (
+                module_name == exc.name or module_name.startswith(f"{exc.name}.")
+            ):
+                raise
+            continue
+
+        registry = getattr(temporal_module, name, None)
+        if callable(registry):
+            return registry
+
+    return None
+
+
+def _register_usage_temporal_workflows() -> None:
+    """Register optional usage workflows without masking packaging failures."""
+    get_workflows = _load_usage_temporal_registry("get_workflows")
+    if get_workflows is not None:
+        register_for_queues(
+            queues=["default"],
+            workflows=get_workflows(),
+        )
+
+
+def _register_usage_temporal_activities(log) -> None:
+    """Register optional usage activities without masking packaging failures."""
+    get_activities = _load_usage_temporal_registry("get_activities")
+    if get_activities is not None:
+        activities = get_activities()
+        register_for_queues(
+            queues=["default"],
+            activities=activities,
+        )
+        log.info("registered_usage_metering_activities", count=len(activities))
 
 
 def _ensure_workflows_registered() -> None:
@@ -252,6 +300,7 @@ def _ensure_workflows_registered() -> None:
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
         from tfc.temporal.drop_in import TaskRunnerWorkflow
+        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         register_for_queues(
             queues=[
@@ -259,6 +308,8 @@ def _ensure_workflows_registered() -> None:
                 "tasks_s",
                 "tasks_l",
                 "tasks_xl",
+                "exact_aggregation",
+                PROPERTY_CATALOG_TASK_QUEUE,
                 "trace_ingestion",
                 "agent_compass",
             ],
@@ -351,23 +402,29 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_call_execution_workflows", error=str(e)
         )
 
-    # Register billing/usage workflows for default queue
-    # UsageConsumerWorkflow (long-running singleton) + MonthlyResetWorkflow
+    # Register the hosted simulation-runner workflow on its dedicated queue.
+    # This workflow dispatches the released SDK to the simulation-runner worker
+    # (plan §9); it runs on `simulation_runner`, not the native call queues.
     try:
-        try:
-            from ee.usage.temporal import get_workflows as get_billing_workflows
-        except ImportError:
-            get_billing_workflows = None
+        from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.simulation_runner_workflow import (
+            SimulationRunnerWorkflow,
+        )
 
-        if get_billing_workflows is not None:
-            register_for_queues(
-                queues=["default"],
-                workflows=get_billing_workflows(),
-            )
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            workflows=[SimulationRunnerWorkflow],
+        )
     except ImportError as e:
         from tfc.logging.temporal import get_logger
 
-        get_logger(__name__).warning("could_not_load_billing_workflows", error=str(e))
+        get_logger(__name__).warning(
+            "could_not_load_simulation_runner_workflow", error=str(e)
+        )
+
+    # Register billing/usage workflows for default queue
+    # UsageConsumerWorkflow (long-running singleton) + MonthlyResetWorkflow
+    _register_usage_temporal_workflows()
 
     try:
         from tfc.temporal.billing.workflows import MonthlyClosingWorkflow
@@ -488,23 +545,65 @@ def _ensure_activities_registered() -> None:
             sample=list(_ACTIVITY_REGISTRY.keys())[:10],
         )
 
-        # Now get all the registered activities
+        # Now get all the registered activities. Exact aggregation is excluded
+        # from the generic queues so an accidental queue override cannot bypass
+        # the production single-slot admission boundary. Keep only tasks_xl as
+        # the explicit compatibility route for deployments not yet running the
+        # dedicated worker.
         from tfc.temporal.drop_in.decorator import get_temporal_activities
+        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         drop_in_activities = get_temporal_activities()
+        exact_aggregation_activities = get_temporal_activities(
+            queue="exact_aggregation"
+        )
+        property_catalog_activities = get_temporal_activities(
+            queue=PROPERTY_CATALOG_TASK_QUEUE
+        )
+        dedicated_activities = {
+            *exact_aggregation_activities,
+            *property_catalog_activities,
+        }
+        generic_drop_in_activities = [
+            registered_activity
+            for registered_activity in drop_in_activities
+            if registered_activity not in dedicated_activities
+        ]
+        tasks_xl_drop_in_activities = [
+            registered_activity
+            for registered_activity in drop_in_activities
+            if registered_activity not in property_catalog_activities
+        ]
         log.info("registering_dropin_activities", count=len(drop_in_activities))
 
-        # Register for all queues (activities specify their own queue in metadata)
+        # Generic queues historically register the complete decorator registry.
+        # The exact reader is the sole exception because concurrent execution is
+        # deliberately bounded at the worker queue.
         register_for_queues(
             queues=[
                 "default",
                 "tasks_s",
                 "tasks_l",
-                "tasks_xl",
                 "agent_compass",
                 "trace_ingestion",
             ],
-            activities=drop_in_activities,
+            activities=generic_drop_in_activities,
+        )
+        register_for_queues(
+            queues=["tasks_xl"],
+            activities=tasks_xl_drop_in_activities,
+        )
+
+        # Exact graph reads have their own single-slot production worker.  Keep
+        # this queue intentionally narrow: the generic workflow plus only the
+        # activity whose decorator explicitly targets exact aggregation.
+        register_for_queues(
+            queues=["exact_aggregation"],
+            activities=exact_aggregation_activities,
+        )
+        register_for_queues(
+            queues=[PROPERTY_CATALOG_TASK_QUEUE],
+            activities=property_catalog_activities,
         )
     except Exception as e:
         log.exception("could_not_load_dropin_activities", error=str(e))
@@ -576,6 +675,29 @@ def _ensure_activities_registered() -> None:
         log.info("registered_call_execution_small_activities", count=9)
     except ImportError as e:
         log.warning("could_not_load_call_execution_small_activities", error=str(e))
+
+    # Hosted simulation-runner activities (plan §9) — dedicated queue. The
+    # runner spawns the released SDK as a child process; these do not run on the
+    # native voice queues.
+    try:
+        from simulate.temporal.activities.hosted_runner import (
+            build_runner_job,
+            finalize_hosted_execution,
+            run_hosted_sdk_job,
+        )
+        from simulate.temporal.constants import QUEUE_RUNNER
+
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            activities=[
+                build_runner_job,
+                run_hosted_sdk_job,
+                finalize_hosted_execution,
+            ],
+        )
+        log.info("registered_hosted_runner_activities", count=3)
+    except ImportError as e:
+        log.warning("could_not_load_hosted_runner_activities", error=str(e))
 
     # Voice small activities (Enterprise Edition)
     try:
@@ -747,7 +869,7 @@ def _ensure_activities_registered() -> None:
     except ImportError as e:
         log.warning("could_not_load_dataset_optimization_activities", error=str(e))
 
-    # Register billing activities (Stripe usage reporting, dunning)
+    # Register billing activities (Stripe usage reporting)
     try:
         from tfc.temporal.billing import get_activities as get_billing_activities
 
@@ -761,23 +883,7 @@ def _ensure_activities_registered() -> None:
         log.warning("could_not_load_billing_activities", error=str(e))
 
     # Register usage metering activities (consumer, sync, monthly reset)
-    try:
-        try:
-            from ee.usage.temporal import get_activities as get_usage_activities
-        except ImportError:
-            get_usage_activities = None
-
-        if get_usage_activities is not None:
-            usage_activities = get_usage_activities()
-            register_for_queues(
-                queues=["default"],
-                activities=usage_activities,
-            )
-            log.info(
-                "registered_usage_metering_activities", count=len(usage_activities)
-            )
-    except ImportError as e:
-        log.warning("could_not_load_usage_metering_activities", error=str(e))
+    _register_usage_temporal_activities(log)
 
     _activities_registered = True
 

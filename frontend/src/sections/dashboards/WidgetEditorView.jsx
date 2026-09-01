@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 import React, {
   useState,
   useEffect,
@@ -6,6 +5,7 @@ import React, {
   useCallback,
   useRef,
 } from "react";
+import PropTypes from "prop-types";
 import {
   Alert,
   Box,
@@ -35,12 +35,12 @@ import {
   Typography,
   useTheme,
   InputAdornment,
-  InputBase,
   CircularProgress,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
+import WidgetPieCharts from "./WidgetPieCharts";
 import {
   buildTimeRangePayload,
   resolveInitialTimeRange,
@@ -48,30 +48,49 @@ import {
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
-  useDashboardMetrics,
-  useDashboardMetricsPaginated,
   useDashboardQuery,
   useCreateWidget,
   useUpdateWidget,
   useDeleteWidget,
+  isPropertyCatalogNotReadyError,
+  useLegacyDashboardMetricsPaginated,
+  usePropertyCatalog,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
+import { useDebounce } from "src/hooks/use-debounce";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 import Iconify from "src/components/iconify";
+import BoundedCursorPaginationControl from "src/components/BoundedCursorPaginationControl";
 import FilterValueLabel, {
   useResolvedFilterOptions,
 } from "src/components/filter-value-label";
 import { useSnackbar } from "src/components/snackbar";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import WidgetDescriptionPopover from "./WidgetDescriptionPopover";
+import TruncatedTooltipText from "./TruncatedTooltipText";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
+import {
+  attributeInventoryKey,
+  useLegacyCursorAttributeInventory,
+} from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import {
   coerceFilterValue,
+  FILTER_STRING_MAX_UTF8_BYTES,
+  getUtf8ByteLength,
   isAllowedFilterOperator,
   normalizeColumnType,
   normalizeFilterType,
+  TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES,
 } from "src/api/contracts/filter-contract";
+import {
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  PROPERTY_CATALOG_PAGE_SIZE,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 import {
   DEFAULT_DECIMALS,
@@ -80,18 +99,45 @@ import {
   fromAxisConfigPayload,
   getAggColumnLabel,
   getAutoDecimals,
-  getSeriesAverage,
+  getExactDashboardResult,
+  getDashboardMetricSeriesState,
+  getPlottedChartSeries,
+  getSeriesScalar,
+  groupPieSeries,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  shouldConnectAcrossMissingBuckets,
+  resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
+import {
+  AGGREGATION_PREPARING_MESSAGE,
+  createAggregationPollController,
+  getFilterValueReadMessage,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+} from "src/utils/queryReadState";
 import {
   AGGREGATION_OPTIONS,
   ALL_AGGREGATIONS,
   PERCENTILE_OPTIONS,
   DATE_PRESETS,
+  DEFAULT_WIDGET_HEIGHT,
 } from "./constants";
+import {
+  WidgetEditorLoadFailure,
+  WidgetPreviewStatus,
+} from "./widgetEditorStatus";
+import {
+  getWidgetEditorLoadState,
+  getWidgetPreviewState,
+  shouldBlockWidgetPreviewForFailure,
+  WIDGET_PREVIEW_MAX_WAIT_MS,
+} from "./widgetEditorState";
+import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+
+const WIDGET_PREVIEW_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -254,6 +300,7 @@ const METRIC_CATEGORIES = [
     key: "custom_attribute",
     label: "Trace Attributes",
     icon: "mdi:tune-variant",
+    source: "traces",
     category: "custom_attribute",
   },
 ];
@@ -266,6 +313,575 @@ const EVAL_DEFAULT_AGGREGATIONS = {
   CHOICES: "count",
 };
 
+export function getWidgetMetricDataType(metric) {
+  const category = metric?.category;
+  const outputType = String(metric?.outputType || metric?.output_type || "");
+  if (category === "annotation_metric" || category === "annotationMetric") {
+    return ["numeric", "star"].includes(outputType.toLowerCase())
+      ? "number"
+      : "string";
+  }
+  if (category === "eval_metric" || category === "evalMetric") {
+    return outputType.toUpperCase() === "SCORE" ? "number" : "string";
+  }
+  return metric?.type || "number";
+}
+
+const WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY = {
+  system_metric: "system",
+  eval_metric: "eval_metric",
+  annotation_metric: "annotation",
+  custom_attribute: "custom_attribute",
+  custom_column: "custom_column",
+};
+
+const getEligibleWidgetAttributeTypes = (attributeTypes, pickerMode) =>
+  attributeTypes.filter((dataType) =>
+    pickerMode === "metric"
+      ? dataType === "number"
+      : pickerMode === "breakdown"
+        ? ["string", "number", "boolean"].includes(dataType)
+        : ["string", "number", "boolean", "array"].includes(dataType),
+  );
+
+const expandWidgetAttributeOption = ({
+  option,
+  attributeTypes,
+  attributeTypesExact,
+  pickerMode,
+}) =>
+  getEligibleWidgetAttributeTypes(attributeTypes, pickerMode).map(
+    (dataType) => ({
+      ...option,
+      dataType,
+      attributeTypes,
+      attributeTypesExact,
+    }),
+  );
+
+const normalizeWidgetCatalogSearchText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const widgetOptionSources = (option) =>
+  new Set(
+    [option?.source, ...(option?.sources || [])].filter(Boolean).map(String),
+  );
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function isWidgetPickerOptionInCategory(option, pickerCategory) {
+  if (!option || !pickerCategory || pickerCategory === "all") return true;
+  const sources = widgetOptionSources(option);
+  const targetsSource = (source) =>
+    sources.has(source) || sources.has("all") || sources.has("both");
+  const searchableIdentity = normalizeWidgetCatalogSearchText(
+    `${option.id || ""} ${option.name || ""}`,
+  );
+
+  switch (pickerCategory) {
+    case "trace":
+      return option.type === "system" && targetsSource("traces");
+    case "eval_metric":
+      return option.type === "eval_metric";
+    case "prompt":
+      return (
+        option.type === "system" &&
+        targetsSource("traces") &&
+        searchableIdentity.includes("prompt")
+      );
+    case "dataset":
+      return targetsSource("datasets");
+    case "simulation":
+      return targetsSource("simulation");
+    case "user":
+      return (
+        option.type === "system" &&
+        targetsSource("traces") &&
+        searchableIdentity.includes("user")
+      );
+    case "annotation":
+      return option.type === "annotation";
+    case "custom_attribute":
+      return option.type === "custom_attribute";
+    default:
+      return false;
+  }
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function resolveWidgetCatalogResultMetrics({
+  baseMetrics,
+  scopedMetrics,
+  scopedRequestActive,
+  requestSettled,
+}) {
+  if (!requestSettled) return [];
+  return scopedRequestActive ? scopedMetrics || [] : baseMetrics || [];
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function isWidgetCatalogInventoryLoading({
+  requestSettled,
+  usesLegacyCatalog,
+  legacyCatalogLoading,
+  propertyCatalogLoading,
+  propertyCatalogSearchPending,
+  propertyCatalogNotReady,
+}) {
+  if (!requestSettled) return true;
+  if (usesLegacyCatalog) return Boolean(legacyCatalogLoading);
+  return Boolean(
+    propertyCatalogLoading ||
+      propertyCatalogSearchPending ||
+      propertyCatalogNotReady,
+  );
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildWidgetCatalogPickerOptions({
+  metrics: catalogMetrics,
+  pickerMode,
+  pickerCategory = "all",
+  search = "",
+  requestSettled = true,
+  selectedMetricSources = [],
+  targetMetricSource = null,
+}) {
+  if (!requestSettled) return [];
+
+  const mappedOptions = (catalogMetrics || [])
+    .filter((metric) => pickerMode !== "metric" || metric.role !== "dimension")
+    .filter((metric) =>
+      isWidgetCatalogOptionAllowed(metric, pickerMode, {
+        selectedMetricSources,
+        targetMetricSource,
+      }),
+    )
+    .flatMap((metric) => {
+      const option = {
+        id: metric.name,
+        registryId: metric.propertyId || metric.property_id,
+        name: metric.displayName || metric.display_name || metric.name,
+        type:
+          WIDGET_OPTION_TYPE_BY_CATALOG_CATEGORY[metric.category] ||
+          metric.category,
+        source: metric.source,
+        sources: metric.sources,
+        dataType: getWidgetMetricDataType(metric),
+        outputType: metric.outputType || metric.output_type,
+        columnDataType: metric.dataType || metric.data_type,
+        configIds: metric.configIds || metric.config_ids,
+        evalKey: metric.evalKey || metric.eval_key,
+        unit: metric.unit,
+        choices: metric.choices,
+        choiceOptions: metric.choiceOptions || metric.choice_options,
+        allowedAggregations:
+          metric.allowedAggregations || metric.allowed_aggregations,
+      };
+      const attributeTypes = [
+        ...(metric.attributeTypes || metric.attribute_types || []),
+      ].filter(
+        (attributeType, index, values) =>
+          attributeType && values.indexOf(attributeType) === index,
+      );
+      if (option.type !== "custom_attribute" || attributeTypes.length === 0) {
+        return [option];
+      }
+      return expandWidgetAttributeOption({
+        option,
+        attributeTypes,
+        attributeTypesExact:
+          metric.attributeTypesExact ?? metric.attribute_types_exact ?? false,
+        pickerMode,
+      });
+    })
+    // The server category is authoritative, and this local guard prevents a
+    // cached or compatibility response from leaking System rows into Trace
+    // Attributes (or vice versa) after an explicit category selection.
+    .filter((option) => isWidgetPickerOptionInCategory(option, pickerCategory));
+
+  const seen = new Set();
+  const uniqueOptions = mappedOptions.filter((option) => {
+    const identity = `${option.registryId || `${option.source || "all"}:${option.type}:${option.id}`}:${option.dataType || ""}`;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+
+  const normalizedSearch = normalizeWidgetCatalogSearchText(search);
+  if (!normalizedSearch) return uniqueOptions;
+
+  // Exact matches stay first, but never suppress fuzzy server matches from
+  // other categories. `cost` under All must retain both Cost and matching
+  // cost_breakdown.* custom attributes.
+  const exactMatches = uniqueOptions.filter((option) =>
+    [option.id, option.name].some(
+      (candidate) =>
+        normalizeWidgetCatalogSearchText(candidate) === normalizedSearch,
+    ),
+  );
+  const exactSet = new Set(exactMatches);
+  return [
+    ...exactMatches,
+    ...uniqueOptions.filter((option) => !exactSet.has(option)),
+  ];
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function getWidgetCatalogExactResultCount({
+  request,
+  categoryCounts,
+  categoryCountsExact,
+  requestSettled,
+}) {
+  if (!requestSettled || !categoryCountsExact || !categoryCounts) return null;
+  const countKey = request?.category || "all";
+  const count = categoryCounts[countKey];
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
+const WIDGET_SIDEBAR_COUNT_KEY = {
+  all: "all",
+  eval_metric: "eval_metric",
+  annotation: "annotation_metric",
+  custom_attribute: "custom_attribute",
+};
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function getWidgetCatalogSidebarCategoryCount({
+  pickerCategory,
+  categoryCounts,
+  categoryCountsExact,
+}) {
+  if (!categoryCountsExact || !categoryCounts) return null;
+  const countKey = WIDGET_SIDEBAR_COUNT_KEY[pickerCategory];
+  if (!countKey) return null;
+  const count = categoryCounts[countKey];
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function getWidgetCatalogCategoryCountPresentation(count) {
+  if (Number.isSafeInteger(count) && count >= 0) {
+    return { text: String(count), title: null, exact: true };
+  }
+  return {
+    text: "—",
+    title: "Exact count unavailable",
+    exact: false,
+  };
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function resolveWidgetCatalogSidebarCounts({
+  requestSettled,
+  search,
+  baseCategoryCounts,
+  baseCategoryCountsExact,
+  allSearchCategoryCounts,
+  allSearchCategoryCountsExact,
+}) {
+  if (!requestSettled) return null;
+  if (!String(search || "").trim()) {
+    return baseCategoryCountsExact ? baseCategoryCounts || null : null;
+  }
+  return allSearchCategoryCountsExact ? allSearchCategoryCounts || null : null;
+}
+
+export function buildWidgetCursorAttributeOptions(
+  cursorAttributes,
+  pickerMode,
+) {
+  return (cursorAttributes || [])
+    .flatMap((attribute) => {
+      const key = attributeInventoryKey(attribute);
+      if (!key) return [];
+      const attributeTypes = [
+        ...(typeof attribute === "string" ? ["string"] : [attribute.type]),
+        ...(Array.isArray(attribute?.types) ? attribute.types : []),
+      ].filter(
+        (attributeType, index, values) =>
+          attributeType && values.indexOf(attributeType) === index,
+      );
+      // Map/object values require a structured object editor that this Widget
+      // picker does not have. JSON-only eval-mapping fields are likewise not a
+      // Widget filter contract. Keep both out instead of coercing them to text.
+      return expandWidgetAttributeOption({
+        option: {
+          id: key,
+          registryId: `custom_attribute:${key}`,
+          name: key,
+          type: "custom_attribute",
+          source: "traces",
+        },
+        attributeTypes,
+        attributeTypesExact: attribute?.types_exact === true,
+        pickerMode,
+      });
+    })
+    .filter(Boolean);
+}
+
+export function mergeWidgetCursorAttributeOptions(
+  catalogOptions,
+  cursorOptions,
+  cursorActive,
+) {
+  if (!cursorActive) return catalogOptions;
+  const options = [
+    ...catalogOptions.filter((option) => option.type !== "custom_attribute"),
+    ...cursorOptions,
+  ];
+  const seen = new Set();
+  return options.filter((option) => {
+    const identity = `${option.registryId || `${option.source || "all"}:${option.type}:${option.id}`}:${option.dataType || ""}`;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
+export function getWidgetMetricCatalogRequest({
+  pickerCategory,
+  search,
+  pickerOpen,
+  pickerMode = "metric",
+}) {
+  const activeCategory = METRIC_CATEGORIES.find(
+    (category) => category.key === pickerCategory,
+  );
+  return {
+    category: activeCategory?.category || "",
+    source: activeCategory?.source || "",
+    search: activeCategory?.nameFilter
+      ? search || activeCategory.nameFilter
+      : search,
+    // Metric selection must page and count only aggregatable properties.
+    // Without this server-side scope, a broad dimension-only search can say
+    // "302 results" while rendering none and offer an effectively endless
+    // Load more cursor through rows the picker intentionally hides.
+    role: pickerMode === "metric" ? "metric" : "",
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    // Only the legacy fallback reads this flag. The activated catalog always
+    // includes custom attributes; the fallback must never rescan the large
+    // source attribute maps while the catalog is unavailable.
+    excludeCustomAttributes: true,
+    enabled: pickerOpen,
+  };
+}
+
+export function WidgetCatalogPaginationControl({
+  pickerCategory,
+  hasNextPage,
+  continuationKey,
+  isFetchingNextPage,
+  isFetchNextPageError = false,
+  onLoadMore,
+  attributeHasNextPage = false,
+  attributeContinuationKey,
+  isFetchingAttributeNextPage = false,
+  isFetchNextAttributePageError = false,
+  onLoadMoreAttributes,
+}) {
+  const attributePageAvailable =
+    (pickerCategory === "all" || pickerCategory === "custom_attribute") &&
+    Boolean(attributeHasNextPage);
+  return (
+    <BoundedCursorPaginationControl
+      channels={[
+        {
+          channelKey: "catalog",
+          hasNextPage: Boolean(hasNextPage),
+          continuationKey,
+          isFetching: isFetchingNextPage,
+          error: isFetchNextPageError,
+          loadNextPage: onLoadMore,
+        },
+        {
+          channelKey: "attributes",
+          hasNextPage: attributePageAvailable,
+          continuationKey: attributeContinuationKey,
+          isFetching: isFetchingAttributeNextPage,
+          error:
+            (pickerCategory === "all" ||
+              pickerCategory === "custom_attribute") &&
+            isFetchNextAttributePageError,
+          loadNextPage: onLoadMoreAttributes,
+        },
+      ]}
+      testId="widget-catalog-pagination-sentinel"
+      errorMessage="The next page failed. Loaded attributes remain available."
+      retryLabel="Retry"
+    />
+  );
+}
+
+WidgetCatalogPaginationControl.propTypes = {
+  pickerCategory: PropTypes.string.isRequired,
+  hasNextPage: PropTypes.bool,
+  continuationKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  isFetchingNextPage: PropTypes.bool,
+  isFetchNextPageError: PropTypes.bool,
+  onLoadMore: PropTypes.func.isRequired,
+  attributeHasNextPage: PropTypes.bool,
+  attributeContinuationKey: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.number,
+  ]),
+  isFetchingAttributeNextPage: PropTypes.bool,
+  isFetchNextAttributePageError: PropTypes.bool,
+  onLoadMoreAttributes: PropTypes.func,
+};
+
+const DATASET_WIDGET_DIMENSIONS = new Set([
+  "dataset",
+  "eval_template",
+  "column_name",
+  "column_source",
+  "cell_status",
+]);
+
+const SIMULATION_FILTER_DIMENSIONS = new Set([
+  "agent_definition",
+  "agent_latency",
+  "agent_version",
+  "ai_interruption_rate",
+  "ai_interruptions",
+  "bot_wpm",
+  "call_type",
+  "customer_cost",
+  "duration",
+  "ended_reason",
+  "llm_cost",
+  "llm_latency",
+  "message_count",
+  "overall_score",
+  "persona",
+  "persona_accent",
+  "persona_age_group",
+  "persona_communication_style",
+  "persona_conversation_speed",
+  "persona_gender",
+  "persona_language",
+  "persona_location",
+  "persona_personality",
+  "persona_profession",
+  "response_time",
+  "run_test",
+  "scenario",
+  "scenario_type",
+  "simulation",
+  "status",
+  "stop_time_after_interruption",
+  "stt_cost",
+  "stt_latency",
+  "talk_ratio",
+  "test_execution",
+  "total_cost",
+  "tts_cost",
+  "tts_latency",
+  "user_interruption_rate",
+  "user_interruptions",
+  "user_wpm",
+]);
+
+const SIMULATION_BREAKDOWN_DIMENSIONS = new Set([
+  "agent_definition",
+  "agent_version",
+  "call_type",
+  "ended_reason",
+  "persona",
+  "persona_accent",
+  "persona_age_group",
+  "persona_communication_style",
+  "persona_conversation_speed",
+  "persona_gender",
+  "persona_language",
+  "persona_location",
+  "persona_personality",
+  "persona_profession",
+  "run_test",
+  "scenario",
+  "scenario_type",
+  "simulation",
+  "status",
+  "test_execution",
+]);
+
+export function isWidgetCatalogOptionAllowed(
+  metric,
+  pickerMode,
+  { selectedMetricSources = [], targetMetricSource = null } = {},
+) {
+  if (!["filter", "metric_filter", "breakdown"].includes(pickerMode)) {
+    return true;
+  }
+  const declaredSources = [
+    ...(metric.source ? [metric.source] : []),
+    ...(metric.sources || []),
+  ];
+  const optionSources = new Set(
+    declaredSources.length > 0 ? declaredSources : ["traces"],
+  );
+  const targetsTrace = ["traces", "all", "both"].some((source) =>
+    optionSources.has(source),
+  );
+  const targetsDataset = ["datasets", "all", "both"].some((source) =>
+    optionSources.has(source),
+  );
+  const targetsSimulation = optionSources.has("simulation");
+  const isSupportedDatasetDimension =
+    metric.category === "system_metric" &&
+    DATASET_WIDGET_DIMENSIONS.has(metric.name);
+  const isSupportedSimulationDimension =
+    metric.category === "system_metric" &&
+    (pickerMode === "breakdown"
+      ? SIMULATION_BREAKDOWN_DIMENSIONS
+      : SIMULATION_FILTER_DIMENSIONS
+    ).has(metric.name);
+
+  if (pickerMode === "metric_filter") {
+    if (targetMetricSource === "datasets") {
+      return isSupportedDatasetDimension;
+    }
+    return targetMetricSource === "simulation"
+      ? targetsSimulation && isSupportedSimulationDimension
+      : targetsTrace;
+  }
+
+  const selectedSources = new Set(selectedMetricSources);
+  if (
+    selectedSources.has("datasets") &&
+    targetsDataset &&
+    !isSupportedDatasetDimension
+  ) {
+    return false;
+  }
+  if (
+    selectedSources.has("simulation") &&
+    targetsSimulation &&
+    !isSupportedSimulationDimension
+  ) {
+    return false;
+  }
+  return (
+    (selectedSources.has("traces") && targetsTrace) ||
+    (selectedSources.has("datasets") && targetsDataset) ||
+    (selectedSources.has("simulation") && targetsSimulation)
+  );
+}
+
+function getWidgetMetricAdapterSource(metric) {
+  if (metric.source === "datasets") return "datasets";
+  if (metric.source === "simulation" && metric.type !== "custom_attribute") {
+    return "simulation";
+  }
+  return "traces";
+}
+
 // Additional aggregation options for dataset-specific types
 const DATASET_EXTRA_AGGREGATIONS = [
   { label: "Pass Rate", value: "pass_rate" },
@@ -275,16 +891,20 @@ const DATASET_EXTRA_AGGREGATIONS = [
   { label: "True Rate", value: "true_rate" },
 ];
 
+const PRESENCE_FILTER_OPERATORS = [
+  { label: "Is set", value: "is_set", noValue: true },
+  { label: "Is not set", value: "is_not_set", noValue: true },
+];
+
 const STRING_FILTER_OPERATORS = [
   { label: "Is", value: "contains", multi: true },
   { label: "Is not", value: "not_contains", multi: true },
   { label: "Contains", value: "str_contains" },
   { label: "Does not contain", value: "str_not_contains" },
-  { label: "Is set", value: "is_set", noValue: true },
-  { label: "Is not set", value: "is_not_set", noValue: true },
+  ...PRESENCE_FILTER_OPERATORS,
 ];
 
-const NUMBER_FILTER_OPERATORS = [
+const COMPARABLE_FILTER_OPERATORS = [
   { label: "Equals", value: "equal_to" },
   { label: "Not equal", value: "not_equal_to" },
   { label: "Greater than", value: "greater_than" },
@@ -293,10 +913,41 @@ const NUMBER_FILTER_OPERATORS = [
   { label: "Less than or equal to", value: "less_than_or_equal" },
   { label: "Between", value: "between", range: true },
   { label: "Not between", value: "not_between", range: true },
+  ...PRESENCE_FILTER_OPERATORS,
 ];
 
-const getFilterOperators = (dataType) =>
-  dataType === "number" ? NUMBER_FILTER_OPERATORS : STRING_FILTER_OPERATORS;
+const BOOLEAN_FILTER_OPERATORS = [
+  { label: "Equals", value: "equal_to" },
+  { label: "Not equal", value: "not_equal_to" },
+  ...PRESENCE_FILTER_OPERATORS,
+];
+
+const ARRAY_FILTER_OPERATORS = [
+  { label: "Contains", value: "str_contains", multi: true },
+  { label: "Does not contain", value: "str_not_contains", multi: true },
+  ...PRESENCE_FILTER_OPERATORS,
+];
+
+export const getWidgetFilterOperators = (dataType) => {
+  const filterType = normalizeFilterType(dataType || "string");
+  if (filterType === "number" || filterType === "datetime") {
+    return COMPARABLE_FILTER_OPERATORS;
+  }
+  if (filterType === "boolean") return BOOLEAN_FILTER_OPERATORS;
+  if (filterType === "array") return ARRAY_FILTER_OPERATORS;
+  return STRING_FILTER_OPERATORS;
+};
+
+export function getWidgetFilterDefaults(dataType) {
+  const filterType = normalizeFilterType(dataType || "string");
+  if (["number", "datetime", "boolean"].includes(filterType)) {
+    return { operator: "equal_to", value: "", opensValuePicker: false };
+  }
+  if (filterType === "array") {
+    return { operator: "str_contains", value: [], opensValuePicker: true };
+  }
+  return { operator: "contains", value: [], opensValuePicker: true };
+}
 
 const NO_VALUE_OPERATORS = new Set(["is_set", "is_not_set"]);
 
@@ -310,6 +961,65 @@ const DASHBOARD_FILTER_OP_TO_API = {
   is_set: "is_not_null",
   is_not_set: "is_null",
 };
+
+export function buildWidgetFilterConfig(filter) {
+  const filterType = normalizeFilterType(
+    filter?.dataType || "string",
+    filter?.value,
+  );
+  const filterOp =
+    DASHBOARD_FILTER_OP_TO_API[filter?.operator] || filter?.operator;
+  if (!isAllowedFilterOperator(filterType, filterOp)) return null;
+
+  const filterValue = coerceFilterValue(filter?.value, filterOp, filterType);
+  const colType = normalizeColumnType(DASHBOARD_TYPE_TO_COL_TYPE[filter?.type]);
+  const attributeValueTypes = (() => {
+    if (
+      colType !== "SPAN_ATTRIBUTE" ||
+      !["in", "not_in"].includes(filterOp) ||
+      !Array.isArray(filterValue) ||
+      !Array.isArray(filter?.valueTypes) ||
+      filter.valueTypes.length !== filterValue.length
+    ) {
+      return undefined;
+    }
+    const valueTypes = filter.valueTypes.map((valueType) =>
+      ["string", "number", "boolean"].includes(valueType) ? valueType : null,
+    );
+    return valueTypes.some(Boolean) ? valueTypes : undefined;
+  })();
+  return {
+    filter_type: filterType,
+    filter_op: filterOp,
+    filter_value: filterValue,
+    ...(colType && { col_type: colType }),
+    ...(attributeValueTypes && {
+      attribute_value_types: attributeValueTypes,
+    }),
+  };
+}
+
+export function hasWidgetFilterValue(filter) {
+  if (!filter?.id) return false;
+  if (NO_VALUE_OPERATORS.has(filter.operator)) return true;
+  if (Array.isArray(filter.value)) return filter.value.length > 0;
+  return (
+    filter.value !== "" && filter.value !== null && filter.value !== undefined
+  );
+}
+
+export function buildLinkedProjectFilter(projectIds) {
+  return {
+    id: "project",
+    registryId: "system_attribute:traces:project",
+    name: "Project",
+    type: "system",
+    dataType: "string",
+    source: "traces",
+    operator: "contains",
+    value: projectIds,
+  };
+}
 
 const DASHBOARD_TYPE_TO_COL_TYPE = {
   system: "SYSTEM_METRIC",
@@ -326,6 +1036,71 @@ const COL_TYPE_TO_DASHBOARD_TYPE = {
   SPAN_ATTRIBUTE: "custom_attribute",
   CUSTOM_COLUMN: "custom_column",
 };
+
+export function normalizeWidgetDashboardDataType(dataType) {
+  const filterType = normalizeFilterType(dataType || "string");
+  if (filterType === "text") return "string";
+  if (filterType === "datetime") return "date";
+  if (filterType === "categorical") return "string";
+  return filterType;
+}
+
+export function toWidgetDashboardFilterOperator(operator, filterType) {
+  if (operator === "in") return "contains";
+  if (operator === "not_in") return "not_contains";
+  if (operator === "contains") return "str_contains";
+  if (operator === "not_contains") return "str_not_contains";
+  if (operator === "is_not_null") return "is_set";
+  if (operator === "is_null") return "is_not_set";
+  if (operator === "equals") {
+    return ["number", "datetime", "boolean"].includes(filterType)
+      ? "equal_to"
+      : "contains";
+  }
+  if (operator === "not_equals") {
+    return ["number", "datetime", "boolean"].includes(filterType)
+      ? "not_equal_to"
+      : "not_contains";
+  }
+  return operator;
+}
+
+export function restoreWidgetFilterConfig(config) {
+  const filterType = normalizeFilterType(config?.filter_type || "string");
+  const operator = toWidgetDashboardFilterOperator(
+    config?.filter_op,
+    filterType,
+  );
+  const isMulti = operator === "contains" || operator === "not_contains";
+  const value = NO_VALUE_OPERATORS.has(operator)
+    ? ""
+    : isMulti
+      ? Array.isArray(config?.filter_value)
+        ? config.filter_value
+        : [config?.filter_value].filter(
+            (candidate) => candidate !== null && candidate !== undefined,
+          )
+      : config?.filter_value ?? (filterType === "number" ? "" : []);
+  const valueTypes = Array.isArray(config?.attribute_value_types)
+    ? config.attribute_value_types
+    : undefined;
+  const attributeTypes = valueTypes
+    ? [
+        ...new Set(
+          [normalizeWidgetDashboardDataType(filterType), ...valueTypes].filter(
+            Boolean,
+          ),
+        ),
+      ]
+    : undefined;
+  return {
+    dataType: normalizeWidgetDashboardDataType(filterType),
+    operator,
+    value,
+    ...(valueTypes && { valueTypes }),
+    ...(attributeTypes && { attributeTypes }),
+  };
+}
 
 const METRIC_TYPE_ICONS = {
   system: "mdi:cog-outline",
@@ -431,6 +1206,18 @@ function ToggleButtons({ options, value, onChange, theme }) {
     </Box>
   );
 }
+
+ToggleButtons.propTypes = {
+  options: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.node.isRequired,
+      value: PropTypes.any,
+    }),
+  ).isRequired,
+  value: PropTypes.any,
+  onChange: PropTypes.func.isRequired,
+  theme: PropTypes.object.isRequired,
+};
 
 function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   return (
@@ -695,6 +1482,15 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   );
 }
 
+AxisSection.propTypes = {
+  title: PropTypes.string.isRequired,
+  config: PropTypes.object.isRequired,
+  onChange: PropTypes.func.isRequired,
+  theme: PropTypes.object.isRequired,
+  showReset: PropTypes.bool,
+  onReset: PropTypes.func,
+};
+
 function AggregationPicker({
   value,
   onChange,
@@ -881,8 +1677,54 @@ function AggregationPicker({
   );
 }
 
+AggregationPicker.propTypes = {
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+  theme: PropTypes.object.isRequired,
+  extraOptions: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      value: PropTypes.string.isRequired,
+    }),
+  ),
+  allowedAggregations: PropTypes.arrayOf(PropTypes.string),
+};
+
+const inferFilterValueStorageType = (value, configuredType) => {
+  if (["string", "number", "boolean", "array"].includes(configuredType)) {
+    return configuredType;
+  }
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  return "string";
+};
+
+const selectedEntriesFromFilter = (filter) => {
+  const values = Array.isArray(filter?.value) ? filter.value : [];
+  const valueTypes = Array.isArray(filter?.valueTypes) ? filter.valueTypes : [];
+  return values.map((value, index) => ({
+    value,
+    type: inferFilterValueStorageType(value, valueTypes[index]),
+  }));
+};
+
+const filterValuePickerScopeKey = (filter, source) =>
+  JSON.stringify([
+    source,
+    filter?.property_id || filter?.propertyId || filter?.registryId || null,
+    filter?.metric_name ||
+      filter?.metricName ||
+      filter?.field ||
+      filter?.name ||
+      filter?.id ||
+      null,
+    filter?.metric_type || filter?.metricType || filter?.type || null,
+    filter?.value || [],
+    filter?.valueTypes || [],
+  ]);
+
 // Filter value picker popup — fetches distinct values for a given attribute
-function FilterValuePickerPopup({
+export function FilterValuePickerPopup({
   anchorEl,
   filter,
   onClose,
@@ -891,33 +1733,154 @@ function FilterValuePickerPopup({
 }) {
   const theme = useTheme();
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState(() =>
-    Array.isArray(filter?.value) ? [...filter.value] : [],
+  const [selectedEntries, setSelectedEntries] = useState(() =>
+    selectedEntriesFromFilter(filter),
   );
+  const valueOptionsListRef = useRef(null);
+  const selectionScopeKey = filterValuePickerScopeKey(filter, source);
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+  useEffect(() => {
+    setSearch("");
+    setSelectedEntries(selectedEntriesFromFilter(filterRef.current));
+  }, [selectionScopeKey]);
+  const optionStorageType = (option) => {
+    return inferFilterValueStorageType(
+      option?.value,
+      option?.type || filter?.dataType,
+    );
+  };
+  const selectedIdentity = (value, valueType) =>
+    `${valueType}:${typeof value}:${JSON.stringify(value)}`;
+  const isSelected = (value, valueType) => {
+    const identity = selectedIdentity(value, valueType);
+    return selectedEntries.some(
+      (entry) => selectedIdentity(entry.value, entry.type) === identity,
+    );
+  };
 
-  const { options, isLoading } = useResolvedFilterOptions(filter, source);
+  // Backend search (custom attributes) reaches values outside the fetched
+  // page and the default lookback; the client-side filter below stays as the
+  // instant layer on top of whatever is already loaded.
+  const exactValueMaxUtf8Bytes =
+    filter?.type === "custom_attribute"
+      ? TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES
+      : FILTER_STRING_MAX_UTF8_BYTES;
+  const exactSearchValue = search.trim();
+  const exactSearchValueTooLong =
+    getUtf8ByteLength(exactSearchValue) > exactValueMaxUtf8Bytes;
+  const debouncedSearch = useDebounce(search, FILTER_VALUE_SEARCH_DEBOUNCE_MS);
+  const {
+    options,
+    isLoading,
+    isError,
+    fetchNextPage,
+    hasNextPage,
+    continuationKey,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    queryReadState,
+    cursorChainStopped,
+    retryFreshPage,
+    isRetryingFreshPage,
+    refetch,
+  } = useResolvedFilterOptions(
+    filter,
+    source,
+    !exactSearchValueTooLong,
+    exactSearchValueTooLong ? "" : debouncedSearch,
+    exactSearchValueTooLong ? "" : search,
+  );
+  const retryValues = retryFreshPage || refetch;
+  const readMessage = exactSearchValueTooLong
+    ? `Enter a value no longer than ${exactValueMaxUtf8Bytes.toLocaleString(
+        "en-US",
+      )} UTF-8 bytes.`
+    : getFilterValueReadMessage(isError ? "error" : queryReadState);
 
   const filteredOptions = useMemo(() => {
+    if (exactSearchValueTooLong) return [];
     if (!search) return options;
     const q = search.toLowerCase();
-    return options.filter((o) =>
-      (o.label || o.value || "").toLowerCase().includes(q),
+    return options.filter((option) =>
+      [option?.label, option?.value, option?.description].some((candidate) =>
+        String(candidate ?? "")
+          .toLowerCase()
+          .includes(q),
+      ),
     );
-  }, [options, search]);
+  }, [exactSearchValueTooLong, options, search]);
+  const searchMatchesLoadedOption = options.some((option) =>
+    [option?.value, option?.label].some(
+      (candidate) =>
+        String(candidate ?? "")
+          .trim()
+          .toLocaleLowerCase() === exactSearchValue.toLocaleLowerCase(),
+    ),
+  );
+  const canSpecifyExactValue = Boolean(
+    exactSearchValue && !exactSearchValueTooLong && !searchMatchesLoadedOption,
+  );
 
-  const toggleValue = (val) => {
-    setSelected((prev) =>
-      prev.includes(val) ? prev.filter((v) => v !== val) : [...prev, val],
+  const toggleValue = (value, valueType) => {
+    const identity = selectedIdentity(value, valueType);
+    setSelectedEntries((previous) =>
+      previous.some(
+        (entry) => selectedIdentity(entry.value, entry.type) === identity,
+      )
+        ? previous.filter(
+            (entry) => selectedIdentity(entry.value, entry.type) !== identity,
+          )
+        : [...previous, { value, type: valueType }],
     );
   };
 
   const toggleAll = () => {
-    if (selected.length === filteredOptions.length) {
-      setSelected([]);
-    } else {
-      setSelected(filteredOptions.map((o) => o.value));
-    }
+    const entries = filteredOptions.map((option) => ({
+      value: option.value,
+      type: optionStorageType(option),
+    }));
+    const visibleIdentities = new Set(
+      entries.map((entry) => selectedIdentity(entry.value, entry.type)),
+    );
+    setSelectedEntries((previous) => {
+      const selectedIdentities = new Set(
+        previous.map((entry) => selectedIdentity(entry.value, entry.type)),
+      );
+      const allVisibleSelected =
+        entries.length > 0 &&
+        entries.every((entry) =>
+          selectedIdentities.has(selectedIdentity(entry.value, entry.type)),
+        );
+      if (allVisibleSelected) {
+        return previous.filter(
+          (entry) =>
+            !visibleIdentities.has(selectedIdentity(entry.value, entry.type)),
+        );
+      }
+      return [
+        ...previous,
+        ...entries.filter(
+          (entry) =>
+            !selectedIdentities.has(selectedIdentity(entry.value, entry.type)),
+        ),
+      ];
+    });
   };
+
+  const exactValueType = ["string", "number", "boolean"].includes(
+    filter?.dataType,
+  )
+    ? filter.dataType
+    : "string";
+  const allFilteredSelected =
+    filteredOptions.length > 0 &&
+    filteredOptions.every((option) =>
+      isSelected(option.value, optionStorageType(option)),
+    );
+  const someFilteredSelected = filteredOptions.some((option) =>
+    isSelected(option.value, optionStorageType(option)),
+  );
 
   return (
     <Popper
@@ -945,7 +1908,14 @@ function FilterValuePickerPopup({
               fullWidth
               placeholder="Search..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) =>
+                setSearch(
+                  String(e.target.value ?? "").slice(
+                    0,
+                    exactValueMaxUtf8Bytes + 1,
+                  ),
+                )
+              }
               autoFocus
               InputProps={{
                 startAdornment: (
@@ -962,6 +1932,32 @@ function FilterValuePickerPopup({
           </Box>
           <Divider />
 
+          {readMessage && (
+            <Stack
+              role="status"
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              spacing={1}
+              sx={{ px: 1.5, py: 1 }}
+            >
+              <Typography variant="caption" color="warning.main">
+                {readMessage}
+              </Typography>
+              {cursorChainStopped && (
+                <Button
+                  size="small"
+                  disabled={isRetryingFreshPage}
+                  onClick={() =>
+                    void Promise.resolve(retryValues?.()).catch(() => {})
+                  }
+                >
+                  {isRetryingFreshPage ? "Retrying…" : "Retry"}
+                </Button>
+              )}
+            </Stack>
+          )}
+
           {/* Select all */}
           <Box
             onClick={toggleAll}
@@ -972,19 +1968,14 @@ function FilterValuePickerPopup({
               px: 2,
               py: 1,
               cursor: "pointer",
-              bgcolor: selected.length > 0 ? "action.selected" : "transparent",
+              bgcolor: someFilteredSelected ? "action.selected" : "transparent",
               "&:hover": { bgcolor: "action.hover" },
             }}
           >
             <Checkbox
               size="small"
-              checked={
-                selected.length === filteredOptions.length &&
-                filteredOptions.length > 0
-              }
-              indeterminate={
-                selected.length > 0 && selected.length < filteredOptions.length
-              }
+              checked={allFilteredSelected}
+              indeterminate={someFilteredSelected && !allFilteredSelected}
               sx={{ p: 0 }}
             />
             <Typography variant="body2" fontWeight={600} color="primary.main">
@@ -994,12 +1985,62 @@ function FilterValuePickerPopup({
           <Divider />
 
           {/* Options list */}
-          <Box sx={{ flex: 1, overflow: "auto", maxHeight: 240 }}>
+          <Box
+            ref={valueOptionsListRef}
+            sx={{ flex: 1, overflow: "auto", maxHeight: 240 }}
+          >
+            {canSpecifyExactValue && (
+              <Box
+                data-widget-filter-exact-value={exactSearchValue}
+                onClick={() => toggleValue(exactSearchValue, exactValueType)}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 2,
+                  py: 0.75,
+                  cursor: "pointer",
+                  bgcolor: isSelected(exactSearchValue, exactValueType)
+                    ? "action.selected"
+                    : "transparent",
+                  "&:hover": { bgcolor: "action.hover" },
+                }}
+              >
+                <Checkbox
+                  size="small"
+                  checked={isSelected(exactSearchValue, exactValueType)}
+                  sx={{ p: 0 }}
+                />
+                <Typography
+                  variant="body2"
+                  noWrap
+                  title={`Specify: ${exactSearchValue}`}
+                  sx={{ minWidth: 0, fontSize: "13px" }}
+                >
+                  Specify: <strong>{exactSearchValue}</strong>
+                </Typography>
+              </Box>
+            )}
             {isLoading ? (
               <Box sx={{ p: 2, textAlign: "center" }}>
                 <CircularProgress size={20} />
               </Box>
-            ) : filteredOptions.length === 0 ? (
+            ) : isError && options.length === 0 ? (
+              <Stack sx={{ p: 2 }} spacing={1} alignItems="center">
+                <Typography variant="body2" color="warning.main">
+                  Values could not be loaded. Retry this exact page.
+                </Typography>
+                <Button
+                  size="small"
+                  disabled={isRetryingFreshPage}
+                  onClick={() =>
+                    void Promise.resolve(retryValues?.()).catch(() => {})
+                  }
+                >
+                  {isRetryingFreshPage ? "Retrying…" : "Retry"}
+                </Button>
+              </Stack>
+            ) : filteredOptions.length === 0 && !canSpecifyExactValue ? (
               <Box sx={{ p: 2, textAlign: "center" }}>
                 <Typography variant="body2" color="text.disabled">
                   No values found
@@ -1008,8 +2049,8 @@ function FilterValuePickerPopup({
             ) : (
               filteredOptions.map((opt) => (
                 <Box
-                  key={opt.value}
-                  onClick={() => toggleValue(opt.value)}
+                  key={`${opt.type || ""}:${typeof opt.value}:${JSON.stringify(opt.value)}`}
+                  onClick={() => toggleValue(opt.value, optionStorageType(opt))}
                   sx={{
                     display: "flex",
                     alignItems: "center",
@@ -1018,22 +2059,45 @@ function FilterValuePickerPopup({
                     py: 0.75,
                     cursor: "pointer",
                     "&:hover": { bgcolor: "action.hover" },
-                    bgcolor: selected.includes(opt.value)
+                    bgcolor: isSelected(opt.value, optionStorageType(opt))
                       ? "action.selected"
                       : "transparent",
                   }}
                 >
                   <Checkbox
                     size="small"
-                    checked={selected.includes(opt.value)}
+                    checked={isSelected(opt.value, optionStorageType(opt))}
                     sx={{ p: 0 }}
                   />
-                  <Typography variant="body2" sx={{ fontSize: "13px" }}>
+                  <Typography
+                    variant="body2"
+                    noWrap
+                    title={String(opt.label ?? opt.value ?? "")}
+                    sx={{ minWidth: 0, fontSize: "13px" }}
+                  >
                     {opt.label || opt.value}
                   </Typography>
                 </Box>
               ))
             )}
+            <BoundedCursorPaginationControl
+              key={`${filterValuePickerScopeKey(filter, source)}:${debouncedSearch}`}
+              rootRef={valueOptionsListRef}
+              testId="widget-filter-value-pagination-sentinel"
+              loadingLabel="Loading more values…"
+              retryLabel="Retry next page"
+              errorMessage="The next page failed. Loaded values remain available."
+              channels={[
+                {
+                  channelKey: "widget-filter-values",
+                  hasNextPage: Boolean(hasNextPage),
+                  continuationKey,
+                  isFetching: isFetchingNextPage,
+                  error: isFetchNextPageError,
+                  loadNextPage: fetchNextPage,
+                },
+              ]}
+            />
           </Box>
 
           {/* Add button */}
@@ -1041,8 +2105,13 @@ function FilterValuePickerPopup({
             <Button
               fullWidth
               variant="contained"
-              onClick={() => onApply(selected)}
-              disabled={selected.length === 0}
+              onClick={() =>
+                onApply(
+                  selectedEntries.map(({ value }) => value),
+                  selectedEntries.map(({ type }) => type),
+                )
+              }
+              disabled={selectedEntries.length === 0}
             >
               Add
             </Button>
@@ -1053,24 +2122,49 @@ function FilterValuePickerPopup({
   );
 }
 
+FilterValuePickerPopup.propTypes = {
+  anchorEl: PropTypes.object,
+  filter: PropTypes.object,
+  onClose: PropTypes.func.isRequired,
+  onApply: PropTypes.func.isRequired,
+  source: PropTypes.string.isRequired,
+};
+
 export default function WidgetEditorView() {
   const theme = useTheme();
   const navigate = useNavigate();
   const { dashboardId, widgetId } = useParams();
+  const { currentWorkspaceId } = useWorkspace();
   const [searchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
   const [createdWidgetId, setCreatedWidgetId] = useState(null);
   const effectiveWidgetId = createdWidgetId || widgetId;
   const isEditing = effectiveWidgetId && effectiveWidgetId !== "new";
+  const isRouteEditing = Boolean(widgetId && widgetId !== "new");
 
   const { canDelete, isReadOnly } = useCanEditDashboard();
 
-  const { data: dashboard } = useDashboardDetail(dashboardId);
+  const {
+    data: dashboard,
+    isLoading: isDashboardLoading,
+    isError: isDashboardError,
+    refetch: refetchDashboard,
+  } = useDashboardDetail(dashboardId);
   const createMutation = useCreateWidget();
   const updateMutation = useUpdateWidget();
   const deleteMutation = useDeleteWidget();
   const queryMutation = useDashboardQuery();
+  const mutateDashboardQuery = queryMutation.mutate;
+  const resetDashboardQuery = queryMutation.reset;
   const { data: simulationAgents = [] } = useSimulationAgents();
+  const [lastExactPreview, setLastExactPreview] = useState(null);
+  const currentPreviewSignatureRef = useRef("");
+  const previewPollTimerRef = useRef(null);
+  const previewRequestControllerRef = useRef(null);
+  const previewRequestTimerRef = useRef(null);
+  const previewGenerationRef = useRef(0);
+  const [isPreviewRefreshing, setIsPreviewRefreshing] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
 
   // Build a map: agent_definition_id → observability project for cross-source correlation
   const simAgentObsMap = useMemo(() => {
@@ -1091,7 +2185,9 @@ export default function WidgetEditorView() {
   const [chartName, setChartName] = useState("");
   const [chartDescription, setChartDescription] = useState("");
   const [editingName, setEditingName] = useState(false);
-  const [editingDesc, setEditingDesc] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
+  const descSlotRef = useRef(null);
+  const trimmedDescription = (chartDescription || "").trim();
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
@@ -1125,6 +2221,7 @@ export default function WidgetEditorView() {
   const [rightTab, setRightTab] = useState(0);
   // Shared picker state: used for metric, filter, and breakdown pickers
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCatalogSession, setPickerCatalogSession] = useState(0);
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerCategory, setPickerCategory] = useState("all");
   const [pickerSearch, setPickerSearch] = useState("");
@@ -1146,14 +2243,14 @@ export default function WidgetEditorView() {
   const [isDragging, setIsDragging] = useState(false);
   const [tableSearch, setTableSearch] = useState("");
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible, Set = selected indices
+  // Saved selection keys, applied once previewSeries loads.
+  const pendingVisibleSeriesRef = useRef(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
-  const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
-  const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
   const customDays =
@@ -1221,72 +2318,281 @@ export default function WidgetEditorView() {
     return () => clearTimeout(timer);
   }, [pickerSearch]);
 
-  // Paginated metrics for the picker
-  const {
-    metrics: paginatedMetrics,
-    total: paginatedTotal,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isLoading: isPaginatedLoading,
-  } = useDashboardMetricsPaginated(
-    useMemo(() => {
-      const activeCat = METRIC_CATEGORIES.find((c) => c.key === pickerCategory);
-      return {
-        category: activeCat?.category || "",
-        source: activeCat?.source || "",
-        search: activeCat?.nameFilter
-          ? debouncedPickerSearch || activeCat.nameFilter
-          : debouncedPickerSearch,
-        pageSize: 50,
-        enabled: pickerOpen,
-      };
-    }, [pickerCategory, debouncedPickerSearch, pickerOpen]),
-  );
-
-  // Map paginated backend metrics to frontend option shape
-  const paginatedMetricOptions = useMemo(() => {
-    // Map backend category to frontend type key (used for icons, already-used checks, etc.)
-    const categoryMap = {
-      system_metric: "system",
-      eval_metric: "eval_metric",
-      annotation_metric: "annotation",
-      custom_attribute: "custom_attribute",
-      custom_column: "custom_column",
-    };
-    return paginatedMetrics
-      .filter((m) => pickerMode !== "metric" || m.role !== "dimension")
-      .map((m) => ({
-        id: m.name,
-        name: m.displayName || m.display_name || m.name,
-        type: categoryMap[m.category] || m.category,
-        source: m.source,
-        sources: m.sources,
-        dataType: m.type || "number",
-        outputType: m.outputType || m.output_type,
-        columnDataType: m.dataType || m.data_type,
-        configIds: m.configIds || m.config_ids,
-        evalKey: m.evalKey || m.eval_key,
-        unit: m.unit,
-        choices: m.choices,
-      }));
-  }, [paginatedMetrics, pickerMode]);
-
-  // Infinite scroll handler for the picker's right panel
-  const pickerListRef = useRef(null);
-  const handlePickerScroll = useCallback(
-    (e) => {
-      const el = e.target;
-      if (
-        el.scrollHeight - el.scrollTop - el.clientHeight < 50 &&
-        hasNextPage &&
-        !isFetchingNextPage
-      ) {
-        fetchNextPage();
+  const preservedDashboardAttributeKeys = useMemo(() => {
+    const keys = new Set();
+    const append = (option) => {
+      if (option?.type === "custom_attribute" && option.id) {
+        keys.add(option.id);
       }
-    },
-    [hasNextPage, isFetchingNextPage, fetchNextPage],
+    };
+    metrics.forEach((metric) => {
+      append(metric);
+      (metric.filters || []).forEach(append);
+    });
+    filters.forEach(append);
+    breakdowns.forEach(append);
+    return [...keys];
+  }, [breakdowns, filters, metrics]);
+
+  const trimmedPickerSearch = pickerSearch.trim();
+  const trimmedDebouncedPickerSearch = debouncedPickerSearch.trim();
+  const pickerSearchSettled =
+    trimmedPickerSearch === trimmedDebouncedPickerSearch;
+  const baseWidgetCatalogRequest = useMemo(
+    () =>
+      getWidgetMetricCatalogRequest({
+        pickerCategory: "all",
+        search: "",
+        pickerOpen,
+        pickerMode,
+      }),
+    [pickerOpen, pickerMode],
   );
+  const scopedWidgetCatalogRequest = useMemo(
+    () =>
+      getWidgetMetricCatalogRequest({
+        pickerCategory,
+        search: trimmedDebouncedPickerSearch,
+        pickerOpen,
+        pickerMode,
+      }),
+    [pickerCategory, trimmedDebouncedPickerSearch, pickerOpen, pickerMode],
+  );
+  const allSearchWidgetCatalogRequest = useMemo(
+    () =>
+      getWidgetMetricCatalogRequest({
+        pickerCategory: "all",
+        search: trimmedDebouncedPickerSearch,
+        pickerOpen,
+        pickerMode,
+      }),
+    [trimmedDebouncedPickerSearch, pickerOpen, pickerMode],
+  );
+  const scopedWidgetCatalogActive = Boolean(
+    pickerCategory !== "all" || trimmedDebouncedPickerSearch,
+  );
+
+  // Keep the unsearched All lane mounted as the stable exact-count baseline.
+  // Search/category requests use an independent cache lane; once settled,
+  // only that lane may own rows and cursor state.
+  const basePropertyCatalog = usePropertyCatalog({
+    category: baseWidgetCatalogRequest.category,
+    source: baseWidgetCatalogRequest.source,
+    search: baseWidgetCatalogRequest.search,
+    role: baseWidgetCatalogRequest.role,
+    pageSize: baseWidgetCatalogRequest.pageSize,
+    enabled: baseWidgetCatalogRequest.enabled,
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `widget-property-catalog:${currentWorkspaceId || ""}:base`,
+    cacheScopeKey: `widget-picker:${pickerCatalogSession}:base`,
+  });
+  const scopedPropertyCatalog = usePropertyCatalog({
+    category: scopedWidgetCatalogRequest.category,
+    source: scopedWidgetCatalogRequest.source,
+    search: scopedWidgetCatalogRequest.search,
+    role: scopedWidgetCatalogRequest.role,
+    pageSize: scopedWidgetCatalogRequest.pageSize,
+    enabled: scopedWidgetCatalogRequest.enabled && scopedWidgetCatalogActive,
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `widget-property-catalog:${currentWorkspaceId || ""}:scoped`,
+    cacheScopeKey: `widget-picker:${pickerCatalogSession}:scoped`,
+  });
+  // Keep search-wide counts mounted independently from the selected category.
+  // While All is selected this shares the scoped query key and is deduplicated;
+  // after a category click it prevents scoped counts from replacing the All
+  // breakdown shown in the sidebar.
+  const allSearchPropertyCatalog = usePropertyCatalog({
+    category: allSearchWidgetCatalogRequest.category,
+    source: allSearchWidgetCatalogRequest.source,
+    search: allSearchWidgetCatalogRequest.search,
+    role: allSearchWidgetCatalogRequest.role,
+    pageSize: allSearchWidgetCatalogRequest.pageSize,
+    enabled: Boolean(
+      allSearchWidgetCatalogRequest.enabled && trimmedDebouncedPickerSearch,
+    ),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `widget-property-catalog:${currentWorkspaceId || ""}:all-search`,
+    cacheScopeKey: `widget-picker:${pickerCatalogSession}:scoped`,
+  });
+  const baseLegacyMetricCatalog = useLegacyDashboardMetricsPaginated({
+    ...baseWidgetCatalogRequest,
+    enabled:
+      baseWidgetCatalogRequest.enabled &&
+      basePropertyCatalog.legacyFallbackRequired,
+  });
+  const scopedLegacyMetricCatalog = useLegacyDashboardMetricsPaginated({
+    ...scopedWidgetCatalogRequest,
+    enabled:
+      scopedWidgetCatalogRequest.enabled &&
+      scopedWidgetCatalogActive &&
+      scopedPropertyCatalog.legacyFallbackRequired,
+  });
+  const baseUsesLegacyCatalog = basePropertyCatalog.legacyFallbackRequired;
+  const scopedUsesLegacyCatalog = scopedPropertyCatalog.legacyFallbackRequired;
+  const scopedRequestOwnsResults = Boolean(
+    scopedWidgetCatalogActive && pickerSearchSettled,
+  );
+  const activeCatalogRequest = scopedRequestOwnsResults
+    ? scopedWidgetCatalogRequest
+    : baseWidgetCatalogRequest;
+  const activePropertyCatalog = scopedRequestOwnsResults
+    ? scopedPropertyCatalog
+    : basePropertyCatalog;
+  const activeLegacyMetricCatalog = scopedRequestOwnsResults
+    ? scopedLegacyMetricCatalog
+    : baseLegacyMetricCatalog;
+  const activeUsesLegacyCatalog = scopedRequestOwnsResults
+    ? scopedUsesLegacyCatalog
+    : baseUsesLegacyCatalog;
+  // A typed catalog-not-ready response is the only compatibility signal that
+  // activates the retained workspace attribute endpoint. Its query remains
+  // cursor-bounded and is disabled for ordinary catalog/network failures.
+  const cursorAttributePickerActive = Boolean(
+    pickerOpen && activeUsesLegacyCatalog,
+  );
+  const {
+    filteredAttributes: cursorAttributes,
+    inventoryControlProps: cursorAttributeControlProps,
+  } = useLegacyCursorAttributeInventory({
+    workspaceScope: true,
+    workspaceScopeKey: currentWorkspaceId,
+    rowType: "spans",
+    discoveryMode: "filter",
+    search: pickerSearch,
+    preservedKeys: preservedDashboardAttributeKeys,
+    enabled: cursorAttributePickerActive,
+    pageSize: PROPERTY_CATALOG_PAGE_SIZE,
+  });
+  const activeRequestSettled = Boolean(
+    pickerSearchSettled &&
+      !activePropertyCatalog.isPlaceholderData &&
+      (!activeUsesLegacyCatalog ||
+        !activeLegacyMetricCatalog.isPlaceholderData),
+  );
+  const baseMetrics = baseUsesLegacyCatalog
+    ? baseLegacyMetricCatalog.metrics
+    : basePropertyCatalog.metrics;
+  const scopedMetrics = scopedUsesLegacyCatalog
+    ? scopedLegacyMetricCatalog.metrics
+    : scopedPropertyCatalog.metrics;
+  const paginatedMetrics = resolveWidgetCatalogResultMetrics({
+    baseMetrics,
+    scopedMetrics,
+    scopedRequestActive: scopedRequestOwnsResults,
+    requestSettled: activeRequestSettled,
+  });
+  const activeCategoryCounts = activeUsesLegacyCatalog
+    ? null
+    : activePropertyCatalog.categoryCounts;
+  const activeCategoryCountsExact = Boolean(
+    !activeUsesLegacyCatalog && activePropertyCatalog.categoryCountsExact,
+  );
+  const pickerSidebarCategoryCounts = resolveWidgetCatalogSidebarCounts({
+    requestSettled: activeRequestSettled,
+    search: trimmedDebouncedPickerSearch,
+    baseCategoryCounts: basePropertyCatalog.categoryCounts,
+    baseCategoryCountsExact: basePropertyCatalog.categoryCountsExact,
+    allSearchCategoryCounts: allSearchPropertyCatalog.categoryCounts,
+    allSearchCategoryCountsExact: allSearchPropertyCatalog.categoryCountsExact,
+  });
+  const pickerSidebarCategoryCountsExact = Boolean(pickerSidebarCategoryCounts);
+  const activeCatalogLoading = isWidgetCatalogInventoryLoading({
+    requestSettled: activeRequestSettled,
+    usesLegacyCatalog: activeUsesLegacyCatalog,
+    legacyCatalogLoading: activeLegacyMetricCatalog.isLoading,
+    propertyCatalogLoading: activePropertyCatalog.isLoading,
+    propertyCatalogSearchPending:
+      activePropertyCatalog.isRemoteCatalogSearchPending,
+    propertyCatalogNotReady: isPropertyCatalogNotReadyError(
+      activePropertyCatalog.error,
+    ),
+  });
+  const paginatedTotal =
+    !activeRequestSettled || activeCatalogLoading
+      ? null
+      : activeUsesLegacyCatalog
+        ? activeLegacyMetricCatalog.total
+        : getWidgetCatalogExactResultCount({
+            request: activeCatalogRequest,
+            categoryCounts: activeCategoryCounts,
+            categoryCountsExact: activeCategoryCountsExact,
+            requestSettled: activeRequestSettled,
+          });
+  const fetchNextPage = activeUsesLegacyCatalog
+    ? activeLegacyMetricCatalog.fetchNextPage
+    : activePropertyCatalog.fetchNextPage;
+  const hasNextPage = activeRequestSettled
+    ? activeUsesLegacyCatalog
+      ? activeLegacyMetricCatalog.hasNextPage
+      : Boolean(activePropertyCatalog.hasNextPage)
+    : false;
+  const catalogContinuationKey = activeRequestSettled
+    ? activeUsesLegacyCatalog
+      ? activeLegacyMetricCatalog.continuationKey
+      : activePropertyCatalog.continuationKey
+    : null;
+  const isFetchingNextPage = Boolean(
+    activeRequestSettled &&
+      (activeUsesLegacyCatalog
+        ? activeLegacyMetricCatalog.isFetchingNextPage
+        : activePropertyCatalog.isFetchingNextPage),
+  );
+  const isFetchNextPageError = Boolean(
+    activeRequestSettled &&
+      (activeUsesLegacyCatalog
+        ? activeLegacyMetricCatalog.isFetchNextPageError
+        : activePropertyCatalog.isFetchNextPageError),
+  );
+  const isPaginatedLoading = Boolean(
+    !activeRequestSettled || activeCatalogLoading,
+  );
+
+  const selectedMetricSources = useMemo(
+    () => metrics.map(getWidgetMetricAdapterSource),
+    [metrics],
+  );
+  const targetMetricSource =
+    pickerMetricIndex == null
+      ? null
+      : getWidgetMetricAdapterSource(metrics[pickerMetricIndex] || {});
+  const catalogMetricOptions = useMemo(
+    () =>
+      buildWidgetCatalogPickerOptions({
+        metrics: paginatedMetrics,
+        pickerMode,
+        pickerCategory,
+        search: trimmedDebouncedPickerSearch,
+        requestSettled: activeRequestSettled,
+        selectedMetricSources,
+        targetMetricSource,
+      }),
+    [
+      activeRequestSettled,
+      paginatedMetrics,
+      pickerCategory,
+      pickerMode,
+      selectedMetricSources,
+      targetMetricSource,
+      trimmedDebouncedPickerSearch,
+    ],
+  );
+
+  const cursorAttributeOptions = useMemo(
+    () => buildWidgetCursorAttributeOptions(cursorAttributes, pickerMode),
+    [cursorAttributes, pickerMode],
+  );
+
+  const pickerMetricOptions = useMemo(
+    () =>
+      mergeWidgetCursorAttributeOptions(
+        catalogMetricOptions,
+        cursorAttributeOptions,
+        cursorAttributePickerActive,
+      ),
+    [catalogMetricOptions, cursorAttributeOptions, cursorAttributePickerActive],
+  );
+
+  const isPickerInventoryLoading = isPaginatedLoading;
 
   // Chart tab — axis config
   const [axisConfig, setAxisConfig] = useState({
@@ -1343,13 +2649,6 @@ export default function WidgetEditorView() {
       };
     });
 
-  // Fetch available metrics — pass workflow so backend returns workflow-specific metrics
-  const {
-    data: availableMetrics,
-    isLoading: _metricsLoading,
-    error: _metricsError,
-  } = useDashboardMetrics([]);
-
   // Initialize from existing widget when editing
   useEffect(() => {
     if (initialized) return;
@@ -1360,6 +2659,8 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
+        // undefined = nothing to restore; null = all visible; array = saved keys.
+        pendingVisibleSeriesRef.current = cc.visible_series;
         const { timePreset: initialPreset, customDateRange: initialRange } =
           resolveInitialTimeRange(
             qc.timeRange || qc.time_range,
@@ -1398,8 +2699,10 @@ export default function WidgetEditorView() {
           return {
             ...m,
             id: m.name || m.id,
+            registryId: m.property_id || m.propertyId,
             name: m.displayName || m.display_name || m.name || m.id,
             type: frontendType,
+            dataType: m.dataType || m.data_type || m.attribute_type || "number",
             source,
             filters: restoredFilters,
           };
@@ -1434,8 +2737,10 @@ export default function WidgetEditorView() {
         const savedBreakdowns = (qc.breakdowns || []).map((b) => ({
           ...b,
           id: b.id || b.name,
+          registryId: b.property_id || b.propertyId,
           name: b.displayName || b.display_name || b.name || b.id,
           type: bdTypeMap[b.type] || b.type || "system",
+          dataType: b.dataType || b.data_type || b.attribute_type || "string",
           source:
             b.source ||
             (qc.workflow === "simulation"
@@ -1449,131 +2754,6 @@ export default function WidgetEditorView() {
       }
     }
   }, [isEditing, dashboard, widgetId, initialized]);
-
-  // Build metric options from unified metrics response
-  const metricOptions = useMemo(() => {
-    // New unified format: availableMetrics.metrics is a flat array
-    const unified = availableMetrics?.metrics;
-    if (unified && Array.isArray(unified)) {
-      return unified.map((m) => {
-        const categoryMap = {
-          system_metric: "system",
-          systemMetric: "system",
-          eval_metric: "eval_metric",
-          evalMetric: "eval_metric",
-          annotation_metric: "annotation",
-          annotationMetric: "annotation",
-          custom_attribute: "custom_attribute",
-          customAttribute: "custom_attribute",
-          custom_column: "custom_column",
-          customColumn: "custom_column",
-        };
-        return {
-          id: m.name,
-          // CamelCaseJSONRenderer converts display_name -> displayName
-          name: m.displayName || m.display_name || m.name,
-          type: categoryMap[m.category] || m.category,
-          source: m.source,
-          sources: m.sources,
-          dataType: m.type || "number",
-          outputType: m.outputType || m.output_type,
-          columnDataType: m.dataType || m.data_type,
-          configIds: m.configIds || m.config_ids,
-          evalKey: m.evalKey || m.eval_key,
-          allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
-          unit: m.unit,
-        };
-      });
-    }
-    // Fallback: old grouped format (backward compat)
-    const opts = [];
-    (
-      availableMetrics?.systemMetrics ||
-      availableMetrics?.system_metrics ||
-      []
-    ).forEach((m) => {
-      opts.push({
-        id: m.name,
-        name: m.displayName || m.display_name || m.name,
-        type: "system",
-        source: "traces",
-        dataType: m.type || "string",
-        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
-      });
-    });
-    (
-      availableMetrics?.evalMetrics ||
-      availableMetrics?.eval_metrics ||
-      []
-    ).forEach((m) => {
-      opts.push({
-        id: m.name,
-        name: m.displayName || m.display_name || m.name,
-        type: "eval_metric",
-        source: "datasets",
-        dataType: "number",
-        outputType: m.outputType || m.output_type,
-        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
-      });
-    });
-    (
-      availableMetrics?.annotationMetrics ||
-      availableMetrics?.annotation_metrics ||
-      []
-    ).forEach((m) => {
-      opts.push({
-        id: m.name,
-        name: m.displayName || m.display_name || m.name,
-        type: "annotation",
-        source: "traces",
-        dataType: "number",
-        outputType: m.outputType || m.output_type,
-        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
-      });
-    });
-    (
-      availableMetrics?.customAttributes ||
-      availableMetrics?.custom_attributes ||
-      []
-    ).forEach((m) => {
-      opts.push({
-        id: m.name,
-        name: m.displayName || m.display_name || m.name,
-        type: "custom_attribute",
-        source: "traces",
-        dataType: m.type || "string",
-        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
-      });
-    });
-    (
-      availableMetrics?.customColumns ||
-      availableMetrics?.custom_columns ||
-      []
-    ).forEach((m) => {
-      opts.push({
-        id: m.name,
-        name: m.displayName || m.display_name || m.name,
-        type: "custom_column",
-        source: "datasets",
-        dataType: m.type || "number",
-        columnDataType: m.dataType || m.data_type,
-        allowedAggregations: m.allowedAggregations || m.allowed_aggregations,
-      });
-    });
-    return opts;
-  }, [availableMetrics]);
-
-  const _filteredMetricOptions = useMemo(() => {
-    let opts = metricOptions;
-    if (pickerCategory !== "all") {
-      opts = opts.filter((o) => o.type === pickerCategory);
-    }
-    if (pickerSearch.trim()) {
-      const q = pickerSearch.toLowerCase();
-      opts = opts.filter((o) => o.name.toLowerCase().includes(q));
-    }
-    return opts;
-  }, [metricOptions, pickerCategory, pickerSearch]);
 
   // Map frontend type keys to backend metric_type values
   const toBackendType = (type) => {
@@ -1598,53 +2778,17 @@ export default function WidgetEditorView() {
     return map[backendType] || backendType || "system";
   };
 
-  const toApiFilterOperator = (operator) =>
-    DASHBOARD_FILTER_OP_TO_API[operator] || operator;
-
-  const toDashboardFilterOperator = (operator, filterType) => {
-    if (operator === "in") return "contains";
-    if (operator === "not_in") return "not_contains";
-    if (operator === "contains") return "str_contains";
-    if (operator === "not_contains") return "str_not_contains";
-    if (operator === "is_not_null") return "is_set";
-    if (operator === "is_null") return "is_not_set";
-    if (operator === "equals")
-      return filterType === "number" || filterType === "datetime"
-        ? "equal_to"
-        : "contains";
-    if (operator === "not_equals")
-      return filterType === "number" || filterType === "datetime"
-        ? "not_equal_to"
-        : "not_contains";
-    return operator;
-  };
-
-  const normalizeDashboardDataType = (dataType) => {
-    const filterType = normalizeFilterType(dataType || "string");
-    if (filterType === "datetime") return "date";
-    if (filterType === "categorical") return "string";
-    return filterType;
-  };
-
   const buildFilterPayload = (f) => {
-    const filterType = normalizeFilterType(f.dataType || "string");
-    const filterOp = toApiFilterOperator(f.operator);
-    if (!isAllowedFilterOperator(filterType, filterOp)) return null;
-
-    const filterValue = coerceFilterValue(f.value, filterOp, filterType);
-    const colType = normalizeColumnType(DASHBOARD_TYPE_TO_COL_TYPE[f.type]);
+    const filterConfig = buildWidgetFilterConfig(f);
+    if (!filterConfig) return null;
 
     return {
       column_id: f.id,
+      ...(f.registryId && { property_id: f.registryId }),
       ...(f.name && { display_name: f.name }),
       ...(f.source && { source: f.source }),
       ...(f.outputType && { output_type: f.outputType }),
-      filter_config: {
-        filter_type: filterType,
-        filter_op: filterOp,
-        filter_value: filterValue,
-        ...(colType && { col_type: colType }),
-      },
+      filter_config: filterConfig,
     };
   };
 
@@ -1655,9 +2799,10 @@ export default function WidgetEditorView() {
         f.metric_type || f.metricType || f.type || "system_metric";
       return {
         id: f.metric_name || f.metricName || f.id,
+        registryId: f.property_id || f.propertyId,
         name: f.metric_name || f.metricName || f.name || f.id || "",
         type: toDashboardFilterType(backendType),
-        dataType: normalizeDashboardDataType(
+        dataType: normalizeWidgetDashboardDataType(
           f.dataType || f.data_type || "string",
         ),
         source: f.source || fallbackSource,
@@ -1672,29 +2817,18 @@ export default function WidgetEditorView() {
       };
     }
 
-    const filterType = normalizeFilterType(config.filter_type || "string");
     const colType = normalizeColumnType(config.col_type);
     const dashboardType =
       COL_TYPE_TO_DASHBOARD_TYPE[colType] || toDashboardFilterType(f.type);
-    const operator = toDashboardFilterOperator(config.filter_op, filterType);
-    const isMulti = operator === "contains" || operator === "not_contains";
-    const value = NO_VALUE_OPERATORS.has(operator)
-      ? ""
-      : isMulti
-        ? Array.isArray(config.filter_value)
-          ? config.filter_value
-          : [config.filter_value].filter((v) => v !== null && v !== undefined)
-        : config.filter_value ?? (filterType === "number" ? "" : []);
 
     return {
       id: f.column_id,
+      registryId: f.property_id || f.propertyId,
       name: f.display_name || f.column_id,
       type: dashboardType,
-      dataType: normalizeDashboardDataType(filterType),
       source: f.source || fallbackSource,
       outputType: f.output_type,
-      operator,
-      value,
+      ...restoreWidgetFilterConfig(config),
     };
   };
 
@@ -1708,6 +2842,7 @@ export default function WidgetEditorView() {
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
+      ...(m.registryId && { property_id: m.registryId }),
       display_name: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
@@ -1723,6 +2858,13 @@ export default function WidgetEditorView() {
       if (m.outputType) base.output_type = m.outputType;
     } else if (backendType === "custom_attribute") {
       base.attribute_key = m.id;
+      // Preserve the typed-Map family returned by the metric catalog. Omitting
+      // this field made the API default numeric attributes (for example
+      // call.total_turns) to string and reject avg/percentile queries before
+      // ClickHouse was reached.
+      base.attribute_type = normalizeWidgetDashboardDataType(
+        m.dataType || m.data_type || "string",
+      );
     } else if (backendType === "custom_column") {
       base.column_id = m.id;
       if (m.columnDataType) base.data_type = m.columnDataType;
@@ -1730,15 +2872,7 @@ export default function WidgetEditorView() {
     // Per-metric filters
     if (m.filters && m.filters.length > 0) {
       base.filters = m.filters
-        .filter(
-          (f) =>
-            f.id &&
-            (NO_VALUE_OPERATORS.has(f.operator) ||
-              (f.value &&
-                (Array.isArray(f.value)
-                  ? f.value.length > 0
-                  : f.value !== ""))),
-        )
+        .filter(hasWidgetFilterValue)
         .map((f) => buildFilterPayload(f))
         .filter(Boolean);
     }
@@ -1750,12 +2884,15 @@ export default function WidgetEditorView() {
     // b.id = backend key
     const base = {
       name: b.id,
+      ...(b.registryId && { property_id: b.registryId }),
       display_name: b.name || b.id,
       type: backendType,
       source: b.source || "traces",
     };
     if (backendType === "custom_attribute") {
-      base.attribute_type = "string";
+      base.attribute_type = normalizeWidgetDashboardDataType(
+        b.dataType || b.data_type || "string",
+      );
     }
     if (backendType === "annotation_metric") {
       base.label_id = b.id;
@@ -1776,15 +2913,7 @@ export default function WidgetEditorView() {
       granularity,
       metrics: metrics.map((m, i) => buildMetricPayload(m, i)),
       filters: filters
-        .filter(
-          (f) =>
-            f.id &&
-            (NO_VALUE_OPERATORS.has(f.operator) ||
-              (f.value &&
-                (Array.isArray(f.value)
-                  ? f.value.length > 0
-                  : f.value !== ""))),
-        )
+        .filter(hasWidgetFilterValue)
         .map((f) => buildFilterPayload(f))
         .filter(Boolean),
       breakdowns: breakdowns
@@ -1793,6 +2922,169 @@ export default function WidgetEditorView() {
     };
   }, [timePreset, customDateRange, granularity, metrics, filters, breakdowns]);
 
+  const previewQueryConfig = buildQueryConfig();
+  const previewQuerySignature = JSON.stringify(previewQueryConfig);
+  currentPreviewSignatureRef.current = previewQuerySignature;
+
+  useEffect(() => {
+    previewGenerationRef.current += 1;
+    previewRequestControllerRef.current?.abort();
+    previewRequestControllerRef.current = null;
+    clearTimeout(previewRequestTimerRef.current);
+    previewRequestTimerRef.current = null;
+    clearTimeout(previewPollTimerRef.current);
+    previewPollTimerRef.current = null;
+    setIsPreviewRefreshing(false);
+    setPreviewFailed(false);
+  }, [previewQuerySignature]);
+
+  useEffect(
+    () => () => {
+      previewGenerationRef.current += 1;
+      previewRequestControllerRef.current?.abort();
+      previewRequestControllerRef.current = null;
+      clearTimeout(previewRequestTimerRef.current);
+      clearTimeout(previewPollTimerRef.current);
+    },
+    [],
+  );
+
+  const runPreviewQuery = useCallback(
+    (queryConfig, { refresh = false } = {}) => {
+      const signature = JSON.stringify(queryConfig);
+      const generation = previewGenerationRef.current + 1;
+      previewGenerationRef.current = generation;
+      clearTimeout(previewPollTimerRef.current);
+      previewPollTimerRef.current = null;
+      const pollingController = createAggregationPollController();
+      // Include the first preview request in the same sub-ten-second action
+      // budget as any pending-response polls. Retry creates a fresh controller.
+      pollingController.start();
+      pollingController.recordAttempt();
+      let refreshWasQueued = false;
+      setPreviewFailed(false);
+
+      const isCurrent = () =>
+        previewGenerationRef.current === generation &&
+        currentPreviewSignatureRef.current === signature;
+
+      const schedulePoll = () => {
+        if (!isCurrent() || previewPollTimerRef.current !== null) return;
+        pollingController.start();
+        const delay = pollingController.nextDelay();
+        if (delay === false) {
+          setIsPreviewRefreshing(false);
+          setPreviewFailed(true);
+          return;
+        }
+        previewPollTimerRef.current = window.setTimeout(() => {
+          previewPollTimerRef.current = null;
+          pollingController.recordAttempt();
+          execute(false);
+        }, delay);
+      };
+
+      const execute = (forceRefresh) => {
+        previewRequestControllerRef.current?.abort();
+        clearTimeout(previewRequestTimerRef.current);
+        const requestController = new AbortController();
+        previewRequestControllerRef.current = requestController;
+        const finishAttempt = () => {
+          clearTimeout(previewRequestTimerRef.current);
+          previewRequestTimerRef.current = null;
+          if (previewRequestControllerRef.current === requestController) {
+            previewRequestControllerRef.current = null;
+          }
+        };
+        const requestTimeoutMs = pollingController.remainingMs(
+          WIDGET_PREVIEW_REQUEST_TIMEOUT_MS,
+        );
+        previewRequestTimerRef.current = window.setTimeout(() => {
+          if (
+            !isCurrent() ||
+            previewRequestControllerRef.current !== requestController
+          ) {
+            return;
+          }
+          finishAttempt();
+          previewGenerationRef.current = generation + 1;
+          requestController.abort();
+          setIsPreviewRefreshing(false);
+          setPreviewFailed(true);
+        }, requestTimeoutMs);
+        mutateDashboardQuery(
+          {
+            queryConfig,
+            refresh: forceRefresh,
+            signal: requestController.signal,
+          },
+          {
+            onSuccess: (response) => {
+              finishAttempt();
+              if (!isCurrent()) return;
+
+              const exactResult = getExactDashboardResult(response);
+              const { isRefreshing, refreshFailed } =
+                getAggregationRefreshState(response);
+              const readState = getExactAggregationReadState(response);
+              const responsePreviewState = getWidgetPreviewState(
+                response?.data?.result,
+                { isSuccess: true },
+              );
+              pollingController.recordSuccess();
+              if (exactResult) {
+                setLastExactPreview({ signature, result: exactResult });
+                setPreviewFailed(false);
+              }
+              if (
+                isRefreshing &&
+                !refreshFailed &&
+                (exactResult || readState === "pending")
+              ) {
+                refreshWasQueued = true;
+                setIsPreviewRefreshing(true);
+                schedulePoll();
+                return;
+              }
+              if (
+                !refreshFailed &&
+                !exactResult &&
+                responsePreviewState === "preparing"
+              ) {
+                refreshWasQueued = true;
+                setIsPreviewRefreshing(true);
+                schedulePoll();
+                return;
+              }
+              setIsPreviewRefreshing(false);
+              if (
+                !exactResult &&
+                (refreshFailed ||
+                  responsePreviewState === "failed" ||
+                  readState !== "complete")
+              ) {
+                setPreviewFailed(true);
+              }
+            },
+            onError: () => {
+              finishAttempt();
+              if (!isCurrent()) return;
+              if (refreshWasQueued && pollingController.recordFailure()) {
+                schedulePoll();
+                return;
+              }
+              setIsPreviewRefreshing(false);
+              setPreviewFailed(true);
+            },
+          },
+        );
+      };
+
+      execute(refresh);
+    },
+    [mutateDashboardQuery],
+  );
+
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
   useEffect(() => {
@@ -1800,10 +3092,10 @@ export default function WidgetEditorView() {
     if (metrics.length > 0 && !customWithoutRange) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
-        queryMutation.mutate(buildQueryConfig());
+        runPreviewQuery(buildQueryConfig());
       }, 400);
     } else {
-      queryMutation.reset();
+      resetDashboardQuery();
     }
     return () => clearTimeout(previewTimerRef.current);
   }, [
@@ -1816,20 +3108,23 @@ export default function WidgetEditorView() {
         (m) =>
           `${m.id}:${m.aggregation}:${JSON.stringify(
             (m.filters || [])
-              .filter((f) => f.id && f.value)
+              .filter((f) => f.id && hasWidgetFilterValue(f))
               .map((f) => ({ id: f.id, op: f.operator, val: f.value })),
           )}`,
       )
       .join(","),
     JSON.stringify(
       filters
-        .filter((f) => f.id && f.value)
+        .filter((f) => f.id && hasWidgetFilterValue(f))
         .map((f) => ({ id: f.id, op: f.operator, val: f.value })),
     ),
     JSON.stringify(breakdowns.filter((b) => b.id).map((b) => b.id)),
+    runPreviewQuery,
+    resetDashboardQuery,
   ]);
 
   const openPicker = (e, mode, targetIndex = null, metricIndex = null) => {
+    setPickerCatalogSession((session) => session + 1);
     setPickerAnchor(e.currentTarget);
     setPickerOpen(true);
     setPickerCategory("all");
@@ -1879,15 +3174,7 @@ export default function WidgetEditorView() {
           const projectIds = [...new Set(obsProjects.map((p) => p.projectId))];
           newMetric.filters = [
             ...(newMetric.filters || []),
-            {
-              id: "project",
-              name: "Project",
-              type: "system",
-              dataType: "string",
-              source: "traces",
-              operator: "contains",
-              value: projectIds,
-            },
+            buildLinkedProjectFilter(projectIds),
           ];
           newMetric._linkedAgents = obsProjects
             .map((p) => p.agentName)
@@ -1908,44 +3195,56 @@ export default function WidgetEditorView() {
     } else if (pickerMode === "filter") {
       // For eval metrics with Pass/Fail or Choices, treat as string (selectable options)
       const evalOt = (option.outputType || "").toUpperCase();
-      const isEvalPassFail =
+      const isEvalCategorical =
         option.type === "eval_metric" &&
-        (evalOt === "PASS_FAIL" || evalOt === "CHOICES");
-      const isNumeric = isEvalPassFail ? false : option.dataType === "number";
+        ["PASS_FAIL", "CHOICE", "CHOICES"].includes(evalOt);
+      const dataType = isEvalCategorical
+        ? "string"
+        : option.dataType || "string";
+      const defaults = getWidgetFilterDefaults(dataType);
       const entry = {
         id: option.id,
+        registryId: option.registryId,
         name: option.name,
         type: option.type,
-        dataType: isEvalPassFail ? "string" : option.dataType || "string",
+        dataType,
+        attributeTypes: option.attributeTypes,
+        attributeTypesExact: option.attributeTypesExact,
         source: option.source || "traces",
         outputType: option.outputType,
-        choices: option.choices,
+        choices: option.choiceOptions || option.choices,
       };
-      const defaultOp = isNumeric ? "equal_to" : "contains";
-      const defaultVal = isNumeric ? "" : [];
       if (pickerTargetIndex != null) {
         const updated = [...filters];
         updated[pickerTargetIndex] = {
           ...updated[pickerTargetIndex],
           ...entry,
-          operator: defaultOp,
-          value: defaultVal,
+          operator: defaults.operator,
+          value: defaults.value,
         };
         setFilters(updated);
-        if (!isNumeric) setPendingFilterOpen(pickerTargetIndex);
+        if (defaults.opensValuePicker) setPendingFilterOpen(pickerTargetIndex);
       } else {
         const newIndex = filters.length;
         setFilters([
           ...filters,
-          { ...entry, operator: defaultOp, value: defaultVal },
+          {
+            ...entry,
+            operator: defaults.operator,
+            value: defaults.value,
+          },
         ]);
-        if (!isNumeric) setPendingFilterOpen(newIndex);
+        if (defaults.opensValuePicker) setPendingFilterOpen(newIndex);
       }
     } else if (pickerMode === "breakdown") {
       const entry = {
         id: option.id,
+        registryId: option.registryId,
         name: option.name,
         type: option.type,
+        dataType: option.dataType || "string",
+        attributeTypes: option.attributeTypes,
+        attributeTypesExact: option.attributeTypesExact,
         source: option.source || "traces",
         outputType: option.outputType,
       };
@@ -1959,19 +3258,26 @@ export default function WidgetEditorView() {
     } else if (pickerMode === "metric_filter" && pickerMetricIndex != null) {
       // Add or replace a per-metric filter
       const mfEvalOt = (option.outputType || "").toUpperCase();
-      const mfIsEvalPassFail =
+      const mfIsEvalCategorical =
         option.type === "eval_metric" &&
-        (mfEvalOt === "PASS_FAIL" || mfEvalOt === "CHOICES");
-      const isNumeric = mfIsEvalPassFail ? false : option.dataType === "number";
+        ["PASS_FAIL", "CHOICE", "CHOICES"].includes(mfEvalOt);
+      const dataType = mfIsEvalCategorical
+        ? "string"
+        : option.dataType || "string";
+      const defaults = getWidgetFilterDefaults(dataType);
       const newFilter = {
         id: option.id,
+        registryId: option.registryId,
         name: option.name,
         type: option.type,
-        dataType: mfIsEvalPassFail ? "string" : option.dataType || "string",
+        dataType,
+        attributeTypes: option.attributeTypes,
+        attributeTypesExact: option.attributeTypesExact,
         source: option.source || "traces",
         outputType: option.outputType,
-        operator: isNumeric ? "equal_to" : "contains",
-        value: isNumeric ? "" : [],
+        choices: option.choiceOptions || option.choices,
+        operator: defaults.operator,
+        value: defaults.value,
       };
       const updated = [...metrics];
       const currentFilters = [...(updated[pickerMetricIndex].filters || [])];
@@ -1990,8 +3296,8 @@ export default function WidgetEditorView() {
         filters: currentFilters,
       };
       setMetrics(updated);
-      // Auto-open value picker for string filters
-      if (!isNumeric) {
+      // Auto-open the retained-value picker for multi-value filters.
+      if (defaults.opensValuePicker) {
         setTimeout(() => {
           const refKey = `${pickerMetricIndex}_${fIdx}`;
           const el = mfValueRefs.current[refKey];
@@ -2036,7 +3342,12 @@ export default function WidgetEditorView() {
   };
 
   const handleRemoveBreakdown = (index) => {
-    setBreakdowns(breakdowns.filter((_, i) => i !== index));
+    const next = breakdowns.filter((_, i) => i !== index);
+    setBreakdowns(next);
+    // Pie needs something to slice by. Fall back here rather than in an effect,
+    // so loading a legacy breakdown-less pie widget for editing doesn't get
+    // silently rewritten before the user touches anything.
+    if (chartType === "pie" && !next.some((b) => b.id)) setChartType("column");
   };
 
   const [saveStatus, setSaveStatus] = useState("idle"); // "idle" | "saving" | "saved"
@@ -2047,13 +3358,16 @@ export default function WidgetEditorView() {
       return;
     }
 
+    // visible_series lives in chart_config since query_config's serializer
+    // rejects unknown fields.
     const data = {
       name: chartName.trim() || "Untitled widget",
-      description: chartDescription,
+      description: chartDescription.trim(),
       query_config: buildQueryConfig(),
       chart_config: {
         chart_type: chartType,
         axis_config: toAxisConfigPayload(axisConfig),
+        visible_series: currentVisibleSeriesKeys(),
       },
     };
 
@@ -2093,37 +3407,44 @@ export default function WidgetEditorView() {
 
   // Chart preview
   // Backend returns: { metrics: [{ name, aggregation, unit, series: [{ name, data: [{ timestamp, value }] }] }] }
-  const previewResult = queryMutation.data?.data?.result;
-  const previewSeries = useMemo(() => {
-    if (!previewResult?.metrics) return [];
-    const allSeries = [];
-    for (const metric of previewResult.metrics) {
-      for (const s of metric.series || []) {
-        const isSingleMetric = previewResult.metrics.length === 1;
-        let seriesLabel;
-        if (s.name === "total") {
-          seriesLabel = `${metric.name} (${metric.aggregation})`;
-        } else if (isSingleMetric) {
-          seriesLabel = s.name;
-        } else {
-          seriesLabel = `${metric.name} / ${s.name} (${metric.aggregation})`;
-        }
-        allSeries.push({
-          name: seriesLabel,
-          unit: metric.unit ?? "",
-          data: (s.data || []).map((point) => ({
-            x: new Date(point.timestamp).getTime(),
-            y: point.value != null ? Number(point.value) : null,
-          })),
-        });
-      }
-    }
-    return allSeries;
-  }, [previewResult]);
+  const activeExactPreview =
+    lastExactPreview?.signature === previewQuerySignature
+      ? lastExactPreview
+      : null;
+  const previewResult = activeExactPreview?.result;
+  const { renderableMetrics: previewRenderableMetrics, series: previewSeries } =
+    useMemo(
+      () => getDashboardMetricSeriesState(previewResult?.metrics),
+      [previewResult?.metrics],
+    );
+
+  // Current selection as stable keys for persistence; null = all visible.
+  const currentVisibleSeriesKeys = useCallback(
+    () =>
+      visibleSeries === null
+        ? null
+        : [...visibleSeries].map((i) => previewSeries[i]?.key).filter(Boolean),
+    [visibleSeries, previewSeries],
+  );
 
   // Auto-select top 10 series when there are more than 10 breakdown series
   const MAX_CHART_SERIES = 10;
   useEffect(() => {
+    if (previewSeries.length === 0) return;
+
+    // Restore a saved selection once, on the first non-empty previewSeries;
+    // consuming the ref lets later re-queries fall through to the default below.
+    if (pendingVisibleSeriesRef.current !== undefined) {
+      const saved = pendingVisibleSeriesRef.current;
+      pendingVisibleSeriesRef.current = undefined;
+      const decision = resolveSavedSelection(saved, previewSeries);
+      // undefined = the saved selection is stale → fall through to the default.
+      if (decision !== undefined) {
+        setVisibleSeries(decision);
+        return;
+      }
+    }
+
     if (previewSeries.length <= MAX_CHART_SERIES) {
       // Show all if within limit
       if (visibleSeries !== null) setVisibleSeries(null);
@@ -2163,6 +3484,8 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
+  const connectsAcrossMissingBuckets =
+    shouldConnectAcrossMissingBuckets(apexType);
 
   const aggColumnLabel = useMemo(
     () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
@@ -2174,6 +3497,13 @@ export default function WidgetEditorView() {
     if (visibleSeries === null) return previewSeries;
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
+
+  // Match the saved-dashboard renderer: null means an absent aggregate
+  // bucket, not zero, so line previews connect the neighbouring exact points.
+  const plottedChartSeries = useMemo(
+    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
+    [chartSeries, connectsAcrossMissingBuckets],
+  );
 
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
@@ -2190,8 +3520,8 @@ export default function WidgetEditorView() {
   );
   const leftAxisFormatConfig = useMemo(() => {
     const leftAxis = axisConfig.leftY || {};
-    const metricUnits = (previewResult?.metrics || []).map(
-      (m) => m?.unit ?? "",
+    const metricUnits = previewRenderableMetrics.map(
+      ({ metric }) => metric?.unit ?? "",
     );
     const isMixedUnits = new Set(metricUnits).size > 1;
     const effectiveUnit = isMixedUnits
@@ -2206,7 +3536,7 @@ export default function WidgetEditorView() {
           "prefix"
         : suggestedLeftAxisUnit.prefixSuffix,
     };
-  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewResult?.metrics]);
+  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewRenderableMetrics]);
 
   useEffect(() => {
     const currentUnit = axisConfig.leftY.unit;
@@ -2243,6 +3573,35 @@ export default function WidgetEditorView() {
     [chartSeries, seriesColorMap],
   );
 
+  // Pie slices are breakdown values, which repeat across metrics — key their
+  // colours by the raw breakdown name so a project stays one colour in every pie.
+  const pieColorMap = useMemo(
+    () =>
+      buildSeriesColorMap([
+        ...new Set(previewSeries.map((s) => s.breakdownName)),
+      ]),
+    [previewSeries],
+  );
+  const pieColorFor = useCallback(
+    (name) => getSeriesColor(name, pieColorMap),
+    [pieColorMap],
+  );
+
+  // A pie needs a category to slice by. `hasBreakdown` mirrors the filter in
+  // buildQueryConfig so the gate matches what is actually queried;
+  // `pieHasBreakdown` is response-driven so legacy saved pies render correctly.
+  const hasBreakdown = breakdowns.some((b) => b.id);
+  const pieHasBreakdown = useMemo(
+    () => previewSeries.some((s) => s.breakdownName !== "total"),
+    [previewSeries],
+  );
+  // From previewSeries, not the top-10-filtered chartSeries: a global cap can
+  // starve one metric of every slice, and groupPieSeries caps per metric.
+  const pieGroups = useMemo(
+    () => (isPie && pieHasBreakdown ? groupPieSeries(previewSeries) : []),
+    [isPie, pieHasBreakdown, previewSeries],
+  );
+
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
     const el = lineChartRef.current;
@@ -2273,74 +3632,6 @@ export default function WidgetEditorView() {
   );
 
   const chartOptions = useMemo(() => {
-    if (isPie) {
-      const pieTotal = chartSeries.reduce(
-        (sum, s) => sum + s.data.reduce((a, pt) => a + (pt.y || 0), 0),
-        0,
-      );
-      const fmtTotal =
-        pieTotal >= 1000000
-          ? `${(pieTotal / 1000000).toFixed(1)}M`
-          : pieTotal >= 1000
-            ? pieTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : pieTotal.toFixed(0);
-      const txtColor = isDark ? "#fff" : "#1a1a2e";
-      return {
-        chart: {
-          type: "donut",
-          toolbar: { show: false },
-          animations: { enabled: true, easing: "easeinout", speed: 400 },
-        },
-        labels: chartSeries.map((s) => s.name),
-        colors: chartColors,
-        plotOptions: {
-          pie: {
-            expandOnClick: false,
-            donut: {
-              size: "58%",
-              labels: {
-                show: true,
-                name: { show: false },
-                value: {
-                  show: true,
-                  fontSize: "36px",
-                  fontWeight: 700,
-                  color: txtColor,
-                  offsetY: 12,
-                  formatter: () => fmtTotal,
-                },
-                total: {
-                  show: true,
-                  showAlways: true,
-                  fontSize: "36px",
-                  fontWeight: 700,
-                  color: txtColor,
-                  label: "",
-                  formatter: () => fmtTotal,
-                },
-              },
-            },
-          },
-        },
-        dataLabels: { enabled: false },
-        legend: { show: false, height: 0 },
-        stroke: { width: 4, colors: [isDark ? "#1e1e2e" : "#fff"] },
-        states: {
-          hover: { filter: { type: "darken", value: 0.92 } },
-          active: { filter: { type: "none" } },
-        },
-        tooltip: {
-          theme: theme.palette.mode,
-          style: { fontSize: "12px" },
-          y: {
-            formatter: (val) =>
-              val >= 1000
-                ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-                : val.toLocaleString(undefined, { maximumFractionDigits: 2 }),
-          },
-        },
-      };
-    }
     const makeFormatter =
       (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
       (val) =>
@@ -2700,7 +3991,6 @@ export default function WidgetEditorView() {
     isLineChart,
     isStacked,
     isHorizontal,
-    isPie,
     chartSeries,
     chartColors,
     theme,
@@ -2711,72 +4001,6 @@ export default function WidgetEditorView() {
     visibleSeries,
   ]);
 
-  // Pie series: sum of all values per series
-  const pieSeries = useMemo(() => {
-    if (!isPie) return [];
-    return chartSeries.map((s) =>
-      s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-    );
-  }, [isPie, chartSeries]);
-
-  // Compute pie connector lines + labels via ref measurement
-  useEffect(() => {
-    if (!isPie || !pieSeries.length) {
-      setPieConnectors([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const container = pieChartRef.current;
-      if (!container) return;
-      const w = container.offsetWidth;
-      const h = container.offsetHeight;
-      // Donut center: horizontally centered, vertically offset for legend (~30px top)
-      const cx = w / 2;
-      const cy = h * 0.48 + 15;
-      const outerR = Math.min(w, h - 40) * 0.33;
-      const total = pieSeries.reduce((a, b) => a + b, 0);
-      if (total === 0) return;
-      const items = [];
-      let cumAngle = -90;
-      pieSeries.forEach((val, i) => {
-        const sliceAngle = (val / total) * 360;
-        const midAngle = cumAngle + sliceAngle / 2;
-        const midRad = (midAngle * Math.PI) / 180;
-        cumAngle += sliceAngle;
-        if (sliceAngle < 3) return;
-        const origIdx = previewSeries.indexOf(chartSeries[i]);
-        const idx = origIdx >= 0 ? origIdx : i;
-        const letter = LETTER_LABELS[idx] || "";
-        const name = chartSeries[i]?.name || "";
-        const fv =
-          val >= 1000
-            ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-        const edgeX = cx + outerR * Math.cos(midRad);
-        const edgeY = cy + outerR * Math.sin(midRad);
-        const elbowDist = outerR + 22;
-        const elbowX = cx + elbowDist * Math.cos(midRad);
-        const elbowY = cy + elbowDist * Math.sin(midRad);
-        const isRight = Math.cos(midRad) >= 0;
-        const endX = isRight ? elbowX + 22 : elbowX - 22;
-        const textX = isRight ? endX + 5 : endX - 5;
-        items.push({
-          edgeX,
-          edgeY,
-          elbowX,
-          elbowY,
-          endX,
-          textX,
-          isRight,
-          line1: `${letter}. ${name}`,
-          line2: fv,
-        });
-      });
-      setPieConnectors(items);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [isPie, pieSeries, chartSeries, previewSeries]);
-
   // Horizontal bar: aggregate each series into one bar
   const barData = useMemo(() => {
     if (!isHorizontal) return null;
@@ -2785,10 +4009,12 @@ export default function WidgetEditorView() {
       return name.length > 25 ? name.slice(0, 22) + "..." : name;
     });
     const values = chartSeries.map((s) => {
-      const avg = getSeriesAverage(s.data);
+      // Same aggregation-aware value the metric card, table and pie use, so
+      // one widget cannot read differently per chart type.
+      const value = getSeriesScalar(s.data, s.aggregation);
       return {
-        value: avg,
-        numericValue: avg == null ? 0 : avg,
+        value,
+        numericValue: value == null ? 0 : value,
       };
     });
     return {
@@ -2808,10 +4034,53 @@ export default function WidgetEditorView() {
   const canPreview =
     metrics.length > 0 && !(timePreset === "custom" && !customDateRange);
 
+  const serverPreviewState = getWidgetPreviewState(
+    queryMutation.data?.data?.result,
+    queryMutation,
+  );
+  const previewPreparing =
+    !previewFailed &&
+    canPreview &&
+    !activeExactPreview &&
+    (queryMutation.isPending ||
+      isPreviewRefreshing ||
+      serverPreviewState === "preparing");
+  const previewActivity = previewPreparing && !activeExactPreview;
+  const previewFailureBlocksRendering = shouldBlockWidgetPreviewForFailure({
+    previewFailed,
+    hasExactPreview: Boolean(activeExactPreview),
+  });
+
+  useEffect(() => {
+    if (!previewActivity) return undefined;
+    const timer = setTimeout(() => {
+      previewGenerationRef.current += 1;
+      clearTimeout(previewPollTimerRef.current);
+      previewPollTimerRef.current = null;
+      setIsPreviewRefreshing(false);
+      setPreviewFailed(true);
+    }, WIDGET_PREVIEW_MAX_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [previewActivity]);
+
+  const retryPreview = useCallback(() => {
+    setPreviewFailed(false);
+    runPreviewQuery(buildQueryConfig(), { refresh: true });
+  }, [buildQueryConfig, runPreviewQuery]);
+
   const previewLoading =
-    queryMutation.isPending ||
-    (isEditing && !initialized) ||
-    (canPreview && queryMutation.isIdle);
+    !previewFailed &&
+    ((queryMutation.isPending && !activeExactPreview) ||
+      (isEditing && isDashboardLoading) ||
+      (canPreview && queryMutation.isIdle && !activeExactPreview));
+
+  const emptyPreviewMessage = canPreview
+    ? activeExactPreview
+      ? "No data for this selection"
+      : previewPreparing
+        ? AGGREGATION_PREPARING_MESSAGE
+        : "No data for this selection"
+    : "Fill in the required fields to see preview";
 
   const cleanupDragRef = useRef(null);
   const handleDragStart = useCallback(
@@ -2855,6 +4124,31 @@ export default function WidgetEditorView() {
       if (cleanupDragRef.current) cleanupDragRef.current();
     };
   }, []);
+
+  const editorLoadState = getWidgetEditorLoadState({
+    isEditing: isRouteEditing,
+    isLoading: isDashboardLoading,
+    isError: isDashboardError,
+    dashboard,
+    widgetId,
+  });
+  if (editorLoadState === "error") {
+    return (
+      <WidgetEditorLoadFailure
+        kind="error"
+        onRetry={() => refetchDashboard()}
+        onBack={() => navigate(dashboardDetailUrl)}
+      />
+    );
+  }
+  if (editorLoadState === "missing") {
+    return (
+      <WidgetEditorLoadFailure
+        kind="missing"
+        onBack={() => navigate(dashboardDetailUrl)}
+      />
+    );
+  }
 
   return (
     <Box
@@ -2954,29 +4248,91 @@ export default function WidgetEditorView() {
           </Typography>
         )}
 
-        {/* Inline editable description */}
-        <InputBase
+        {/* Description — a capped preview in the bar; the full text is read
+            and edited in a popover, so the bar can't be blown out by length. */}
+        <Box ref={descSlotRef} sx={{ display: "flex", minWidth: 0 }}>
+          {trimmedDescription ? (
+            <TruncatedTooltipText text={trimmedDescription}>
+              {(measureRef) => (
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  gap={0.5}
+                  role={isReadOnly ? undefined : "button"}
+                  tabIndex={isReadOnly ? undefined : 0}
+                  aria-label={
+                    isReadOnly
+                      ? undefined
+                      : `Edit description: ${trimmedDescription}`
+                  }
+                  onClick={() => !isReadOnly && setDescOpen(true)}
+                  onKeyDown={(e) => {
+                    if (isReadOnly) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setDescOpen(true);
+                    }
+                  }}
+                  sx={{
+                    minWidth: 0,
+                    maxWidth: 260,
+                    px: 0.75,
+                    py: 0.25,
+                    borderRadius: 1,
+                    color: "text.secondary",
+                    cursor: isReadOnly ? "default" : "pointer",
+                    transition: "background-color 0.15s, color 0.15s",
+                    "&:hover": isReadOnly
+                      ? undefined
+                      : { bgcolor: "action.hover", color: "text.primary" },
+                    "&:focus-visible": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      outlineOffset: 2,
+                    },
+                  }}
+                >
+                  <Iconify
+                    icon="mdi:text-box-outline"
+                    width={14}
+                    sx={{ flexShrink: 0 }}
+                  />
+                  <Typography
+                    ref={measureRef}
+                    noWrap
+                    sx={{ fontSize: "13px", minWidth: 0 }}
+                  >
+                    {trimmedDescription}
+                  </Typography>
+                </Stack>
+              )}
+            </TruncatedTooltipText>
+          ) : (
+            !isReadOnly && (
+              <Button
+                size="small"
+                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                onClick={() => setDescOpen(true)}
+                sx={{
+                  flexShrink: 0,
+                  fontSize: "13px",
+                  fontWeight: 400,
+                  color: "text.disabled",
+                  "&:hover": { color: "text.secondary" },
+                }}
+              >
+                Add description
+              </Button>
+            )
+          )}
+        </Box>
+
+        <WidgetDescriptionPopover
+          open={descOpen}
+          anchorEl={descSlotRef.current}
           value={chartDescription}
-          onChange={(e) => setChartDescription(e.target.value)}
-          onClick={() => !isReadOnly && !editingDesc && setEditingDesc(true)}
-          onBlur={() => setEditingDesc(false)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") setEditingDesc(false);
-          }}
-          readOnly={isReadOnly || !editingDesc}
-          autoFocus={editingDesc}
-          placeholder="+ Add desc..."
-          sx={{
-            minWidth: 140,
-            maxWidth: 200,
-            fontSize: "13px",
-            color: chartDescription ? "text.secondary" : "text.disabled",
-            cursor: isReadOnly ? "default" : editingDesc ? "text" : "pointer",
-            "&:hover": { color: "text.secondary" },
-            "& .MuiInputBase-input": {
-              padding: 0,
-            },
-          }}
+          onChange={setChartDescription}
+          onClose={() => setDescOpen(false)}
         />
 
         {/* Spacer */}
@@ -3036,15 +4392,24 @@ export default function WidgetEditorView() {
             <MenuItem
               onClick={() => {
                 setMoreMenuAnchor(null);
+                const source = dashboard?.widgets?.find(
+                  (w) => w.id === widgetId,
+                );
                 const dupData = {
                   name: `${chartName || "Untitled widget"} (copy)`,
-                  width: 12,
-                  height: 1,
-                  position: 0,
+                  description: trimmedDescription,
+                  // Carry the source widget's own layout and sit the copy next
+                  // to it, as the backend's duplicate endpoint does. The
+                  // hardcoded height of 1 fell under the card's >50 guard, so
+                  // it silently rendered at the default height instead.
+                  width: source?.width || 12,
+                  height: source?.height || DEFAULT_WIDGET_HEIGHT,
+                  position: (source?.position ?? 0) + 1,
                   query_config: buildQueryConfig(),
                   chart_config: {
                     chart_type: chartType,
                     axis_config: toAxisConfigPayload(axisConfig),
+                    visible_series: currentVisibleSeriesKeys(),
                   },
                 };
                 createMutation
@@ -3075,7 +4440,9 @@ export default function WidgetEditorView() {
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                // Agg column header is aggregation-derived, so the value must
+                // honour that aggregation too.
+                const avg = getSeriesScalar(s.data, s.aggregation);
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -3111,7 +4478,9 @@ export default function WidgetEditorView() {
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                // Agg column header is aggregation-derived, so the value must
+                // honour that aggregation too.
+                const avg = getSeriesScalar(s.data, s.aggregation);
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -3130,18 +4499,24 @@ export default function WidgetEditorView() {
           </MenuItem>
           <Divider />
           <MenuItem
-            disabled={metrics.length === 0}
+            disabled={metrics.length === 0 || isPreviewRefreshing}
             onClick={() => {
               setMoreMenuAnchor(null);
               if (metrics.length > 0) {
-                queryMutation.mutate(buildQueryConfig());
+                runPreviewQuery(buildQueryConfig(), { refresh: true });
               }
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:refresh" width={18} />
+              {isPreviewRefreshing ? (
+                <CircularProgress size={16} />
+              ) : (
+                <Iconify icon="mdi:refresh" width={18} />
+              )}
             </ListItemIcon>
-            <ListItemText>Refresh Data</ListItemText>
+            <ListItemText>
+              {isPreviewRefreshing ? "Refreshing Data" : "Refresh Data"}
+            </ListItemText>
           </MenuItem>
         </Menu>
 
@@ -3331,13 +4706,48 @@ export default function WidgetEditorView() {
                 {CHART_TYPES.map((ct, i) => {
                   const prev = i > 0 ? CHART_TYPES[i - 1] : null;
                   const showDivider = prev && prev.group !== ct.group;
+                  // A pie shows parts of one whole, so it needs a breakdown to
+                  // slice by — without one every metric is a single value and
+                  // would render as a meaningless 100% circle (TH-6530).
+                  const pieDisabled = ct.value === "pie" && !hasBreakdown;
+                  const label = (
+                    <Stack direction="row" alignItems="center" gap={0.5}>
+                      <Iconify icon={ct.icon} width={16} />
+                      {ct.label}
+                    </Stack>
+                  );
                   return [
                     showDivider && <Divider key={`div-${i}`} />,
-                    <MenuItem key={ct.value} value={ct.value}>
-                      <Stack direction="row" alignItems="center" gap={0.5}>
-                        <Iconify icon={ct.icon} width={16} />
-                        {ct.label}
-                      </Stack>
+                    // The tooltip goes inside the MenuItem, never around it:
+                    // Select matches its current value against `props.value` on
+                    // its direct children, and a wrapper has none. A legacy
+                    // breakdown-less pie widget is exactly the case where the
+                    // disabled item is also the selected one, so wrapping it
+                    // made MUI log an out-of-range value and forward option
+                    // props onto the wrapper.
+                    <MenuItem
+                      key={ct.value}
+                      value={ct.value}
+                      disabled={pieDisabled}
+                    >
+                      {pieDisabled ? (
+                        <CustomTooltip
+                          show
+                          size="small"
+                          title="Add a breakdown to slice the pie by"
+                          placement="right"
+                        >
+                          {/* A disabled MenuItem sets pointer-events: none, so
+                              the trigger has to opt back in to receive hover —
+                              and span the whole row, or the dead area beside
+                              the label swallows the pointer. */}
+                          <Stack sx={{ pointerEvents: "auto", width: "100%" }}>
+                            {label}
+                          </Stack>
+                        </CustomTooltip>
+                      ) : (
+                        label
+                      )}
                     </MenuItem>,
                   ];
                 })}
@@ -3357,7 +4767,7 @@ export default function WidgetEditorView() {
             }}
           >
             {/* Bar chart — horizontal bars (left) + search/checkboxes (right) */}
-            {isHorizontal && previewLoading && (
+            {isHorizontal && (previewLoading || previewPreparing) && (
               <Box
                 sx={{
                   flex: 1,
@@ -3366,24 +4776,39 @@ export default function WidgetEditorView() {
                   alignItems: "center",
                 }}
               >
-                <CircularProgress size={24} />
+                <WidgetPreviewStatus
+                  state={previewPreparing ? "preparing" : "loading"}
+                />
               </Box>
             )}
-            {isHorizontal && !previewLoading && previewSeries.length === 0 && (
-              <Box
-                sx={{
-                  flex: 1,
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  Fill in the required fields to see preview
-                </Typography>
+            {isHorizontal && previewFailureBlocksRendering && (
+              <Box sx={{ p: 2 }}>
+                <WidgetPreviewStatus state="failed" onRetry={retryPreview} />
               </Box>
             )}
-            {isHorizontal && previewSeries.length > 0 && !previewLoading
+            {isHorizontal &&
+              !previewLoading &&
+              !previewPreparing &&
+              !previewFailureBlocksRendering &&
+              previewSeries.length === 0 && (
+                <Box
+                  sx={{
+                    flex: 1,
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                  }}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    {emptyPreviewMessage}
+                  </Typography>
+                </Box>
+              )}
+            {isHorizontal &&
+            previewSeries.length > 0 &&
+            !previewLoading &&
+            !previewPreparing &&
+            !previewFailureBlocksRendering
               ? (() => {
                   const maxVal = Math.max(
                     ...barData.series[0].data.map(Math.abs),
@@ -3754,11 +5179,15 @@ export default function WidgetEditorView() {
                   overflow: "hidden",
                 }}
               >
-                {previewLoading ? (
-                  <CircularProgress size={24} />
+                {previewLoading || previewPreparing ? (
+                  <WidgetPreviewStatus
+                    state={previewPreparing ? "preparing" : "loading"}
+                  />
+                ) : previewFailureBlocksRendering ? (
+                  <WidgetPreviewStatus state="failed" onRetry={retryPreview} />
                 ) : previewSeries.length > 0 ? (
                   <Box sx={{ width: "100%", height: "100%" }}>
-                    {isMetricCard ? (
+                    {isMetricCard || (isPie && !pieHasBreakdown) ? (
                       <Stack
                         direction="row"
                         gap={3}
@@ -3767,7 +5196,15 @@ export default function WidgetEditorView() {
                         sx={{ height: "100%" }}
                       >
                         {chartSeries.map((s, i) => {
-                          const avg = getSeriesAverage(s.data);
+                          // Honour the metric's own aggregation and unit, so
+                          // this matches the saved widget exactly.
+                          const value = getSeriesScalar(s.data, s.aggregation);
+                          const cellConfig = s.unit
+                            ? {
+                                ...leftAxisFormatConfig,
+                                ...getUnitRendering(s.unit),
+                              }
+                            : leftAxisFormatConfig;
                           return (
                             <Box key={i} sx={{ textAlign: "center" }}>
                               <Typography
@@ -3776,7 +5213,11 @@ export default function WidgetEditorView() {
                                   color: chartColors[i % chartColors.length],
                                 }}
                               >
-                                {avg == null ? "—" : formatValFn(avg)}
+                                {value == null
+                                  ? "—"
+                                  : formatValueWithConfig(value, cellConfig, {
+                                      fallbackDecimals: autoDecimals,
+                                    })}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -3951,81 +5392,12 @@ export default function WidgetEditorView() {
                         );
                       })()
                     ) : isPie ? (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexDirection: "column",
-                          width: "100%",
-                          height: "100%",
-                        }}
-                      >
-                        {chartSeries.length > 1 && (
-                          <ChartLegend
-                            items={chartSeries.map((s) => s.name)}
-                            colors={chartColors}
-                          />
-                        )}
-                        <Box
-                          ref={pieChartRef}
-                          sx={{
-                            position: "relative",
-                            flex: 1,
-                            minHeight: 0,
-                          }}
-                        >
-                          <ReactApexChart
-                            key={`pie-${axisConfig.leftY.unit}-${axisConfig.leftY.prefixSuffix}-${axisConfig.leftY.abbreviation}-${axisConfig.leftY.decimals}`}
-                            options={chartOptions}
-                            series={pieSeries}
-                            type="donut"
-                            height="100%"
-                          />
-                          {pieConnectors.length > 0 && (
-                            <svg
-                              style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                height: "100%",
-                                pointerEvents: "none",
-                                overflow: "visible",
-                              }}
-                            >
-                              {pieConnectors.map((c, i) => (
-                                <g key={i}>
-                                  <polyline
-                                    points={`${c.edgeX},${c.edgeY} ${c.elbowX},${c.elbowY} ${c.endX},${c.elbowY}`}
-                                    fill="none"
-                                    stroke={
-                                      isDark
-                                        ? "rgba(255,255,255,0.35)"
-                                        : "rgba(0,0,0,0.25)"
-                                    }
-                                    strokeWidth="1"
-                                  />
-                                  <text
-                                    x={c.textX}
-                                    y={c.elbowY - 6}
-                                    textAnchor={c.isRight ? "start" : "end"}
-                                    fill={isDark ? "#fff" : "#1a1a2e"}
-                                    fontSize="12"
-                                    fontWeight="500"
-                                    fontFamily="inherit"
-                                  >
-                                    <tspan x={c.textX} dy="0">
-                                      {c.line1}
-                                    </tspan>
-                                    <tspan x={c.textX} dy="15">
-                                      {c.line2}
-                                    </tspan>
-                                  </text>
-                                </g>
-                              ))}
-                            </svg>
-                          )}
-                        </Box>
-                      </Box>
+                      <WidgetPieCharts
+                        groups={pieGroups}
+                        colorFor={pieColorFor}
+                        baseFormatConfig={leftAxisFormatConfig}
+                        fallbackDecimals={autoDecimals}
+                      />
                     ) : outOfRangeWarning ? (
                       <Box
                         sx={{
@@ -4062,7 +5434,7 @@ export default function WidgetEditorView() {
                           <ReactApexChart
                             key={`${axisConfig.leftY.unit}-${axisConfig.leftY.prefixSuffix}-${axisConfig.leftY.abbreviation}-${axisConfig.leftY.decimals}-${axisConfig.leftY.outOfBounds}-${axisConfig.rightY.unit}-${axisConfig.rightY.prefixSuffix}-${axisConfig.rightY.abbreviation}-${axisConfig.rightY.decimals}-${axisConfig.rightY.outOfBounds}-${JSON.stringify(axisConfig.seriesAxis)}-${axisConfig.rightY.visible}`}
                             options={chartOptions}
-                            series={chartSeries}
+                            series={plottedChartSeries}
                             type={apexType}
                             height="100%"
                           />
@@ -4072,7 +5444,7 @@ export default function WidgetEditorView() {
                   </Box>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
-                    Fill in the required fields to see preview
+                    {emptyPreviewMessage}
                   </Typography>
                 )}
               </Box>
@@ -4200,7 +5572,8 @@ export default function WidgetEditorView() {
               )}
 
             {/* Pie chart: summary columns below the chart */}
-            {isPie && previewSeries.length > 0 && (
+            {/* Pie chart: one summary column per metric */}
+            {isPie && pieGroups.length > 0 && (
               <Box
                 sx={{
                   flex: 1,
@@ -4211,47 +5584,43 @@ export default function WidgetEditorView() {
                   overflow: "auto",
                 }}
               >
-                {chartSeries.map((s, i) => {
-                  const origIdx = previewSeries.indexOf(s);
-                  const idx = origIdx >= 0 ? origIdx : i;
-                  return (
-                    <Box
-                      key={i}
+                {pieGroups.map((g, i) => (
+                  <Box
+                    key={g.metricIndex}
+                    sx={{
+                      flex: 1,
+                      textAlign: "center",
+                      py: 2,
+                      px: 1.5,
+                      borderRight:
+                        i < pieGroups.length - 1
+                          ? `1px solid ${theme.palette.divider}`
+                          : "none",
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
                       sx={{
-                        flex: 1,
-                        textAlign: "center",
-                        py: 2,
-                        px: 1.5,
-                        borderRight:
-                          i < chartSeries.length - 1
-                            ? `1px solid ${theme.palette.divider}`
-                            : "none",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        color: "text.primary",
                       }}
                     >
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 600,
-                          fontSize: "13px",
-                          color: "text.primary",
-                        }}
-                      >
-                        {LETTER_LABELS[idx]} {s.name}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                          fontSize: "11px",
-                          display: "block",
-                        }}
-                      >
-                        {metrics[idx]?.name || ""} -{" "}
-                        {metrics[idx]?.aggregation || "avg"}
-                      </Typography>
-                    </Box>
-                  );
-                })}
+                      {LETTER_LABELS[g.metricIndex]} {g.metricName}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        fontSize: "11px",
+                        display: "block",
+                      }}
+                    >
+                      {g.aggregation} · {g.slices.length}{" "}
+                      {g.slices.length === 1 ? "slice" : "slices"}
+                    </Typography>
+                  </Box>
+                ))}
               </Box>
             )}
 
@@ -4297,8 +5666,14 @@ export default function WidgetEditorView() {
                         .includes(tableSearch.toLowerCase()),
                   )
                   .sort((a, b) => {
-                    const avgA = getSeriesAverage(previewSeries[a].data);
-                    const avgB = getSeriesAverage(previewSeries[b].data);
+                    const avgA = getSeriesScalar(
+                      previewSeries[a].data,
+                      previewSeries[a].aggregation,
+                    );
+                    const avgB = getSeriesScalar(
+                      previewSeries[b].data,
+                      previewSeries[b].aggregation,
+                    );
                     const scoreA =
                       avgA == null ? Number.NEGATIVE_INFINITY : avgA;
                     const scoreB =
@@ -4462,7 +5837,7 @@ export default function WidgetEditorView() {
                             const s = previewSeries[si];
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
-                            const avg = getSeriesAverage(s.data);
+                            const avg = getSeriesScalar(s.data, s.aggregation);
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,
@@ -4956,7 +6331,7 @@ export default function WidgetEditorView() {
 
                       {/* Per-metric inline filters */}
                       {(m.filters || []).map((mf, fi) => {
-                        const mfOps = getFilterOperators(mf.dataType);
+                        const mfOps = getWidgetFilterOperators(mf.dataType);
                         const curMfOp = mfOps.find(
                           (o) => o.value === mf.operator,
                         );
@@ -5115,6 +6490,33 @@ export default function WidgetEditorView() {
                                     sx={{ flex: 1, fontSize: "12px" }}
                                   />
                                 </Stack>
+                              ) : mf.dataType === "boolean" ? (
+                                <FormControl size="small" sx={{ flex: 1 }}>
+                                  <Select
+                                    displayEmpty
+                                    value={
+                                      mf.value === true
+                                        ? "true"
+                                        : mf.value === false
+                                          ? "false"
+                                          : mf.value ?? ""
+                                    }
+                                    onChange={(e) =>
+                                      handleUpdateMetricFilter(i, fi, {
+                                        value: e.target.value,
+                                      })
+                                    }
+                                    variant="standard"
+                                    renderValue={(value) => value || "Value"}
+                                    sx={{ fontSize: "12px" }}
+                                  >
+                                    <MenuItem disabled value="">
+                                      Value
+                                    </MenuItem>
+                                    <MenuItem value="true">true</MenuItem>
+                                    <MenuItem value="false">false</MenuItem>
+                                  </Select>
+                                </FormControl>
                               ) : (
                                 <TextField
                                   size="small"
@@ -5123,7 +6525,7 @@ export default function WidgetEditorView() {
                                   type={
                                     mf.dataType === "number" ? "number" : "text"
                                   }
-                                  value={mf.value || ""}
+                                  value={mf.value ?? ""}
                                   onChange={(e) =>
                                     handleUpdateMetricFilter(i, fi, {
                                       value: e.target.value,
@@ -5459,7 +6861,7 @@ export default function WidgetEditorView() {
                       </Stack>
                       {f.name &&
                         (() => {
-                          const ops = getFilterOperators(f.dataType);
+                          const ops = getWidgetFilterOperators(f.dataType);
                           const currentOp = ops.find(
                             (o) => o.value === f.operator,
                           );
@@ -5582,6 +6984,36 @@ export default function WidgetEditorView() {
                                     sx={{ flex: 1, fontSize: "13px" }}
                                   />
                                 </Stack>
+                              ) : f.dataType === "boolean" ? (
+                                <FormControl size="small" sx={{ flex: 1 }}>
+                                  <Select
+                                    displayEmpty
+                                    value={
+                                      f.value === true
+                                        ? "true"
+                                        : f.value === false
+                                          ? "false"
+                                          : f.value ?? ""
+                                    }
+                                    onChange={(e) => {
+                                      const updated = [...filters];
+                                      updated[i] = {
+                                        ...updated[i],
+                                        value: e.target.value,
+                                      };
+                                      setFilters(updated);
+                                    }}
+                                    variant="standard"
+                                    renderValue={(value) => value || "Value"}
+                                    sx={{ fontSize: "13px" }}
+                                  >
+                                    <MenuItem disabled value="">
+                                      Value
+                                    </MenuItem>
+                                    <MenuItem value="true">true</MenuItem>
+                                    <MenuItem value="false">false</MenuItem>
+                                  </Select>
+                                </FormControl>
                               ) : (
                                 <TextField
                                   size="small"
@@ -5590,7 +7022,7 @@ export default function WidgetEditorView() {
                                   type={
                                     f.dataType === "number" ? "number" : "text"
                                   }
-                                  value={f.value || ""}
+                                  value={f.value ?? ""}
                                   onChange={(e) => {
                                     const updated = [...filters];
                                     updated[i] = {
@@ -5958,6 +7390,91 @@ export default function WidgetEditorView() {
                       AXIS
                     </Typography>
 
+                    {/* Axis Assignment */}
+                    <Box>
+                      <Typography
+                        variant="subtitle2"
+                        fontWeight={700}
+                        sx={{ mb: 1.5 }}
+                      >
+                        Axis Assignment
+                      </Typography>
+                      {previewSeries.map((s, si) => {
+                        const seriesColor = getSeriesColor(
+                          s.name,
+                          seriesColorMap,
+                        );
+                        return (
+                          <Stack
+                            key={si}
+                            direction="row"
+                            alignItems="center"
+                            justifyContent="space-between"
+                            sx={{ mb: 1 }}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ flex: 1, minWidth: 0 }}
+                            >
+                              <Box
+                                sx={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 0.5,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  bgcolor: seriesColor + "22",
+                                  color: seriesColor,
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {LETTER_LABELS[si] || si}
+                              </Box>
+                              <Iconify
+                                icon="mdi:chart-line"
+                                width={16}
+                                sx={{
+                                  color: seriesColor,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <Typography
+                                variant="body2"
+                                noWrap
+                                sx={{ fontWeight: 500 }}
+                              >
+                                {s.name?.split(" (")[0] || s.name}
+                              </Typography>
+                            </Stack>
+                            <ToggleButtons
+                              options={[
+                                { label: "L", value: "left" },
+                                { label: "R", value: "right" },
+                              ]}
+                              value={axisConfig.seriesAxis[si] || "left"}
+                              onChange={(v) => setSeriesAxis(si, v)}
+                              theme={theme}
+                            />
+                          </Stack>
+                        );
+                      })}
+                      {previewSeries.length === 0 && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ fontStyle: "italic" }}
+                        >
+                          Add metrics to see axis assignments
+                        </Typography>
+                      )}
+                    </Box>
+
+                    <Divider sx={{ my: 2 }} />
+
                     {/* Left Y-Axis */}
                     <AxisSection
                       title="Left Y-Axis"
@@ -6065,91 +7582,6 @@ export default function WidgetEditorView() {
                         />
                       </Stack>
                     </Box>
-
-                    <Divider sx={{ my: 2 }} />
-
-                    {/* Axis Assignment */}
-                    <Box>
-                      <Typography
-                        variant="subtitle2"
-                        fontWeight={700}
-                        sx={{ mb: 1.5 }}
-                      >
-                        Axis Assignment
-                      </Typography>
-                      {previewSeries.map((s, si) => {
-                        const seriesColor = getSeriesColor(
-                          s.name,
-                          seriesColorMap,
-                        );
-                        return (
-                          <Stack
-                            key={si}
-                            direction="row"
-                            alignItems="center"
-                            justifyContent="space-between"
-                            sx={{ mb: 1 }}
-                          >
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              gap={1}
-                              sx={{ flex: 1, minWidth: 0 }}
-                            >
-                              <Box
-                                sx={{
-                                  width: 22,
-                                  height: 22,
-                                  borderRadius: 0.5,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  bgcolor: seriesColor + "22",
-                                  color: seriesColor,
-                                  fontSize: "11px",
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {LETTER_LABELS[si] || si}
-                              </Box>
-                              <Iconify
-                                icon="mdi:chart-line"
-                                width={16}
-                                sx={{
-                                  color: seriesColor,
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <Typography
-                                variant="body2"
-                                noWrap
-                                sx={{ fontWeight: 500 }}
-                              >
-                                {s.name?.split(" (")[0] || s.name}
-                              </Typography>
-                            </Stack>
-                            <ToggleButtons
-                              options={[
-                                { label: "L", value: "left" },
-                                { label: "R", value: "right" },
-                              ]}
-                              value={axisConfig.seriesAxis[si] || "left"}
-                              onChange={(v) => setSeriesAxis(si, v)}
-                              theme={theme}
-                            />
-                          </Stack>
-                        );
-                      })}
-                      {previewSeries.length === 0 && (
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          sx={{ fontStyle: "italic" }}
-                        >
-                          Add metrics to see axis assignments
-                        </Typography>
-                      )}
-                    </Box>
                   </>
                 )}
               </Box>
@@ -6196,16 +7628,24 @@ export default function WidgetEditorView() {
                       />
                     </InputAdornment>
                   ),
-                  endAdornment: paginatedTotal > 0 && (
+                  endAdornment: isPickerInventoryLoading ? (
                     <InputAdornment position="end">
-                      <Typography
-                        variant="caption"
-                        sx={{ color: "text.disabled", fontSize: 11 }}
-                      >
-                        {paginatedTotal} results
-                      </Typography>
+                      <CircularProgress
+                        size={14}
+                        aria-label="Searching dashboard properties"
+                      />
                     </InputAdornment>
-                  ),
+                  ) : !cursorAttributePickerActive &&
+                    Number.isSafeInteger(paginatedTotal) ? (
+                      <InputAdornment position="end">
+                        <Typography
+                          variant="caption"
+                          sx={{ color: "text.disabled", fontSize: 11 }}
+                        >
+                          {paginatedTotal} results
+                        </Typography>
+                      </InputAdornment>
+                    ) : null,
                 }}
               />
             </Box>
@@ -6221,65 +7661,103 @@ export default function WidgetEditorView() {
                   py: 0.5,
                 }}
               >
-                {METRIC_CATEGORIES.map((cat) => (
-                  <Box
-                    key={cat.key}
-                    onClick={() => setPickerCategory(cat.key)}
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      px: 1.5,
-                      py: 0.75,
-                      cursor: "pointer",
-                      borderRadius: 1,
-                      mx: 0.5,
-                      bgcolor:
-                        pickerCategory === cat.key
-                          ? "action.selected"
-                          : "transparent",
-                      "&:hover": {
+                {METRIC_CATEGORIES.map((cat) => {
+                  const categoryCount = getWidgetCatalogSidebarCategoryCount({
+                    pickerCategory: cat.key,
+                    categoryCounts: pickerSidebarCategoryCounts,
+                    categoryCountsExact: pickerSidebarCategoryCountsExact,
+                  });
+                  const categoryCountPresentation =
+                    getWidgetCatalogCategoryCountPresentation(categoryCount);
+                  return (
+                    <Box
+                      key={cat.key}
+                      onClick={() => setPickerCategory(cat.key)}
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                        px: 1.5,
+                        py: 0.75,
+                        cursor: "pointer",
+                        borderRadius: 1,
+                        mx: 0.5,
                         bgcolor:
                           pickerCategory === cat.key
                             ? "action.selected"
-                            : "action.hover",
-                      },
-                    }}
-                  >
-                    <Iconify
-                      icon={cat.icon}
-                      width={16}
-                      sx={{
-                        color:
-                          pickerCategory === cat.key
-                            ? "primary.main"
-                            : "text.secondary",
-                      }}
-                    />
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        fontSize: "12px",
-                        fontWeight: pickerCategory === cat.key ? 600 : 400,
-                        color:
-                          pickerCategory === cat.key
-                            ? "text.primary"
-                            : "text.secondary",
+                            : "transparent",
+                        "&:hover": {
+                          bgcolor:
+                            pickerCategory === cat.key
+                              ? "action.selected"
+                              : "action.hover",
+                        },
                       }}
                     >
-                      {cat.label}
-                    </Typography>
-                  </Box>
-                ))}
+                      <Iconify
+                        icon={cat.icon}
+                        width={16}
+                        sx={{
+                          color:
+                            pickerCategory === cat.key
+                              ? "primary.main"
+                              : "text.secondary",
+                        }}
+                      />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: "12px",
+                          fontWeight: pickerCategory === cat.key ? 600 : 400,
+                          color:
+                            pickerCategory === cat.key
+                              ? "text.primary"
+                              : "text.secondary",
+                          flex: 1,
+                        }}
+                      >
+                        {cat.label}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        aria-label={`${cat.label} property count: ${
+                          categoryCountPresentation.exact
+                            ? categoryCountPresentation.text
+                            : "exact count unavailable"
+                        }`}
+                        title={categoryCountPresentation.title || undefined}
+                        sx={{ color: "text.disabled", fontSize: 10 }}
+                      >
+                        {categoryCountPresentation.text}
+                      </Typography>
+                    </Box>
+                  );
+                })}
               </Box>
-              {/* Right: items — paginated with infinite scroll */}
-              <Box
-                ref={pickerListRef}
-                onScroll={handlePickerScroll}
-                sx={{ flex: 1, overflow: "auto", maxHeight: 340 }}
-              >
-                {isPaginatedLoading &&
-                  paginatedMetricOptions.length === 0 &&
+              {/* Right: items — the end sentinel advances one cursor page. */}
+              <Box sx={{ flex: 1, overflow: "auto", maxHeight: 340 }}>
+                {isPickerInventoryLoading &&
+                  pickerMetricOptions.length === 0 && (
+                    <Box
+                      role="status"
+                      aria-live="polite"
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                        px: 1.5,
+                        pt: 1.25,
+                        color: "text.secondary",
+                      }}
+                    >
+                      <CircularProgress size={14} />
+                      <Typography variant="caption">
+                        Searching properties…
+                      </Typography>
+                    </Box>
+                  )}
+                {isPickerInventoryLoading &&
+                  pickerMetricOptions.length === 0 &&
                   Array.from({ length: 8 }).map((_, i) => (
                     <Box
                       key={`skel-${i}`}
@@ -6330,7 +7808,7 @@ export default function WidgetEditorView() {
                       />
                     </Box>
                   ))}
-                {paginatedMetricOptions.map((opt) => {
+                {pickerMetricOptions.map((opt) => {
                   const alreadyUsed = false;
 
                   const sourceBadge =
@@ -6348,7 +7826,7 @@ export default function WidgetEditorView() {
 
                   return (
                     <Box
-                      key={`${opt.source || "all"}-${opt.type}-${opt.id}`}
+                      key={`${opt.source || "all"}-${opt.type}-${opt.id}-${opt.dataType || ""}`}
                       onClick={
                         alreadyUsed ? undefined : () => handlePickerSelect(opt)
                       }
@@ -6372,6 +7850,7 @@ export default function WidgetEditorView() {
                       />
                       <Typography
                         variant="body2"
+                        title={opt.name}
                         sx={{
                           fontSize: "13px",
                           flex: 1,
@@ -6402,6 +7881,14 @@ export default function WidgetEditorView() {
                           }}
                         />
                       )}
+                      {opt.type === "custom_attribute" && opt.dataType && (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          label={opt.dataType}
+                          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+                        />
+                      )}
                       {sourceBadge && (
                         <Chip
                           size="small"
@@ -6418,18 +7905,51 @@ export default function WidgetEditorView() {
                     </Box>
                   );
                 })}
-                {isFetchingNextPage && (
-                  <Box sx={{ py: 1.5, textAlign: "center" }}>
-                    <CircularProgress size={16} />
+                <WidgetCatalogPaginationControl
+                  key={`${pickerCatalogSession}:${pickerMode}:${pickerCategory}:${debouncedPickerSearch}`}
+                  pickerCategory={pickerCategory}
+                  hasNextPage={hasNextPage}
+                  continuationKey={catalogContinuationKey}
+                  isFetchingNextPage={isFetchingNextPage}
+                  isFetchNextPageError={isFetchNextPageError}
+                  onLoadMore={fetchNextPage}
+                  attributeHasNextPage={
+                    cursorAttributePickerActive &&
+                    cursorAttributeControlProps.hasNextPage
+                  }
+                  attributeContinuationKey={
+                    cursorAttributePickerActive
+                      ? cursorAttributeControlProps.continuationKey
+                      : null
+                  }
+                  isFetchingAttributeNextPage={
+                    cursorAttributePickerActive &&
+                    cursorAttributeControlProps.isFetchingNextPage
+                  }
+                  isFetchNextAttributePageError={
+                    cursorAttributePickerActive &&
+                    cursorAttributeControlProps.isFetchNextPageError
+                  }
+                  onLoadMoreAttributes={cursorAttributeControlProps.onLoadMore}
+                />
+                {cursorAttributePickerActive && (
+                  <Box sx={{ px: 1.5, pb: 1.5 }}>
+                    <AttributeInventoryControls
+                      {...cursorAttributeControlProps}
+                      search={pickerSearch}
+                      showSearch={false}
+                      showLoadMore={false}
+                    />
                   </Box>
                 )}
-                {paginatedMetricOptions.length === 0 && !isPaginatedLoading && (
-                  <Box sx={{ p: 3, textAlign: "center" }}>
-                    <Typography variant="body2" color="text.disabled">
-                      No attributes found
-                    </Typography>
-                  </Box>
-                )}
+                {pickerMetricOptions.length === 0 &&
+                  !isPickerInventoryLoading && (
+                    <Box sx={{ p: 3, textAlign: "center" }}>
+                      <Typography variant="body2" color="text.disabled">
+                        No attributes found
+                      </Typography>
+                    </Box>
+                  )}
               </Box>
             </Box>
           </Paper>
@@ -6446,11 +7966,12 @@ export default function WidgetEditorView() {
             setFilterValueAnchor(null);
             setFilterValueIndex(null);
           }}
-          onApply={(selected) => {
+          onApply={(selected, valueTypes) => {
             const updated = [...filters];
             updated[filterValueIndex] = {
               ...updated[filterValueIndex],
               value: selected,
+              valueTypes,
             };
             setFilters(updated);
             setFilterValueAnchor(null);
@@ -6476,11 +7997,11 @@ export default function WidgetEditorView() {
                 setMfValueAnchor(null);
                 setMfValueTarget(null);
               }}
-              onApply={(selected) => {
+              onApply={(selected, valueTypes) => {
                 handleUpdateMetricFilter(
                   mfValueTarget.metricIdx,
                   mfValueTarget.filterIdx,
-                  { value: selected },
+                  { value: selected, valueTypes },
                 );
                 setMfValueAnchor(null);
                 setMfValueTarget(null);

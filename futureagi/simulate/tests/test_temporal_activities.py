@@ -264,6 +264,19 @@ class TestTemporalClientAPI:
 
         assert result is False
 
+    @patch("simulate.temporal.client._cancel_simulation_runner_workflow_async")
+    def test_cancel_simulation_runner_workflow(
+        self, mock_cancel_async, db, test_execution
+    ):
+        from simulate.temporal.client import cancel_simulation_runner_workflow
+
+        mock_cancel_async.return_value = True
+
+        result = cancel_simulation_runner_workflow(str(test_execution.id))
+
+        assert result is True
+        mock_cancel_async.assert_called_once_with(str(test_execution.id))
+
     @patch("simulate.temporal.client._rerun_call_executions_async")
     def test_rerun_call_executions(
         self,
@@ -396,6 +409,29 @@ class TestTemporalClientAPIIntegration:
         assert result is True
         mock_handle.cancel.assert_called_once()
 
+    @patch("tfc.temporal.common.client.get_client")
+    @pytest.mark.asyncio
+    async def test_cancel_simulation_runner_workflow_uses_hosted_id(
+        self, mock_get_client, db, test_execution
+    ):
+        from simulate.temporal.client import _cancel_simulation_runner_workflow_async
+
+        mock_handle = MagicMock()
+        mock_handle.cancel = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.get_workflow_handle.return_value = mock_handle
+        mock_get_client.return_value = mock_client
+
+        result = await _cancel_simulation_runner_workflow_async(
+            str(test_execution.id)
+        )
+
+        assert result is True
+        mock_client.get_workflow_handle.assert_called_once_with(
+            f"sim-runner-{test_execution.id}"
+        )
+        mock_handle.cancel.assert_called_once()
+
 
 # ============================================================================
 # Activity Integration Tests - setup_test_execution
@@ -482,6 +518,7 @@ class TestSetupTestExecutionActivity:
 
 
 @pytest.mark.integration
+@pytest.mark.requires_ee
 class TestCreateCallExecutionRecordsActivity:
     """Integration tests for create_call_execution_records activity."""
 
@@ -962,6 +999,7 @@ class TestFetchAndPersistCallResultActivity:
                 stereo_recording_url=None,
                 customer_recording_url=None,
                 assistant_recording_url=None,
+                provider_call_data=None,
             )
             mock_vsm.extract_and_persist_recordings = AsyncMock(
                 return_value=mock_recordings
@@ -1056,6 +1094,7 @@ class TestFetchAndPersistCallResultActivity:
                 stereo_recording_url=None,
                 customer_recording_url=None,
                 assistant_recording_url=None,
+                provider_call_data=None,
             )
             mock_vsm.extract_and_persist_recordings = AsyncMock(
                 return_value=mock_recordings
@@ -1377,6 +1416,7 @@ class TestRunSimulateEvaluationsActivity:
 
 
 @pytest.mark.unit
+@pytest.mark.requires_ee
 def test_tool_evaluation_gate_invariant_bland_has_no_adapter():
     """Locks the invariant the tool-eval gate in _run_tool_evaluation_standalone
     relies on: a provider absent from ToolCallingSupportedProviders (e.g. Bland)
@@ -1572,8 +1612,9 @@ class TestBuildTranscriptData:
         from simulate.models import CallTranscript
         from simulate.temporal.activities.xl import _build_transcript_data
 
-        # VAPI inbound (the resolver's default) maps "user" to tested_agent
-        # and "assistant" to simulator; seed accordingly.
+        # No provider_call_data ⇒ the resolver falls back to VAPI and defaults
+        # to OUTBOUND (its direction default on missing metadata), which maps
+        # "user" to the simulator (customer) and "assistant" to the tested agent.
         CallTranscript.objects.create(
             call_execution=call_execution,
             speaker_role=CallTranscript.SpeakerRole.USER,
@@ -1591,8 +1632,8 @@ class TestBuildTranscriptData:
 
         result = _build_transcript_data(call_execution)
 
-        assert "agent: Hello, how can I help?" in result["transcript"]
-        assert "customer: I need help with my order." in result["transcript"]
+        assert "customer: Hello, how can I help?" in result["transcript"]
+        assert "agent: I need help with my order." in result["transcript"]
 
     @pytest.mark.django_db(transaction=True)
     def test_build_transcript_data_no_transcripts(self, call_execution):
@@ -1656,6 +1697,7 @@ class TestCallExecutionWorkflowIntegration:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    @pytest.mark.requires_ee
     async def test_workflow_activity_sequence_inbound(self, call_execution):
         """Test that CallExecutionWorkflow calls activities in correct order for inbound calls."""
         from unittest.mock import call
@@ -1826,6 +1868,7 @@ class TestTestExecutionWorkflowIntegration:
 class TestCallExecutionRerunAPI:
     """Integration tests for the CallExecutionRerunView API."""
 
+    @pytest.mark.requires_ee
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_with_temporal(
         self, mock_rerun, auth_client, test_execution, call_execution

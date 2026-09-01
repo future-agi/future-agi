@@ -1,3 +1,4 @@
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,6 +15,65 @@ logger = structlog.get_logger(__name__)
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
 OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
+RETELL_CALL_HYDRATION_BOUND = 250
+
+
+def _normalize_voice_call_status(value: object) -> str | None:
+    """Return the canonical lifecycle value rendered by voice-call rows."""
+
+    if value is None:
+        return None
+    token = str(value).strip().lower()
+    if token in {
+        "ended",
+        "done",
+        "complete",
+        "completed",
+        "success",
+        "succeeded",
+        "ok",
+    }:
+        return "completed"
+    if token in {
+        "in-progress",
+        "in_progress",
+        "ongoing",
+        "started",
+        "initiated",
+        "processing",
+        "scheduled",
+        "created",
+        "dialing",
+        "connecting",
+        "ringing",
+        "queued",
+        "pending",
+    }:
+        return "in-progress"
+    if token in {"failed", "failure", "error", "errored"}:
+        return "failed"
+    if token in {
+        "dropped",
+        "cancelled",
+        "canceled",
+        "aborted",
+        "hung-up",
+        "hung_up",
+    }:
+        return "dropped"
+    if token in {
+        "not-connected",
+        "not_connected",
+        "no-answer",
+        "no_answer",
+        "unanswered",
+        "busy",
+    }:
+        return "not-connected"
+    # The public voice status is a closed five-value vocabulary. Unknown
+    # non-empty provider states are safest as transitional/in-progress; raw
+    # SPAN_ATTRIBUTE filters still expose the provider token unchanged.
+    return "in-progress" if token else None
 
 
 class ObservabilityService:
@@ -29,9 +89,7 @@ class ObservabilityService:
         if provider == ProviderChoices.VAPI:
             api_endpoint = f"{ObservabilityRoutes.VAPI_CALL_URL.value}?limit=0"
         elif provider == ProviderChoices.RETELL:
-            api_endpoint = (
-                f"{ObservabilityRoutes.RETELL_LIST_ASSISTANTS_URL.value}?limit=1"
-            )
+            api_endpoint = ObservabilityRoutes.RETELL_LIST_AGENTS_URL.value
         elif provider == ProviderChoices.BLAND:
             # Bland validates via its read-only account endpoint and takes the
             # raw key in the authorization header (no Bearer prefix).
@@ -43,12 +101,30 @@ class ObservabilityService:
             return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
+
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(
-            api_endpoint,
-            headers=headers,
-            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
-        )
+        if provider == ProviderChoices.RETELL:
+            response = requests.post(
+                api_endpoint,
+                params={"limit": 1},
+                headers=headers,
+                json={
+                    "filter_criteria": {
+                        "channel": {
+                            "type": "string",
+                            "op": "eq",
+                            "value": "voice",
+                        }
+                    }
+                },
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+        else:
+            response = requests.get(
+                api_endpoint,
+                headers=headers,
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
         return response.status_code
 
     @staticmethod
@@ -185,6 +261,37 @@ class ObservabilityService:
         return all_logs
 
     @staticmethod
+    def _fetch_retell_call_detail(
+        call: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
+        """Hydrate a lean v3 list item with fields available only from Get Call.
+
+        Raises:
+            ValueError: if call has no call_id or response is not a dict.
+            requests.RequestException: on HTTP or network failure.
+            TypeError: if response JSON is not a dict.
+        """
+        call_id = call.get("call_id")
+        if not call_id:
+            raise ValueError("Retell call detail: missing call_id")
+
+        response = requests.get(
+            f"{ObservabilityRoutes.RETELL_GET_CALL_URL.value}/{call_id}",
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        detail = response.json()
+
+        if not isinstance(detail, dict):
+            raise TypeError(
+                f"Retell call detail response must be a dict, "
+                f"got {type(detail).__name__}"
+            )
+
+        return {**call, **detail}
+
+    @staticmethod
     def _fetch_retell_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
@@ -209,27 +316,78 @@ class ObservabilityService:
         }
         agent_assistant_id = getattr(agent, "assistant_id", None) if agent else None
         data: dict[str, Any] = {
-            "limit": 1000,
+            "limit": RETELL_CALL_HYDRATION_BOUND,
             "filter_criteria": {
                 # Using assistant_id as the agent identifier
-                "agent_id": [agent_assistant_id] if agent_assistant_id else [],
-                "call_status": ["ended", "error"],
+                "agent": (
+                    [{"agent_id": agent_assistant_id}] if agent_assistant_id else []
+                ),
+                "call_status": {
+                    "type": "enum",
+                    "op": "in",
+                    "value": ["ended", "error"],
+                },
             },
         }
         if start_time and end_time:
-            data["filter_criteria"]["start_timestamp"] = {
-                "lower_threshold": int(start_time.timestamp() * 1000),
-                "upper_threshold": int(end_time.timestamp() * 1000),
+            data["filter_criteria"]["end_timestamp"] = {
+                "type": "range",
+                "op": "bt",
+                "value": [
+                    int(start_time.timestamp() * 1000),
+                    int(end_time.timestamp() * 1000),
+                ],
             }
 
-        response = requests.post(
-            ObservabilityRoutes.RETELL_LIST_CALLS_URL.value,
-            headers=headers,
-            json=data,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json()
+        all_logs: list[dict] = []
+        pagination_key = None
+        seen_pagination_keys: set[str] = set()
+        while True:
+            request_data = dict(data)
+            if pagination_key:
+                request_data["pagination_key"] = pagination_key
+
+            response = requests.post(
+                ObservabilityRoutes.RETELL_LIST_CALLS_URL.value,
+                headers=headers,
+                json=request_data,
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            has_more = bool(payload.get("has_more"))
+            next_pagination_key = payload.get("pagination_key")
+            all_logs.extend(payload.get("items") or [])
+
+            if len(all_logs) > RETELL_CALL_HYDRATION_BOUND or (
+                has_more and len(all_logs) >= RETELL_CALL_HYDRATION_BOUND
+            ):
+                raise RuntimeError(
+                    "Retell pagination did not complete within the "
+                    f"{RETELL_CALL_HYDRATION_BOUND}-call hydration bound "
+                    f"(has_more={has_more}, collected={len(all_logs)})."
+                )
+
+            if not has_more:
+                break
+            if not next_pagination_key:
+                raise RuntimeError(
+                    "Retell pagination reported has_more without a pagination_key"
+                )
+            if next_pagination_key in seen_pagination_keys:
+                raise RuntimeError(
+                    f"Retell pagination repeated cursor {next_pagination_key!r}"
+                )
+            seen_pagination_keys.add(next_pagination_key)
+            pagination_key = next_pagination_key
+
+        if all_logs:
+            all_logs = [
+                ObservabilityService._fetch_retell_call_detail(call, headers)
+                for call in all_logs
+            ]
+
+        return all_logs
 
     @staticmethod
     def _list_eleven_labs_conversations(
@@ -434,9 +592,7 @@ class ObservabilityService:
         if not api_key:
             logger.warning(
                 "missing_api_key_for_provider",
-                provider_id=str(provider.id),
                 provider_name=provider_name,
-                message=f"Missing API key for {provider_name} provider. Skipping log fetch.",
             )
             return None
         return api_key
@@ -476,7 +632,10 @@ class ObservabilityService:
         recording_url = (
             sa.get("recording_url")
             or sa.get("conversation.recording.mono.combined")
-            or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+            or (raw_log.get("artifact") or {})
+            .get("recording", {})
+            .get("mono", {})
+            .get("combinedUrl")
             or raw_log.get("recordingUrl")
         )
         stereo_recording_url = (
@@ -604,7 +763,7 @@ class ObservabilityService:
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
             "recording_url": recording_url,
-            "cost_cents": cost * 100 if cost else None,
+            "cost_cents": cost * 100 if cost is not None else None,
             "cost_breakdown": cost_breakdown,
             "call_metadata": raw_log_get("callMetadata"),
             "error_message": raw_log_get("errorMessage"),
@@ -665,9 +824,14 @@ class ObservabilityService:
         recording_url = raw_log_get("recording_url")
         transcripts = raw_log_get("transcript_with_tool_calls") or []
         call_cost_object = raw_log_get("call_cost") or {}
-        duration_seconds = None
-        if started_at_timestamp and ended_at_timestamp:
-            duration_seconds = int(ended_at_timestamp - started_at_timestamp)
+        duration_ms = raw_log_get("duration_ms")
+        try:
+            duration_ms = float(duration_ms)
+            duration_seconds = (
+                int(duration_ms / 1000) if math.isfinite(duration_ms) else None
+            )
+        except (TypeError, ValueError):
+            duration_seconds = None
         cost_cents = call_cost_object.get("combined_cost")
         phone_number = raw_log_get("to_number")
         metadata = raw_log_get("metadata") or {}
@@ -838,9 +1002,22 @@ class ObservabilityService:
                 else {}
             )
             duration = attrs.get("call.duration")
+            combined_cost = attrs.get("combined_cost")
+            total_cost = attrs.get("cost_breakdown.total")
+            cost_cents = (
+                combined_cost
+                if combined_cost is not None
+                else total_cost * 100
+                if total_cost is not None
+                else None
+            )
             return {
                 "call_id": sim_meta.get("call_execution_id"),
-                "status": attrs.get("call.status") or "completed",
+                "status": _normalize_voice_call_status(attrs.get("call.status"))
+                or "completed",
+                "call_type": attrs.get("call_type"),
+                "ended_reason": attrs.get("ended_reason"),
+                "cost_cents": cost_cents,
                 "started_at": None,  # span start_time is authoritative
                 "duration_seconds": int(duration) if duration is not None else None,
                 "recording_url": attrs.get("conversation.recording.mono.combined"),
@@ -874,54 +1051,38 @@ class ObservabilityService:
         elif provider == ProviderChoices.TWILIO:
             processed = ObservabilityService._process_twilio_raw(raw_log)
         else:  # VAPI, and the default for any still-unrecognized label
-            processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
+            processed = ObservabilityService._process_vapi_logs(
+                raw_log, span_attributes
+            )
 
         if span_attributes:
+            if not processed.get("ended_reason"):
+                processed["ended_reason"] = span_attributes.get("ended_reason")
+
             from tracer.utils.vapi_recording import VapiRecordingService
 
-            mono_s3 = (
-                span_attributes.get("recording_url")
-                or span_attributes.get("conversation.recording.mono.combined")
+            mono_s3 = span_attributes.get("recording_url") or span_attributes.get(
+                "conversation.recording.mono.combined"
             )
-            stereo_s3 = (
-                span_attributes.get("stereo_recording_url")
-                or span_attributes.get("conversation.recording.stereo")
-            )
-            logger.info(
-                "process_raw_logs: rehost decision",
-                provider=provider,
-                mono_s3=mono_s3,
-                mono_s3_is_fagi=(
-                    VapiRecordingService.is_fagi_s3_url(mono_s3) if mono_s3 else None
-                ),
-                processed_recording_url=processed.get("recording_url"),
-                processed_recording_url_is_fagi=(
-                    VapiRecordingService.is_fagi_s3_url(processed.get("recording_url"))
-                    if processed.get("recording_url")
-                    else None
-                ),
-                stereo_s3=stereo_s3,
-                stereo_s3_is_fagi=(
-                    VapiRecordingService.is_fagi_s3_url(stereo_s3) if stereo_s3 else None
-                ),
-                processed_stereo_url=processed.get("stereo_recording_url"),
-                processed_stereo_url_is_fagi=(
-                    VapiRecordingService.is_fagi_s3_url(processed.get("stereo_recording_url"))
-                    if processed.get("stereo_recording_url")
-                    else None
-                ),
-                fagi_buckets=list(VapiRecordingService._FAGI_S3_BUCKETS),
-            )
-            if mono_s3 and VapiRecordingService.is_fagi_s3_url(mono_s3) and not VapiRecordingService.is_fagi_s3_url(
-                processed.get("recording_url")
+            stereo_s3 = span_attributes.get(
+                "stereo_recording_url"
+            ) or span_attributes.get("conversation.recording.stereo")
+            if (
+                mono_s3
+                and VapiRecordingService.is_fagi_s3_url(mono_s3)
+                and not VapiRecordingService.is_fagi_s3_url(
+                    processed.get("recording_url")
+                )
             ):
                 processed["recording_url"] = mono_s3
-                logger.info("process_raw_logs: mono_s3 rehosted", mono_s3=mono_s3)
-            if stereo_s3 and VapiRecordingService.is_fagi_s3_url(stereo_s3) and not VapiRecordingService.is_fagi_s3_url(
-                processed.get("stereo_recording_url")
+            if (
+                stereo_s3
+                and VapiRecordingService.is_fagi_s3_url(stereo_s3)
+                and not VapiRecordingService.is_fagi_s3_url(
+                    processed.get("stereo_recording_url")
+                )
             ):
                 processed["stereo_recording_url"] = stereo_s3
-                logger.info("process_raw_logs: stereo_s3 rehosted", stereo_s3=stereo_s3)
 
         return processed
 
@@ -931,9 +1092,7 @@ class ObservabilityService:
         metadata = raw_log.get("metadata") or {}
         started_at = None
         if start_unix := metadata.get("start_time_unix_secs"):
-            started_at = datetime.fromtimestamp(
-                start_unix, tz=timezone.utc
-            ).isoformat()
+            started_at = datetime.fromtimestamp(start_unix, tz=timezone.utc).isoformat()
 
         transcripts = [
             {
@@ -955,12 +1114,7 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("conversation_id"),
             "phone_number": None,
-            # Normalize ConvAI 'done'/'ended' to 'completed' to match other providers.
-            "status": (
-                "completed"
-                if raw_log.get("status") in ("done", "ended")
-                else raw_log.get("status")
-            ),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
             "started_at": started_at,
             "created_at": started_at,
             "duration_seconds": metadata.get("call_duration_secs"),
@@ -996,7 +1150,7 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("call_id"),
             "phone_number": raw_log.get("to"),
-            "status": raw_log.get("status"),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
             "started_at": raw_log.get("started_at") or raw_log.get("created_at"),
             # The list's date column binds created_at.
             "created_at": raw_log.get("created_at") or raw_log.get("started_at"),
@@ -1021,7 +1175,7 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("sid"),
             "phone_number": raw_log.get("to"),
-            "status": raw_log.get("status"),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
             "started_at": raw_log.get("start_time"),
             # The list's date column binds created_at.
             "created_at": raw_log.get("start_time") or raw_log.get("date_created"),
