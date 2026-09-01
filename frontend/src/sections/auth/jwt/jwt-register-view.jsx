@@ -39,7 +39,7 @@ import {
 } from "src/hooks/useDeploymentMode";
 
 export default function JwtRegisterView() {
-  const { register, login, awsRegister } = useAuthContext();
+  const { register, login, marketplaceRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   // Confirmed read only: the hook falls back to "oss" when deployment-info
@@ -59,6 +59,7 @@ export default function JwtRegisterView() {
   const [loading, setLoading] = useState(false);
   const queryParams = new URLSearchParams(location.search);
   const onboarding_token = queryParams.get("onboarding_token");
+  const onboarding_gcp_token = queryParams.get("onboarding_gcp_token");
 
   const RegisterSchema = Yup.object().shape({
     fullName: Yup.string().required("Full name required"),
@@ -179,11 +180,14 @@ export default function JwtRegisterView() {
         ...(isOSS ? { password: data?.password } : {}),
       };
       let response;
-      if (onboarding_token) {
-        response = await awsRegister({
-          ...payload,
-          onboarding_token: onboarding_token,
-        });
+      const marketplaceToken = onboarding_gcp_token || onboarding_token;
+      if (marketplaceToken) {
+        response = await marketplaceRegister(
+          onboarding_gcp_token
+            ? endpoints.auth.gcpSignUp
+            : endpoints.auth.awsSignUp,
+          { ...payload, onboarding_token: marketplaceToken },
+        );
       } else {
         response = await register(payload);
       }

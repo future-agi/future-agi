@@ -288,6 +288,7 @@ export const endpoints = {
     logout: apiPath("/accounts/logout/"),
     refreshToken: apiPath("/accounts/token/refresh/"),
     awsSignUp: apiPath("/accounts/aws-marketplace/signup/"),
+    gcpSignUp: apiPath("/accounts/gcp-marketplace/signup/"),
     config: apiPath("/accounts/config/"),
     createOrganization: apiPath("/accounts/organizations/create/"),
   },
