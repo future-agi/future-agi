@@ -1928,8 +1928,12 @@ def _calculate_judge_human_agreement(queue):
     items.
 
     Returns ``None`` when no evaluator is linked, the queue isn't completed,
-    or no overlapping data exists so the caller can distinguish "not
-    configured" / "not ready" from "0 % agreement".
+    the eval template has no normalized output type, or the queue holds no
+    trace/observation-span sourced items — so the caller can distinguish
+    "not configured" / "not ready" from "0 % agreement".  Otherwise a dict
+    is returned, possibly with ``overall_agreement: None`` and
+    ``total_comparisons: 0`` when items exist but no human scores overlap
+    with the linked evaluator's latest completed eval rows.
 
     Judge-vs-human agreement is only meaningful once annotation work is
     finished, so non-``COMPLETED`` queues (draft / active / paused) return

@@ -128,14 +128,16 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     def get_fields(self):
         """Scope ``custom_eval_config`` to the caller's organization.
 
-        ``PrimaryKeyRelatedField.queryset`` only governs which PKs the field
-        will resolve (it never constrains what a client *may* submit); the
-        org/project check still lives in ``validate_custom_eval_config``. But
-        narrowing it here is defence-in-depth: a UUID from another org fails at
-        the field layer with a clear "does not exist" instead of reaching the
-        validator, and the field reads as org-scoped at definition time. The
-        ``objects.all()`` default stays as a fallback for non-request contexts
-        (e.g. OpenAPI schema generation) where no org is available.
+        ``PrimaryKeyRelatedField`` resolves submitted PKs against its
+        queryset (anything outside it fails validation with "does not
+        exist"), so narrowing it here already rejects cross-org UUIDs at
+        the field layer. The org/project checks in
+        ``validate_custom_eval_config`` stay as defence-in-depth (and cover
+        the non-request fallback path below), while this filter gives the
+        rejection a clear "does not exist" message and reads as org-scoped
+        at definition time. The ``objects.all()`` default is only used for
+        non-request contexts (e.g. OpenAPI schema generation) where no org
+        is available.
         """
         fields = super().get_fields()
         organization, _workspace = self._request_org_workspace()

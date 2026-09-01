@@ -62,7 +62,9 @@ const DEFAULT_VALUES = {
   label_ids: [],
   annotators: [],
   status: "draft",
-  custom_eval_config: null,
+  // Select options use value="" for "None", so the form state must too;
+  // null only appears in the submit payload (mapped in onSubmit).
+  custom_eval_config: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -191,7 +193,7 @@ export default function CreateQueueDrawer({
         label_ids: qLabels,
         annotators: qAnnotators,
         status: editQueue.status || "draft",
-        custom_eval_config: editQueue.custom_eval_config || null,
+        custom_eval_config: editQueue.custom_eval_config || "",
       });
       setAdvancedOpen(false);
     } else if (open) {

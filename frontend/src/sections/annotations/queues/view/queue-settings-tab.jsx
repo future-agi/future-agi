@@ -109,7 +109,9 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
       autoAssign: false,
       label_ids: [],
       annotators: [],
-      custom_eval_config: null,
+      // Select options use value="" for "None", so the form state must too;
+      // null only appears in the submit payload (mapped in onSubmit).
+      custom_eval_config: "",
     },
   });
 
@@ -147,7 +149,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
         autoAssign: queue.auto_assign ?? false,
         label_ids: qLabels,
         annotators: qAnnotators,
-        custom_eval_config: queue.custom_eval_config || null,
+        custom_eval_config: queue.custom_eval_config || "",
       });
     }
   }, [queue, reset]);

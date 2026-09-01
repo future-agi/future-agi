@@ -237,11 +237,18 @@ export default function QueueAgreementTab({ queueId, queue }) {
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
             Judge vs Human Agreement
           </Typography>
-          {queue && queue.custom_eval_config && queue.status !== "completed" ? (
-            <Typography variant="body2" color="text.secondary">
-              Mark the queue as completed to compare judge scores against human
-              labels.
-            </Typography>
+          {queue && queue.custom_eval_config ? (
+            queue.status !== "completed" ? (
+              <Typography variant="body2" color="text.secondary">
+                Mark the queue as completed to compare judge scores against
+                human labels.
+              </Typography>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No comparable data yet: judge scores and human labels have no
+                overlapping items to compare for this queue.
+              </Typography>
+            )
           ) : (
             <Typography variant="body2" color="text.secondary">
               Link an evaluator to this queue to compare judge scores against
