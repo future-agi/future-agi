@@ -123,6 +123,23 @@ describe("StereoMultiTrackPlayer track selection", () => {
 describe("AudioPlayerCustom picks the renderer from the recording shape", () => {
   beforeEach(resetCaptured);
 
+  // The list row already says a recording exists, so `recording_available` is
+  // true before the detail response carrying the URLs has arrived. Handing the
+  // player an empty set there makes it report a failure for a call that is
+  // merely still loading.
+  it("waits instead of rendering a player when the URLs have not arrived", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{ module: "project", recording_available: true }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(captured.trackUrls).toBeNull();
+    expect(captured.singleUrl).toBeNull();
+  });
+
   it.each(["retell", "bland"])(
     "sends a single-URL %s call to the same single-track bar",
     (provider) => {

@@ -216,6 +216,26 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
 
     // Normalize recordings to flat format for project module
     const normalizedRecordings = normalizeRecordings(data?.recording);
+    // `recording_available` rides on the list row, so it is already true while
+    // the detail response carrying the URLs is still in flight. Handing the
+    // player an empty set there would have it report a failure for a call that
+    // is only still loading.
+    const hasAnyUrl = Boolean(
+      normalizedRecordings.stereo ||
+        normalizedRecordings.combined ||
+        normalizedRecordings.assistant ||
+        normalizedRecordings.customer,
+    );
+    if (!hasAnyUrl) {
+      return (
+        <Box sx={{ height: 200 }}>
+          <LoadingStateComponent
+            status="fetching"
+            message="Fetching the recording"
+          />
+        </Box>
+      );
+    }
     return (
       <StereoMultiTrackPlayer
         recordings={normalizedRecordings}
@@ -246,6 +266,26 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         <LoadingStateComponent
           status="fetching"
           message={"Fetching the recording"}
+        />
+      </Box>
+    );
+  }
+
+  // `hasRecordingData` is satisfied by `audio_url` alone, which the player
+  // never receives — so the gate can pass while every URL the player would
+  // use is still empty. Wait rather than hand it nothing.
+  const hasPlayableUrl = Boolean(
+    recordings?.stereo ||
+      recordings?.combined ||
+      recordings?.assistant ||
+      recordings?.customer,
+  );
+  if (hasRecordingData && !hasPlayableUrl) {
+    return (
+      <Box sx={{ height: 200 }}>
+        <LoadingStateComponent
+          status="fetching"
+          message="Fetching the recording"
         />
       </Box>
     );
