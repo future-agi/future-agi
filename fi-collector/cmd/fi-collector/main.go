@@ -11,20 +11,20 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, FI_ADMIN_ADDR, ...)
 //
-// Health surfaces:
+// Health surfaces (internal-only admin listener, default 127.0.0.1:9464,
+// configurable via admin.addr or FI_ADMIN_ADDR):
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
+//   - /metrics (Prometheus text exposition of writer + Go runtime stats)
 //   - Structured logs on stderr (JSON lines)
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -43,12 +43,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type adminConfig struct {
+	Addr string `yaml:"addr"`
+}
+
 type rootConfig struct {
 	Writer          chwriter.Config               `yaml:"writer"`
 	Server          server.Config                 `yaml:"server"`
 	Auth            auth.Config                   `yaml:"auth"`
 	Catalog         catalogwriter.RuntimeConfig   `yaml:"catalog"`
 	PropertyCatalog propertycatalog.RuntimeConfig `yaml:"property_catalog"`
+	Admin           adminConfig                   `yaml:"admin"`
+}
+
+// defaultAdminAddr is the internal-only admin listener (loopback default).
+const defaultAdminAddr = "127.0.0.1:9464"
+
+// resolveAdminAddr returns the configured admin address or the loopback default.
+func resolveAdminAddr(cfg rootConfig) string {
+	if addr := strings.TrimSpace(cfg.Admin.Addr); addr != "" {
+		return addr
+	}
+	return defaultAdminAddr
 }
 
 const (
@@ -302,14 +318,15 @@ func main() {
 		go logCatalogSubmissionGaps(ctx, catalogSubmitter, log)
 	}
 
-	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	// Admin HTTP server — internal only, honors admin.addr / FI_ADMIN_ADDR.
+	go runAdmin(resolveAdminAddr(cfg), writer, log)
 
 	go authenticator.WatchRevocations(ctx)
 
 	log.Info("starting",
 		"grpc_addr", cfg.Server.GRPCAddr,
 		"http_addr", cfg.Server.HTTPAddr,
+		"admin_addr", resolveAdminAddr(cfg),
 		"ch_url", cfg.Writer.URL,
 	)
 	runErr := srv.Run(ctx)
@@ -515,6 +532,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
+	}
+	if v := os.Getenv("FI_ADMIN_ADDR"); v != "" {
+		c.Admin.Addr = v
 	}
 	// Auth overrides (auth is active when PG_WRITE is set)
 	if v := os.Getenv("FI_PG_WRITE"); v != "" {
@@ -741,24 +761,4 @@ func sameClickHouseIdentity(canonical, catalog string) bool {
 		catalog = "default"
 	}
 	return canonical == catalog
-}
-
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
-		s := w.Snapshot()
-		denom := s.BatchesInserted + s.BatchesFailed
-		if denom > 100 && s.BatchesFailed*2 > denom {
-			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s})
-			return
-		}
-		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
-	})
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Warn("admin server stopped", "err", err)
-	}
 }
