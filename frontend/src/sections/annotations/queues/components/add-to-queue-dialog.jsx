@@ -33,7 +33,9 @@ AddToQueueDialog.propTypes = {
   sourceIds: PropTypes.array,
   onSuccess: PropTypes.func,
   itemName: PropTypes.string,
-  // Phase 3 — filter-mode selection
+  // Filter mode resolves the matching set server-side. Manual CH-native adds
+  // also pass projectId so the existing resolver stays tenant-scoped and can
+  // reject ambiguous bare span IDs.
   selectionMode: PropTypes.oneOf(["manual", "filter"]),
   filter: PropTypes.array,
   projectId: PropTypes.string,
@@ -180,6 +182,7 @@ export default function AddToQueueDialog({
               source_type: sourceType,
               source_id: id,
             })),
+            ...(projectId ? { project_id: projectId } : {}),
           };
 
       addItems(mutationArgs, {
@@ -445,6 +448,7 @@ export default function AddToQueueDialog({
                   source_type: sourceType,
                   source_id: id,
                 })),
+                ...(projectId ? { project_id: projectId } : {}),
               };
 
           addItems(mutationArgs, {

@@ -58,7 +58,9 @@ class TestBuildScheduleReadsRegistry:
     decorator-declared max_retries / retry_delay onto TaskRunnerInput."""
 
     def test_known_activity_propagates_retry_metadata(self):
-        @temporal_activity(name="fixture_scheduled_activity", max_retries=2, retry_delay=15)
+        @temporal_activity(
+            name="fixture_scheduled_activity", max_retries=2, retry_delay=15
+        )
         def _scheduled_no_op():
             return None
 
@@ -103,6 +105,21 @@ class TestBuildScheduleReadsRegistry:
         schedule = _build_schedule_for_config(config)
 
         assert schedule.spec.jitter == timedelta(seconds=45)
+
+    def test_activity_arguments_are_pinned_in_schedule_input(self):
+        config = ScheduleConfig(
+            schedule_id="fixture-arguments",
+            activity_name="never_registered_scheduled_activity",
+            interval_seconds=300,
+            activity_args=("workspace",),
+            activity_kwargs={"mode": "incremental"},
+        )
+
+        schedule = _build_schedule_for_config(config)
+        run_input = schedule.action.args[0]
+
+        assert run_input.args == ["workspace"]
+        assert run_input.kwargs == {"mode": "incremental"}
 
 
 class TestUpdateSchedule:

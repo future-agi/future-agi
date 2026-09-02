@@ -21,7 +21,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 from tfc.temporal.eval_tasks.search_attributes import (
     ORG_ID,
@@ -70,8 +70,12 @@ RUN_ENTRY_RETRY_POLICY = RetryPolicy(
 )
 
 _CONTROL_TIMEOUT = timedelta(minutes=30)
+_RECONCILE_TIMEOUT = timedelta(hours=3)
 _RUN_ENTRY_TIMEOUT = timedelta(hours=12)
 _HEARTBEAT = timedelta(minutes=5)
+_CONTINUOUS_RECONCILE_BUDGET_DEFERRAL_PATCH = (
+    "continuous-eval-reconcile-budget-deferral-v1"
+)
 
 
 async def _apply_labels(task_id: str) -> None:
@@ -143,10 +147,52 @@ async def _reconcile(task_id: str) -> None:
     await workflow.execute_activity(
         "reconcile_eval_task_activity",
         ReconcileActivityInput(task_id=task_id),
-        start_to_close_timeout=_CONTROL_TIMEOUT,
+        # Exact 100k historical selection is intentionally off the HTTP path.
+        # It remains heartbeating and each ClickHouse statement is bounded, but
+        # the fully buffered multi-query proof may legitimately outlive the
+        # ordinary 30-minute control activity ceiling.
+        start_to_close_timeout=_RECONCILE_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+
+
+def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
+    """Return whether an exhausted reconcile was transient CH read pressure."""
+
+    if not isinstance(exc, ActivityError):
+        return False
+    cause = exc.cause
+    return bool(
+        isinstance(cause, ApplicationError)
+        and cause.type == "EvalTaskReadBudgetExceeded"
+        and not cause.non_retryable
+    )
+
+
+async def _reconcile_continuous(task_id: str) -> bool:
+    """Reconcile once, deferring only exhausted transient CH read failures.
+
+    The activity already used the bounded five-attempt control policy.  A
+    continuous task has a durable cursor and another poll boundary, so killing
+    it after momentary ClickHouse pressure loses future work. Returning False
+    parks before any claim/drain, then retries from the unchanged cursor. Every
+    other exception still reaches the workflow's terminal fail path.
+    """
+
+    try:
+        await _reconcile(task_id)
+    except Exception as exc:
+        if not _is_retryable_reconcile_budget_error(exc):
+            raise
+        # Old histories that already observed the terminal activity failure
+        # must retain the pre-fix fail-task command sequence during replay.
+        # New/open executions record this marker at the first divergent failure
+        # and may safely enter the durable defer/retry loop.
+        if not workflow.patched(_CONTINUOUS_RECONCILE_BUDGET_DEFERRAL_PATCH):
+            raise
+        return False
+    return True
 
 
 async def _reap(task_id: str) -> None:
@@ -404,8 +450,11 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
         # Idempotent: only the first run (pending row) actually transitions;
         # continue-as-new hops find it already running and no-op.
         await _mark_running(state.task_id)
-        await _reconcile(state.task_id)
-        await _reap(state.task_id)
+        reconciled = await _reconcile_continuous(state.task_id)
+        reaped = False
+        if reconciled:
+            await _reap(state.task_id)
+            reaped = True
 
         while True:
             tstate = await _task_state(state.task_id)
@@ -415,6 +464,31 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 _set_status(tstate["status"])
                 self._phase = PHASE_DONE
                 return
+
+            # Pending entries are safe to claim only after a successful current
+            # row-set proof. A failed reconcile may leave them stale after a
+            # task edit or latest eval/annotation change, so park and retry from
+            # the unchanged cursor before spending any evaluations.
+            if not reconciled:
+                self._phase = PHASE_SLEEPING
+                await self._sleep_or_recheck(state.poll_interval_seconds)
+                self._phase = PHASE_MATERIALIZING
+                # A pause/edit signal may have woken the deferred retry. Check
+                # the durable task state before issuing another CH proof.
+                tstate = await _task_state(state.task_id)
+                if not tstate["active"]:
+                    _set_status(tstate["status"])
+                    self._phase = PHASE_DONE
+                    return
+                reconciled = await _reconcile_continuous(state.task_id)
+                continue
+
+            if not reaped:
+                # A restarted workflow may have entries stranded RUNNING. If
+                # initial CH pressure delayed the first proof, reap immediately
+                # after eventual success and before the first claim.
+                await _reap(state.task_id)
+                reaped = True
 
             batch = await _claim(state.task_id, state.batch_size)
             entry_ids = batch["entry_ids"]
@@ -431,7 +505,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 self._phase = PHASE_SLEEPING
                 await self._sleep_or_recheck(state.poll_interval_seconds)
                 self._phase = PHASE_MATERIALIZING
-                await _reconcile(state.task_id)
+                reconciled = await _reconcile_continuous(state.task_id)
 
             if not self._paused and _should_continue_as_new(
                 state.batches, state.continue_as_new_after_batches

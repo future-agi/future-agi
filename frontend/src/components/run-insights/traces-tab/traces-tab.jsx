@@ -1,4 +1,4 @@
-import { Box, Collapse } from "@mui/material";
+import { Box, Button, Collapse } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
@@ -23,9 +23,17 @@ import { Events, trackEvent } from "src/utils/Mixpanel";
 import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
-import { useQuery } from "@tanstack/react-query";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
+import { getListTotalState } from "src/sections/projects/LLMTracing/listTotalMetadata";
+import { parsePrototypeTraceListResponse } from "src/api/project/telemetry-list-contract";
+import { useRunInsightAttributeKeys } from "./useRunInsightAttributeKeys";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readRunInsightListPage } from "../run_insight_list_read";
+import {
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  INTERACTIVE_TABLE_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 const defaultFilter = {
   column_id: "",
@@ -36,32 +44,14 @@ const defaultFilter = {
   },
 };
 
-const normalizeColumnConfig = (column = {}) => ({
-  ...column,
-  isVisible: column.isVisible ?? column.is_visible,
-  groupBy: column.groupBy ?? column.group_by,
-  outputType: column.outputType ?? column.output_type,
-  reverseOutput: column.reverseOutput ?? column.reverse_output,
-  annotationLabelType:
-    column.annotationLabelType ?? column.annotation_label_type,
-  choicesMap: column.choicesMap ?? column.choices_map,
-  evalTemplateId: column.evalTemplateId ?? column.eval_template_id,
-  sourceField: column.sourceField ?? column.source_field,
-  parentEvalId: column.parentEvalId ?? column.parent_eval_id,
-});
-
-const normalizeTraceListPayload = (payload = {}) => {
-  const metadata = payload.metadata || {};
+const normalizeTraceListPayload = (payload) => {
+  const normalized = parsePrototypeTraceListResponse(payload);
+  const metadata = normalized.metadata;
+  const totalState = getListTotalState(metadata);
 
   return {
-    columnConfig: (
-      payload.columnConfig ||
-      payload.column_config ||
-      payload.config ||
-      []
-    ).map(normalizeColumnConfig),
-    table: payload.table || [],
-    totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+    ...normalized,
+    ...totalState,
   };
 };
 
@@ -81,30 +71,23 @@ const TraceTab = React.forwardRef(
     const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.borderless);
     const { projectId, runId } = useParams();
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
+    const [readError, setReadError] = useState(null);
 
     const [filters, setFilters] = useState([
       { ...defaultFilter, id: getRandomId() },
     ]);
 
-    const { data: evalAttributes } = useQuery({
-      queryKey: ["span-attribute-keys", projectId],
-      queryFn: async () => {
-        try {
-          const res = await axios.get(endpoints.project.spanAttributeKeys(), {
-            params: { project_id: projectId },
-          });
-          return res;
-        } catch {
-          // Fallback to legacy API when ClickHouse is unavailable
-          return axios.get(endpoints.project.getEvalAttributeList(), {
-            params: {
-              filters: JSON.stringify({ project_id: projectId }),
-            },
-          });
-        }
-      },
-      select: (data) => data.data?.result,
-    });
+    const {
+      attributeKeys: evalAttributes,
+      hasNextPage: hasNextAttributePage,
+      fetchNextPage: fetchNextAttributePage,
+      isFetchingNextPage: isFetchingNextAttributePage,
+      isError: isAttributeLoadError,
+      isFetchNextPageError: isNextAttributePageError,
+      cursorChainStopped: attributeCursorStopped,
+      retryCursorChain: retryAttributeCursor,
+      isRetryingCursorChain: isRetryingAttributeCursor,
+    } = useRunInsightAttributeKeys(projectId);
 
     const [filterDefinition, setFilterDefinition] = useState(() => {
       return generateTraceFilterDefinition(columns, evalAttributes, filters);
@@ -119,40 +102,14 @@ const TraceTab = React.forwardRef(
         showMetricsIds: state.showMetricsIds,
         reset: state.reset,
       }));
-    // Memoized helper for preserving attribute definitions
-    const preserveAttributeDefinitions = useMemo(() => {
-      return (prevDefinition, newBaseDefinition) => {
-        const attributionIndex = prevDefinition?.findIndex(
-          (item) => item?.propertyName === "Attribute",
-        );
-
-        if (prevDefinition?.[attributionIndex]?.dependents?.length > 0) {
-          // Already has the Attribute block — preserve it
-          const copy = [...newBaseDefinition];
-          const copyAttributionIndex = copy?.findIndex(
-            (item) => item?.propertyName === "Attribute",
-          );
-          if (copyAttributionIndex >= 0) {
-            copy[copyAttributionIndex] = prevDefinition[attributionIndex];
-          }
-          return copy;
-        } else {
-          // Generate fresh with attributes
-          return newBaseDefinition;
-        }
-      };
-    }, []);
-
     useEffect(() => {
-      setFilterDefinition((prevDefinition) => {
-        const newBaseDefinition = generateTraceFilterDefinition(
-          columns,
-          evalAttributes,
-          filters,
-        );
-        return preserveAttributeDefinitions(prevDefinition, newBaseDefinition);
-      });
-    }, [columns, evalAttributes, filters, preserveAttributeDefinitions]);
+      // Attribute pages are cumulative and de-duplicated. Rebuilding from all
+      // loaded pages appends new dependents, while `filters` preserves the
+      // selected attribute and its chosen scalar editor type.
+      setFilterDefinition(
+        generateTraceFilterDefinition(columns, evalAttributes, filters),
+      );
+    }, [columns, evalAttributes, filters]);
 
     const reversePrimaryEvalColumnIds = useMemo(() => {
       return columns.filter((c) => c?.reverseOutput).map((c) => c.id);
@@ -164,7 +121,10 @@ const TraceTab = React.forwardRef(
       getFilterExtraProperties,
     );
 
-    const debouncedValidatedFilters = useDebounce(validatedFilters, 500);
+    const debouncedValidatedFilters = useDebounce(
+      validatedFilters,
+      FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+    );
 
     useEffect(() => {
       const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
@@ -297,36 +257,48 @@ const TraceTab = React.forwardRef(
           try {
             const { request } = params;
 
-            // request has startRow and endRow get next page number and each page has 10 rows
-            const pageNumber = Math.floor(request.startRow / 10);
+            const pageNumber = Math.floor(
+              request.startRow / INTERACTIVE_TABLE_PAGE_SIZE,
+            );
 
-            const results = await axios.get(endpoints.project.getTraceList(), {
-              params: {
-                project_version_id: runId,
-                page_number: pageNumber,
-                trace_ids: selectedTraceIds.join(","),
-                page_size: 10,
-                filters: JSON.stringify(debouncedValidatedFilters),
-              },
-            });
-            const res = normalizeTraceListPayload(results?.data?.result);
+            const results = await readRunInsightListPage(
+              ({ signal, timeout }) =>
+                axios.get(endpoints.project.getTraceList(), {
+                  signal,
+                  timeout,
+                  params: {
+                    project_version_id: runId,
+                    page_number: pageNumber,
+                    trace_ids: selectedTraceIds.join(","),
+                    page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                    filters: JSON.stringify(debouncedValidatedFilters),
+                  },
+                }),
+            );
+            const res = normalizeTraceListPayload(results.data);
             const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res.totalRows;
-            params.success({
-              rowData: res.table,
-              totalRows: res.totalRows,
-            });
-          } catch (error) {
+            params.api.totalRowCount = res.totalRowCount;
+            params.api.totalRowCountLowerBound = res.totalRowCountLowerBound;
+            params.api.totalRowCountIsLowerBound =
+              res.totalRowCountIsLowerBound;
+            const successPayload = { rowData: res.table };
+            if (!res.totalRowCountIsLowerBound) {
+              successPayload.totalRows = res.totalRows;
+            }
+            setReadError(null);
+            params.success(successPayload);
+          } catch {
+            setReadError(QUERY_FAILED_RETRY_MESSAGE);
             params.fail();
           }
         },
         getRowId: ({ data }) => {
-          return data.rowId;
+          return data.trace_id;
         },
       }),
       [debouncedValidatedFilters, runId, selectedTraceIds, setColumns],
@@ -342,7 +314,60 @@ const TraceTab = React.forwardRef(
               setFilters={setFilters}
               filterDefinition={filterDefinition}
               onClose={() => setFilterOpen(false)}
+              projectId={projectId}
             />
+            {(attributeCursorStopped ||
+              isAttributeLoadError ||
+              isNextAttributePageError) && (
+              <Box
+                role="status"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                  mt: 1,
+                }}
+              >
+                <Box sx={{ fontSize: 12, color: "warning.main" }}>
+                  {isAttributeLoadError
+                    ? "Attributes could not be loaded. Retry safely."
+                    : isNextAttributePageError
+                      ? "The next attribute page failed. Loaded attributes remain available."
+                      : "Attribute pagination stopped safely. Loaded attributes remain available."}
+                </Box>
+                <Button
+                  size="small"
+                  disabled={
+                    isRetryingAttributeCursor || isFetchingNextAttributePage
+                  }
+                  onClick={() =>
+                    void Promise.resolve(
+                      isNextAttributePageError && !attributeCursorStopped
+                        ? fetchNextAttributePage?.()
+                        : retryAttributeCursor?.(),
+                    ).catch(() => {})
+                  }
+                >
+                  {isRetryingAttributeCursor || isFetchingNextAttributePage
+                    ? "Retrying attributes…"
+                    : "Retry attributes"}
+                </Button>
+              </Box>
+            )}
+            {hasNextAttributePage && (
+              <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}>
+                <Button
+                  size="small"
+                  disabled={isFetchingNextAttributePage}
+                  onClick={() => fetchNextAttributePage()}
+                >
+                  {isFetchingNextAttributePage
+                    ? "Loading attributes…"
+                    : "Load more attributes"}
+                </Button>
+              </Box>
+            )}
           </Box>
         </Collapse>
         <Box
@@ -351,18 +376,43 @@ const TraceTab = React.forwardRef(
             flex: 1,
           }}
         >
+          {readError && (
+            <Box
+              role="alert"
+              sx={{
+                px: 1.5,
+                py: 0.75,
+                color: "warning.main",
+                bgcolor: "warning.lighter",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              {readError}
+              <Button
+                size="small"
+                onClick={() => {
+                  setReadError(null);
+                  gridApiRef?.current?.api?.refreshServerSide({ purge: false });
+                }}
+              >
+                Retry
+              </Button>
+            </Box>
+          )}
           <AgGridReact
             ref={gridApiRef}
             theme={agTheme}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             pagination={false}
-            cacheBlockSize={10}
+            cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
             maxBlocksInCache={10}
             suppressRowClickSelection={true}
             rowModelType="serverSide"
             suppressServerSideFullWidthLoadingRow={true}
-            serverSideInitialRowCount={10}
+            serverSideInitialRowCount={INTERACTIVE_TABLE_PAGE_SIZE}
             serverSideDatasource={dataSource}
             onRowClicked={(event) => {
               setTraceDetailDrawerOpen({
@@ -383,7 +433,6 @@ const TraceTab = React.forwardRef(
           filterData={openQuickFilter}
           onClose={() => setOpenQuickFilter(null)}
           setFilters={setFilters}
-          setFilterOpen={setFilterOpen}
         />
       </>
     );

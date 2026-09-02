@@ -20,6 +20,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
 import { useCreateEval } from "../hooks/useCreateEval";
@@ -43,6 +44,7 @@ import {
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -153,6 +155,7 @@ const EvalCreatePage = () => {
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed defaults raw and only
   // strip them on confirmed denial — seeding off `locked` (which is true
   // while loading) would blank the default model / flip the eval type for
@@ -187,7 +190,8 @@ const EvalCreatePage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !agentEvalLocked;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   const [tags, setTags] = useState([]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
@@ -490,15 +494,9 @@ const EvalCreatePage = () => {
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
       navigate(`/dashboard/evaluations/${draftId}`);
     } catch (error) {
-      const message =
-        error?.response?.data?.result ||
-        error?.message ||
-        "Failed to save evaluation";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
-        {
-          variant: "error",
-        },
+        getSafeActionErrorMessage(error, "Failed to save evaluation"),
+        { variant: "error" },
       );
     }
   }, [
@@ -550,15 +548,12 @@ const EvalCreatePage = () => {
       });
       navigate(`/dashboard/evaluations/${result.id}`);
     } catch (error) {
-      const message =
-        error?.response?.data?.result ||
-        error?.message ||
-        "Failed to create composite evaluation";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
-        {
-          variant: "error",
-        },
+        getSafeActionErrorMessage(
+          error,
+          "Failed to create composite evaluation",
+        ),
+        { variant: "error" },
       );
     }
   }, [
@@ -608,9 +603,10 @@ const EvalCreatePage = () => {
       }
       setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
     } catch (error) {
-      const message =
-        error?.response?.data?.result || error?.message || "Failed to run test";
-      handleTestResult(false, message);
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to run test"),
+      );
       setIsTesting(false);
     }
   }, [
@@ -684,7 +680,6 @@ const EvalCreatePage = () => {
   // and can be tested individually.
   const canSave =
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
-
 
   if (capabilitiesLoading) {
     return null;
@@ -946,10 +941,7 @@ const EvalCreatePage = () => {
                                   }}
                                 >
                                   {tab.label}
-                                  <Iconify
-                                    icon="mdi:lock-outline"
-                                    width={14}
-                                  />
+                                  <Iconify icon="mdi:lock-outline" width={14} />
                                 </Box>
                               </CustomTooltip>
                             ) : (
@@ -1124,9 +1116,9 @@ const EvalCreatePage = () => {
                     />
                   )}
 
-                  {/* Error Localization — LLM/Agent only. Code evals don't
-                      produce model traces for the localizer to introspect. */}
-                  {evalType !== "code" && (
+                  {/* LLM/Agent only — code evals don't produce model traces for
+                      the localizer to introspect. */}
+                  {errorLocalizerAvailable && evalType !== "code" && (
                     <Box>
                       <CustomTooltip
                         show={agentEvalLocked}

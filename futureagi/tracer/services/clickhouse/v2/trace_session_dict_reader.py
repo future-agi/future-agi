@@ -84,12 +84,16 @@ from collections.abc import Iterable
 
 import structlog
 
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
-from tracer.services.clickhouse.v2.query_settings import current_settings
+from tracer.services.clickhouse.v2.query_settings import (
+    application_read_settings,
+    current_settings,
+)
 
 log = structlog.get_logger("ch25.trace_session_dict_reader")
 
@@ -130,6 +134,26 @@ def _get_client():
     so a settings-client is never shared across threads and a concurrent caller
     with a different key cannot close a client this thread is mid-query on. The
     empty-settings path is unchanged."""
+    cfg = get_v2_config()
+    if cfg["server_enforced_readonly"]:
+        global _client
+        if _client is not None:
+            return _client
+        with _client_lock:
+            if _client is None:
+                from tracer.services.clickhouse.server_readonly import (
+                    ServerEnforcedReadOnlyNativeClient,
+                )
+
+                _client = ServerEnforcedReadOnlyNativeClient(
+                    host=cfg["host"],
+                    port=cfg["tcp_port"],
+                    username=cfg["user"],
+                    password=cfg["password"] or "",
+                    database=cfg["database"],
+                )
+        return _client
+
     overrides = current_settings()
     if overrides:
         key = tuple(sorted(overrides.items()))
@@ -146,34 +170,31 @@ def _get_client():
                 pass
         import clickhouse_connect
 
-        cfg = get_v2_config()
         client = clickhouse_connect.get_client(
             host=cfg["host"],
             port=cfg["http_port"],
             username=cfg["user"],
             password=cfg["password"] or "",
             database=cfg["database"],
-            send_receive_timeout=15,
+            send_receive_timeout=9.5,
             settings=overrides,
         )
         _settings_tls.client = client
         _settings_tls.key = key
         return client
-    global _client
     if _client is not None:
         return _client
     with _client_lock:
         if _client is None:
             import clickhouse_connect
 
-            cfg = get_v2_config()
             _client = clickhouse_connect.get_client(
                 host=cfg["host"],
                 port=cfg["http_port"],
                 username=cfg["user"],
                 password=cfg["password"] or "",
                 database=cfg["database"],
-                send_receive_timeout=15,
+                send_receive_timeout=9.5,
             )
     return _client
 
@@ -200,6 +221,9 @@ def _reset_client() -> None:
 
 def resolve_external_session_ids(
     trace_session_ids: Iterable[object],
+    *,
+    timeout_ms: int | None = None,
+    settings: dict | None = None,
 ) -> dict[str, str | None]:
     """Batch-resolve ``{trace_session_id (str) -> external_session_id}`` from the
     CH ``trace_sessions_dict``.
@@ -224,13 +248,20 @@ def resolve_external_session_ids(
     try:
         # arrayJoin over the literal id list resolves the whole batch in ONE
         # round-trip. dictGetOrNull keeps the missing-key → NULL semantics.
+        query_kwargs = {"parameters": {"ids": list(ids)}}
+        if timeout_ms is not None and timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+        query_kwargs["settings"] = application_read_settings(
+            {**current_settings(), **(settings or {})},
+            timeout_ms=timeout_ms,
+        )
         result = client.query(
             (
                 f"SELECT toString(sid), "
                 f"dictGetOrNull('{_DICT_NAME}', '{_LABEL_ATTR}', sid) "
                 f"FROM (SELECT arrayJoin(%(ids)s::Array(UUID)) AS sid)"
             ),
-            parameters={"ids": list(ids)},
+            **query_kwargs,
         )
     except Exception:
         # A read error is real (parity must not silently degrade). Reset the
@@ -359,6 +390,8 @@ def resolve_session_fields(
     trace_session_ids: Iterable[object],
     *,
     project_id: str | None = None,
+    project_ids: Iterable[object] | None = None,
+    deadline: ReadDeadline | None = None,
 ) -> dict[str, dict[str, object]]:
     """Batch-resolve ``{trace_session_id (str) -> {external_session_id,
     first_seen, project_id, bookmarked, display_name}}`` — the curated CH identity
@@ -391,7 +424,8 @@ def resolve_session_fields(
       • ``project_id`` is returned as a ``str``.
       • When several input ids resolve to the SAME survivor (straddler old+new
         both passed), each input id maps to its own copy of the one entity.
-      • ``project_id`` (optional kwarg): scope the WHERE to one tenant, pruning on
+      • ``project_id`` / ``project_ids`` (optional kwargs): scope the WHERE to
+        one or more already-authorized projects, pruning on
         the ``trace_sessions`` ORDER BY ``(project_id, trace_session_id)``
         sort-key prefix so an eval-path caller reads ~its own sessions instead
         of the whole table.
@@ -401,43 +435,80 @@ def resolve_session_fields(
     if not ids:
         return {}
 
-    client = _get_client()
     resolved = resolved_id_expr("ids.sid")
     remap_join = remap_left_join("ids.sid", _SESSION_REMAP)
     params: dict[str, object] = {"ids": list(ids)}
     project_clause = ""
+    if project_id and project_ids is not None:
+        raise ValueError("project_id and project_ids are mutually exclusive")
+    normalized_project_ids = {str(value) for value in (project_ids or ()) if value}
     if project_id:
+        normalized_project_ids = {str(project_id)}
         params["pid"] = str(project_id)
         project_clause = " AND ts.project_id = %(pid)s"
-    try:
-        # Resolve new→old in the inner subquery (plain (input_id, resolved_id)
-        # columns), join the curated table on the resolved id as a plain column,
-        # and pull external_session_id/first_seen/project_id off the survivor row.
-        # FINAL for immediate visibility of the net-new dual-write + RMT
-        # latest-wins.
-        result = client.query(
-            (
-                f"SELECT toString(r.input_id), toString(r.resolved_id), "
-                f"ts.external_session_id, ts.first_seen, toString(ts.project_id) "
-                f"FROM ("
-                f"  SELECT ids.sid AS input_id, {resolved} AS resolved_id "
-                f"  FROM (SELECT arrayJoin(%(ids)s::Array(UUID)) AS sid) AS ids "
-                f"  {remap_join}"
-                f") AS r "
-                # alias BEFORE FINAL (CH syntax); see _resolve_existing_ids.
-                f"INNER JOIN {_SESSIONS_TABLE} AS ts FINAL "
-                f"  ON ts.trace_session_id = r.resolved_id "
-                f"WHERE ts.is_deleted = 0{project_clause}"
-            ),
-            parameters=params,
+    elif normalized_project_ids:
+        params["pids"] = tuple(sorted(normalized_project_ids))
+        project_clause = " AND ts.project_id IN %(pids)s"
+    # Resolve new→old in the inner subquery (plain input/resolved columns),
+    # join the curated table on the resolved id, and pull the survivor fields.
+    # FINAL provides immediate visibility of the net-new dual-write row.
+    query = (
+        f"SELECT toString(r.input_id) AS input_id, "
+        f"toString(r.resolved_id) AS resolved_id, "
+        f"ts.external_session_id AS external_session_id, "
+        f"ts.first_seen AS first_seen, "
+        f"toString(ts.project_id) AS project_id "
+        f"FROM ("
+        f"  SELECT ids.sid AS input_id, {resolved} AS resolved_id "
+        f"  FROM (SELECT arrayJoin(%(ids)s::Array(UUID)) AS sid) AS ids "
+        f"  {remap_join}"
+        f") AS r "
+        # alias BEFORE FINAL (CH syntax); see _resolve_existing_ids.
+        f"INNER JOIN {_SESSIONS_TABLE} AS ts FINAL "
+        f"  ON ts.trace_session_id = r.resolved_id "
+        f"WHERE ts.is_deleted = 0{project_clause}"
+    )
+    if deadline is not None:
+        # The ordinary reader's cached HTTP client owns a 9.5s socket timeout.
+        # Picker label hydration instead uses the deadline-aware native service,
+        # which narrows admission, socket, and server execution to the request's
+        # remaining four-second wall (also on server-enforced-readonly lanes).
+        from tracer.services.clickhouse.v2.query_service import (
+            V2AnalyticsQueryService,
         )
-    except Exception:
-        _reset_client()
-        raise
+
+        result = V2AnalyticsQueryService().execute_ch_query(
+            query,
+            params,
+            timeout_ms=deadline.remaining_ms(),
+            settings={
+                "max_threads": 2,
+                "max_result_rows": len(ids),
+                "result_overflow_mode": "throw",
+                "timeout_overflow_mode": "throw",
+            },
+        )
+        result_rows = [
+            (
+                row["input_id"],
+                row["resolved_id"],
+                row["external_session_id"],
+                row["first_seen"],
+                row["project_id"],
+            )
+            for row in result.data
+        ]
+    else:
+        client = _get_client()
+        try:
+            result_rows = client.query(query, parameters=params).result_rows
+        except Exception:
+            _reset_client()
+            raise
 
     out: dict[str, dict[str, object]] = {}
     resolved_by_input: dict[str, str] = {}
-    for row in result.result_rows:
+    for row in result_rows:
         input_id, resolved_id, external, first_seen, proj_id = row
         resolved_by_input[input_id] = resolved_id
         out[input_id] = {
@@ -459,9 +530,51 @@ def resolve_session_fields(
 
     survivor_ids = set(resolved_by_input.values())
     overlay_by_resolved: dict[str, dict[str, object]] = {}
-    for tsid, bookmarked, display_name in TraceSessionOverlay.objects.filter(
+    overlay_queryset = TraceSessionOverlay.objects.filter(
         trace_session_id__in=survivor_ids
-    ).values_list("trace_session_id", "bookmarked", "display_name"):
+    )
+    if normalized_project_ids:
+        overlay_queryset = overlay_queryset.filter(
+            project_id__in=normalized_project_ids
+        )
+    overlay_queryset = overlay_queryset.values_list(
+        "trace_session_id", "bookmarked", "display_name"
+    )
+    if deadline is None:
+        overlay_rows = list(overlay_queryset)
+    else:
+        from contextlib import nullcontext
+
+        from django.db import DatabaseError, connection, transaction
+
+        timeout_ms = deadline.remaining_ms()
+        already_in_atomic_block = connection.in_atomic_block
+        try:
+            if connection.vendor == "postgresql":
+                transaction_context = (
+                    nullcontext() if already_in_atomic_block else transaction.atomic()
+                )
+                with transaction_context:
+                    with connection.cursor() as cursor:
+                        # The direct SELECT harness may already own a read-only
+                        # outer transaction. SET TRANSACTION is invalid after
+                        # its savepoint/prior statement, while SET LOCAL remains
+                        # valid and preserves the request-owned statement wall.
+                        if not already_in_atomic_block:
+                            cursor.execute("SET TRANSACTION READ ONLY")
+                        cursor.execute(
+                            "SELECT set_config('statement_timeout', %s, true)",
+                            [str(timeout_ms)],
+                        )
+                    overlay_rows = list(overlay_queryset)
+            else:
+                overlay_rows = list(overlay_queryset)
+        except DatabaseError as exc:
+            raise ReadDeadlineExceeded(
+                "Session-label PostgreSQL read exceeded its request deadline"
+            ) from exc
+
+    for tsid, bookmarked, display_name in overlay_rows:
         overlay_by_resolved[str(tsid)] = {
             "bookmarked": bool(bookmarked),
             "display_name": display_name,
