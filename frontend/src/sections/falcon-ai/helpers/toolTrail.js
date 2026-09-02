@@ -109,3 +109,124 @@ export function groupBlocks(blocks = []) {
   });
   return grouped;
 }
+
+/**
+ * A skill declares the flow it intends to follow in example_trajectories, so
+ * the trail does not have to guess: it can say which declared step the run is
+ * on instead of only relabelling the tool that already fired.
+ *
+ * A trajectory is { user, steps: [{ tool, params }] }. Only the ordered tool
+ * names matter here.
+ */
+export function declaredSteps(trajectory) {
+  return (trajectory?.steps || []).map((s) => s?.tool).filter(Boolean);
+}
+
+/**
+ * A skill may declare several flows for several kinds of request. Pick the one
+ * that explains the most of what actually ran; before anything has run, the
+ * longest declared flow is the best description of the job.
+ */
+export function pickTrajectory(trajectories = [], toolCalls = []) {
+  const usable = (trajectories || []).filter((t) => declaredSteps(t).length);
+  if (!usable.length) return null;
+  if (usable.length === 1) return usable[0];
+
+  const ran = (toolCalls || []).map((tc) => tc?.tool_name);
+  let best = null;
+  let bestScore = -1;
+  usable.forEach((t) => {
+    const plan = declaredSteps(t);
+    const declared = new Set(plan);
+    const hits = ran.filter((n) => declared.has(n)).length;
+    const score = hits * 1000 + plan.length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = t;
+    }
+  });
+  return best;
+}
+
+export function planFor(trajectories = [], toolCalls = []) {
+  return declaredSteps(pickTrajectory(trajectories, toolCalls));
+}
+
+/**
+ * Walk the live tool calls against the declared flow.
+ *
+ * A run does not walk its plan cleanly, so every call gets one of three
+ * readings and none of them is dropped:
+ *   plan       the next declared occurrence of this tool, at or after the
+ *              cursor. Advances the run.
+ *   revisit    a declared step the run already passed, either because the tool
+ *              is being called again or because the plan was taken out of
+ *              order. Counts as reached, never moves the cursor backwards.
+ *   extra      the tool is nowhere in the declared flow.
+ *
+ * `done` counts distinct declared steps that were actually reached, so a
+ * jumped step is never counted as run, and `pending` names the ones that were
+ * not.
+ */
+export function alignToPlan(toolCalls = [], plan = []) {
+  const planned = plan.length;
+  const empty = {
+    steps: [],
+    byCallId: {},
+    planned,
+    done: 0,
+    extra: 0,
+    pending: [],
+  };
+  if (!planned) return { ...empty, steps: toolCalls };
+
+  const reached = new Set();
+  const lastSeen = new Map();
+  const byCallId = {};
+  let cursor = 0;
+  let extra = 0;
+
+  const steps = (toolCalls || []).map((call) => {
+    const name = call?.tool_name;
+    let aligned;
+    const ahead = plan.indexOf(name, cursor);
+    if (ahead !== -1) {
+      cursor = ahead + 1;
+      aligned = { ...call, planIndex: ahead, planKind: "plan" };
+    } else {
+      const known = lastSeen.has(name)
+        ? lastSeen.get(name)
+        : plan.indexOf(name);
+      if (known >= 0) {
+        aligned = { ...call, planIndex: known, planKind: "revisit" };
+      } else {
+        extra += 1;
+        aligned = { ...call, planIndex: null, planKind: "extra" };
+      }
+    }
+    if (aligned.planIndex !== null) {
+      reached.add(aligned.planIndex);
+      lastSeen.set(name, aligned.planIndex);
+    }
+    byCallId[call?.call_id] = aligned;
+    return aligned;
+  });
+
+  const pending = [];
+  plan.forEach((tool, index) => {
+    if (!reached.has(index)) pending.push({ index, tool });
+  });
+
+  return { steps, byCallId, planned, done: reached.size, extra, pending };
+}
+
+/**
+ * Which skill a turn ran under, read off the message that triggered it. This
+ * mirrors the backend's own parse exactly (startswith "/", first space
+ * delimited token), so the trail can never name a skill the turn did not run.
+ */
+export function slugFromMessage(content) {
+  const text = String(content || "");
+  if (!text.startsWith("/")) return null;
+  return text.split(" ", 1)[0].slice(1) || null;
+}
