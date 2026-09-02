@@ -1,3 +1,7 @@
+// This suite reads the widget sources off disk to prove the saved widget and
+// the editor preview resolve their axis through the same helper, so it needs
+// `process`. Everything under src/ otherwise lints as browser code.
+/* eslint-env node */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
