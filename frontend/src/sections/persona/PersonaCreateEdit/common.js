@@ -369,10 +369,12 @@ const PersonCreateBaseValidationSchema = z.object({
   profession: z.array(z.string()).transform((val) => (val.length ? val : null)),
   personality: z
     .array(z.object({ value: z.string() }))
-    .transform((val) => (val.length ? val?.map((item) => item.value) : null)),
+    .min(1, "Select at least one personality")
+    .transform((val) => val.map((item) => item.value)),
   communicationStyle: z
     .array(z.string())
-    .transform((val) => (val.length ? val : null)),
+    .min(1, "Select at least one communication style")
+    .transform((val) => val),
   accent: z.array(z.string()).transform((val) => (val.length ? val : null)),
   conversationSpeed: z
     .array(z.object({ value: z.string() }))
