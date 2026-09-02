@@ -62,6 +62,40 @@ const SPAN_FILTER_DEFAULT = {
   filterConfig: { filterType: "", filterOp: "", filterValue: "" },
 };
 
+export function TraceDetailSpanFilterPanel({
+  anchorEl,
+  open,
+  onClose,
+  currentFilters,
+  onApply,
+  projectId,
+}) {
+  return (
+    <TraceFilterPanel
+      anchorEl={anchorEl}
+      open={open}
+      onClose={onClose}
+      currentFilters={currentFilters}
+      onApply={onApply}
+      projectId={projectId}
+      source="traces"
+      tab="spans"
+      propertyNamespace="traces"
+      attributeSource="spans"
+      isSpansView
+    />
+  );
+}
+
+TraceDetailSpanFilterPanel.propTypes = {
+  anchorEl: PropTypes.any,
+  open: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  currentFilters: PropTypes.array.isRequired,
+  onApply: PropTypes.func.isRequired,
+  projectId: PropTypes.string.isRequired,
+};
+
 const ACTION_ITEMS = [
   { id: "dataset", label: "Move to dataset", icon: "mdi:database-outline" },
   {
@@ -908,7 +942,7 @@ const TraceDetailDrawerV2 = ({
 
       {/* Span filter popover — hidden on Imagine tab */}
       {!isImagineActive && (
-        <TraceFilterPanel
+        <TraceDetailSpanFilterPanel
           anchorEl={filterAnchorEl}
           open={Boolean(filterAnchorEl)}
           onClose={() => setFilterAnchorEl(null)}

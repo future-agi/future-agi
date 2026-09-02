@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -31,14 +32,11 @@ import {
   getNewTaskFilters,
 } from "./schema";
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const getTaskDetailsErrorMessage = (error) =>
-  error?.result ||
-  error?.message ||
-  error?.response?.data?.result ||
-  error?.response?.data?.message ||
-  "Task details could not be loaded.";
+  getSafeActionErrorMessage(error, "Task details could not be loaded.");
 
 const TAB_OPTIONS = [
   { label: "Details", value: "details", icon: "solar:settings-linear" },
@@ -91,6 +89,8 @@ const TaskDetailPage = () => {
     isLoading,
     isError,
     error,
+    isFetching,
+    refetch,
   } = useGetTaskData(taskId, {
     enabled: !!taskId,
     // Poll while non-terminal so the header/badge advance without a refresh.
@@ -118,6 +118,7 @@ const TaskDetailPage = () => {
 
   // ── Mutations ──
   const { mutate: updateTask, isPending: isUpdating } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ payload }) =>
       axios.patch(endpoints.project.patchEvalTask(), {
         ...payload,
@@ -133,10 +134,12 @@ const TaskDetailPage = () => {
     },
     onError: (err, { mode }) => {
       enqueueSnackbar(
-        err?.response?.data?.result ||
-          (mode === "rerun"
+        getSafeActionErrorMessage(
+          err,
+          mode === "rerun"
             ? "Failed to start the re-run"
-            : "Failed to update task"),
+            : "Task could not be updated. Review the filters and try again.",
+        ),
         { variant: "error" },
       );
     },
@@ -256,7 +259,7 @@ const TaskDetailPage = () => {
     [formValues, updateTask, confirmMode],
   );
 
-  if (isLoading) {
+  if (isLoading && !taskDetails) {
     return (
       <Box
         sx={{
@@ -271,7 +274,7 @@ const TaskDetailPage = () => {
     );
   }
 
-  if (isError || !taskDetails) {
+  if (!taskDetails) {
     const message = getTaskDetailsErrorMessage(error);
     return (
       <Box
@@ -302,15 +305,26 @@ const TaskDetailPage = () => {
               {message}
             </Typography>
           </Box>
-          <Button
-            variant="contained"
-            size="small"
-            onClick={() => navigate("/dashboard/tasks")}
-            startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-            sx={{ textTransform: "none" }}
-          >
-            Back to Tasks
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => refetch?.()}
+              disabled={isFetching}
+              sx={{ textTransform: "none" }}
+            >
+              Retry
+            </Button>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => navigate("/dashboard/tasks")}
+              startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+              sx={{ textTransform: "none" }}
+            >
+              Back to Tasks
+            </Button>
+          </Stack>
         </Stack>
       </Box>
     );
@@ -416,6 +430,26 @@ const TaskDetailPage = () => {
         actions={headerActions}
         onNameChange={(newName) => renameTask(newName)}
       />
+
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch?.()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+        >
+          {getTaskDetailsErrorMessage(error)} Existing task details are still
+          shown.
+        </Alert>
+      )}
 
       {/* Segmented-pill tabs — matches EvalDetailPage style */}
       <Box

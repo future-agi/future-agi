@@ -72,7 +72,9 @@ jobs:
       packages: write # ghcr build-cache: read on PRs, written on pushes
     env:
       BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
-      BUILD_FRONTEND: ${{ needs.changes.outputs.frontend }}
+      # Always from source: specs land with the frontend behavior they assert,
+      # so the released frontend image can be too old for them (TH-7733).
+      BUILD_FRONTEND: "true"
       BUILD_GATEWAY: ${{ needs.changes.outputs.gateway }}
     steps:
       - uses: actions/checkout@v4
@@ -116,10 +118,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # An image whose filter did not fire is NOT built from this PR — the
-      # stack runs the released :latest for it. So an e2e/**-only PR exercises
-      # the released stack; a frontend PR tests its frontend against released
-      # backend/collector/gateway. Deliberate speed trade.
+      # A backend/gateway image whose filter did not fire is NOT built from
+      # this PR — the stack runs the released :latest for it. Deliberate speed
+      # trade. The frontend is exempt (see BUILD_FRONTEND above).
       - name: Build backend image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5

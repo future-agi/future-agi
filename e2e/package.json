@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "catalog": "node scripts/flow-catalog.mjs",
     "catalog:check": "node scripts/flow-catalog.mjs --check",
+    "coverage": "node scripts/e2e-coverage.mjs",
     "selftest": "node --test 'scripts/**/*.test.mjs'"
   },
   "devDependencies": {

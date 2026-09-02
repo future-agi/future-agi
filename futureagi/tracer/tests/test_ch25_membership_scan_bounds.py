@@ -120,6 +120,7 @@ class TestTimeSeriesAttrFilterScope:
             project_id=PROJECT_ID,
             filters=[DATETIME_FILTER, SPAN_ATTR_FILTER],
             interval="day",
+            observe_type="trace",
         )
         sql, params = builder.build()
         sub = _membership_subquery(sql)
@@ -165,34 +166,40 @@ def _with_op(op, value):
     return f
 
 
-class TestLoweredStringValueCompanion:
-    """Text equality/IN must emit a companion predicate matching
-    idx_attrs_str_values (bloom over arrayMap(x -> lower(x),
-    mapValues(attrs_string))) — the lower()-wrapped comparison alone can
-    never engage a skip index. The companion is implied by the real
-    predicate, so result sets are unchanged."""
+class TestUnicodeSafeStringEquality:
+    """Text equality/IN must preserve the lowerUTF8 public contract."""
 
-    def test_equals_emits_lowered_has_companion(self):
+    def test_equals_does_not_apply_ascii_only_value_bloom(self):
         sql, params = _v2_sql(STR_EQ_FILTER)
-        assert "has(arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
-        # the companion constant is lowercased like the equality constant
+        assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
         assert "checkout flow" in [v for v in params.values() if isinstance(v, str)]
 
-    def test_in_emits_lowered_hasany_companion(self):
+    def test_in_does_not_apply_ascii_only_value_bloom(self):
         sql, params = _v2_sql(_with_op("in", ["Checkout Flow", "ONBOARDING"]))
-        assert "hasAny(arrayMap(x -> lower(x), mapValues(attrs_string)), [" in sql
-        flat = [v for v in params.values() if isinstance(v, str)]
-        assert "checkout flow" in flat
-        assert "onboarding" in flat
+        assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert any(
+            isinstance(value, tuple) and value == ("checkout flow", "onboarding")
+            for value in params.values()
+        )
+
+    def test_ascii_filter_keeps_kelvin_sign_candidate(self):
+        stored = "\N{KELVIN SIGN}"
+        assert not stored.isascii()
+        assert stored.lower() == "k"
+
+        sql, params = _v2_sql(_with_op("equals", "K"))
+
+        assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "k" in [value for value in params.values() if isinstance(value, str)]
 
     def test_not_equals_has_no_companion(self):
-        # a has() companion on a negation would invert semantics — must
-        # never be emitted
         sql, _ = _v2_sql(_with_op("not_equals", "Checkout Flow"))
         assert "arrayMap(x -> lower(x)" not in sql
 
     def test_contains_has_no_companion(self):
-        # plain bloom does exact membership; substring ops get no companion
         sql, _ = _v2_sql(_with_op("contains", "heckout"))
         assert "arrayMap(x -> lower(x)" not in sql
 
