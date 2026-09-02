@@ -261,6 +261,40 @@ export default function HarnessCreate() {
       ]),
     );
 
+  // Derive the per-job egress allowlist from any URL-valued env/config the user supplied
+  // (e.g. LIVEKIT_URL -> its media host). Platform-common hosts (TURN, provider APIs) are
+  // added by the backend base egress; this only carries agent-declared, publicly-routable hosts.
+  const deriveEgressDomains = (...maps) => {
+    const hosts = new Set();
+    for (const map of maps) {
+      for (const value of Object.values(map || {})) {
+        if (typeof value !== "string") continue;
+        const trimmed = value.trim();
+        if (!/^(wss?|https?):\/\//i.test(trimmed)) continue;
+        let host = "";
+        try {
+          host = new URL(trimmed).hostname;
+        } catch {
+          continue;
+        }
+        if (
+          !host ||
+          host === "localhost" ||
+          host === "host.docker.internal" ||
+          host === "::1" ||
+          host.startsWith("127.") ||
+          host.startsWith("10.") ||
+          host.startsWith("192.168.") ||
+          host.startsWith("169.254.") ||
+          /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+        )
+          continue;
+        hosts.add(host);
+      }
+    }
+    return Array.from(hosts);
+  };
+
   const hostedPayload = (secretRefs = {}) => ({
     schema_version: "futureagi.harness-job.v1",
     source: sourcePayload(),
@@ -284,7 +318,7 @@ export default function HarnessCreate() {
       read_only_source: true,
       allow_privileged: false,
       allow_host_runtime_control: false,
-      allowed_egress_domains: [],
+      allowed_egress_domains: deriveEgressDomains(configurationValues, environmentValues),
     },
     retry: {
       max_infrastructure_attempts: 2,
