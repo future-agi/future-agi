@@ -1,4 +1,4 @@
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { useWatch } from "react-hook-form";
@@ -7,7 +7,6 @@ import CustomTooltip from "src/components/tooltip";
 import RequestBody from "src/sections/develop-detail/AddColumn/AddColumnApiCall/RequestBody";
 
 const CreateDescriptions = ({ fields, control }) => {
-  const theme = useTheme();
   const columns = useWatch({
     name: "columns",
     control,
@@ -128,7 +127,6 @@ const CreateDescriptions = ({ fields, control }) => {
                   }
                   showHelper={false}
                   sx={{
-                    backgroundColor: theme.palette.background.paper,
                     borderRadius: "4px",
                   }}
                 />
