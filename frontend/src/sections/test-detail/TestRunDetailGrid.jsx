@@ -485,6 +485,15 @@ const TestRunDetailGrid = () => {
             className="test-detail-grid"
             selectionColumnDef={selectionColumnDef}
             onSelectionChanged={onRowSelectionChanged}
+            /*
+              AG Grid's default header is ~54px, set for a table whose rows are
+              the same height. These rows are 100px of stacked content, so the
+              header was inheriting a size meant for a denser grid and reading
+              as a heavy band across the top. 40 puts it in proportion with the
+              rest of the app's table headers without touching the shared
+              ag-theme, which a dozen other tables render with.
+            */
+            headerHeight={40}
             rowHeight={100}
             columnDefs={finalColumnDefs}
             defaultColDef={defaultColDef}

@@ -1,3 +1,5 @@
+import { environmentVersions } from "./versions";
+
 /**
  * Environment configuration, instances and files.
  *
@@ -54,22 +56,96 @@ export const ISOLATION_OPTIONS = [
   },
 ];
 
-/** Version history — what a run pins itself to. */
-export const ENV_VERSIONS = [
-  { version: "v7", createdAt: "2026-08-14T09:20:00Z", note: "Added 40 discontinued SKUs", current: true, runs: 12 },
-  { version: "v6", createdAt: "2026-07-30T14:05:00Z", note: "Refund threshold rule tightened", current: false, runs: 48 },
-  { version: "v5", createdAt: "2026-07-11T11:42:00Z", note: "Seeded 200 more customers", current: false, runs: 31 },
-  { version: "v4", createdAt: "2026-06-28T16:10:00Z", note: "Initial published build", current: false, runs: 96 },
+/* ── lineage ──────────────────────────────────────────────────────────────
+ *
+ * "Every task starts from the same snapshot" is the claim that makes two runs
+ * comparable, and until now it was a sentence in a settings label. Here it is a
+ * shape instead: one frozen master, built when the environment was published,
+ * and a copy per task that is written to and then destroyed.
+ *
+ * Derived from the environment rather than hand-written, so the master quotes
+ * this environment's own tables and the copies run its own tasks.
+ */
+
+const shortHash = (s = "") => {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36).slice(0, 6).padEnd(6, "0");
+};
+
+/** The read-only snapshot every instance is copied from. */
+export const masterSnapshot = (env, envState) => {
+  const tables = env?.seed?.tables || [];
+  const rows = tables.reduce((a, t) => a + (t.rows || 0), 0);
+  /* The version the rest of the app shows — a master pinned to a version
+     nothing else mentions would undo the point of pinning it. */
+  const versions = environmentVersions(env, envState);
+  const current = versions.find((v) => v.current) || versions[0];
+  return {
+    id: `master-${shortHash(env?.id || "env")}`,
+    version: current.label,
+    builtAt: current.createdAt,
+    tables: tables.length,
+    rows,
+    sizeMB: Math.max(1, Math.round(rows / 900)),
+    /* Nothing ever writes here. That is the entire point of the record. */
+    readOnly: true,
+  };
+};
+
+/**
+ * The copies. Two still running, one grading, two finished and destroyed —
+ * enough to show the shape of a batch mid-flight rather than a tidy end state.
+ */
+const COPY_PLAN = [
+  { status: "running", uptimeS: 42, cpu: 38, mem: 61 },
+  { status: "running", uptimeS: 31, cpu: 24, mem: 55 },
+  { status: "grading", uptimeS: 88, cpu: 12, mem: 48 },
+  { status: "passed", uptimeS: 64, cpu: 0, mem: 0 },
+  { status: "failed", uptimeS: 71, cpu: 0, mem: 0 },
 ];
 
-/** Live and recent sandbox instances of this environment. */
-export const INSTANCES = [
-  { id: "inst-9f2c41", status: "running", task: "Refunds above $200 need supervisor approval", uptimeS: 42, region: "us-east-1", version: "v7", cpu: 38, mem: 61 },
-  { id: "inst-7b1a08", status: "running", task: "Never confirm identity from the phone number alone", uptimeS: 31, region: "us-east-1", version: "v7", cpu: 24, mem: 55 },
-  { id: "inst-3d88fe", status: "grading", task: "Return window is 30 days from delivery", uptimeS: 88, region: "us-east-1", version: "v7", cpu: 12, mem: 48 },
-  { id: "inst-1c4d90", status: "passed", task: "Routine task using lookup_order", uptimeS: 64, region: "us-east-1", version: "v7", cpu: 0, mem: 0 },
-  { id: "inst-55ab21", status: "failed", task: "Do not disclose another customer's order details", uptimeS: 71, region: "us-east-1", version: "v7", cpu: 0, mem: 0 },
-];
+/**
+ * The copies a run made.
+ *
+ * `active` is what a run in flight looks like — some copies still executing,
+ * some grading, some already torn down. A run that finished has none of that:
+ * every copy is gone, along with everything it wrote, which is the claim this
+ * panel exists to demonstrate. Showing three "Running" instances for a run that
+ * ended yesterday contradicts it in the same screen that makes it.
+ */
+export const instancesFor = (env, { active = false } = {}) => {
+  const master = masterSnapshot(env);
+  const rules = env?.rules || [];
+  const tools = env?.tools || [];
+  const tasks = [
+    rules[0],
+    rules[1],
+    rules[2],
+    tools[0] && `Routine task using ${tools[0].name}`,
+    rules[3] || (tools[1] && `Routine task using ${tools[1].name}`),
+  ];
+
+  return COPY_PLAN.map((c, i) => {
+    const live = active && ["running", "grading"].includes(c.status);
+    const status = live ? c.status : c.status === "failed" ? "failed" : "passed";
+    return {
+      ...c,
+      status,
+      id: `inst-${shortHash(`${env?.id || "env"}-${i}`)}`,
+      from: master.id,
+      task: tasks[i] || `Task ${i + 1}`,
+      region: DEFAULT_RUNTIME.region,
+      version: master.version,
+      /* Writes land in the copy and die with it. */
+      wroteRows: live ? 4 + i * 3 : 9 + i * 6,
+      destroyed: !live,
+    };
+  });
+};
 
 /**
  * Files inside the environment. `diff` marks files an agent changed during a

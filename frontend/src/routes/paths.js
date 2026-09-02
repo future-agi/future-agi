@@ -93,11 +93,41 @@ export const paths = {
       // evals, then run. The legacy routes above stay mounted so the old
       // screens remain reachable for comparison.
       environments: `${ROOTS.DASHBOARD}/simulate/environments`,
+      // Twins gets its own top-level nav slot — it's a discovery /
+      // marketing surface for the service-twin catalog + entry point,
+      // not a parallel storage layer. Twin-backed envs still live in
+      // `state.myEnvironments`; this page shows a filtered view of
+      // them alongside the catalog and the "create" CTA.
+      twins: `${ROOTS.DASHBOARD}/simulate/twins`,
+      twinDetail: (envId) => `${ROOTS.DASHBOARD}/simulate/twins/${envId}`,
       environmentNew: `${ROOTS.DASHBOARD}/simulate/environments/new`,
+      // World-class differentiator: create an env where the "world" is a
+      // live sandbox for third-party services (Slack, Notion, Salesforce,
+      // etc.) rather than the default seeded generic tables. Beats every
+      // competitor because the twin backing plugs into the existing env
+      // machinery (scenarios, personas, evals, RL contract, versioning)
+      // for free.
+      environmentNewTwin: `${ROOTS.DASHBOARD}/simulate/environments/new/twin`,
+      environmentUseTemplate: (templateId) => `${ROOTS.DASHBOARD}/simulate/environments/use/${templateId}`,
       environmentDetail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+      /* Connect-your-agent step for a freshly composed twin env —
+         same shape as UseTemplate's step 0. Fit-check runs on submit,
+         then hands off to twin-review. */
+      environmentTwinConnect: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-connect`,
+      /* Review layout — chat left + workspace tabs right — for a
+         freshly composed twin env. Same shape the single-service
+         template flow uses at step 2. */
+      environmentTwinReview: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-review`,
       environmentStep: (envId, step) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/${step}`,
       simulationRun: (envId, runId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}`,
+      // Two or more runs of the same scenarios, read as one screen. The runs
+      // travel in the query string so a comparison is a link someone can send.
+      simulationCompare: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
       simulationRuns: `${ROOTS.DASHBOARD}/simulate/runs`,
+      // Where a finished run reports. The legacy execution-detail screen, fed
+      // for prototype runs by the mock adapter in simulate-v2/_mock.
+      executionDetail: (testId, executionId) =>
+        `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {

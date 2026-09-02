@@ -33,19 +33,71 @@ export const hashSeed = (str) => {
 
 /* ── per-surface step vocabularies ───────────────────────────────────────── */
 
+/*
+  Agent lines carry alternates; the caller's do not.
+
+  A new version of an agent says the same things differently — that is most of
+  what changing a prompt does — and a comparison where every turn is
+  word-for-word identical can only ever report "2 turns added", which is the
+  least interesting thing that happened. The counterpart keeps its script so the
+  difference stays attributable: when the caller says the same sentence and the
+  agent answers it differently, the agent is the variable.
+*/
 const VOICE_TURNS = [
   { role: "customer", text: "Hi, I'm calling about an order I placed last week." },
-  { role: "agent", text: "Of course — I can help with that. Could I take the order number?" },
+  {
+    role: "agent",
+    text: "Of course — I can help with that. Could I take the order number?",
+    alts: [
+      "Happy to help. What's the order number?",
+      "Sure thing. Can you read me the order number when you have it?",
+    ],
+  },
   { role: "customer", text: "It's A dash one zero two four one." },
-  { role: "agent", text: "Thank you. Before I pull that up, can you confirm the email on the account?" },
+  {
+    role: "agent",
+    text: "Thank you. Before I pull that up, can you confirm the email on the account?",
+    alts: [
+      "Got it. For security, what's the email on the account?",
+      "Thanks. One quick check first — the email we have on file?",
+    ],
+  },
   { role: "customer", text: "Yeah, it's marcus dot webb at gmail." },
-  { role: "agent", text: "Perfect, that matches. Let me check the shipment." },
+  {
+    role: "agent",
+    text: "Perfect, that matches. Let me check the shipment.",
+    alts: [
+      "That matches what I have. Checking the shipment now.",
+      "Verified. Pulling up the delivery status.",
+    ],
+  },
   { role: "customer", text: "It was supposed to be here Tuesday." },
-  { role: "agent", text: "I can see it's with the carrier and out for delivery today before 8pm." },
+  {
+    role: "agent",
+    text: "I can see it's with the carrier and out for delivery today before 8pm.",
+    alts: [
+      "It's with the carrier and due today before 8pm.",
+      "The carrier has it — delivery is scheduled for this evening.",
+    ],
+  },
   { role: "customer", text: "Okay. And if it doesn't turn up?" },
-  { role: "agent", text: "If it hasn't arrived by tomorrow, call back and we'll open a lost-parcel claim." },
+  {
+    role: "agent",
+    text: "If it hasn't arrived by tomorrow, call back and we'll open a lost-parcel claim.",
+    alts: [
+      "If nothing arrives by tomorrow, we'll raise a lost-parcel claim for you.",
+      "Not arrived by tomorrow? Call us and we'll start a claim straight away.",
+    ],
+  },
   { role: "customer", text: "Alright, thanks for your help." },
-  { role: "agent", text: "You're very welcome. Anything else I can do today?" },
+  {
+    role: "agent",
+    text: "You're very welcome. Anything else I can do today?",
+    alts: [
+      "You're welcome. Anything else while I have you?",
+      "Glad to help. Was there anything else today?",
+    ],
+  },
 ];
 
 const CHAT_TURNS = [
@@ -61,7 +113,37 @@ const CHAT_TURNS = [
   { role: "agent", text: "Card frozen and dispute DSP-99214 raised. A replacement arrives in 3–5 days." },
 ];
 
-const BROWSER_STEPS = [
+/*
+  Three browsers, not one.
+
+  A browser environment is whatever app it seeds, and this one seeds a todo list
+  and 2048 boards — so an agent driving it through a billing console was a
+  script from a different product. The scenario decides which app is on screen,
+  and the steps are the ones that app can actually take.
+*/
+const BROWSER_TODO = [
+  { action: "navigate", target: "app.taskly.dev/lists/inbox", thought: "Open the shared inbox list." },
+  { action: "click", target: "tab:has-text('Active')", thought: "Hide what is already done before counting." },
+  { action: "type", target: "#new-task", value: "Chase Northwind invoice", thought: "Add the task that was asked for." },
+  { action: "click", target: "button:has-text('Add')", thought: "Commit it to the list." },
+  { action: "click", target: "li:has-text('Renew SSL certificate') >> input[type=checkbox]", thought: "Tick the one that is finished." },
+  { action: "scroll", target: "task list", thought: "Check nothing below is already complete." },
+  { action: "click", target: "button:has-text('Clear completed')", thought: "Tidy the list as instructed." },
+  { action: "wait", target: "counter settles", thought: "Confirm the remaining count changed." },
+];
+
+const BROWSER_GAME = [
+  { action: "navigate", target: "play.2048.io/seeded/4x4", thought: "Load the seeded board." },
+  { action: "key", target: "ArrowLeft", thought: "Collapse the row and keep the big tile in a corner." },
+  { action: "key", target: "ArrowUp", thought: "Stack the pairs without breaking the corner." },
+  { action: "key", target: "ArrowLeft", thought: "Merge the two 32s." },
+  { action: "scroll", target: "score panel", thought: "Read the score before deciding again." },
+  { action: "key", target: "ArrowUp", thought: "Keep the largest tile pinned." },
+  { action: "key", target: "ArrowLeft", thought: "One more merge along the top row." },
+  { action: "wait", target: "board settles", thought: "Let the spawned tile land before the next move." },
+];
+
+const BROWSER_ADMIN = [
   { action: "navigate", target: "app.acme-admin.com/login", thought: "Start at the console login." },
   { action: "type", target: "#email", value: "ops@acme.com", thought: "Fill the operator account." },
   { action: "type", target: "#password", value: "••••••••", thought: "Enter the password." },
@@ -75,6 +157,16 @@ const BROWSER_STEPS = [
   { action: "wait", target: "confirmation toast", thought: "Confirm the retry succeeded." },
   { action: "click", target: "button:has-text('Export')", thought: "Export the reconciliation list." },
 ];
+
+/** Which app this scenario is about. Titles and tasks name it. */
+export const browserAppOf = (row) => {
+  const t = `${row?.title || ""} ${row?.task || ""}`.toLowerCase();
+  if (/2048|game|board|tile/.test(t)) return "game";
+  if (/todo|task list|checklist/.test(t)) return "todo";
+  return "admin";
+};
+
+const BROWSER_VOCAB = { admin: BROWSER_ADMIN, todo: BROWSER_TODO, game: BROWSER_GAME };
 
 const TOOL_STEPS = [
   { tool: "query_metrics", args: { q: "rate(http_errors[5m])", svc: "checkout" }, result: "0.081 (8.1%)", ms: 240 },
@@ -119,7 +211,7 @@ const EMAIL_STEPS = [
 const STAGE_STEPS = {
   voice: VOICE_TURNS,
   chat: CHAT_TURNS,
-  browser: BROWSER_STEPS,
+  browser: BROWSER_ADMIN,
   tools: TOOL_STEPS,
   terminal: TERMINAL_STEPS,
   email: EMAIL_STEPS,
@@ -132,6 +224,95 @@ const STAGE_STEPS = {
  * verdicts. Tasks are spread across a few parallel "workers" so the live view
  * shows real concurrency rather than a single queue.
  */
+/**
+ * What the agent did to the world, alongside what it said.
+ *
+ * The whole argument for an environment over a transcript test is that the
+ * world knows what was touched. An agent can say "I've issued your refund",
+ * never call issue_refund, and score perfectly on every grader that reads
+ * words — which is the failure people buy this to catch.
+ *
+ * So a task carries a call log: which tools were invoked, with what, what came
+ * back, and — the important half — which tools the scenario needed and the
+ * agent never called at all.
+ */
+function buildCallLog(scenario, tools, r, failed) {
+  const named = (scenario.task || "").toLowerCase();
+  /* Tools the scenario is actually about: the ones it names, or the first
+     couple as a fallback so every task has something to be judged on. */
+  const required = tools.filter((t) => named.includes(t.name)).slice(0, 3);
+  /* Fallback picks from the scenario's own hash rather than the head of the
+     list. Taking the first two made every failing task in a run skip the same
+     tool, which reads as one bug repeated seven times rather than seven
+     scenarios — and it is only visible once two runs sit side by side. */
+  const pick = hashSeed(scenario.id || "s");
+  const fallback = tools.length
+    ? [tools[pick % tools.length], tools[(pick + 1) % tools.length]].filter(
+      (t, i, arr) => arr.indexOf(t) === i,
+    )
+    : [];
+  const expected = required.length ? required : fallback;
+
+  /* A failing run skips one of the tools it needed — that skip is the finding,
+     and it is what the claims-vs-actions check reads. */
+  const skipped = failed && expected.length ? expected[expected.length - 1] : null;
+
+  const calls = expected
+    .filter((t) => t !== skipped)
+    .map((t, i) => ({
+      id: `${scenario.id}-call-${i}`,
+      name: t.name,
+      args: { id: `A-${1000 + Math.floor(r() * 8999)}` },
+      status: "ok",
+      rows: 1 + Math.floor(r() * 3),
+      ms: 40 + Math.floor(r() * 260),
+      wrote: /refund|issue|create|update|cancel|book/.test(t.name),
+    }));
+
+  /* Extra reads happen — they are not failures, but they are worth seeing. */
+  const extras = tools
+    .filter((t) => !expected.includes(t))
+    .slice(0, failed ? 0 : 1)
+    .map((t, i) => ({
+      id: `${scenario.id}-extra-${i}`,
+      name: t.name,
+      args: {},
+      status: "ok",
+      rows: 1,
+      ms: 30 + Math.floor(r() * 120),
+      wrote: false,
+    }));
+
+  return {
+    calls: [...calls, ...extras],
+    /* The tools this scenario is about, named whether or not they were called.
+       Derived from the scenario rather than from the run, so every version of
+       the agent is judged against the same list — which is what makes a
+       checklist comparable across columns at all. */
+    expected: expected.map((t) => t.name),
+    missing: skipped ? [skipped.name] : [],
+    /* The claim the transcript makes that the call log does not support.
+       A skipped write was claimed as done; a skipped read was claimed as
+       looked up — "the shipment status was done" is not a sentence. */
+    unsupportedClaim: skipped
+      ? (/refund|issue|create|update|cancel|book|escalate/.test(skipped.name)
+        ? `The agent told the caller the ${skipped.name.replace(/_/g, " ")} was done, but never called ${skipped.name}.`
+        : `The agent told the caller it had checked the ${skipped.name.replace(/_/g, " ")}, but never called ${skipped.name}.`)
+      : null,
+  };
+}
+
+/**
+ * A scenario, run more than once.
+ *
+ * One sample per scenario and a boolean verdict is the single most misleading
+ * thing an eval builder can do: the other side of the conversation is a
+ * sampled model, so two runs of the *same* agent disagree, and a screen that
+ * reports 43% against 86% invites someone to ship on the strength of two coin
+ * flips. Every scenario is therefore run `repeats` times, and its result is a
+ * proportion — passed, failed, or flaky when the samples cannot agree with
+ * each other, which is a finding about the scenario rather than the agent.
+ */
 export function buildRun({
   seed = "default",
   scenarios = [],
@@ -139,23 +320,66 @@ export function buildRun({
   evals = [],
   concurrency = 4,
   failRate = 0.22,
+  tools = [],
+  repeats = 3,
+  phrasing = 0,
 }) {
   const r = rng(hashSeed(seed));
-  const vocab = STAGE_STEPS[stage] || VOICE_TURNS;
+  const vocabFor = (sc) => (stage === "browser"
+    ? BROWSER_VOCAB[browserAppOf(sc)]
+    : STAGE_STEPS[stage] || VOICE_TURNS);
 
   const tasks = scenarios.map((sc, i) => {
+    const vocab = vocabFor(sc);
     const stepCount = 5 + Math.floor(r() * Math.min(vocab.length - 4, 8));
-    const steps = Array.from({ length: stepCount }, (_, s) => ({
-      id: `${sc.id}-s${s}`,
-      index: s,
-      ...vocab[s % vocab.length],
-      // Per-step dwell time, in ms of simulated wall clock.
-      duration: 600 + Math.floor(r() * 1400),
-    }));
+    /* Phrasing belongs to the agent version, not to the run: one prompt means
+       one way of opening the call, every time it runs. Two runs of the same
+       version therefore read identically — which is what makes a wording
+       difference between columns attributable to the version change. */
+    const voiceIdx = phrasing;
+    const steps = Array.from({ length: stepCount }, (_, s) => {
+      const base = vocab[s % vocab.length];
+      const phrasings = base.alts ? [base.text, ...base.alts] : null;
+      return {
+        id: `${sc.id}-s${s}`,
+        index: s,
+        ...base,
+        ...(phrasings ? { text: phrasings[voiceIdx % phrasings.length] } : {}),
+        // Per-step dwell time, in ms of simulated wall clock.
+        duration: 600 + Math.floor(r() * 1400),
+      };
+    });
+
+    /*
+      Faults that are not the agent's.
+
+      Rare on purpose — a builder that drops one call in three is not a builder
+      — but present, because a product that has never seen an infrastructure
+      failure will report the next one as an agent regression. Drawn before the
+      verdict and independently of it: whether the environment came up has
+      nothing to do with how good the agent is.
+    */
+    const fault = {};
+    const faultDraw = r();
+    if (faultDraw < 0.035) {
+      fault.environment = `${tools[0]?.name || "The seeded world"} never passed its readiness probe — the scenario could not be staged.`;
+    } else if (faultDraw < 0.07) {
+      fault.transport = "The session dropped before the agent answered; no terminal state was reached.";
+    } else if (faultDraw < 0.115) {
+      fault.simulator = "The simulated caller contradicted its own scenario facts and the run was abandoned.";
+    } else if (faultDraw < 0.13) {
+      fault.grading = "Evidence was captured but the grader returned no verdict.";
+    }
+    const unmeasured = !!(fault.environment || fault.transport || fault.simulator || fault.grading);
+
+    /* Sample-to-sample drift in the *caller* rather than the agent. A scenario
+       whose caller wanders is flaky because of the scenario. */
+    if (!unmeasured && r() < 0.08) fault.simulatorDrift = true;
 
     // Critical scenarios fail more often — that is the point of marking them.
     const failChance = sc.critical ? failRate * 1.9 : failRate;
-    const failed = r() < failChance;
+    const draw = r();
+    const failed = draw < failChance;
     const failStep = failed
       ? Math.max(2, Math.floor(steps.length * (0.45 + r() * 0.45)))
       : null;
@@ -169,20 +393,59 @@ export function buildRun({
           ev.id === "pii_leakage");
       const base = isCulprit ? 0.18 + r() * 0.34 : 0.72 + r() * 0.28;
       const score = Math.round(base * 100) / 100;
+      const passedIt = score >= (ev.threshold ?? 0.8);
       return {
         id: ev.id,
         name: ev.name,
         color: ev.color,
         score,
-        passed: score >= (ev.threshold ?? 0.8),
+        passed: passedIt,
         reason: isCulprit
           ? culpritReason(ev.id, sc)
-          : "Met the configured threshold with no violations detected.",
+          : passedIt
+            ? "Met the configured threshold with no violations detected."
+            : `Scored ${Math.round(score * 100)} against a threshold of ${Math.round((ev.threshold ?? 0.8) * 100)}.`,
       };
     });
 
+    const callLog = buildCallLog(sc, tools, r, failed);
+
+    /*
+      The remaining samples. The first one is the episode kept in full — its
+      transcript, its call log, its graders — because a drawer showing three
+      near-identical conversations helps nobody. The rest contribute their
+      verdict, which is what the proportion is made of.
+    */
+    const samples = [failed ? "failed" : "passed"];
+    /*
+      Only scenarios near their own threshold disagree with themselves. Drawing
+      each sample independently would make roughly half of every suite flaky,
+      which is both wrong about real agents — most scenarios land the same way
+      every time — and useless: a flag that fires on half the rows is not a
+      finding. So how close this scenario landed to its threshold decides how
+      likely a later sample is to come out the other way.
+    */
+    const margin = Math.abs(draw - failChance);
+    const flipChance = Math.max(0, 0.55 - margin * 4);
+    for (let k = 1; k < Math.max(1, repeats); k += 1) {
+      const flipped = r() < flipChance ? !failed : failed;
+      samples.push(flipped ? "failed" : "passed");
+    }
+    const passes = samples.filter((v) => v === "passed").length;
+    /*
+      A scenario nothing could be measured on has no verdict — not a failed
+      one. Calling it "failed" is the single most common way an eval product
+      reports its own outage as the agent's fault.
+    */
+    const verdict = unmeasured
+      ? "unmeasured"
+      : passes === samples.length
+        ? "passed"
+        : passes === 0 ? "failed" : "flaky";
+
     return {
       id: sc.id,
+      callLog,
       title: sc.title,
       task: sc.task,
       persona: sc.persona,
@@ -192,7 +455,16 @@ export function buildRun({
       steps,
       failStep,
       status: "queued",
-      verdict: failed ? "failed" : "passed",
+      verdict,
+      fault,
+      measured: !unmeasured,
+      samples: unmeasured ? [] : samples,
+      repeats: unmeasured ? 0 : samples.length,
+      passes: unmeasured ? null : passes,
+      /* The share of samples that passed — the number every rate on every
+         screen above this one is an average of. Null when there is nothing to
+         average, so it can never be silently read as zero. */
+      passShare: unmeasured ? null : passes / samples.length,
       evalResults,
       durationMs: steps.reduce((a, s) => a + s.duration, 0),
       cost: Math.round((0.02 + r() * 0.14) * 1000) / 1000,
@@ -200,7 +472,7 @@ export function buildRun({
     };
   });
 
-  return { tasks, stage, concurrency };
+  return { tasks, stage, concurrency, repeats };
 }
 
 function culpritReason(evalId, sc) {

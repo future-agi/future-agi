@@ -8,6 +8,7 @@
  */
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { ORIGIN_KINDS } from "../_mock/provenance";
 import { alpha } from "@mui/material/styles";
 import {
   Box,
@@ -115,10 +116,93 @@ export const STATUS_META = {
   running:   { color: "#2563EB", label: "Running" },
   grading:   { color: "#7857FC", label: "Grading" },
   passed:    { color: "#16A34A", label: "Passed" },
+  /* Samples that disagreed with each other. Neither a pass nor a failure —
+     it is the scenario, not the agent, that has been found out. */
+  flaky:     { color: "#D97706", label: "Flaky" },
+  /* Nothing upstream of the agent worked, so there is no verdict to report.
+     Deliberately not red: this is our failure, not the agent's. */
+  unmeasured: { color: "#9AA0A6", label: "Not measured" },
+  completed: { color: "#71717A", label: "Completed" },
   failed:    { color: "#DC2626", label: "Failed" },
   error:     { color: "#EA580C", label: "Error" },
   cancelled: { color: "#71717A", label: "Cancelled" },
 };
+
+/**
+ * Verdicts on the comparison screens.
+ *
+ * Deliberately below the saturation of STATUS_META: there, colour reports an
+ * outcome; here, colour is reserved for movement, and a wall of saturated
+ * pass/fail blocks drowns the sentence beside them that says what happened.
+ *
+ * `passes / repeats` is part of the verdict, not a footnote. A scenario that
+ * passed two of three samples is not the same finding as one that passed three
+ * of three, and a screen that renders both as "Passed" is hiding the only
+ * evidence anyone has about how noisy the measurement is.
+ */
+export const VERDICT_TONE = {
+  passed:  { color: "#5AA47B", label: "Passed" },
+  failed:  { color: "#C2603F", label: "Failed" },
+  flaky:   { color: "#B98A3C", label: "Flaky" },
+  unmeasured: { color: "#9AA0A6", label: "Not measured" },
+  missing: { color: "#9AA0A6", label: "Not run" },
+};
+
+export function Verdict({ status, passes, repeats, showSamples = true }) {
+  const tone = VERDICT_TONE[status] || VERDICT_TONE.missing;
+  const samples = showSamples && repeats > 1 && passes != null;
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.75}>
+      <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: tone.color, flexShrink: 0 }} />
+      <Typography sx={{ typography: "s3", fontWeight: 700, color: tone.color }}>
+        {tone.label}
+      </Typography>
+      {samples && (
+        <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+          {passes}/{repeats}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+
+Verdict.propTypes = {
+  status: PropTypes.string,
+  passes: PropTypes.number,
+  repeats: PropTypes.number,
+  showSamples: PropTypes.bool,
+};
+
+/**
+ * Whose failure it was, said out loud.
+ *
+ * The whole point of attributing a failure is that somebody reads the
+ * attribution — a chip on the row beats a tooltip nobody opens, because the
+ * difference between "the agent got this wrong" and "we never measured it" is
+ * the difference between changing a prompt and re-running.
+ */
+export function DomainChip({ domain, dense }) {
+  if (!domain) return null;
+  return (
+    <Tooltip arrow title={`${domain.blurb} ${domain.next}`}>
+      <Stack
+        direction="row" alignItems="center" spacing={0.5}
+        sx={{
+          px: dense ? 0.5 : 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
+          bgcolor: (t) => alpha(domain.color, t.palette.mode === "dark" ? 0.18 : 0.1),
+          cursor: "default",
+        }}
+      >
+        <Box sx={{ width: 5, height: 5, borderRadius: "50%", bgcolor: domain.color, flexShrink: 0 }} />
+        <Typography noWrap sx={{ typography: "s3", fontWeight: 700, color: domain.color }}>
+          {domain.short}
+        </Typography>
+      </Stack>
+    </Tooltip>
+  );
+}
+
+DomainChip.propTypes = { domain: PropTypes.object, dense: PropTypes.bool };
 
 export function StatusDot({ status, size = 8, live }) {
   const meta = STATUS_META[status] || STATUS_META.queued;
@@ -185,8 +269,8 @@ export function ScorePill({ score, passed, label }) {
         sx={{
           px: 0.75, height: 20, borderRadius: 0.5,
           color,
-          bgcolor: (t) => alpha(color, t.palette.mode === "dark" ? 0.16 : 0.1),
-          border: () => `1px solid ${alpha(color, 0.22)}`,
+          bgcolor: "transparent",
+          border: () => `1px solid ${alpha(color, 0.35)}`,
         }}
       >
         <Iconify icon={passed ? "solar:check-circle-bold" : "solar:close-circle-bold"} width={12} />
@@ -399,3 +483,63 @@ export function EmptyState({ icon, title, body, action }) {
   );
 }
 EmptyState.propTypes = { icon: PropTypes.string, title: PropTypes.node, body: PropTypes.node, action: PropTypes.node };
+
+/**
+ * Where a derived fact was found.
+ *
+ * Small, because it sits at the end of every tool and rule row — but it is the
+ * difference between a rule the code enforces and a sentence somebody left in
+ * a README, and those should never look alike. The file and line are the point:
+ * a claim you can go and check is a different kind of claim.
+ */
+export function OriginChip({ origin, file, line, showPath = true }) {
+  const meta = ORIGIN_KINDS[origin];
+  if (!meta) return null;
+
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      title={
+        <Box sx={{ maxWidth: 300, py: 0.5 }}>
+          <Typography sx={{ typography: "s3", fontWeight: 700, mb: 0.25 }}>{meta.label}</Typography>
+          <Typography sx={{ typography: "s3" }}>{meta.note}</Typography>
+          {file && (
+            <Typography sx={{ typography: "s3", mt: 0.75, fontFamily: "ui-monospace, Menlo, monospace", opacity: 0.75 }}>
+              {file}:{line}
+            </Typography>
+          )}
+        </Box>
+      }
+    >
+      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexShrink: 0, cursor: "default" }}>
+        {showPath && file && (
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3", color: "text.disabled", fontFamily: "ui-monospace, Menlo, monospace",
+              display: { xs: "none", lg: "block" }, maxWidth: 300,
+            }}
+          >
+            {file}:{line}
+          </Typography>
+        )}
+        <Typography
+          sx={{
+            px: 0.75, py: 0.25, borderRadius: 0.5,
+            typography: "s3", fontWeight: 700, color: meta.color,
+            bgcolor: (t) => alpha(meta.color, t.palette.mode === "dark" ? 0.16 : 0.1),
+          }}
+        >
+          {meta.short}
+        </Typography>
+      </Stack>
+    </Tooltip>
+  );
+}
+OriginChip.propTypes = {
+  origin: PropTypes.string,
+  file: PropTypes.string,
+  line: PropTypes.number,
+  showPath: PropTypes.bool,
+};

@@ -18,6 +18,47 @@
  */
 
 import { AGENT_TYPE_GROUPS, getAgentType } from "./agentTypes.js";
+import { TWIN_CATALOG } from "./twins.js";
+
+/*
+  Generate one env template per twin service so browsing the twin
+  catalog happens on the same Environments page as every other
+  template. Each entry is a fully-formed template (agentType,
+  surface, tools, rules, evalPreset) so downstream code
+  (TemplateSetupPanel, gallery grouping, compat check) treats them
+  the same as any other template. Twin identity is carried on
+  `twinBacking` — the same shape the two hand-authored twin
+  templates below use — plus `singleService: true` so the setup
+  panel knows to one-click-provision instead of running the
+  multi-service wizard.
+*/
+const twinServiceTemplates = TWIN_CATALOG.map((twin) => ({
+  id: `env-twin-service-${twin.id}`,
+  agentType: "twin_backed",
+  name: twin.name,
+  surface: twin.id === "gmail" ? "email"
+    : twin.id === "slack" || twin.id === "discord" ? "chat"
+    : twin.id === "github" || twin.id === "linear" || twin.id === "jira" ? "coding"
+    : "chat",
+  domain: "twin",
+  tagline: `${twin.name} sandbox`,
+  description: `A live ${twin.name} sandbox for your agent — provisioned per run, torn down after. Evals check what actually landed.`,
+  official: true,
+  popularity: 1200,
+  difficulty: "Advanced",
+  seed: { tables: [] },
+  twinBacking: {
+    services: [twin.id],
+    seedPrompt: "",
+  },
+  singleService: true,
+  tools: (twin.depth || []).slice(0, 4).map((label) => ({ name: `${twin.id}.${label.toLowerCase().replace(/\s+/g, "_")}`, desc: `${label} operations` })),
+  rules: [
+    `Never write outside the target ${twin.name} target — no cross-service side effects`,
+    "Match the tone and format the sandbox seed established",
+  ],
+  evalPreset: ["task_success", "twin_end_state_match", "twin_no_extra_writes"],
+}));
 
 export const ENVIRONMENT_TEMPLATES = [
   /* ─────────────────────── Voice & chat ─────────────────────── */
@@ -56,38 +97,6 @@ export const ENVIRONMENT_TEMPLATES = [
     evalPreset: ["task_success", "policy_adherence", "tone", "latency"],
   },
   {
-    id: "env-voice-clinic",
-    agentType: "voice_platform",
-    name: "Clinic Intake Line",
-    surface: "voice",
-    domain: "healthcare",
-    tagline: "Appointment booking and triage over the phone",
-    description:
-      "A primary-care intake line. Patients book, reschedule and describe symptoms. HIPAA-shaped rules and an escalation path for red-flag symptoms.",
-    official: true,
-    popularity: 1980,
-    difficulty: "Intermediate",
-    seed: {
-      tables: [
-        { name: "patients", rows: 300, note: "45 with allergies on file" },
-        { name: "appointments", rows: 800, note: "next 60 days" },
-        { name: "providers", rows: 24, note: "6 specialties" },
-      ],
-    },
-    tools: [
-      { name: "find_slot", desc: "Search provider availability" },
-      { name: "book_appointment", desc: "Reserve a slot" },
-      { name: "triage_symptoms", desc: "Score urgency" },
-      { name: "transfer_to_nurse", desc: "Escalate red flags" },
-    ],
-    rules: [
-      "Chest pain or stroke signs must escalate immediately",
-      "Never diagnose or suggest medication",
-      "Verify date of birth before reading any record",
-    ],
-    evalPreset: ["task_success", "safety", "escalation_accuracy", "empathy"],
-  },
-  {
     id: "env-chat-banking",
     agentType: "chat_webhook",
     name: "Retail Banking Assistant",
@@ -122,39 +131,40 @@ export const ENVIRONMENT_TEMPLATES = [
     evalPreset: ["task_success", "compliance", "pii_leakage", "hallucination"],
   },
   {
-    id: "env-chat-kb",
+    id: "env-chat-travel",
     agentType: "chat_webhook",
-    name: "Support Knowledge Base",
+    name: "Airline Rebooking Assistant",
     surface: "chat",
-    domain: "support",
-    tagline: "Answer from the docs — or admit the docs do not say",
+    domain: "travel",
+    tagline: "Disruption chat where every option costs money",
     description:
-      "A product knowledge base with genuine gaps, stale pages and near-duplicate articles. The test is whether the agent stays grounded instead of filling silence with plausible answers.",
+      "In-app chat for an airline during disruption. Passengers arrive angry about cancelled flights and want rebooking, refunds or compensation — and the rules about which they are owed are strict, so the grader checks the entitlement before the promise.",
     official: true,
-    popularity: 3040,
-    difficulty: "Intermediate",
+    popularity: 3240,
+    difficulty: "Advanced",
     seed: {
       tables: [
-        { name: "articles", rows: 640, note: "80 stale, 30 near-duplicates" },
-        { name: "changelogs", rows: 220, note: "version-specific behaviour" },
-        { name: "known_gaps", rows: 25, note: "questions the docs cannot answer" },
+        { name: "bookings", rows: 900, note: "140 on cancelled flights" },
+        { name: "flights", rows: 260, note: "18 cancelled, 34 delayed over 3h" },
+        { name: "fare_rules", rows: 45, note: "12 non-refundable" },
+        { name: "compensation_claims", rows: 75, note: "22 already paid" },
       ],
     },
     tools: [
-      { name: "search_kb", desc: "Semantic search over articles" },
-      { name: "fetch_article", desc: "Read a full article" },
-      { name: "check_version", desc: "Resolve behaviour for a release" },
-      { name: "open_ticket", desc: "Escalate when the docs fall short" },
+      { name: "lookup_booking", desc: "Find a booking by reference or email" },
+      { name: "search_flights", desc: "Alternative flights on the same route" },
+      { name: "rebook_segment", desc: "Move a passenger to another flight" },
+      { name: "check_compensation", desc: "Entitlement under the delay rules" },
+      { name: "issue_voucher", desc: "Meal or hotel voucher during disruption" },
     ],
     rules: [
-      "Never answer beyond what the retrieved articles support",
-      "Version-specific answers must name the version",
-      "Open a ticket rather than guess when the KB has a gap",
+      "Never promise compensation before check_compensation returns eligible",
+      "Offer same-day alternatives before discussing a refund",
+      "State the fare difference before confirming any rebooking",
+      "Do not rebook without confirming the passenger's booking reference",
     ],
-    evalPreset: ["task_success", "hallucination", "completeness", "tone"],
+    evalPreset: ["task_success", "policy_adherence", "hallucination", "tone"],
   },
-
-  /* ─────────────────────── Computer use ─────────────────────── */
   {
     id: "env-browser",
     agentType: "browser_agent",
@@ -549,7 +559,109 @@ export const ENVIRONMENT_TEMPLATES = [
     ],
     evalPreset: ["task_success", "test_pass_rate", "diff_quality", "constraint_violation"],
   },
+
+  /* ─────────────────────────── Service twins ─────────────────────────── */
+  /*
+    Twin-backed templates. Unlike the seeded-data envs above, these
+    ship a `twinBacking` object that names live services (Slack,
+    Notion, Gmail, Salesforce) plus a natural-language seed prompt.
+    Setting one up (UseTemplate.finish) provisions the twin, seeds
+    the sandbox, and drops starter scenarios that exercise the exact
+    services listed here.
+
+    Two curated templates for now — the two shapes we hear most from
+    design partners: a support desk and a RevOps copilot. Each names
+    the services, the initial world, and the eval preset that a real
+    version of that agent would be graded on.
+  */
+  {
+    id: "env-twin-support-desk",
+    agentType: "twin_backed",
+    name: "Support desk (twin)",
+    surface: "chat",
+    domain: "support",
+    tagline: "Slack + Notion + Gmail sandbox, seeded with real support state",
+    description:
+      "A clone-backed environment for a support copilot. Slack channels seeded with active tickets, a Notion knowledge base of playbooks and product FAQs, and a Gmail inbox with unread refund requests. Runs restart against a fresh copy of the same seeded state every time.",
+    official: true,
+    popularity: 2140,
+    difficulty: "Advanced",
+    seed: { tables: [] },
+    twinBacking: {
+      services: ["slack", "notion", "gmail"],
+      seedPrompt:
+        "Slack: #support-urgent has 3 escalated customer threads (angry, waiting >24h), #general has 5 recent product-question messages. Notion: a Playbooks database (12 pages) with refund, escalation and outage-response runbooks; a shared Pricing FAQ page. Gmail: 4 unread emails tagged Support — two refund requests, one legal escalation, one meeting invite.",
+    },
+    tools: [
+      { name: "slack.post_message", desc: "Reply in-thread or in a channel" },
+      { name: "slack.dm", desc: "Direct-message a teammate" },
+      { name: "notion.read_page", desc: "Fetch a playbook or FAQ" },
+      { name: "notion.add_comment", desc: "Note a follow-up on a database row" },
+      { name: "gmail.reply", desc: "Reply to an inbound email in-thread" },
+      { name: "gmail.apply_label", desc: "Tag an email for triage" },
+    ],
+    rules: [
+      "Never reply in the wrong Slack channel",
+      "Escalations go by DM to the on-call, not in public channels",
+      "Refund policy comes from the Notion playbook, not the model",
+      "Never send more than one reply per customer thread",
+    ],
+    evalPreset: [
+      "task_success",
+      "twin_end_state_match",
+      "twin_write_target",
+      "twin_no_extra_writes",
+      "tone",
+    ],
+  },
+  {
+    id: "env-twin-revops",
+    agentType: "twin_backed",
+    name: "RevOps copilot (twin)",
+    surface: "email",
+    domain: "sales",
+    tagline: "Gmail + Salesforce + Notion twin — email in, CRM writes out",
+    description:
+      "A clone-backed environment for a RevOps copilot. Gmail is the inbound surface (renewal questions, refund asks, product asks from CSMs), Salesforce holds accounts + opportunities, and Notion carries the enablement playbooks. Each run resets both the inbox and the CRM to the same seed.",
+    official: true,
+    popularity: 1520,
+    difficulty: "Advanced",
+    seed: { tables: [] },
+    twinBacking: {
+      services: ["gmail", "salesforce", "notion"],
+      seedPrompt:
+        "Gmail: 3 unread emails — two renewal questions from Acme and Beacon Corp CSMs, one refund escalation. Salesforce: 4 accounts (Acme, Beacon Corp, Zenith, Cirrus), each with an active Q4 opportunity; Acme is 15 days from close, Beacon has no next step set. Notion: a Renewals Playbook page and a Refunds Policy page shared with CS.",
+    },
+    tools: [
+      { name: "gmail.reply", desc: "Reply to an email in-thread" },
+      { name: "salesforce.lookup_account", desc: "Fetch an account and its opportunities" },
+      { name: "salesforce.log_task", desc: "Log a Task on an account or opportunity" },
+      { name: "salesforce.update_opportunity", desc: "Change stage, next-step, or close date" },
+      { name: "notion.read_page", desc: "Fetch the renewals or refund playbook" },
+    ],
+    rules: [
+      "Never quote a discount that isn't in the playbook",
+      "Every email reply that changes CRM state must log a Task",
+      "Do not close an opportunity — only the account owner can",
+      "Escalate refund requests over $10k to the CSM DM before replying",
+    ],
+    evalPreset: [
+      "task_success",
+      "twin_end_state_match",
+      "twin_write_target",
+      "twin_field_semantics",
+      "twin_side_effect_budget",
+    ],
+  },
 ];
+
+/*
+  Splice the auto-generated single-service twin templates in after the
+  two curated multi-service twin templates. Kept mutable at module
+  init so consumers importing `ENVIRONMENT_TEMPLATES` get the full
+  list — no code paths need to know about the generator.
+*/
+ENVIRONMENT_TEMPLATES.push(...twinServiceTemplates);
 
 export const DIFFICULTIES = ["Starter", "Intermediate", "Advanced", "Expert"];
 

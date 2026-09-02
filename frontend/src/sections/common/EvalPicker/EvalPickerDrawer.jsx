@@ -339,6 +339,12 @@ const EvalPickerDrawer = ({
   progress = null,
   primaryLabel = null,
   showClose = false,
+  // Opt-in paper overrides. The theme's MuiDrawer rule paints a temporary
+  // drawer's paper from the drawer *root*, which outranks PaperProps.sx, so a
+  // caller cannot restyle the surface from there. Applied through the root's
+  // own sx with doubled specificity, which can. Callers that pass nothing keep
+  // exactly what they render today.
+  paperSx = null,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -372,6 +378,7 @@ const EvalPickerDrawer = ({
           },
         },
       }}
+      sx={paperSx ? { "&& .MuiDrawer-paper": paperSx } : undefined}
     >
       <EvalPickerProvider
         key={initialEval?.userEvalId || initialEval?.id || "new"}
@@ -411,6 +418,7 @@ const EvalPickerDrawer = ({
 };
 
 EvalPickerDrawer.propTypes = {
+  paperSx: PropTypes.object,
   multiSelect: PropTypes.bool,
   selectedIds: PropTypes.object,
   onToggleSelect: PropTypes.func,

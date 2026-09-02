@@ -6,16 +6,26 @@ import {
   Box, Stack, Typography, Button, Tab, InputAdornment, TextField,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { CustomTabs } from "src/components/tabs/tabs";
+import { CustomTabs, SegmentedTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { ENVIRONMENT_TEMPLATES, groupByAgentGroup } from "../_mock/environments";
 import { AGENT_TYPE_GROUPS, getAgentType } from "../_mock/agentTypes";
 import { getSurface } from "../_mock/surfaces";
 import { useSimStore } from "../store";
-import EnvironmentCard from "./EnvironmentCard";
+import MyEnvironmentsTable from "./MyEnvironmentsTable";
 import TemplateSetupPanel from "./TemplateSetupPanel";
+import { TwinComposer } from "./NewTwinEnvironment";
 import { EnvironmentCardSkeleton } from "../components/loading";
 import { EmptyState, cardGrid } from "../components/primitives";
+
+/*
+  Twins tab embeds the compose flow inline — multi-service picker,
+  seed prompt, lifetime, name, provision. There's no separate catalog
+  or right-hand setup panel because every twin selection is really a
+  composition of one or more twins; treating N=1 and N>1 differently
+  fragments the flow. The same picker handles the "I just want one"
+  case as a natural subset of the composer.
+*/
 
 /** Filter controls sit above the content, so they stay out of its way. */
 const compactInputSx = {
@@ -35,8 +45,23 @@ export default function EnvironmentGallery() {
   const navigate = useNavigate();
   const { state } = useSimStore();
   const [tab, setTab] = useState("templates");
+  /*
+    Sub-toggle inside the Templates tab — "Regular" is the classic
+    agent-type-grouped gallery, "Twins" surfaces the twin-service
+    catalog with brand logos and the twin-category groupings the
+    user is used to seeing on the twins browse page.
+  */
+  const [kind, setKind] = useState("regular");
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState("all");
+  /*
+    Backing filter — quick chip on My environments to filter by how
+    the env's world is materialised. "twin" surfaces envs whose world
+    is a live SaaS sandbox (twinBacking set); "generated" surfaces the
+    seed-derived ones. Empty means show everything. Templates tab
+    doesn't use this — templates don't have a twin backing yet.
+  */
+  const [backing, setBacking] = useState("all");
   const [selectedId, setSelectedId] = useState(ENVIRONMENT_TEMPLATES[0]?.id);
   const [loading, setLoading] = useState(true);
 
@@ -48,12 +73,36 @@ export default function EnvironmentGallery() {
   }, []);
 
   const mine = state.myEnvironments;
-  const source = tab === "mine" ? mine : ENVIRONMENT_TEMPLATES;
+  /*
+    Templates split into regular vs twin: `agentType === "twin_backed"`
+    is the discriminator. The Templates tab then picks one via the
+    `kind` toggle; My environments keeps the full list (twin envs
+    still show up there, filtered via the backing chip).
+  */
+  const regularTemplates = useMemo(
+    () => ENVIRONMENT_TEMPLATES.filter((e) => e.agentType !== "twin_backed"),
+    [],
+  );
+  const twinTemplates = useMemo(
+    () => ENVIRONMENT_TEMPLATES.filter((e) =>
+      e.agentType === "twin_backed"
+      && (e.twinBacking?.services?.length || 0) === 1,
+    ),
+    [],
+  );
+  const source = tab === "mine"
+    ? mine
+    : (kind === "twins" ? twinTemplates : regularTemplates);
 
   const filtered = useMemo(
     () =>
       source.filter((e) => {
-        if (group !== "all" && getAgentType(e.agentType)?.group !== group) return false;
+        if (tab === "templates" && kind === "regular" && group !== "all" && getAgentType(e.agentType)?.group !== group) return false;
+        if (tab === "mine" && backing !== "all") {
+          const hasTwin = !!state.byEnv?.[e.id]?.twinBacking;
+          if (backing === "twin" && !hasTwin) return false;
+          if (backing === "generated" && hasTwin) return false;
+        }
         if (query) {
           const q = query.toLowerCase();
           const hay = `${e.name} ${e.tagline} ${e.description}`.toLowerCase();
@@ -61,7 +110,12 @@ export default function EnvironmentGallery() {
         }
         return true;
       }),
-    [source, group, query],
+    [source, group, query, backing, tab, kind, state.byEnv],
+  );
+
+  const twinCount = useMemo(
+    () => mine.filter((e) => !!state.byEnv?.[e.id]?.twinBacking).length,
+    [mine, state.byEnv],
   );
 
   // Keep the selection inside the filtered set, or the right pane would show a
@@ -81,6 +135,9 @@ export default function EnvironmentGallery() {
     setTab(next);
     setGroup("all");
     setQuery("");
+    setBacking("all");
+    setKind("regular");
+    setSelectedId(null);
   };
 
   const openEnv = (env) =>
@@ -111,14 +168,22 @@ export default function EnvironmentGallery() {
             seeded data, tools and scenario packs.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<Iconify icon="solar:add-circle-linear" width={18} />}
-          onClick={() => navigate(paths.dashboard.simulate.environmentNew)}
-          sx={{ flexShrink: 0, typography: "s1", fontWeight: 600, color: "text.primary", borderColor: "divider" }}
-        >
-          Build from scratch
-        </Button>
+        {/*
+          The primary action on the page, so it is filled. `color="primary"`
+          rather than the default inherit: the theme's primary is brand purple
+          in light and monochrome #FAFAFA in dark, which is the intent in both.
+        */}
+        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<Iconify icon="solar:add-circle-linear" width={18} />}
+            onClick={() => navigate(paths.dashboard.simulate.environmentNew)}
+            sx={{ typography: "s1", fontWeight: 600 }}
+          >
+            Build from your agent
+          </Button>
+        </Stack>
       </Stack>
 
       {/* ── tabs ── */}
@@ -130,11 +195,22 @@ export default function EnvironmentGallery() {
           "& .MuiTab-root": { typography: "s1" },
         }}
       >
-        <Tab value="templates" label={`Templates (${ENVIRONMENT_TEMPLATES.length})`} sx={{ minHeight: 40 }} />
+        <Tab value="templates" label={`Templates (${regularTemplates.length + twinTemplates.length})`} sx={{ minHeight: 40 }} />
         <Tab value="mine" label={`My environments (${mine.length})`} sx={{ minHeight: 40 }} />
       </CustomTabs>
 
-      {/* ── filters ── */}
+      {/* ── Worlds / Twins sub-toggle inside Templates ── */}
+      {tab === "templates" && (
+        <Box sx={{ mb: 2 }}>
+          <SegmentedTabs value={kind} onChange={(_, v) => { setKind(v); setSelectedId(null); }}>
+            <Tab value="regular" label={`Worlds (${regularTemplates.length})`} />
+            <Tab value="twins" label={`Clones (${twinTemplates.length})`} />
+          </SegmentedTabs>
+        </Box>
+      )}
+
+      {/* ── filters ── (hidden in twins mode — composer owns its own search) */}
+      {!(tab === "templates" && kind === "twins") && (
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 2.5 }}>
         <TextField
           size="small"
@@ -150,24 +226,57 @@ export default function EnvironmentGallery() {
           }}
           sx={{ width: 240, ...compactInputSx }}
         />
-        <TextField
-          select
-          size="small"
-          value={group}
-          onChange={(e) => setGroup(e.target.value)}
-          SelectProps={{ native: true }}
-          sx={{ width: 200, ...compactInputSx }}
-        >
-          <option value="all">All environment types</option>
-          {availableGroups.map((g) => (
-            <option key={g} value={g}>{g}</option>
-          ))}
-        </TextField>
+        {(tab === "mine" || (tab === "templates" && kind === "regular")) && (
+          <TextField
+            select
+            size="small"
+            value={group}
+            onChange={(e) => setGroup(e.target.value)}
+            SelectProps={{ native: true }}
+            sx={{ width: 200, ...compactInputSx }}
+          >
+            <option value="all">All environment types</option>
+            {availableGroups.map((g) => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </TextField>
+        )}
+        {tab === "mine" && twinCount > 0 && (
+          <Stack
+            direction="row" spacing={0.75}
+            sx={{
+              p: 0.5, borderRadius: 999, border: "1px solid",
+              borderColor: "divider", bgcolor: "background.paper",
+            }}
+          >
+            <BackingChip
+              label="All"
+              on={backing === "all"}
+              onClick={() => setBacking("all")}
+              count={mine.length}
+            />
+            <BackingChip
+              label="Clone-backed"
+              icon="solar:server-square-linear"
+              on={backing === "twin"}
+              onClick={() => setBacking("twin")}
+              count={twinCount}
+              accent
+            />
+            <BackingChip
+              label="Generated"
+              on={backing === "generated"}
+              onClick={() => setBacking("generated")}
+              count={mine.length - twinCount}
+            />
+          </Stack>
+        )}
         <Box flex={1} />
         <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
           {filtered.length} {filtered.length === 1 ? "environment" : "environments"}
         </Typography>
       </Stack>
+      )}
 
       {loading ? (
         <Box sx={cardGrid(440)}>
@@ -175,6 +284,13 @@ export default function EnvironmentGallery() {
             <EnvironmentCardSkeleton key={i} />
           ))}
         </Box>
+      ) : (tab === "templates" && kind === "twins") ? (
+        /*
+          Twins tab always renders the composer — the "no results"
+          empty state doesn't apply here because the composer is
+          keyed off its own picker, not the filtered template list.
+        */
+        <TwinComposer embedded />
       ) : filtered.length === 0 ? (
         <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
           <EmptyState
@@ -199,12 +315,20 @@ export default function EnvironmentGallery() {
           />
         </Box>
       ) : tab === "mine" ? (
-        // Already set up — these open straight into the workspace.
-        <Box sx={cardGrid(440)}>
-          {filtered.map((env) => (
-            <EnvironmentCard key={env.id} env={env} onOpen={openEnv} />
-          ))}
-        </Box>
+        /*
+          Already set up — a table rather than a card grid. Cards worked when
+          every field was in the same place; once environments started
+          carrying build status, agent type and derived counts, aligning them
+          in columns is what makes the list scannable.
+        */
+        <MyEnvironmentsTable envs={filtered} onOpen={openEnv} />
+      ) : kind === "twins" ? (
+        /*
+          Twins tab: full-width composer. Selecting one twin still
+          works — the composer treats N=1 as a valid composition — so
+          there's no separate "single-twin template" path to maintain.
+        */
+        <TwinComposer embedded />
       ) : (
         // ── catalogue left, setup right — even split ──
         <Stack direction={{ xs: "column", lg: "row" }} spacing={2} alignItems="flex-start">
@@ -304,4 +428,53 @@ TemplateRow.propTypes = {
   env: PropTypes.object.isRequired,
   selected: PropTypes.bool,
   onSelect: PropTypes.func,
+};
+
+/**
+ * Segmented chip in the My-envs filter row. Pill styling matches the
+ * existing SegmentedTabs so it visually reads as a group of related
+ * choices, not three loose buttons. The twin option gets a subtle
+ * purple accent when active — same purple used throughout the twin
+ * feature — so the "there's twin-backed stuff here" signal is
+ * consistent across the surface.
+ */
+function BackingChip({ label, icon, on, onClick, count, accent }) {
+  return (
+    <Stack
+      direction="row" alignItems="center" spacing={0.75}
+      onClick={onClick}
+      sx={{
+        px: 1.25, py: 0.5, borderRadius: 999, cursor: "pointer",
+        typography: "s3", fontWeight: 700,
+        color: on
+          ? (accent ? "#7857FC" : "text.primary")
+          : "text.subtitle",
+        bgcolor: (t) => on
+          ? (accent
+              ? alpha("#7857FC", t.palette.mode === "dark" ? 0.16 : 0.1)
+              : alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.09 : 0.06))
+          : "transparent",
+        transition: "background-color .12s ease, color .12s ease",
+        "&:hover": on ? undefined : {
+          color: "text.primary",
+          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04),
+        },
+      }}
+    >
+      {icon && <Iconify icon={icon} width={12} />}
+      <span>{label}</span>
+      <Typography sx={{
+        typography: "s3", fontWeight: 700, opacity: 0.7,
+        fontVariantNumeric: "tabular-nums",
+      }}>{count}</Typography>
+    </Stack>
+  );
+}
+BackingChip.propTypes = {
+  label: PropTypes.string.isRequired,
+  icon: PropTypes.string,
+  on: PropTypes.bool,
+  onClick: PropTypes.func,
+  count: PropTypes.number,
+  accent: PropTypes.bool,
 };

@@ -259,7 +259,7 @@ export function useNavData() {
           //   },
           // },
           {
-            title: "Run Simulation",
+            title: "Simulated Runs",
             path: paths.dashboard.simulate.test,
             icon: ICONS.test,
             eventTrigger: () => {

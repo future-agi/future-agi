@@ -11,6 +11,8 @@ import { useEffect, useRef } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, keyframes } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { browserAppOf } from "../../_mock/runStream";
+import BrowserApp, { deriveState, focusOf, CURSOR, urlFor } from "./BrowserApps";
 import { PersonaBadge } from "../../components/primitives";
 
 const bar = keyframes`
@@ -73,17 +75,18 @@ export function VoiceStage({ task, stepIndex, live }) {
           label={task.persona?.name || "Caller"}
           sub={task.persona?.voice}
           icon="solar:user-linear"
-          color="#0891B2"
+          color={null}
           speaking={live && current?.role === "customer"}
         />
         <Box sx={{ flex: 1, display: "grid", placeItems: "center" }}>
-          <Waveform active={live} color={agentSpeaking ? "#7857FC" : "#0891B2"} />
+          <Waveform active={live} agent={agentSpeaking} />
         </Box>
         <Party
           label="Your agent"
           sub="under test"
           icon="solar:cpu-bolt-linear"
-          color="#7857FC"
+          color={null}
+          accent
           speaking={live && agentSpeaking}
           right
         />
@@ -103,7 +106,13 @@ export function VoiceStage({ task, stepIndex, live }) {
 }
 VoiceStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
 
-function Party({ label, sub, icon, color, speaking, right }) {
+/*
+  Only the agent gets an accent, and it is the theme's own primary — monochrome
+  in dark by brand-guide intent. Two hard-coded brand hues facing each other
+  made the header the loudest thing on a screen whose actual signal is pass,
+  fail and running.
+*/
+function Party({ label, sub, icon, color, accent, speaking, right }) {
   return (
     <Stack direction={right ? "row-reverse" : "row"} alignItems="center" spacing={1.25} sx={{ width: 160 }}>
       <Box sx={{ position: "relative", display: "grid", placeItems: "center", flexShrink: 0 }}>
@@ -111,7 +120,8 @@ function Party({ label, sub, icon, color, speaking, right }) {
           <Box
             sx={{
               position: "absolute", width: 44, height: 44, borderRadius: "50%",
-              border: "2px solid", borderColor: alpha(color, 0.45),
+              border: "2px solid",
+              borderColor: (t) => alpha(accent ? t.palette.primary.main : t.palette.text.disabled, 0.45),
               animation: `${clickRing} 1.4s ease-out infinite`,
             }}
           />
@@ -119,8 +129,12 @@ function Party({ label, sub, icon, color, speaking, right }) {
         <Box
           sx={{
             width: 36, height: 36, borderRadius: "50%", display: "grid", placeItems: "center",
-            bgcolor: (t) => alpha(color, t.palette.mode === "dark" ? 0.18 : 0.1),
-            color, border: `1px solid ${alpha(color, 0.3)}`,
+            bgcolor: accent
+              ? (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.18 : 0.1)
+              : "background.neutral",
+            color: accent ? "primary.main" : "text.subtitle",
+            border: "1px solid",
+            borderColor: (t) => alpha(accent ? t.palette.primary.main : t.palette.text.disabled, 0.3),
           }}
         >
           <Iconify icon={icon} width={18} />
@@ -135,10 +149,11 @@ function Party({ label, sub, icon, color, speaking, right }) {
 }
 Party.propTypes = {
   label: PropTypes.string, sub: PropTypes.string, icon: PropTypes.string,
-  color: PropTypes.string, speaking: PropTypes.bool, right: PropTypes.bool,
+  color: PropTypes.string, accent: PropTypes.bool,
+  speaking: PropTypes.bool, right: PropTypes.bool,
 };
 
-function Waveform({ active, color = "#7857FC" }) {
+function Waveform({ active, agent }) {
   const bars = [0.5, 0.8, 0.35, 1, 0.6, 0.9, 0.45, 0.75, 0.55, 0.95, 0.4, 0.7];
   return (
     <Stack direction="row" alignItems="center" spacing={0.375} sx={{ height: 28 }}>
@@ -146,7 +161,8 @@ function Waveform({ active, color = "#7857FC" }) {
         <Box
           key={i}
           sx={{
-            width: 3, height: 24, borderRadius: 2, bgcolor: color,
+            width: 3, height: 24, borderRadius: 2,
+            bgcolor: agent ? "primary.main" : "text.disabled",
             opacity: active ? 0.9 : 0.25,
             transformOrigin: "center",
             transform: active ? undefined : "scaleY(0.2)",
@@ -158,7 +174,7 @@ function Waveform({ active, color = "#7857FC" }) {
     </Stack>
   );
 }
-Waveform.propTypes = { active: PropTypes.bool, color: PropTypes.string };
+Waveform.propTypes = { active: PropTypes.bool, agent: PropTypes.bool };
 
 function Turn({ turn, latest }) {
   const isAgent = turn.role === "agent";
@@ -172,14 +188,14 @@ function Turn({ turn, latest }) {
         sx={{
           maxWidth: "76%", px: 1.75, py: 1.125, borderRadius: 1.5,
           border: "1px solid",
-          borderColor: isAgent ? alpha("#7857FC", 0.3) : "divider",
+          borderColor: (t) => isAgent ? alpha(t.palette.primary.main, 0.3) : t.palette.divider,
           bgcolor: (t) => isAgent
-            ? alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.06)
+            ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.06)
             : "background.paper",
-          ...(latest && { boxShadow: () => `0 0 0 3px ${alpha(isAgent ? "#7857FC" : "#0891B2", 0.1)}` }),
+          ...(latest && { boxShadow: (t) => `0 0 0 3px ${alpha(isAgent ? t.palette.primary.main : t.palette.text.disabled, 0.1)}` }),
         }}
       >
-        <Typography sx={{ typography: "s3", fontWeight: 700, color: isAgent ? "#7857FC" : "text.subtitle", mb: 0.25 }}>
+        <Typography sx={{ typography: "s3", fontWeight: 700, color: isAgent ? "primary.main" : "text.subtitle", mb: 0.25 }}>
           {isAgent ? "Agent" : "Customer"}
         </Typography>
         <Typography sx={{ typography: "s2" }}>{turn.text}</Typography>
@@ -205,7 +221,7 @@ function TypingIndicator({ role }) {
             key={i}
             sx={{
               width: 5, height: 5, borderRadius: "50%",
-              bgcolor: isAgent ? "#7857FC" : "text.subtitle",
+              bgcolor: isAgent ? "primary.main" : "text.subtitle",
               animation: `${bar} 1s ease-in-out infinite`,
               animationDelay: `${i * 0.16}s`,
             }}
@@ -260,9 +276,17 @@ export function BrowserStage({ task, stepIndex, live }) {
   const scrollRef = useAutoScroll(stepIndex);
   const visible = task.steps.slice(0, stepIndex + 1);
 
-  // Deterministic cursor placement per step so the pointer moves purposefully
-  // rather than jittering — it should read as intent, not noise.
-  const pos = cursorFor(current, stepIndex);
+  /*
+    The page is derived from the steps taken so far rather than drawn as a
+    wireframe. A grey skeleton cannot show whether the agent typed into the
+    right field or clicked the row the scenario meant — which is the only
+    reason to render a browser at all.
+  */
+  const app = browserAppOf(task);
+  const state = deriveState(app, visible);
+  const focus = focusOf(current);
+  /* The pointer goes where the target is, not where the verb usually is. */
+  const pos = CURSOR[focus] || { x: 50, y: 50 };
 
   return (
     <StageShell>
@@ -293,7 +317,7 @@ export function BrowserStage({ task, stepIndex, live }) {
               }}
             >
               <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
-                {current?.action === "navigate" ? current.target : "app.acme-admin.com/billing"}
+                {urlFor(app, state)}
               </Typography>
             </Box>
             {live && (
@@ -306,7 +330,7 @@ export function BrowserStage({ task, stepIndex, live }) {
 
           {/* wireframe viewport with the agent's cursor */}
           <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
-            <Wireframe highlight={pos.region} />
+            <BrowserApp app={app} state={state} focus={focus} />
 
             {live && (
               <Box
@@ -321,7 +345,7 @@ export function BrowserStage({ task, stepIndex, live }) {
                   <Box
                     sx={{
                       position: "absolute", left: -12, top: -12, width: 26, height: 26,
-                      borderRadius: "50%", border: "2px solid #7857FC",
+                      borderRadius: "50%", border: "2px solid", borderColor: "primary.main",
                       animation: `${clickRing} .9s ease-out infinite`,
                     }}
                   />
@@ -329,7 +353,7 @@ export function BrowserStage({ task, stepIndex, live }) {
                 <Iconify
                   icon="solar:cursor-bold"
                   width={20}
-                  sx={{ color: "#7857FC", filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))" }}
+                  sx={{ color: "primary.main", filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))" }}
                 />
               </Box>
             )}
@@ -374,62 +398,6 @@ export function BrowserStage({ task, stepIndex, live }) {
 }
 BrowserStage.propTypes = { task: PropTypes.object, stepIndex: PropTypes.number, live: PropTypes.bool };
 
-function cursorFor(step, i) {
-  if (!step) return { x: 50, y: 50, region: null };
-  const map = {
-    navigate: { x: 30, y: 8, region: "url" },
-    type: { x: 42, y: 38, region: "form" },
-    click: { x: 62, y: 52, region: "table" },
-    scroll: { x: 78, y: 62, region: "table" },
-    wait: { x: 50, y: 30, region: null },
-  };
-  const base = map[step.action] || { x: 50, y: 50, region: null };
-  // Nudge by index so repeated actions don't land on the identical pixel.
-  return { ...base, x: base.x + ((i * 7) % 11) - 5, y: base.y + ((i * 5) % 9) - 4 };
-}
-
-function Wireframe({ highlight }) {
-  const hl = (region) => ({
-    outline: highlight === region ? "2px solid #7857FC" : "none",
-    outlineOffset: 2,
-    transition: "outline-color .3s ease",
-  });
-  return (
-    <Box sx={{ position: "absolute", inset: 0, p: 1.5, display: "flex", gap: 1.5 }}>
-      {/* sidebar */}
-      <Stack spacing={0.75} sx={{ width: "18%", flexShrink: 0 }}>
-        <Box sx={{ height: 18, borderRadius: 0.5, bgcolor: (t) => alpha(t.palette.primary.main, 0.18) }} />
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Box key={i} sx={{ height: 10, borderRadius: 0.5, bgcolor: "background.neutral", opacity: 1 - i * 0.1 }} />
-        ))}
-      </Stack>
-      {/* main */}
-      <Stack spacing={1} sx={{ flex: 1, minWidth: 0 }}>
-        <Stack direction="row" spacing={1} sx={{ ...hl("form") }}>
-          <Box sx={{ flex: 1, height: 22, borderRadius: 0.5, bgcolor: "background.neutral" }} />
-          <Box sx={{ width: 64, height: 22, borderRadius: 0.5, bgcolor: (t) => alpha(t.palette.primary.main, 0.25) }} />
-        </Stack>
-        <Stack direction="row" spacing={1}>
-          {[0, 1, 2].map((i) => (
-            <Box key={i} sx={{ flex: 1, height: 42, borderRadius: 0.75, bgcolor: "background.neutral" }} />
-          ))}
-        </Stack>
-        <Box sx={{ flex: 1, borderRadius: 0.75, bgcolor: "background.neutral", p: 1, ...hl("table") }}>
-          <Stack spacing={0.625}>
-            {Array.from({ length: 7 }).map((_, i) => (
-              <Stack key={i} direction="row" spacing={1}>
-                <Box sx={{ flex: 2, height: 9, borderRadius: 0.375, bgcolor: "divider" }} />
-                <Box sx={{ flex: 1, height: 9, borderRadius: 0.375, bgcolor: "divider", opacity: 0.7 }} />
-                <Box sx={{ flex: 1, height: 9, borderRadius: 0.375, bgcolor: "divider", opacity: 0.5 }} />
-              </Stack>
-            ))}
-          </Stack>
-        </Box>
-      </Stack>
-    </Box>
-  );
-}
-Wireframe.propTypes = { highlight: PropTypes.string };
 
 /* ── tools ───────────────────────────────────────────────────────────────── */
 

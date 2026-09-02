@@ -135,6 +135,40 @@ export function ScriptThumb() {
   );
 }
 
+/** From production — clustered failing traces from the Error Feed. */
+export function ProductionThumb() {
+  const c = usePalette();
+  return (
+    <Card c={c}>
+      {/* header — Error Feed title strip */}
+      <rect x="26" y="17" width="80" height="7" rx="2" fill={c.text} opacity="0.75" />
+      <text x="128" y="22" fontFamily={FONT} fontSize="5.5" fill={c.muted}>Error Feed</text>
+
+      {/* cluster 1 — hot */}
+      <rect x="26" y="32" width="124" height="12" rx="2" fill={c.line} opacity="0.25" />
+      <circle cx="32" cy="38" r="2.4" fill="#DC2626" />
+      <rect x="40" y="35" width="46" height="3" rx="1.5" fill={c.text} opacity="0.8" />
+      <rect x="40" y="40" width="30" height="2.5" rx="1.25" fill={c.muted} />
+      <text x="140" y="40.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill="#DC2626" fontWeight="700">47</text>
+
+      {/* cluster 2 — being promoted (accent + arrow to right) */}
+      <rect x="26" y="49" width="124" height="12" rx="2" fill={c.tint} />
+      <rect x="26" y="49" width="2" height="12" fill={c.accent} />
+      <circle cx="32" cy="55" r="2.4" fill={c.accent} />
+      <rect x="40" y="52" width="52" height="3" rx="1.5" fill={c.text} opacity="0.9" />
+      <rect x="40" y="57" width="36" height="2.5" rx="1.25" fill={c.muted} />
+      <text x="140" y="57.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill={c.accent} fontWeight="700">→ +1</text>
+
+      {/* cluster 3 */}
+      <rect x="26" y="66" width="124" height="12" rx="2" fill={c.line} opacity="0.25" />
+      <circle cx="32" cy="72" r="2.4" fill="#B45309" />
+      <rect x="40" y="69" width="40" height="3" rx="1.5" fill={c.text} opacity="0.8" />
+      <rect x="40" y="74" width="26" height="2.5" rx="1.25" fill={c.muted} />
+      <text x="140" y="74.5" textAnchor="end" fontFamily={MONO} fontSize="5.5" fill={c.muted}>18</text>
+    </Card>
+  );
+}
+
 /** From your agent — its tools, and the weak spot we aim at. */
 export function AgentThumb() {
   const c = usePalette();

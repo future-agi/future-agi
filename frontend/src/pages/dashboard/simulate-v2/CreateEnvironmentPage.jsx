@@ -1,5 +1,5 @@
 import { Helmet } from "react-helmet-async";
-import CreateEnvironmentWizard from "src/sections/simulate-v2/environments/CreateEnvironmentWizard";
+import BuildFromAgent from "src/sections/simulate-v2/environments/BuildFromAgent";
 
 export default function CreateEnvironmentPage() {
   return (
@@ -7,7 +7,7 @@ export default function CreateEnvironmentPage() {
       <Helmet>
         <title>Build environment | Future AGI</title>
       </Helmet>
-      <CreateEnvironmentWizard />
+      <BuildFromAgent />
     </>
   );
 }

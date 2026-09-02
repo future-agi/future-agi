@@ -91,6 +91,9 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
       key={mapping ? queue[index]?.id : "list"}
       open={open}
       onClose={close}
+      // Same surface as every other drawer in this flow — see SideDrawer for
+      // why the theme rule has to be outranked to get it.
+      paperSx={{ backgroundColor: "background.paper", backgroundImage: "none" }}
       source="create-simulate"
       sourceId={env?.id || ""}
       sourcePreviewData={previewData}

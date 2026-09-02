@@ -16,6 +16,10 @@ import { FIELD } from "../../_mock/agentTypes";
  * declares, so adding a new agent kind is a data change, not a new screen.
  */
 export default function DynamicField({ field, value, onChange, values }) {
+  /* A field can take its label from another field's value — see the provider
+     -> assistant/agent/pathway mapping on voice_platform. */
+  const resolved = field.labelFrom ? field.labelFrom.map[values?.[field.labelFrom.key]] : null;
+  field = resolved ? { ...field, ...resolved } : field;
   const [reveal, setReveal] = useState(false);
 
   // Conditional visibility (e.g. hide the token field when auth is "none").
@@ -90,17 +94,37 @@ export default function DynamicField({ field, value, onChange, values }) {
                   sx={{
                     flex: 1, p: 1.5, borderRadius: 1, cursor: "pointer",
                     border: "1px solid",
-                    borderColor: selected ? "primary.main" : "divider",
-                    bgcolor: (t) => selected ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.14 : 0.06) : "transparent",
+                    /*
+                      Neutral text-primary tint in dark theme, purple
+                      in light — matches the "where does this live?"
+                      and "agent type" card grids in the drawer so
+                      every card picker across the connect flow
+                      selects the same way.
+                    */
+                    borderColor: (t) => selected
+                      ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.35) : t.palette.primary.main)
+                      : t.palette.divider,
+                    bgcolor: (t) => selected
+                      ? (t.palette.mode === "dark"
+                        ? alpha(t.palette.text.primary, 0.06)
+                        : alpha(t.palette.primary.main, 0.05))
+                      : "transparent",
                     transition: "border-color .15s ease, background-color .15s ease",
-                    "&:hover": { borderColor: selected ? "primary.main" : "text.subtitle" },
+                    "&:hover": {
+                      borderColor: (t) => selected
+                        ? (t.palette.mode === "dark" ? alpha(t.palette.text.primary, 0.35) : t.palette.primary.main)
+                        : t.palette.text.disabled,
+                    },
                   }}
                 >
                   <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.25 }}>
                     <Iconify
-                      icon={selected ? "solar:check-circle-bold" : "solar:record-circle-linear"}
+                      icon={selected ? "solar:check-circle-bold" : "solar:circle-linear"}
                       width={15}
-                      sx={{ color: selected ? "primary.main" : "text.subtitle" }}
+                      sx={{ color: (t) => selected
+                        ? (t.palette.mode === "dark" ? t.palette.text.primary : t.palette.primary.main)
+                        : t.palette.text.subtitle,
+                      }}
                     />
                     <Typography sx={{ typography: "s2", fontWeight: 600 }}>{o.label}</Typography>
                   </Stack>

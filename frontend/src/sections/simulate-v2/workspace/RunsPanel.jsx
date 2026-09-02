@@ -1,13 +1,17 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Grid } from "@mui/material";
+import { Box, Stack, Typography, Button, Grid, TextField, MenuItem } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import { protoRunId } from "../_mock/executionAdapter";
 import { resolveEval } from "../_mock/evals";
 import { getAgentType } from "../_mock/agentTypes";
 import { getSurface } from "../_mock/surfaces";
+import { agentVersionsWithRuns } from "../_mock/versions";
 import { SectionCard, EmptyState, StatusChip } from "../components/primitives";
+import RunsSummary from "../run/RunsSummary";
 
 /**
  * Pre-flight + run history.
@@ -18,14 +22,28 @@ import { SectionCard, EmptyState, StatusChip } from "../components/primitives";
  */
 export default function RunsPanel({ env, envState, onGo }) {
   const navigate = useNavigate();
+  const [scope, setScope] = useState("all");
   const surface = getSurface(env.surface);
   const agentType = getAgentType(envState.agent?.typeId);
   const ready = !!envState.agent && envState.scenarios.length > 0;
+  const scoped = scope === "all"
+    ? envState.runs
+    : envState.runs.filter((r) => r.agentVersion === scope);
 
   const startRun = () => {
-    const runId = `run-${Date.now().toString(36)}`;
+    const runId = protoRunId(env.id, Date.now().toString(36));
     navigate(paths.dashboard.simulate.simulationRun(env.id, runId));
   };
+
+  /*
+    Once there is anything to compare, this step is the summary rather than a
+    launcher. Pre-flight still exists — it moved into "Add more runs", where it
+    is read at the moment it matters rather than sitting above a history nobody
+    came here to skip past.
+  */
+  if (envState.runs.length > 0) {
+    return <RunsSummary env={env} envState={envState} onGo={onGo} onStart={startRun} />;
+  }
 
   return (
     <Box sx={{ p: 2 }}>
@@ -108,16 +126,41 @@ export default function RunsPanel({ env, envState, onGo }) {
 
       {/* ── history ── */}
       <Box sx={{ mt: 3 }}>
-        <SectionCard title={`Run history (${envState.runs.length})`}>
-          {envState.runs.length === 0 ? (
+        <SectionCard
+          title={`Run history (${scoped.length})`}
+          subtitle={scope === "all" ? undefined : `Showing only runs of agent ${scope}`}
+          action={
+            /*
+              Scoping to a version is what makes a history readable: a mixed
+              list of numbers from three different agents compares nothing.
+            */
+            <TextField
+              select size="small" label="Agent version" value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              sx={{ minWidth: 150, "& .MuiInputBase-input": { typography: "s2", py: 0.75 } }}
+            >
+              <MenuItem value="all" sx={{ typography: "s2" }}>All versions</MenuItem>
+              {agentVersionsWithRuns(envState).map((v) => (
+                <MenuItem key={v.id} value={v.label} sx={{ typography: "s2" }}>
+                  {v.label}{v.current ? " · current" : ""}
+                </MenuItem>
+              ))}
+            </TextField>
+          }
+        >
+          {scoped.length === 0 ? (
             <EmptyState
               icon="solar:play-circle-linear"
-              title="No runs yet"
-              body="Start a simulation above and you'll be able to watch every task execute live."
+              title={scope === "all" ? "No runs yet" : `No runs of agent ${scope}`}
+              body={
+                scope === "all"
+                  ? "Start a simulation above and you'll be able to watch every task execute live."
+                  : "This environment has runs, but none against that agent version. Switch the scope, or run the suite against it."
+              }
             />
           ) : (
             <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-              {envState.runs.map((r) => (
+              {scoped.map((r) => (
                 <Stack
                   key={r.id}
                   direction="row"
@@ -130,6 +173,8 @@ export default function RunsPanel({ env, envState, onGo }) {
                     <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{r.label}</Typography>
                     <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
                       {new Date(r.finishedAt).toLocaleString()} · {r.total} tasks
+                      {r.agentVersion ? ` · agent ${r.agentVersion}` : ""}
+                      {r.seed != null ? ` · seed ${r.seed}` : ""}
                     </Typography>
                   </Box>
                   <Box sx={{ width: 120, display: { xs: "none", sm: "block" } }}>

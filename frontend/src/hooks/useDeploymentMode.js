@@ -13,6 +13,22 @@ import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
 
 export function useDeploymentMode() {
+  /*
+    LOCAL DEV OVERRIDE — dev.api.futureagi.com is currently 502 and the
+    real fetch keeps the whole app on the splash screen. Short-circuit
+    to `cloud` mode so guards resolve immediately and the frontend
+    boots against its own mocks/localStorage. Revert before shipping.
+  */
+  return {
+    mode: "cloud",
+    isCloud: true,
+    isOSS: false,
+    isEE: false,
+    isLoading: false,
+    isSuccess: true,
+  };
+
+  // eslint-disable-next-line no-unreachable
   const { data, isLoading, isSuccess } = useQuery({
     queryKey: ["deployment-info"],
     queryFn: () => axios.get(endpoints.settings.v2.deploymentInfo),

@@ -13,13 +13,23 @@ import { buildRun } from "../_mock/runStream";
  * scheduled timers, so a pause control would have to unwind and reschedule all
  * of them — a half-working pause is worse than none.
  */
-export default function useRunPlayer({ seed, scenarios, stage, evals, concurrency = 4 }) {
+export default function useRunPlayer({ seed, scenarios, stage, evals, tools = [], concurrency = 4, repeats = 3, phrasing = 0 }) {
   const run = useMemo(
-    () => buildRun({ seed, scenarios, stage, evals, concurrency }),
-    [seed, scenarios, stage, evals, concurrency],
+    () => buildRun({ seed, scenarios, stage, evals, tools, concurrency, repeats, phrasing }),
+    [seed, scenarios, stage, evals, tools, concurrency, repeats, phrasing],
   );
 
   const [phase, setPhase] = useState("booting"); // booting | running | done
+  /*
+    When anything last actually moved.
+
+    A long stage and a dead one look identical on a progress bar, and the
+    difference is the whole question a user has while waiting. So the last
+    state change is timestamped, and the view reports how long ago it was
+    rather than implying health from the fact that a spinner is spinning.
+  */
+  const [lastEventAt, setLastEventAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [speed, setSpeed] = useState(1);
   const [tasks, setTasks] = useState(() =>
     run.tasks.map((t) => ({ ...t, status: "queued", stepIndex: -1, evalIndex: -1 })),
@@ -44,7 +54,15 @@ export default function useRunPlayer({ seed, scenarios, stage, evals, concurrenc
 
   const patchTask = useCallback((id, patch) => {
     setTasks((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    setLastEventAt(Date.now());
   }, []);
+
+  /* One ticker for the whole view; the heartbeat is derived from it. */
+  useEffect(() => {
+    if (phase === "done") return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
 
   /** Drives one task through its steps, then grading, then a verdict. */
   const driveTask = useCallback(
@@ -112,28 +130,48 @@ export default function useRunPlayer({ seed, scenarios, stage, evals, concurrenc
   const focus = tasks.find((t) => t.id === focusId) || tasks[0];
 
   const stats = useMemo(() => {
-    const done = tasks.filter((t) => t.status === "passed" || t.status === "failed");
+    const FINISHED = ["passed", "failed", "flaky", "unmeasured"];
+    const done = tasks.filter((t) => FINISHED.includes(t.status));
     const passed = tasks.filter((t) => t.status === "passed").length;
     const failed = tasks.filter((t) => t.status === "failed").length;
+    /* Scenarios whose samples disagreed with each other. Counted apart from
+       both — calling them failures blames the agent for the scenario. */
+    const flaky = tasks.filter((t) => t.status === "flaky").length;
+    /* Scenarios nothing could be measured on — ours to fix, not the agent's. */
+    const unmeasured = tasks.filter((t) => t.status === "unmeasured").length;
+    const measured = done.filter((t) => t.status !== "unmeasured");
     const active = tasks.filter((t) => ["running", "grading"].includes(t.status)).length;
     return {
       total: tasks.length,
       done: done.length,
       passed,
       failed,
+      flaky,
+      unmeasured,
+      measured: measured.length,
+      repeats: run.repeats || 1,
       active,
       queued: tasks.length - done.length - active,
-      passRate: done.length ? passed / done.length : 0,
+      /* The mean pass proportion, so a scenario that passed two of three
+         samples counts as two thirds rather than as a clean pass or a loss. */
+      /* Over what was measurable, never over what was attempted. */
+      passRate: measured.length
+        ? measured.reduce((a, t) => a + (t.passShare ?? (t.status === "passed" ? 1 : 0)), 0) / measured.length
+        : 0,
       progress: tasks.length ? (done.length / tasks.length) * 100 : 0,
       cost: done.reduce((a, t) => a + t.cost, 0),
       tokens: done.reduce((a, t) => a + t.tokens, 0),
     };
-  }, [tasks]);
+  }, [tasks, run.repeats]);
 
   return {
     phase, setPhase, start,
     tasks, focus, focusId, setFocusId,
     stats, elapsed,
+    /* Seconds since anything last changed, and whether that is long enough to
+       stop calling it slow. */
+    sinceLastEvent: Math.max(0, Math.round((now - lastEventAt) / 1000)),
+    stalled: phase === "running" && now - lastEventAt > 15000,
     speed, setSpeed,
     stage: run.stage,
   };

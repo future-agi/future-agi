@@ -29,8 +29,9 @@ export default function McpConnect({ env, type, onConnect, testing }) {
     <SectionCard title="Connect your agent to this environment">
       <Box sx={{ p: 2.5 }}>
         <Typography sx={{ typography: "s2", color: "text.secondary", mb: 2 }}>
-          We publish {env.name} as MCP tools. Point your agent at the address below and it
-          can act in the environment — nothing of yours has to be reachable from our side.
+          We publish {env.name} as MCP tools. Point your agent at the address below and it can act
+          in the environment. Your agent keeps running wherever it already runs — we never host or
+          deploy it, and nothing of yours has to be reachable from our side.
         </Typography>
 
         <Stack direction="row" spacing={0.75} sx={{ mb: 1.5 }}>

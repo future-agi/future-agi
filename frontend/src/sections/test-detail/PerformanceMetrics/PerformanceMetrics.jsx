@@ -12,6 +12,7 @@ import { useParams } from "react-router";
 import useKpis from "src/hooks/useKpis";
 import SvgColor from "src/components/svg-color/svg-color.jsx";
 import CallDetails from "./CallDetails";
+import HeadlineStats from "./HeadlineStats";
 import SystemMetrics from "./SystemMetrics";
 import EvaluationMetrics from "./EvaluationMetrics";
 import { extractKpis, TestRunLoadingStatus } from "../common";
@@ -183,6 +184,12 @@ export default function PerformanceMetrics() {
         </IconButton>
       </Stack>
       <Collapse in={!collapse}>
+        {/*
+          The collapsed state is a preview, so it has to end somewhere — but a
+          hard maxHeight cut mid-chart looked like a rendering fault rather
+          than a fold. A mask fades the last 40px out, which is what says
+          "there is more" without a caption saying it.
+        */}
         <Box
           sx={() => ({
             overflow: {
@@ -191,33 +198,61 @@ export default function PerformanceMetrics() {
             },
             maxHeight: expanded ? "100%" : "400px",
             transition: "max-height 0.4s ease-in-out",
+            ...(!expanded && {
+              maskImage: "linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%)",
+              WebkitMaskImage: "linear-gradient(to bottom, #000 calc(100% - 40px), transparent 100%)",
+            }),
           })}
         >
           {isPending && !kpis ? (
             <PerformanceSkeleton />
           ) : (
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={2.5}>
-                <CallDetails
-                  handleSetFilter={handleSetFilter}
-                  expanded={expanded}
-                  data={callDetails}
-                  agentType={kpis?.agent_type}
-                />
+            <>
+              {/*
+                Headline first, detail under it. Three cards of equal weight
+                gave "how many calls ran" and "words per minute" the same
+                billing, and left Call Details three tiles tall inside a box
+                sized for eight — most of the dead space in this section.
+              */}
+              <HeadlineStats
+                callDetails={callDetails}
+                systemMetrics={systemMetrics}
+                agentType={kpis?.agent_type}
+                onFilter={handleSetFilter}
+              />
+              <Grid container spacing={2} alignItems="stretch">
+                <Grid item xs={12} md={5}>
+                  <SystemMetrics expanded={expanded} data={systemMetrics} />
+                </Grid>
+                <Grid item xs={12} md={7}>
+                  <EvaluationMetrics
+                    expanded={expanded}
+                    data={{ evalMetrics, deterministicEvals }}
+                    isPending={isPending}
+                    status={status}
+                  />
+                </Grid>
               </Grid>
-              <Grid item xs={12} md={4}>
-                <SystemMetrics expanded={expanded} data={systemMetrics} />
-              </Grid>
-              <Grid item xs={12} md={5.5}>
-                <EvaluationMetrics
-                  expanded={expanded}
-                  data={{ evalMetrics, deterministicEvals }}
-                  isPending={isPending}
-                  status={status}
-                />
-              </Grid>
-            </Grid>
+              {/*
+                Call Details is folded into the headline above — its counts
+                are the headline, and its click-to-filter came with them. The
+                card is kept mounted only when the headline could not take
+                every count, which the current key set never hits.
+              */}
+              {Object.keys(callDetails || {}).length > 4 && (
+                <Box sx={{ mt: 2 }}>
+                  <CallDetails
+                    handleSetFilter={handleSetFilter}
+                    expanded={expanded}
+                    data={Object.fromEntries(Object.entries(callDetails).slice(4))}
+                    agentType={kpis?.agent_type}
+                  />
+                </Box>
+              )}
+            </>
           )}
+        </Box>
+        <Box>
           <Button
             disabled={isPending}
             onClick={handleToggleExpand}

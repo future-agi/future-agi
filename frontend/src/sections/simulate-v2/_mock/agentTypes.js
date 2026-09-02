@@ -62,7 +62,29 @@ export const AGENT_TYPES = [
         ],
       },
       { key: "apiKey", label: "API key", type: FIELD.SECRET, required: true, placeholder: "sk_live_…" },
-      { key: "agentId", label: "Agent ID", type: FIELD.TEXT, required: true, placeholder: "asst_9f2c…", help: "We can list these once the key is valid." },
+      /*
+        Providers disagree on the noun: Vapi has assistants, Retell and
+        ElevenLabs have agents, Bland has pathways. Whichever they picked, the
+        label should match the dashboard they are copying the id out of.
+      */
+      {
+        key: "agentId",
+        label: "Agent ID",
+        labelFrom: {
+          key: "provider",
+          map: {
+            vapi: { label: "Assistant ID", placeholder: "asst_9f2c…" },
+            retell: { label: "Agent ID", placeholder: "agent_9f2c…" },
+            bland: { label: "Pathway ID", placeholder: "pathway_9f2c…" },
+            elevenlabs: { label: "Agent ID", placeholder: "agent_9f2c…" },
+            livekit: { label: "Agent name", placeholder: "returns-line-agent" },
+          },
+        },
+        type: FIELD.TEXT,
+        required: true,
+        placeholder: "asst_9f2c…",
+        help: "We can list these once the key is valid.",
+      },
       {
         key: "callDirection",
         label: "Call direction",
@@ -87,8 +109,21 @@ export const AGENT_TYPES = [
     handshake: ["Resolving SIP host", "Registering", "Negotiating codec (opus)", "Sending OPTIONS ping"],
     fields: [
       { key: "sipUri", label: "SIP URI", type: FIELD.TEXT, required: true, placeholder: "sip:agent@your-trunk.com" },
-      { key: "username", label: "Username", type: FIELD.TEXT, required: true },
-      { key: "password", label: "Password", type: FIELD.SECRET, required: true },
+      /*
+        Digest auth is opt-in. Most production trunks use IP allowlisting
+        or embed credentials directly in the SIP URI, so making
+        username / password required upfront was over-collecting. The
+        two fields appear only when this switch is on.
+      */
+      {
+        key: "needsAuth",
+        label: "This trunk needs digest auth",
+        type: FIELD.SWITCH,
+        default: false,
+        help: "Turn on if your SIP trunk authenticates with a username + password. Leave off for IP-allowlisted trunks or trunks that embed credentials in the URI.",
+      },
+      { key: "username", label: "Username", type: FIELD.TEXT, dependsOn: { key: "needsAuth", eq: true } },
+      { key: "password", label: "Password", type: FIELD.SECRET, dependsOn: { key: "needsAuth", eq: true } },
       { key: "codec", label: "Preferred codec", type: FIELD.SELECT, options: [
         { value: "opus", label: "Opus" }, { value: "pcmu", label: "PCMU (G.711µ)" }, { value: "pcma", label: "PCMA (G.711a)" },
       ] },
@@ -108,9 +143,10 @@ export const AGENT_TYPES = [
     handshake: ["Resolving endpoint", "Checking auth", "Sending probe message", "Mapping response shape"],
     fields: [
       { key: "endpoint", label: "Endpoint URL", type: FIELD.URL, required: true, placeholder: "https://api.yourapp.com/agent/chat" },
-      { key: "auth", label: "Authentication", type: FIELD.SELECT, required: true, options: [
+      { key: "auth", label: "Authentication", type: FIELD.SELECT, required: true, defaultValue: "none", options: [
+        { value: "none", label: "No auth" },
         { value: "bearer", label: "Bearer token" }, { value: "apikey", label: "API key header" },
-        { value: "basic", label: "Basic auth" }, { value: "none", label: "No auth" },
+        { value: "basic", label: "Basic auth" },
       ] },
       { key: "token", label: "Token", type: FIELD.SECRET, dependsOn: { key: "auth", not: "none" } },
       { key: "headers", label: "Extra headers", type: FIELD.KEYVALUE },
@@ -134,6 +170,41 @@ export const AGENT_TYPES = [
       { key: "apiKey", label: "API key", type: FIELD.SECRET, required: true },
       { key: "model", label: "Model", type: FIELD.TEXT, required: true, placeholder: "my-support-agent-v3" },
       { key: "systemPrompt", label: "System prompt override", type: FIELD.TEXTAREA, help: "Optional. Leave blank to use whatever your endpoint already does." },
+    ],
+  },
+
+  /* ─────────────────────────── Service twins ─────────────────────────── */
+  /*
+    "twin_backed" is not really a connection method — the twin *is* the
+    env's world. This registration exists so twin-backed environments
+    have a first-class agent-type entry that the gallery can group by,
+    the compatibility check can key off, and (below) a preset that
+    templates ship with. The fields describe how the user's agent
+    reaches the sandbox — an SDK endpoint per service is the common
+    shape today, and the field schema will grow as more twin runtimes
+    land. Direction is "outbound": the user's agent calls into the
+    sandbox we host.
+  */
+  {
+    id: "twin_backed",
+    group: "Service clones",
+    label: "Clone-backed agent",
+    blurb: "Your agent talks to a live sandbox of Slack, Notion, Salesforce, etc. We spin it up per run.",
+    icon: "solar:server-square-linear",
+    color: "#7857FC",
+    surfaces: ["chat", "messaging", "email", "sim", "tools"],
+    direction: "outbound",
+    handshake: [
+      "Provisioning twin services",
+      "Seeding starting state",
+      "Rotating per-run credentials",
+      "Streaming first probe",
+    ],
+    fields: [
+      { key: "sdkEndpoint", label: "Agent SDK endpoint", type: FIELD.URL, required: true, placeholder: "https://api.yourapp.com/agent/step" },
+      { key: "authToken", label: "Auth token", type: FIELD.SECRET, help: "Optional — only needed if your agent endpoint requires an Authorization header." },
+      { key: "identityMap", label: "Service credentials map", type: FIELD.KEYVALUE, help: "How your agent should authenticate against each twinned service. Keys are the service ids, values are secret refs." },
+      { key: "resetBetween", label: "Reset sandbox between runs", type: FIELD.SWITCH },
     ],
   },
 
@@ -341,13 +412,21 @@ export const AGENT_TYPES = [
  * environments are grouped by the agent type they need, so the two screens
  * present the same taxonomy in the same sequence.
  */
+/*
+  Order matters twice over: it sets the section order in the environment
+  gallery and the group order on the connect screen, and the two must agree.
+  Conversational agents first because that is what most people arrive with,
+  then computer use and code — the three we support deepest — and the more
+  specialised worlds below them.
+*/
 export const AGENT_TYPE_GROUPS = [
   "Voice & chat",
+  "Service twins",
   "Computer use",
+  "Code",
   "Robotics",
   "Games & worldsims",
   "Tools & protocol",
-  "Code",
   "Composite",
 ];
 

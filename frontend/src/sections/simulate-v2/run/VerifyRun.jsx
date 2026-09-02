@@ -7,10 +7,10 @@ import { SectionCard, CopyField } from "../components/primitives";
 import { BootSequence } from "../components/loading";
 
 /**
- * Verify the run with Omega CLI.
+ * Verify the run independently.
  *
  * This is the "who watches the watchmen" step: the platform says the agent
- * passed, and Omega independently re-checks that the *harness* behaved — that
+ * passed, and this independently re-checks that the *builder* behaved — that
  * the environment really reset, the tools really fired, and the graders scored
  * what they claim to have scored. Showing the command rather than hiding it
  * matters, because the point is that the user can run this themselves.
@@ -24,7 +24,7 @@ const VERIFY_STEPS = [
   "Comparing against platform verdicts",
 ];
 
-export default function OmegaVerify({ env, stats, runId }) {
+export default function VerifyRun({ env, stats, runId }) {
   const [phase, setPhase] = useState("idle");
 
   const checks = [
@@ -63,19 +63,19 @@ export default function OmegaVerify({ env, stats, runId }) {
   return (
     <Stack spacing={2}>
       <SectionCard
-        title="Verify this run with Omega CLI"
-        subtitle="An independent check that the harness itself behaved — not just the agent"
+        title="Verify this run"
+        subtitle="An independent check that the builder itself behaved — not just the agent"
       >
         <Box sx={{ p: 2.5 }}>
           <Typography sx={{ typography: "s2", color: "text.secondary", mb: 2, maxWidth: 720 }}>
-            The platform already told you which tasks passed. Omega re-derives that answer
+            The platform already told you which tasks passed. This re-derives that answer
             from the raw run artifacts, so you can trust the number before you act on it.
             Run it locally or let us run it here.
           </Typography>
 
           <CopyField
             label="Run locally"
-            value={`omega verify run ${runId} --env ${env.id} --strict`}
+            value={`fai verify run ${runId} --env ${env.id} --strict`}
           />
 
           <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 2 }}>
@@ -90,7 +90,7 @@ export default function OmegaVerify({ env, stats, runId }) {
               {phase === "running" ? "Verifying…" : phase === "done" ? "Re-run verification" : "Run verification"}
             </Button>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Uses your local Omega credentials · takes ~40s
+              Uses your local credentials · takes ~40s
             </Typography>
           </Stack>
         </Box>
@@ -162,6 +162,6 @@ export default function OmegaVerify({ env, stats, runId }) {
   );
 }
 
-OmegaVerify.propTypes = {
+VerifyRun.propTypes = {
   env: PropTypes.object, stats: PropTypes.object, runId: PropTypes.string,
 };

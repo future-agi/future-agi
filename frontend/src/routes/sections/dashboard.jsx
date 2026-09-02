@@ -316,8 +316,26 @@ const SimEnvironmentWorkspace = lazyWithRetry(
 const SimRunView = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/RunViewPage"),
 );
+const SimRunCompare = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/RunComparePage"),
+);
 const SimCreateEnvironment = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/CreateEnvironmentPage"),
+);
+const SimUseTemplate = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/UseTemplatePage"),
+);
+const SimNewTwinEnvironment = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/NewTwinEnvironmentPage"),
+);
+const SimTwinDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/TwinDetailPage"),
+);
+const SimTwinReview = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/TwinReviewPage"),
+);
+const SimTwinConnect = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/TwinConnectPage"),
 );
 const AgentDefinitions = lazyWithRetry(
   () => import("src/pages/dashboard/agent-definitions/AgentDefinitions"),
@@ -1355,12 +1373,47 @@ export const dashboardRoutes = (
               element: <SimEnvironments />,
             },
             {
+              /* Twins browse consolidated into the Environments Templates
+                 tab — the standalone /twins page now just redirects. */
+              path: "twins",
+              element: <Navigate to="/dashboard/simulate/environments" replace />,
+            },
+            {
+              /* Twin detail page still lives — post-provisioning UX. */
+              path: "twins/:envId",
+              element: <SimTwinDetail />,
+            },
+            {
               path: "environments/new",
               element: <SimCreateEnvironment />,
             },
             {
+              path: "environments/new/twin",
+              element: <SimNewTwinEnvironment />,
+            },
+            {
+              path: "environments/use/:templateId",
+              element: <SimUseTemplate />,
+            },
+            {
+              /* Must appear before the :envId/:step catch-all so the
+                 static segment wins. */
+              path: "environments/:envId/twin-connect",
+              element: <SimTwinConnect />,
+            },
+            {
+              path: "environments/:envId/twin-review",
+              element: <SimTwinReview />,
+            },
+            {
               path: "environments/:envId",
               element: <SimEnvironmentWorkspace />,
+            },
+            {
+              /* A static segment, so it outranks `:envId/:step` and a
+                 comparison never renders as an unknown workspace step. */
+              path: "environments/:envId/compare",
+              element: <SimRunCompare />,
             },
             {
               path: "environments/:envId/:step",

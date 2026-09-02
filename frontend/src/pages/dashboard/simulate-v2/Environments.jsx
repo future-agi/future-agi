@@ -5,7 +5,7 @@ export default function EnvironmentsPage() {
   return (
     <>
       <Helmet>
-        <title>Environments | Future AGI</title>
+        <title>RL Environments | Future AGI</title>
       </Helmet>
       <EnvironmentGallery />
     </>

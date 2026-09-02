@@ -1,25 +1,29 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { alpha } from "@mui/material/styles";
+import { useEffect, useMemo, useRef } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box, Stack, Typography, Button, IconButton, Tooltip, ToggleButton,
   ToggleButtonGroup, LinearProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import RunResults from "./RunResults";
+import { publishRun, installMockExecutionAdapter } from "../_mock/executionAdapter";
+import { rebuildRun } from "../_mock/comparison";
+import { currentAgentVersion, currentEnvVersion, versionNumber } from "../_mock/versions";
+import { twinTimelineFor } from "../_mock/twins";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { getEval, resolveEval } from "../_mock/evals";
 import { BOOT_STEPS } from "../_mock/runStream";
+import { SHADOW_SUMMARY } from "../_mock/sandbox";
 import { useSimStore, useEnvState } from "../store";
 import {
-  StatusDot, StatusChip, ScorePill, EmptyState, PersonaBadge,
+  StatusDot, StatusChip, ScorePill, EmptyState, PersonaBadge, pulse,
 } from "../components/primitives";
 import { ProvisioningPanel } from "../components/loading";
 import useRunPlayer from "./useRunPlayer";
 import Stage from "./stages";
-import RunResults from "./RunResults";
 
 /**
  * The live run.
@@ -32,6 +36,7 @@ import RunResults from "./RunResults";
 export default function LiveRunView() {
   const { envId, runId } = useParams();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const { state } = useSimStore();
   const { envState, recordRun } = useEnvState(envId);
 
@@ -43,14 +48,103 @@ export default function LiveRunView() {
     [envState.evals],
   );
 
+  /*
+    A run is not always a run of everything. `?only=` carries the subset a
+    comparison sent here — re-run these four blockers against the new version —
+    and the run records what it actually covered, so nothing downstream reads a
+    four-scenario check as a full sweep that lost twenty-eight rows.
+  */
+  const only = params.get("only");
+  const scenarios = useMemo(() => {
+    if (!only) return envState.scenarios;
+    const wanted = new Set(only.split(","));
+    const subset = envState.scenarios.filter((sc) => wanted.has(sc.id));
+    return subset.length ? subset : envState.scenarios;
+  }, [only, envState.scenarios]);
+
+  /*
+    Every scenario, three times. The other side of the conversation is sampled,
+    so one shot per scenario reports a coin flip as a verdict — and three
+    samples is the smallest n where "passed twice, failed once" is sayable.
+  */
+  const repeats = 3;
+
   const player = useRunPlayer({
     seed: runId,
-    scenarios: envState.scenarios,
+    scenarios,
     stage: surface.stage,
     evals,
+    tools: env?.tools || [],
+    repeats,
+    phrasing: versionNumber(currentAgentVersion(envState).label),
   });
 
-  const { phase, start, tasks, focus, focusId, setFocusId, stats, elapsed, speed, setSpeed } = player;
+  const {
+    phase, start, tasks, focus, focusId, setFocusId, stats, elapsed, speed, setSpeed,
+    sinceLastEvent, stalled,
+  } = player;
+
+  /*
+    A run that is already in history is being read, not run. Replaying it —
+    provisioning animation and all — was the old behaviour and it is wrong
+    twice over: it wastes the reader's time, and it invites the suspicion that
+    the numbers are generated fresh each time rather than being that run's.
+
+    The latch matters because a run finishing puts itself into history: without
+    it, the live view would flip to read-only in the same commit that finished
+    it.
+  */
+  const stored = envState.runs.find((r) => r.id === runId);
+  const wasLive = useRef(false);
+  useEffect(() => {
+    if (phase === "running") wasLive.current = true;
+  }, [phase]);
+  const readOnly = !wasLive.current && !!stored;
+
+  const storedTasks = useMemo(
+    () => (readOnly && env ? rebuildRun(env, envState, stored) : []),
+    [readOnly, env, envState, stored],
+  );
+
+  const storedStats = useMemo(() => {
+    const passed = storedTasks.filter((t) => t.status === "passed").length;
+    const failed = storedTasks.filter((t) => t.status === "failed").length;
+    const flaky = storedTasks.filter((t) => t.status === "flaky").length;
+    const unmeasured = storedTasks.filter((t) => t.status === "unmeasured").length;
+    const measured = storedTasks.filter((t) => t.status !== "unmeasured");
+    return {
+      total: storedTasks.length,
+      passed,
+      failed,
+      flaky,
+      unmeasured,
+      measured: measured.length,
+      repeats: stored?.repeats || 1,
+      /* Same rule as the live run: the mean of the per-scenario proportions,
+         over the scenarios that produced one. */
+      passRate: measured.length
+        ? measured.reduce((a, t) => a + (t.passShare ?? (t.status === "passed" ? 1 : 0)), 0) / measured.length
+        : 0,
+      tokens: storedTasks.reduce((a, t) => a + (t.tokens || 0), 0),
+      cost: storedTasks.reduce((a, t) => a + (t.cost || 0), 0),
+    };
+  }, [storedTasks, stored]);
+
+
+  /*
+    Finishing hands the run to the execution-detail screen and goes there.
+
+    That screen is real product code and fetches everything it renders, so the
+    run is published to the mock adapter first — the adapter answers those
+    fetches for this run id and passes every other request through untouched.
+    Publishing before navigating matters: the screen's first query fires on
+    mount, and an empty answer would be cached.
+  */
+  useEffect(() => {
+    if (phase !== "done") return;
+    installMockExecutionAdapter();
+    publishRun(runId, { tasks, startedAt: new Date(Date.now() - elapsed).toISOString() });
+  }, [phase, runId, tasks, elapsed]);
 
   // Record the run once it finishes so it shows up in history.
   useEffect(() => {
@@ -58,13 +152,58 @@ export default function LiveRunView() {
     if (envState.runs.some((r) => r.id === runId)) return;
     recordRun({
       id: runId,
-      label: `${env?.name} · ${stats.total} tasks`,
+      label: only
+        ? `${stats.total} scenario${stats.total === 1 ? "" : "s"} re-run`
+        : `${env?.name} · ${stats.total} tasks`,
       finishedAt: new Date().toISOString(),
       total: stats.total,
       passed: stats.passed,
       failed: stats.failed,
+      flaky: stats.flaky,
+      /* Kept on the run so history can show what the run could not measure —
+         a rate with no denominator behind it is not reproducible. */
+      unmeasured: stats.unmeasured,
+      /* Which agent version was current when this started — pinned, never
+         inferred later from the run's place in the list. */
+      agentVersion: currentAgentVersion(envState).label,
+      /* And which env version — a run is `env × agent`, so both halves
+         travel on it. Lets the runs table read "agent v2 · env v3" and
+         lets the compare view distinguish "the agent changed" from "the
+         world changed" instead of collapsing both into one axis. */
+      envVersion: currentEnvVersion(env, envState).label,
+      /* What it actually covered, and how many samples each row is made of.
+         A comparison needs both before it can claim two runs are comparable. */
+      scenarioIds: scenarios.map((sc) => sc.id),
+      repeats,
+      partial: !!only,
+      /* One past the highest ordinal ever stamped here, so numbers are stable
+         even after a run is deleted. */
+      ordinal: Math.max(0, ...envState.runs.map((r) => r.ordinal || 0)) + 1,
+      seed: 7,
+      /* Twin write count summed across every task in the run. Stamped
+         at record time so the runs history can show it later without
+         re-deriving from task data (which is cached in the adapter and
+         not always available). null for non-twin envs. */
+      twinWrites: envState.twinBacking
+        ? tasks.reduce((sum, task) => {
+            const t = twinTimelineFor(envState, task);
+            return sum + Object.values(t.writesByService).reduce((a, b) => a + b, 0);
+          }, 0)
+        : null,
     });
-  }, [phase, runId, env, stats, envState.runs, recordRun]);
+  }, [phase, runId, env, envState, stats, scenarios, only, recordRun]);
+
+  /*
+    A finished run goes to the summary, not to its own results. On its own a
+    result page answers "how did that go"; the question someone has after
+    changing their agent and running again is whether it moved, and only the
+    list of runs can answer that. The run just finished is the top row there,
+    one click from everything this screen used to show.
+  */
+  useEffect(() => {
+    if (phase !== "done" || readOnly) return;
+    navigate(paths.dashboard.simulate.environmentStep(envId, "runs"), { replace: true });
+  }, [phase, readOnly, navigate, envId]);
 
   if (!env) {
     return (
@@ -104,6 +243,20 @@ export default function LiveRunView() {
     );
   }
 
+  /* ── a finished run, read back ── */
+  if (readOnly) {
+    return (
+      <RunResults
+        env={env}
+        runId={runId}
+        tasks={storedTasks}
+        stats={storedStats}
+        evals={evals}
+        stage={surface.stage}
+      />
+    );
+  }
+
   /* ── pre-run provisioning ── */
   if (phase === "booting") {
     return (
@@ -113,7 +266,10 @@ export default function LiveRunView() {
             icon={surface.icon}
             accent={surface.color}
             title="Preparing the simulation"
-            subtitle={`${envState.scenarios.length} tasks · 4 workers · fresh copy of ${env.name} per task`}
+            /* What this run is actually about to do — a re-run of four
+               scenarios is not "17 tasks", and the boot panel is the first
+               place that claim appears. */
+            subtitle={`${scenarios.length}${only ? ` of ${envState.scenarios.length}` : ""} tasks × ${repeats} samples · 4 workers · a shadow agent and a fresh copy of ${env.name} per task`}
             steps={BOOT_STEPS[surface.stage] || BOOT_STEPS.voice}
             onDone={start}
           />
@@ -145,10 +301,45 @@ export default function LiveRunView() {
                 Simulation running
               </Typography>
               <StatusChip status="running" />
+              {/* The isolation claim, where a viewer is most likely to doubt it. */}
+              <Tooltip arrow title={SHADOW_SUMMARY}>
+                <Stack
+                  direction="row" alignItems="center" spacing={0.5}
+                  sx={{
+                    px: 0.75, height: 22, borderRadius: 0.75, color: "text.subtitle",
+                    border: "1px solid", borderColor: "divider",
+                  }}
+                >
+                  <Iconify icon="solar:shield-keyhole-linear" width={12} />
+                  <Typography sx={{ typography: "s3", fontWeight: 600 }}>shadow sandbox</Typography>
+                </Stack>
+              </Tooltip>
             </Stack>
             <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
               {env.name} · {stats.done}/{stats.total} tasks complete · {formatMs(elapsed)} elapsed
             </Typography>
+            {/*
+              Slow and stalled look identical on a progress bar, and telling
+              them apart is the only question anyone has while waiting. So the
+              heartbeat is stated: how long since anything moved, and a warning
+              once that gap stops being normal.
+            */}
+            {phase === "running" && (
+              <Stack direction="row" alignItems="center" spacing={0.625} sx={{ mt: 0.25 }}>
+                <Box
+                  sx={{
+                    width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                    bgcolor: stalled ? "#DC2626" : "#16A34A",
+                    animation: stalled ? "none" : `${pulse} 1.6s ease-in-out infinite`,
+                  }}
+                />
+                <Typography sx={{ typography: "s3", color: stalled ? "#DC2626" : "text.subtitle" }}>
+                  {stalled
+                    ? `No heartbeat for ${sinceLastEvent}s — the run may be stalled`
+                    : `Healthy · last event ${sinceLastEvent}s ago`}
+                </Typography>
+              </Stack>
+            )}
           </Box>
 
           <LiveCounter label="Passed" value={stats.passed} color="#16A34A" />
@@ -186,7 +377,7 @@ export default function LiveRunView() {
           value={stats.progress}
           sx={{
             height: 3, bgcolor: "transparent",
-            "& .MuiLinearProgress-bar": { bgcolor: surface.color, transition: "transform .4s ease" },
+            "& .MuiLinearProgress-bar": { bgcolor: "primary.main", transition: "transform .4s ease" },
           }}
         />
       </Box>
@@ -290,22 +481,20 @@ function TaskRow({ task, active, onClick }) {
               {task.title}
             </Typography>
             {task.critical && (
-              <Iconify icon="solar:danger-triangle-bold" width={11} sx={{ color: "#DC2626", flexShrink: 0 }} />
+              <Iconify icon="solar:danger-triangle-bold" width={11} sx={{ color: "text.subtitle", flexShrink: 0 }} />
             )}
           </Stack>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
             {task.persona?.name}
           </Typography>
         </Box>
-        {task.status === "passed" && <Iconify icon="solar:check-circle-bold" width={15} sx={{ color: "#16A34A" }} />}
-        {task.status === "failed" && <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: "#DC2626" }} />}
       </Stack>
 
       {["running", "grading"].includes(task.status) && (
         <Box sx={{ mt: 0.875, height: 2, borderRadius: 1, bgcolor: "background.neutral", overflow: "hidden" }}>
           <Box
             sx={{
-              height: "100%", width: `${progress}%`, bgcolor: "#2563EB",
+              height: "100%", width: `${progress}%`, bgcolor: "primary.main",
               transition: "width .4s ease",
             }}
           />
@@ -325,7 +514,7 @@ function TaskRow({ task, active, onClick }) {
 function LiveEvalPanel({ task, evals }) {
   if (!task) return null;
   const grading = task.status === "grading";
-  const settled = ["passed", "failed"].includes(task.status);
+  const settled = ["passed", "failed", "flaky", "unmeasured"].includes(task.status);
 
   return (
     <Box>
@@ -354,8 +543,7 @@ function LiveEvalPanel({ task, evals }) {
                 <Box
                   sx={{
                     width: 26, height: 26, borderRadius: 0.75, display: "grid", placeItems: "center", flexShrink: 0,
-                    bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.16 : 0.1),
-                    color: r.color,
+                    bgcolor: "background.neutral", color: "text.subtitle",
                   }}
                 >
                   <Iconify icon={getEval(r.id)?.icon || "solar:shield-check-linear"} width={14} />
@@ -381,7 +569,7 @@ function LiveEvalPanel({ task, evals }) {
         </Typography>
         <PersonaBadge persona={task.persona} />
         <Stack direction="row" spacing={0.875} sx={{ mt: 1.5 }}>
-          <Iconify icon="solar:target-linear" width={14} sx={{ color: "#16A34A", flexShrink: 0, mt: "2px" }} />
+          <Iconify icon="solar:target-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0, mt: "2px" }} />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>{task.expected}</Typography>
         </Stack>
       </Box>
