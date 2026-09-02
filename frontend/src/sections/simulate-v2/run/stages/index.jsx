@@ -14,6 +14,7 @@ import Iconify from "src/components/iconify";
 import { browserAppOf } from "../../_mock/runStream";
 import BrowserApp, { deriveState, focusOf, CURSOR, urlFor } from "./BrowserApps";
 import { PersonaBadge } from "../../components/primitives";
+import CloneStage from "./CloneStage";
 
 const bar = keyframes`
   0%, 100% { transform: scaleY(0.28); }
@@ -728,12 +729,25 @@ const STAGES = {
   multi: ChatStage,
 };
 
-export default function Stage({ stage, task, stepIndex, live }) {
-  const Cmp = STAGES[stage] || VoiceStage;
+/*
+  For clone-backed environments the star of the live view is the
+  sandbox surface — Slack channel filling with the agent's replies,
+  Notion rows getting comments, Salesforce tasks logging. The persona
+  ↔ agent chat is a poor fit here because the agent's real work is
+  writes to the twinned services, not a spoken conversation.
+  CloneStage is chosen over the modality-based STAGES when the caller
+  passes twinBacking.
+*/
+export default function Stage({ stage, task, stepIndex, live, twinBacking }) {
   if (!task) return null;
+  if (twinBacking?.services?.length) {
+    return <CloneStage task={task} stepIndex={stepIndex} live={live} twinBacking={twinBacking} />;
+  }
+  const Cmp = STAGES[stage] || VoiceStage;
   return <Cmp task={task} stepIndex={stepIndex} live={live} />;
 }
 Stage.propTypes = {
   stage: PropTypes.string, task: PropTypes.object,
   stepIndex: PropTypes.number, live: PropTypes.bool,
+  twinBacking: PropTypes.object,
 };

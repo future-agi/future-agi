@@ -1395,6 +1395,27 @@ const CROSS_SERVICE_LIBRARY = [
 
   /* ── two-service combos ──────────────────────────────────────── */
   {
+    services: ["slack", "linear"],
+    kind: "combo",
+    name: "slack-complaint-to-linear-ticket",
+    title: "Turn a Slack complaint into a Linear ticket",
+    task: "Find the latest customer complaint posted in #support-urgent, create a Linear ticket for it in the Support project with the reproducible summary, then post a confirmation back in the Slack thread with the ticket link.",
+    expected: "One Linear ticket created in Support with the reproducible summary and the customer's Slack handle. One Slack reply in-thread on the original complaint with the ticket link. No touches to unrelated messages, no duplicate tickets.",
+    useCase: "Support triage",
+    branchCategory: "Read Slack → write Linear → write Slack",
+    /* Explicit subTasks — CloneStage renders one activity event per
+       subTask so the live view walks the audience through the whole
+       Slack → Linear → Slack chain (each step attributes to its
+       named service because the label mentions it verbatim). */
+    subTasks: [
+      { label: "Search Slack #support-urgent for the latest complaint" },
+      { label: "Read the customer's message and identify the issue" },
+      { label: "Create a Linear ticket in the Support project" },
+      { label: "Attach the reproducible summary to the Linear ticket" },
+      { label: "Reply in the Slack thread with the ticket link" },
+    ],
+  },
+  {
     services: ["slack", "notion"],
     kind: "combo",
     name: "slack-request-to-launch-db",

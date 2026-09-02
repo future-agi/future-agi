@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha, keyframes } from "@mui/material/styles";
 import {
@@ -8,6 +8,7 @@ import {
 } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { DataTable } from "src/components/data-table";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import Iconify from "src/components/iconify";
 import { getAgentType } from "../_mock/agentTypes";
 import { subTasksFor } from "../_mock/contract";
@@ -88,31 +89,11 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
         header: "Name",
         meta: { flex: 1 },
         minSize: 180,
-        cell: ({ getValue, row }) => {
-          const twin = row.original?.twinBacking;
-          return (
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-                {getValue()}
-              </Typography>
-              {twin && (
-                <Box sx={{
-                  display: "inline-flex", alignItems: "center", gap: 0.375,
-                  height: 18, px: 0.625, borderRadius: 0.75,
-                  bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.18 : 0.1),
-                  color: "#7857FC",
-                  border: "1px solid", borderColor: alpha("#7857FC", 0.35),
-                  flexShrink: 0,
-                }}>
-                  <Iconify icon="solar:server-square-linear" width={10} />
-                  <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.4 }}>
-                    CLONE · {twin.services?.length || 0}
-                  </Typography>
-                </Box>
-              )}
-            </Stack>
-          );
-        },
+        cell: ({ getValue }) => (
+          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
+            {getValue()}
+          </Typography>
+        ),
       },
       {
         id: "description",
@@ -255,22 +236,78 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
     screenful the same DataTable takes `DataTablePagination` underneath
     without changing anything above.
   */
-  const bodyHeight = Math.min(640, 40 + Math.max(rows.length, 1) * 52 + 12);
+  /*
+    Client-side pagination. DataTable itself doesn't accept page/
+    pageSize props — those pass through unused. We render the
+    DataTablePagination footer separately underneath and slice the
+    rows array ourselves. Page state is 0-indexed to match the
+    footer's expectation.
+
+    pageSize is derived from the *measured* height of the flex-fill
+    wrapper — not a guessed viewport-minus-chrome calc — so the
+    table always shows exactly the number of rows that fit and the
+    pagination bar sits flush with the last row. ResizeObserver
+    keeps it accurate through resizes and sidebar toggles.
+  */
+  const ROW_H = 52;
+  const HEADER_H = 40;
+  const bodyRef = useRef(null);
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(0);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return undefined;
+    const compute = () => {
+      const avail = el.clientHeight - HEADER_H;
+      setPageSize(Math.max(5, Math.floor(avail / ROW_H)));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1));
+  const pageRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const active = menuFor?.env;
   const buildingActive = active?.buildStatus === "building";
 
   return (
     <>
-      <Box sx={{ height: bodyHeight, minHeight: 0 }}>
-        <DataTable
-          columns={columns}
-          data={rows}
-          rowCount={rows.length}
-          getRowId={(row) => row.id}
-          onRowClick={(row) => onOpen?.(row.env)}
-          rowHeight={52}
-          emptyMessage="No environments yet"
-        />
+      <Box sx={{
+        display: "flex", flexDirection: "column",
+        /*
+          Fills every pixel the parent doesn't already claim (page
+          header + tabs + filter row above; nothing below since this
+          is the last thing on the page). ResizeObserver above reads
+          this exact height and computes pageSize from it, so rows +
+          pagination together match the container height with no gap.
+        */
+        height: "calc(100vh - 220px)",
+        minHeight: 320,
+      }}>
+        <Box
+          ref={bodyRef}
+          sx={{ flex: 1, minHeight: 0 }}
+        >
+          <DataTable
+            columns={columns}
+            data={pageRows}
+            rowCount={rows.length}
+            getRowId={(row) => row.id}
+            onRowClick={(row) => onOpen?.(row.env)}
+            rowHeight={52}
+            emptyMessage="No environments yet"
+          />
+        </Box>
+        {rows.length > 0 && (
+          <DataTablePagination
+            page={currentPage}
+            pageSize={pageSize}
+            total={rows.length}
+            onPageChange={setPage}
+            onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
+          />
+        )}
       </Box>
 
       {/*

@@ -430,6 +430,7 @@ export default function LiveRunView() {
                 task={focus}
                 stepIndex={focus.stepIndex}
                 live={live}
+                twinBacking={envState?.twinBacking}
               />
             </>
           )}

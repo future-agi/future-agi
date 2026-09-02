@@ -173,14 +173,6 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
     >
       <DialogTitle sx={{ p: 2.5, pb: 1.5 }}>
         <Stack direction="row" alignItems="flex-start" spacing={1.5}>
-          <Box sx={{
-            width: 30, height: 30, borderRadius: 0.875,
-            display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.18 : 0.1),
-            color: TWIN_TINT,
-          }}>
-            <Iconify icon="solar:server-square-bold" width={16} />
-          </Box>
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "m2", fontWeight: 700 }}>Author clone end-state eval</Typography>
             <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
@@ -216,9 +208,9 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
                   px: 1.5, py: 0.5, borderColor: "divider",
                 },
                 "& .Mui-selected": {
-                  bgcolor: (t) => `${alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.16 : 0.08)} !important`,
-                  color: `${TWIN_TINT} !important`,
-                  borderColor: `${TWIN_TINT} !important`,
+                  bgcolor: (t) => `${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08)} !important`,
+                  color: (t) => `${t.palette.text.primary} !important`,
+                  borderColor: (t) => `${alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.35 : 0.28)} !important`,
                 },
               }}
             >
@@ -255,10 +247,10 @@ export default function TwinEvalEditor({ open, envState, onClose, onSave }) {
           {assertions.length > 0 && assertions.every((a) => shapeById(a.shapeId)) && (
             <Box sx={{
               p: 1.5, borderRadius: 1.25, border: "1px dashed",
-              borderColor: alpha(TWIN_TINT, 0.32),
-              bgcolor: (t) => alpha(TWIN_TINT, t.palette.mode === "dark" ? 0.06 : 0.03),
+              borderColor: "divider",
+              bgcolor: "background.neutral",
             }}>
-              <Typography sx={{ typography: "s3", fontWeight: 700, color: TWIN_TINT, textTransform: "uppercase", letterSpacing: 0.4, mb: 0.5 }}>
+              <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 0.5 }}>
                 Preview
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.primary" }}>
@@ -352,7 +344,7 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
             return (
               <MenuItem key={sId} value={sId} sx={{ typography: "s2" }}>
                 <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <Iconify icon={t?.icon || "solar:server-square-linear"} width={12} sx={{ color: t?.color || TWIN_TINT }} />
+                  <Iconify icon={t?.icon || "solar:server-square-linear"} width={12} sx={{ color: t?.color || "text.subtitle" }} />
                   <span>{t?.name || sId}</span>
                 </Stack>
               </MenuItem>
@@ -372,7 +364,7 @@ function AssertionRow({ index, assertion, services, onPatch, onRemove }) {
           {eligibleShapes.map((s) => (
             <MenuItem key={s.id} value={s.id} sx={{ typography: "s2" }}>
               <Stack direction="row" alignItems="center" spacing={0.75}>
-                <Iconify icon={s.icon} width={12} sx={{ color: TWIN_TINT }} />
+                <Iconify icon={s.icon} width={12} sx={{ color: "text.subtitle" }} />
                 <span>{s.label}</span>
               </Stack>
             </MenuItem>

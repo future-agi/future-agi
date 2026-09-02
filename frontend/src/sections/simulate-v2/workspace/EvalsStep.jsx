@@ -90,12 +90,9 @@ export default function EvalsStep({ env, envState, patch, onGo, buildMode }) {
                     startIcon={<Iconify icon="solar:server-square-linear" width={14} />}
                     sx={{
                       typography: "s2", fontWeight: 700,
-                      borderColor: (t) => t.palette.mode === "dark" ? "rgba(120,87,252,0.5)" : "rgba(120,87,252,0.4)",
-                      color: "#7857FC",
-                      "&:hover": {
-                        borderColor: "#7857FC",
-                        bgcolor: (t) => t.palette.mode === "dark" ? "rgba(120,87,252,0.1)" : "rgba(120,87,252,0.06)",
-                      },
+                      color: "text.primary",
+                      borderColor: "divider",
+                      "&:hover": { borderColor: "text.disabled" },
                     }}
                   >
                     Author clone eval
@@ -193,8 +190,9 @@ export default function EvalsStep({ env, envState, patch, onGo, buildMode }) {
                     startIcon={<Iconify icon="solar:server-square-linear" width={14} />}
                     sx={{
                       typography: "s2", fontWeight: 700,
-                      borderColor: (t) => t.palette.mode === "dark" ? "rgba(120,87,252,0.5)" : "rgba(120,87,252,0.4)",
-                      color: "#7857FC",
+                      color: "text.primary",
+                      borderColor: "divider",
+                      "&:hover": { borderColor: "text.disabled" },
                     }}
                   >
                     Author clone eval

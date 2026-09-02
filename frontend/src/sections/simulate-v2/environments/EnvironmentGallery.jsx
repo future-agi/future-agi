@@ -203,7 +203,7 @@ export default function EnvironmentGallery() {
       {tab === "templates" && (
         <Box sx={{ mb: 2 }}>
           <SegmentedTabs value={kind} onChange={(_, v) => { setKind(v); setSelectedId(null); }}>
-            <Tab value="regular" label={`Worlds (${regularTemplates.length})`} />
+            <Tab value="regular" label={`Prebuilt (${regularTemplates.length})`} />
             <Tab value="twins" label={`Clones (${twinTemplates.length})`} />
           </SegmentedTabs>
         </Box>
