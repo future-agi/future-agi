@@ -73,10 +73,8 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 
 	setAuthMetadataFromRequest(rc, r)
 
-	// Extract Agentcc metadata from headers (with security key blocklist).
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		parseMetadataHeader(meta, rc)
-	}
+	// Caller dimensions, from the x-agentcc-metadata header.
+	applyCallerMetadata(rc, r, nil)
 	if sid := r.Header.Get("x-agentcc-session-id"); sid != "" {
 		if len(sid) > maxSessionIDLen {
 			models.WriteError(w, models.ErrBadRequest("session_id_too_long",

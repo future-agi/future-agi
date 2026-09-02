@@ -1,5 +1,3 @@
-from typing import List
-
 import structlog
 
 from tfc.temporal.drop_in import temporal_activity
@@ -14,6 +12,14 @@ def soft_delete_expired_data_activity():
         from ee.usage.tasks.retention import soft_delete_expired_data
     except ImportError:
         soft_delete_expired_data = None
+
+    if soft_delete_expired_data is None:
+        logger.info(
+            "soft_delete_activity_skipped",
+            dependency="ee.usage.tasks.retention",
+            reason="retention_dependency_unavailable",
+        )
+        return {}
 
     result = soft_delete_expired_data()
     total = sum(sum(counts.values()) for counts in result.values())
@@ -32,6 +38,14 @@ def hard_delete_expired_data_activity():
     except ImportError:
         hard_delete_expired_data = None
 
+    if hard_delete_expired_data is None:
+        logger.info(
+            "hard_delete_activity_skipped",
+            dependency="ee.usage.tasks.retention",
+            reason="retention_dependency_unavailable",
+        )
+        return {}
+
     result = hard_delete_expired_data()
     total = sum(result.values())
     logger.info(
@@ -42,7 +56,7 @@ def hard_delete_expired_data_activity():
     return result
 
 
-RETENTION_SCHEDULES: List[ScheduleConfig] = [
+RETENTION_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
         schedule_id="retention-soft-delete",
         activity_name="soft_delete_expired_data_activity",

@@ -285,17 +285,16 @@ def _cancel_running_scenario_workflows(
     )
 
     try:
-        from tfc.temporal.common.client import get_client_sync
-
-        client = get_client_sync()
+        from tfc.temporal.common.client import cancel_workflow_sync
 
         for workflow_id in remaining_workflow_ids:
             try:
-                handle = client.get_workflow_handle(workflow_id)
-                # Cancel the workflow (non-blocking)
-                # Note: This returns immediately; actual cancellation is async
-                handle.cancel()
-                logger.debug(f"[EVAL_CLEANUP] Canceled workflow {workflow_id}")
+                if cancel_workflow_sync(workflow_id):
+                    logger.debug(f"[EVAL_CLEANUP] Canceled workflow {workflow_id}")
+                else:
+                    logger.warning(
+                        f"[EVAL_CLEANUP] Workflow was not canceled: {workflow_id}"
+                    )
             except Exception as e:
                 # Best effort - log but don't fail
                 logger.warning(

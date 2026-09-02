@@ -6,8 +6,10 @@ Tests for /tracer/custom-eval-config/ endpoints.
 
 import json
 import uuid
+from io import StringIO
 
 import pytest
+from django.core.management import call_command
 from rest_framework import status
 
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -100,6 +102,91 @@ class TestCustomEvalConfigCreateAPI:
         )
         # Should fail due to unique constraint
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_config_saves_only_path_string_mapping_values(
+        self, auth_client, project, eval_template
+    ):
+        """Mapping values are attribute paths — an object value is not stored."""
+        rejected = auth_client.post(
+            "/tracer/custom-eval-config/",
+            {
+                "project": str(project.id),
+                "eval_template": str(eval_template.id),
+                "name": "Object Mapping Config",
+                "mapping": {"input": {"path": "input"}, "output": "output"},
+            },
+            format="json",
+        )
+        assert rejected.status_code == status.HTTP_400_BAD_REQUEST
+        assert not CustomEvalConfig.objects.filter(
+            name="Object Mapping Config"
+        ).exists()
+        # The response names the offending key in words the caller can act on,
+        # and carries no DRF internals.
+        body = json.dumps(rejected.json())
+        assert "attribute path strings" in body
+        assert "input" in body
+        assert "ErrorDetail" not in body
+
+        accepted = auth_client.post(
+            "/tracer/custom-eval-config/",
+            {
+                "project": str(project.id),
+                "eval_template": str(eval_template.id),
+                "name": "Path Mapping Config",
+                "mapping": {"input": "input.value", "output": "output"},
+            },
+            format="json",
+        )
+        assert accepted.status_code == status.HTTP_200_OK
+        saved = CustomEvalConfig.objects.get(name="Path Mapping Config")
+        assert saved.mapping == {"input": "input.value", "output": "output"}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCustomEvalConfigPartialUpdateAPI:
+    """Tests for PATCH /tracer/custom-eval-config/<id>/ endpoint."""
+
+    def test_partial_update_unauthenticated(self, api_client, custom_eval_config):
+        """Unauthenticated requests should be rejected."""
+        response = api_client.patch(
+            f"/tracer/custom-eval-config/{custom_eval_config.id}/",
+            {"mapping": {"input": "input.value"}},
+            format="json",
+        )
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
+
+    def test_partial_update_saves_only_path_string_mapping_values(
+        self, auth_client, custom_eval_config
+    ):
+        """Mapping values are attribute paths — an object value is not stored."""
+        existing_mapping = dict(custom_eval_config.mapping)
+
+        rejected = auth_client.patch(
+            f"/tracer/custom-eval-config/{custom_eval_config.id}/",
+            {"mapping": {"input": {"path": "input"}, "output": "output"}},
+            format="json",
+        )
+        assert rejected.status_code == status.HTTP_400_BAD_REQUEST
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.mapping == existing_mapping
+        body = json.dumps(rejected.json())
+        assert "attribute path strings" in body
+        assert "input" in body
+        assert "ErrorDetail" not in body
+
+        accepted = auth_client.patch(
+            f"/tracer/custom-eval-config/{custom_eval_config.id}/",
+            {"mapping": {"input": "input.value", "output": "output"}},
+            format="json",
+        )
+        assert accepted.status_code == status.HTTP_200_OK
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.mapping == {
+            "input": "input.value",
+            "output": "output",
+        }
 
 
 @pytest.mark.integration
@@ -451,3 +538,155 @@ class TestEvalConfigBYOModel:
         config = ExternalEvalConfig(model=model_value)
         exclude = [f.name for f in ExternalEvalConfig._meta.fields if f.name != "model"]
         config.clean_fields(exclude=exclude)
+
+
+@pytest.mark.integration
+class TestScanEvalMappingPathsCommand:
+    """Tests for `manage.py scan_eval_mapping_paths` — the existing-row sweep."""
+
+    def _scan(self, **kwargs):
+        out = StringIO()
+        call_command("scan_eval_mapping_paths", stdout=out, **kwargs)
+        return out.getvalue()
+
+    def test_reports_a_row_saved_before_the_write_gate(self, custom_eval_config):
+        # Written straight through the ORM: exactly how the rows that predate
+        # the API gate exist today.
+        custom_eval_config.mapping = {"input": {"path": "input"}, "output": "output"}
+        custom_eval_config.save(update_fields=["mapping"])
+
+        output = self._scan()
+
+        assert str(custom_eval_config.id) in output
+        assert "input=dict" in output
+        assert "output" not in output.split("invalid_keys=")[1].split("]")[0]
+        assert "affected_eval_configs=1" in output
+
+    def test_reports_a_list_valued_row_without_aborting(self, custom_eval_config):
+        # non_path_mapping_keys used to raise AttributeError on a non-dict
+        # mapping, which killed the sweep on the first such row and left every
+        # row after it unreported.
+        custom_eval_config.mapping = ["input", "output"]
+        custom_eval_config.save(update_fields=["mapping"])
+
+        output = self._scan()
+
+        assert str(custom_eval_config.id) in output
+        assert "<mapping>=list" in output
+        assert "affected_eval_configs=1" in output
+
+    def test_reports_nothing_when_every_value_is_a_path(self, custom_eval_config):
+        output = self._scan()
+
+        assert str(custom_eval_config.id) not in output
+        assert "affected_eval_configs=0" in output
+
+    def test_leaves_the_row_untouched(self, custom_eval_config):
+        broken = {"input": {"path": "input"}, "output": "output"}
+        custom_eval_config.mapping = broken
+        custom_eval_config.save(update_fields=["mapping"])
+
+        self._scan()
+
+        custom_eval_config.refresh_from_db()
+        assert custom_eval_config.mapping == broken
+
+    def test_project_filter_scopes_the_scan(self, custom_eval_config):
+        custom_eval_config.mapping = {"input": {"path": "input"}}
+        custom_eval_config.save(update_fields=["mapping"])
+
+        output = self._scan(project_id=str(uuid.uuid4()))
+
+        assert "affected_eval_configs=0" in output
+
+
+@pytest.mark.integration
+class TestEvalTagIngestMappingValues:
+    """The OTEL eval-tag path writes CustomEvalConfig.mapping straight from the
+    wire via get_or_create, bypassing both the serializer and the eval-group
+    helper. It is the only write path a customer's SDK reaches directly."""
+
+    def _tag(self, mapping, eval_template):
+        return [
+            {
+                "custom_eval_name": "release-tag-eval",
+                "eval_name": eval_template.name,
+                "mapping": mapping,
+            }
+        ]
+
+    def test_object_mapping_value_is_refused_before_a_config_is_created(
+        self, project, eval_template
+    ):
+        # Driven through get_or_create_project_version, not _process_eval_tags:
+        # creation happens in _create_custom_eval_configs, so only the caller
+        # that reaches it can show that nothing was created.
+        from tracer.utils.otel import get_or_create_project_version
+
+        with pytest.raises(Exception, match="must be an attribute path string"):
+            get_or_create_project_version(
+                project_id=project.id,
+                project_version_name="v1",
+                project_version_id=None,
+                eval_tags=self._tag(
+                    {"input": {"path": "input"}, "output": "output"}, eval_template
+                ),
+                metadata=None,
+                project_type="experiment",
+            )
+        assert not CustomEvalConfig.objects.filter(name="release-tag-eval").exists()
+
+    def test_async_ingest_keeps_the_span_batch_when_a_tag_is_malformed(
+        self, project, eval_template
+    ):
+        """The OTLP export already answered 200 before this runs.
+
+        bulk_create_observation_span_task is a max_retries=0 activity wrapping
+        the whole batch in one transaction, so raising here would drop every
+        span in it with nothing surfaced to the client. The bad tag is dropped
+        instead; the spans land.
+        """
+        from tracer.utils.otel import _bulk_get_or_create_project_versions
+
+        tags = self._tag(
+            {"input": {"path": "input"}, "output": "output"}, eval_template
+        )
+        versions = _bulk_get_or_create_project_versions(
+            [(project.name, "experiment", "v1", None, tags)],
+            {(project.name, project.organization_id, "experiment"): project},
+            project.organization_id,
+        )
+
+        assert any(
+            v is not None for v in versions.values()
+        ), "the whole span batch would have been dropped"
+        assert not CustomEvalConfig.objects.filter(name="release-tag-eval").exists()
+
+    def test_list_mapping_is_refused_as_a_value_error(self, project, eval_template):
+        # A list was storable before the write gates existed: the OTEL path
+        # stored wire values verbatim after json.loads. It must not reach
+        # ``.items()`` as an AttributeError.
+        from tracer.utils.otel import _process_eval_tags
+
+        with pytest.raises(ValueError, match="must be an object"):
+            _process_eval_tags(self._tag(["input", "output"], eval_template), project)
+
+    def test_path_string_mapping_values_pass_through(self, project, eval_template):
+        from tracer.utils.otel import _process_eval_tags
+
+        processed = _process_eval_tags(
+            self._tag({"input": "input.value", "output": "output"}, eval_template),
+            project,
+        )
+
+        assert processed[0]["mapping"] == {"input": "input.value", "output": "output"}
+
+    def test_json_string_mapping_is_parsed_then_checked(self, project, eval_template):
+        from tracer.utils.otel import _process_eval_tags
+
+        # The wire form is often a JSON string; the guard must run after the parse.
+        with pytest.raises(ValueError, match="must be an attribute path string"):
+            _process_eval_tags(
+                self._tag(json.dumps({"input": {"path": "input"}}), eval_template),
+                project,
+            )

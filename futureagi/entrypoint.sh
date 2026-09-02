@@ -10,6 +10,76 @@ ENV_PROJECT_ROOT=${ENV_PROJECT_ROOT:-/app/backend}
 # Fast startup mode - skip non-essential checks for faster local dev
 FAST_STARTUP=${FAST_STARTUP:-false}
 
+# Hosted application startup is mutation-free by default. Production schema or
+# data bootstrap must run as a dedicated one-shot operator job using both
+# SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator. Development and
+# self-hosted compose retain the existing default startup behavior.
+CLOUD_STARTUP=false
+case "$ENV_TYPE" in
+    "prod"|"production"|"staging"|"PROD"|"PRODUCTION"|"STAGING") CLOUD_STARTUP=true ;;
+esac
+case "$CLOUD_DEPLOYMENT" in
+    "US"|"EU"|"DEV"|"us"|"eu"|"dev") CLOUD_STARTUP=true ;;
+esac
+
+STARTUP_DB_MUTATION_MODE=${STARTUP_DB_MUTATION_MODE:-disabled}
+case "$STARTUP_DB_MUTATION_MODE" in
+    "disabled"|"operator") ;;
+    *)
+        echo "ERROR: STARTUP_DB_MUTATION_MODE must be exactly 'disabled' or 'operator'"
+        exit 64
+        ;;
+esac
+
+OPERATOR_BOOTSTRAP=false
+if [ "$CLOUD_STARTUP" = "true" ] && [ "$SERVICE_TYPE" = "bootstrap" ] && [ "$STARTUP_DB_MUTATION_MODE" = "operator" ]; then
+    OPERATOR_BOOTSTRAP=true
+fi
+
+if [ "${NO_STARTUP_DB_MUTATIONS+x}" != "x" ]; then
+    if [ "$OPERATOR_BOOTSTRAP" = "true" ]; then
+        NO_STARTUP_DB_MUTATIONS=false
+    elif [ "$CLOUD_STARTUP" = "true" ]; then
+        NO_STARTUP_DB_MUTATIONS=true
+    else
+        NO_STARTUP_DB_MUTATIONS=false
+    fi
+fi
+case "$NO_STARTUP_DB_MUTATIONS" in
+    "true"|"false") ;;
+    *)
+        echo "ERROR: NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'"
+        exit 64
+        ;;
+esac
+
+if [ "$OPERATOR_BOOTSTRAP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" != "false" ]; then
+    echo "ERROR: operator bootstrap requires NO_STARTUP_DB_MUTATIONS=false"
+    exit 64
+fi
+
+if [ "$CLOUD_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "false" ]; then
+    if [ "$OPERATOR_BOOTSTRAP" != "true" ]; then
+        echo "ERROR: hosted database mutations require SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator"
+        exit 64
+    fi
+fi
+
+if [ "$CLOUD_STARTUP" = "true" ] && [ "$SERVICE_TYPE" = "bootstrap" ] && [ "$OPERATOR_BOOTSTRAP" != "true" ]; then
+    echo "ERROR: hosted bootstrap requires STARTUP_DB_MUTATION_MODE=operator"
+    exit 64
+fi
+
+# Operator bootstrap must execute the complete one-shot path even if an
+# inherited workload environment set FAST_STARTUP=true. Ordinary services keep
+# their configured FAST_STARTUP value; mutation permission is enforced below as
+# a separate boundary.
+if [ "$OPERATOR_BOOTSTRAP" = "true" ]; then
+    FAST_STARTUP=false
+fi
+export NO_STARTUP_DB_MUTATIONS
+export STARTUP_DB_MUTATION_MODE
+
 # Disable bytecode compilation to speed up imports (optional)
 # export PYTHONDONTWRITEBYTECODE=1
 
@@ -221,34 +291,58 @@ print_service_info() {
 # Initialize
 print_service_info
 
-# Run database checks for services that need it (skip in FAST_STARTUP mode)
+# Run startup checks for services that need them (skip in FAST_STARTUP mode).
+# FAST_STARTUP controls validation latency only. Database mutation permission
+# is independently controlled by NO_STARTUP_DB_MUTATIONS.
 if [ "$FAST_STARTUP" != "true" ]; then
     case "$SERVICE_TYPE" in
-        "backend"|"worker"|"beat"|"grpc")
+        "backend"|"worker"|"beat"|"grpc"|"bootstrap")
             wait_for_db
             ;;
     esac
 
-    # Create cache table for services that need it
-    case "$SERVICE_TYPE" in
-        "backend"|"worker")
-            create_cache_table
-            ;;
-    esac
+    if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+        echo "NO_STARTUP_DB_MUTATIONS=true: skipping cache-table, migration, and seed writes"
+        if [ "$SERVICE_TYPE" = "backend" ]; then
+            collect_static
+            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+                validate_django
+            fi
+        fi
+    else
+        case "$SERVICE_TYPE" in
+            "backend"|"worker"|"bootstrap")
+                create_cache_table
+                ;;
+        esac
 
-    # Run backend-specific setup
-    if [ "$SERVICE_TYPE" = "backend" ]; then
-        run_migrations
-        collect_static
-        if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
-            validate_django
+        if [ "$SERVICE_TYPE" = "backend" ] || [ "$SERVICE_TYPE" = "bootstrap" ]; then
+            run_migrations
+            if [ "$SERVICE_TYPE" = "bootstrap" ]; then
+                python manage.py seed_system_evals
+            fi
+            collect_static
+            if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
+                validate_django
+            fi
         fi
     fi
 else
     echo "FAST_STARTUP mode: skipping DB checks, migrations, and static collection"
 fi
 
+# Static collection writes only image/container files. Keep hosted backend/admin
+# assets available when mutation-free startup explicitly uses FAST_STARTUP.
+if [ "$FAST_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "true" ] && [ "$SERVICE_TYPE" = "backend" ]; then
+    collect_static
+fi
+
 should_register_temporal_schedules() {
+    if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+        echo "NO_STARTUP_DB_MUTATIONS=true: skipping Temporal schedule registration"
+        return 1
+    fi
+
     if [ "${REGISTER_TEMPORAL_SCHEDULES+x}" = "x" ]; then
         register_temporal_schedules_value=$(printf '%s' "$REGISTER_TEMPORAL_SCHEDULES" | tr '[:upper:]' '[:lower:]')
         case "$register_temporal_schedules_value" in
@@ -276,6 +370,11 @@ fi
 
 # Start the appropriate service based on SERVICE_TYPE
 case "$SERVICE_TYPE" in
+    "bootstrap")
+        echo "One-shot database bootstrap completed successfully"
+        exit 0
+        ;;
+
     "backend")
         echo "Starting backend server..."
 
@@ -531,7 +630,7 @@ case "$SERVICE_TYPE" in
 
     *)
         echo "ERROR: Unknown SERVICE_TYPE: $SERVICE_TYPE"
-        echo "Available options: backend, worker, beat, flower, grpc, temporal-worker"
+        echo "Available options: bootstrap, backend, worker, beat, flower, grpc, temporal-worker"
         echo "Current environment:"
         echo "  SERVICE_TYPE=$SERVICE_TYPE"
         echo "  ENV_TYPE=$ENV_TYPE"

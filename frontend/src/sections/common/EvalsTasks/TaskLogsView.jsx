@@ -1,5 +1,7 @@
 import {
+  Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Collapse,
@@ -17,6 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { enrichErrorGroups } from "./classifyTaskError";
+import { readEvalTaskLogs } from "./task_log_read";
 
 // ── Stat Card ──
 
@@ -522,18 +525,25 @@ WarningGroupCard.propTypes = {
 const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const theme = useTheme();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalTaskLogs(), {
-        params: { eval_task_id: evalTaskId },
-      }),
-    select: (d) => d?.data?.result,
+    queryFn: ({ signal }) =>
+      readEvalTaskLogs(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.project.getEvalTaskLogs(), {
+            signal: requestSignal,
+            timeout,
+            params: { eval_task_id: evalTaskId },
+          }),
+        signal,
+      ),
     enabled: !!evalTaskId,
+    retry: false,
     // Poll off the response's own status (not the prop) so the same fetch that
     // reports "completed" also carries the final counts — no stale tick.
     refetchInterval: (query) => {
-      const status = query?.state?.data?.data?.result?.status ?? taskStatus;
+      if (query?.state?.status === "error") return false;
+      const status = query?.state?.data?.status ?? taskStatus;
       return status === "pending" || status === "running" ? 3000 : false;
     },
   });
@@ -576,22 +586,33 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     );
   }
 
-  if (!data) {
+  if (isError && !data) {
     return (
       <Box
         sx={{
+          flexDirection: "column",
+          gap: 1,
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
           minHeight: 200,
         }}
       >
-        <Typography variant="body2" color="text.disabled">
-          No log data available
-        </Typography>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          We couldn&apos;t load evaluation task logs.
+        </Alert>
       </Box>
     );
   }
+
+  if (!data) return null;
 
   // Response keys are snake_case — the DRF camelCase middleware was
   // removed, so we alias locally to keep the rest of the component
@@ -632,6 +653,18 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          Could not refresh task logs. The previous summary is still shown.
+        </Alert>
+      )}
       {/* Progress Bar */}
       <Box>
         <Box

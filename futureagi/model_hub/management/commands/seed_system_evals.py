@@ -13,19 +13,17 @@ Usage:
 YAML files are in: model_hub/system_evals/{function,agent,specialty}/*.yaml
 """
 
-import os
 from pathlib import Path
 
 import structlog
 import yaml
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 15
+SYSTEM_EVALS_VERSION = 16
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
@@ -99,7 +97,6 @@ def seed_evals(dry_run=False, force=False, verbose=False):
     from django.core.cache import cache
     from django.db import connection
 
-    from model_hub.models.choices import OwnerChoices
     from model_hub.models.evals_metric import EvalTemplate
 
     with transaction.atomic():

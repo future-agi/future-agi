@@ -17,6 +17,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.span_selectors import (
+    bound_observe_list_value,
     flatten_span_attributes_into_entry,
 )
 
@@ -92,6 +93,26 @@ class TestFlattenSpanAttributes:
     def test_bad_attributes_extra_json_is_ignored(self):
         entry = _flatten(attrs_string={"s": "v"}, attributes_extra="{not json")
         assert entry == {"s": "v"}
+
+    def test_large_structured_value_becomes_a_bounded_preview(self, settings):
+        settings.OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES = 1_024
+
+        entry = _flatten(
+            attributes_extra=json.dumps({"payload": {"items": ["x" * 50] * 100}})
+        )
+
+        assert isinstance(entry["payload"], str)
+        assert len(entry["payload"].encode("utf-8")) <= 1_024
+        assert entry["payload"].endswith("…")
+
+
+def test_observe_list_preview_truncates_utf8_without_splitting_codepoints(settings):
+    settings.OBSERVABILITY_LIST_CELL_PREVIEW_MAX_BYTES = 1_024
+
+    preview = bound_observe_list_value("é" * 1_000)
+
+    assert len(preview.encode("utf-8")) <= 1_024
+    assert preview.endswith("…")
 
 
 # --------------------------------------------------------------------------- #

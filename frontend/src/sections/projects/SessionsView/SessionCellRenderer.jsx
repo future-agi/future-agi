@@ -67,7 +67,12 @@ const SessionCellRenderer = (params) => {
     if (colId === "duration") {
       return (
         <Box display="flex" alignItems="center" justifyContent={"flex-end"}>
-          <Iconify icon="radix-icons:clock" width={14} marginRight="7px" />
+          <Iconify
+            icon="radix-icons:clock"
+            width={14}
+            marginRight="7px"
+            sx={{ flexShrink: 0 }}
+          />
           {value}s
         </Box>
       );
@@ -95,6 +100,7 @@ const SessionCellRenderer = (params) => {
             color="text.primary"
             height={16}
             width={16}
+            sx={{ flexShrink: 0 }}
           />
           {value}
         </Box>
@@ -111,7 +117,7 @@ const SessionCellRenderer = (params) => {
           <SvgColor
             src="/assets/icons/ic_tokens.svg"
             color="text.primary"
-            sx={{ width: 16, height: 16 }}
+            sx={{ width: 16, height: 16, flexShrink: 0 }}
           />
           {value}
         </Box>

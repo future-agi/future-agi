@@ -51,13 +51,17 @@
 
 <!--
   [MARKETING] hero-demo (YouTube)
-  GitHub markdown does not render inline <iframe>/<video>, so we use a
-  clickable YouTube thumbnail that opens the video in a new tab.
-  Video: https://www.youtube.com/watch?v=Mdpn8ekFwQ0
+  Video: https://www.youtube.com/watch?v=6keOTAOUUWI
+  GitHub's markdown sanitizer strips <iframe>/<video> but leaves the raw tag
+  text behind, so an embed renders as a wall of markup on the repo page. We
+  use the video's still frame with a YouTube play button on it, linked to the
+  video. The asset filename carries the video ID on purpose: GitHub's image
+  CDN caches by URL path, so reusing a filename serves the old picture for
+  hours. New video => new ID => new filename => renders immediately.
 -->
 <div align="center">
-  <a href="https://www.youtube.com/watch?v=Mdpn8ekFwQ0&t=1s">
-    <img alt="Future AGI — trace an agent, run evals, simulate, and guardrail in one platform (watch on YouTube)" src="https://img.youtube.com/vi/Mdpn8ekFwQ0/maxresdefault.jpg" width="720">
+  <a href="https://www.youtube.com/watch?v=6keOTAOUUWI">
+    <img alt="Watch the demo — trace an agent, run evals, simulate, and guardrail on one platform" src="frontend/public/assets/readme/demo-6keOTAOUUWI-v4.png" width="100%">
   </a>
 </div>
 
@@ -139,6 +143,23 @@ cd future-agi
 
 Open [http://localhost:3000](http://localhost:3000).
 <sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
+
+When upgrading an installation that already contains traces, initialize any
+inactive unified property catalogs explicitly after the new stack is healthy:
+
+```bash
+# macOS / Linux / WSL
+./bin/property-catalog-backfill --execute
+
+# Windows PowerShell
+.\bin\property-catalog-backfill.ps1 -Execute
+```
+
+Ordinary restarts never start a historical scan. The command uses the exact
+image already selected by Docker Compose (it does not pull a branch, source, or
+image), skips already-active workspaces, and resumes through the catalog's
+durable ledger. It is bounded to active workspaces and projects admitted by the
+self-hosted supervisor and to its rolling 366-day source window.
 
 </td>
 </tr>
@@ -293,7 +314,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
   <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, RabbitMQ" src=".github/assets/architecture.svg" width="100%">
 </picture> -->
 
-**Runtime:** Python 3.11+ (Django 4.2 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
+**Runtime:** Python 3.11+ (Django 5.1 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
 **Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · RabbitMQ + Temporal (jobs).
 
 <details><summary>Component breakdown (per-package)</summary>
