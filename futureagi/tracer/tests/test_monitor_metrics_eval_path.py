@@ -1,7 +1,11 @@
-"""Monitor builder EVALUATION_METRICS: table + not-deleted predicate from
-eval_logger_source(); span membership bounded; the eval SQL goes THROUGH the v2
-rewrite so a spliced span-attribute filter fragment is translated to v2 columns.
-Pure SQL-string assertions, no ClickHouse."""
+"""Monitor builder EVALUATION_METRICS query-shape regressions.
+
+Eval reads collapse the latest physical version per id inside a bounded scan,
+then apply live/error/status guards outside that collapse.  Span membership is
+windowed, and the SQL still goes through the v2 rewrite so a spliced
+span-attribute filter fragment is translated to v2 columns.  These are pure
+SQL-string assertions and do not require ClickHouse.
+"""
 
 from __future__ import annotations
 
@@ -67,23 +71,28 @@ def _eval_sqls(
 def test_eval_legacy_table_default_predicate() -> None:
     with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger"):
         for sql in _eval_sqls():
-            assert "FROM tracer_eval_logger FINAL" in sql
+            assert "FROM tracer_eval_logger AS eval_scan" in sql
             assert "tracer_eval_logger_v2" not in sql
+            assert "ORDER BY eval_scan._peerdb_version DESC" in sql
+            assert "LIMIT 1 BY eval_scan.id" in sql
+            assert "latest_eval._peerdb_is_deleted = 0" in sql
             assert (
-                f"custom_eval_config_id = toUUID(%(eval_config_id)s) AND {LEGACY_ND}"
-                in sql
+                "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in sql
             )
-            # Rewrite-safe: no _peerdb token that the v2 rewriter would mangle.
-            assert "_peerdb" not in sql
+            assert sql.index("LIMIT 1 BY eval_scan.id") < sql.index(
+                "latest_eval._peerdb_is_deleted = 0"
+            )
 
 
 def test_eval_v2_table_uses_is_deleted() -> None:
     with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2"):
         for sql in _eval_sqls():
-            assert "FROM tracer_eval_logger_v2 FINAL" in sql
-            assert (
-                "custom_eval_config_id = toUUID(%(eval_config_id)s) AND is_deleted = 0"
-                in sql
+            assert "FROM tracer_eval_logger_v2 AS eval_scan" in sql
+            assert "ORDER BY eval_scan._version DESC" in sql
+            assert "LIMIT 1 BY eval_scan.id" in sql
+            assert "latest_eval.is_deleted = 0" in sql
+            assert sql.index("LIMIT 1 BY eval_scan.id") < sql.index(
+                "latest_eval.is_deleted = 0"
             )
 
 
@@ -96,7 +105,7 @@ def test_eval_membership_is_windowed_span_join() -> None:
     value_sql, stats_sql, ts_sql = _eval_sqls()
     for sql in (value_sql, stats_sql, ts_sql):
         subq = sql.split("INNER JOIN (", 1)[1]
-        assert "ON observation_span_id = sp.id" in subq
+        assert "ON eval_scan.observation_span_id = sp.id" in subq
         assert "start_time >= %(start_time)s AND start_time < %(end_time)s" in subq
         assert "created_at >= %(start_time)s - INTERVAL 1 DAY" in subq
         assert "project_id = %(project_id)s" in subq
@@ -108,7 +117,7 @@ def test_eval_membership_is_windowed_span_join() -> None:
 
 def _eval_guards(sql: str) -> str:
     # Eval-row conditions live in the WHERE after the membership join.
-    return sql.split("ON observation_span_id = sp.id", 1)[1]
+    return sql.split("ON eval_scan.observation_span_id = sp.id", 1)[1]
 
 
 def test_eval_table_window_is_loose_lower_bound_only() -> None:
@@ -119,9 +128,10 @@ def test_eval_table_window_is_loose_lower_bound_only() -> None:
     # "quality of recent activity" (8,577 vs 400 evals for the same hour).
     for sql in _eval_sqls():
         guards = _eval_guards(sql)
-        assert "created_at >= %(start_time)s - INTERVAL 1 DAY" in guards
-        assert "created_at < %(end_time)s" not in guards
-        assert "created_at BETWEEN" not in sql
+        assert "eval_scan.created_at >=" in guards
+        assert "%(start_time)s - INTERVAL 1 DAY" in guards
+        assert "eval_scan.created_at < %(end_time)s" not in guards
+        assert "eval_scan.created_at BETWEEN" not in sql
 
 
 def test_eval_rows_exclude_non_completed_statuses() -> None:
@@ -130,8 +140,8 @@ def test_eval_rows_exclude_non_completed_statuses() -> None:
     # depress the pass rate). Mirrors span_list.py / filters.py.
     for sql in _eval_sqls():
         guards = _eval_guards(sql)
-        assert "error = 0" in guards
-        assert "ifNull(output_str, '') != 'ERROR'" in guards
+        assert "latest_eval.error = 0" in guards
+        assert "ifNull(latest_eval.output_str, '') != 'ERROR'" in guards
         for status in ("pending", "running", "skipped", "errored"):
             assert status in guards
         assert "'completed'" not in guards  # NOT-IN keeps empty/NULL rows

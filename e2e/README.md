@@ -204,6 +204,10 @@ builds `:e2e-ci` images from the PR's own code.
 
 ## Writing a flow
 
+The `writing-e2e-flows` skill (`/writing-e2e-flows` in Claude Code, `$writing-e2e-flows` in Codex)
+walks a developer through this section, the design doc, and the proof-of-done loop; `reviewing-prs`
+applies the coverage rule below plus the team standards.
+
 A flow is one user goal, start to finish, asserted in the UI and in the backend state behind it.
 Specs live in `flows/<area>/<name>.spec.ts`; the directory is the area and the catalog groups by it.
 
@@ -391,6 +395,28 @@ annotation changed without a regenerated catalog fails fast.
 
 ---
 
+## Declaring coverage on a PR
+
+Every PR states its E2E coverage in one line of the body — `E2E: new <ID>`, `E2E: updated <ID>`,
+`E2E: covered-by <ID>`, or `E2E: exempt (<reason>)`. From `e2e/`, `yarn coverage` classifies your
+branch against `origin/dev`, or against the PR's base branch with `--pr <n>`: it maps changed paths
+to product areas, checks whether any existing flow pins an endpoint, route, table or selector you
+touched, looks for new-surface signals (a new route, `paths.js` key, `urls.py` entry, views module,
+page, collector handler, a migration surfaced by a serializer, or a `feat` title in an area that has
+no flow yet), and tells you which line to write. Docs, CI, tests-only, and stack-shape changes are
+exempt without a line. A behaviour change with no line is `needs-marker`; a `new` id must appear in
+the `FLOWS.md` diff; a change that adds user-visible surface needs a new flow, so any other line on
+it needs a reviewer to accept it.
+
+`yarn coverage --pr <n>` reads the title, body and base from GitHub. Without a PR, supply the title
+yourself — the `feat`-in-an-uncovered-area signal reads it, and nothing else provides it:
+
+```bash
+yarn coverage --base origin/<base> --title "<branch or PR title>" --body <file>
+```
+
+---
+
 ## Quarantine and the flake policy
 
 **`retries: 0`.** A flow that passes only on the second attempt is telling you something true about
@@ -533,6 +559,17 @@ judge model to compose its own JSON — which is why `EVAL-E2E-001` authors its 
 ## Reference
 
 - Flow catalog (generated): [`FLOWS.md`](FLOWS.md)
+- Agent skills: `.agents/skills/writing-e2e-flows`, `.agents/skills/reviewing-prs` (Claude Code reads
+  them through `.claude/skills/` symlinks). To use `reviewing-prs` in another repo, link it into your
+  home skill directories — **run this from the future-agi repo root**, because `$PWD` is what makes
+  the link absolute, and `ln -s` exits 0 while creating a dangling link from anywhere else:
+
+  ```bash
+  mkdir -p ~/.agents/skills ~/.claude/skills
+  ln -s "$PWD"/.agents/skills/reviewing-prs ~/.agents/skills/reviewing-prs
+  ln -s "$PWD"/.agents/skills/reviewing-prs ~/.claude/skills/reviewing-prs
+  ```
+
 - Repo-wide testing overview: [`../TESTING.md`](../TESTING.md)
 - Frontend test conventions: [`../frontend/TESTING.md`](../frontend/TESTING.md)
 - Architecture spec and decision record:

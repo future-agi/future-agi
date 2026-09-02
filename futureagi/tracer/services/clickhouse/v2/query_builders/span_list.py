@@ -8,12 +8,9 @@ the v2 rewriter at one boundary — `build()`, `build_content_query()` and
 `build_count_query()` need no per-method overrides.
 
 The eval and annotation queries (`build_eval_query`, `build_annotation_query`)
-read from the eval-logger and `model_hub_score` tables, which the `spans`
-rewrite doesn't apply to — so both are excluded via `_v2_rewrite_exclude`.
-`build_eval_query` instead resolves its table + not-deleted predicate through
-`eval_logger_source()`, so it follows the CH25 `tracer_eval_logger_v2`
-(`is_deleted`) flip on its own. `build_annotation_query` still reads the
-CDC'd `model_hub_score` with `_peerdb_is_deleted`.
+target non-span tables, so both are excluded via `_v2_rewrite_exclude`.
+`build_eval_query` follows the independently configured authoritative eval
+table on the CH25 connection; `build_annotation_query` retains its own source.
 """
 
 from __future__ import annotations
@@ -42,6 +39,9 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
     # Use the v2 filter compiler so filters read the v2 dimension tables
     # (end_users, etc.) instead of the dropped legacy CDC tables.
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+    _NORMAL_TIME_WHERE = (
+        "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
+    )
 
 
 __all__ = ["SpanListQueryBuilderV2"]

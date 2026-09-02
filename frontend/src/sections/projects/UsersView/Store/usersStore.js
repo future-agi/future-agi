@@ -1,6 +1,7 @@
 import { getRandomId } from "src/utils/utils";
 import { create } from "zustand";
 import { userDefaultFilter } from "../common";
+import { withLiveGridApi } from "src/utils/gridApi";
 
 const useUsersStore = create((set, get) => ({
   searchQuery: "",
@@ -45,9 +46,7 @@ const useUsersStore = create((set, get) => ({
     set((state) => ({ columnPanelOpen: !state.columnPanelOpen })),
   clearSelection: () => {
     const { gridApi } = get();
-    if (gridApi) {
-      gridApi.deselectAll();
-    }
+    withLiveGridApi(gridApi, (api) => api.deselectAll?.());
     set({
       selectedAll: false,
       selectedRowsData: [],
