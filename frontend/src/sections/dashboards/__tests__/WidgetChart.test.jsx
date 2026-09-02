@@ -2,6 +2,7 @@ import React from "react";
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "src/utils/test-utils";
 import WidgetChart from "../WidgetChart";
+import { TABLE_BUCKET_LIMIT } from "../widgetUtils";
 import {
   AGGREGATION_POLL_MAX_ATTEMPTS,
   AGGREGATION_POLLING_PAUSED_MESSAGE,
@@ -1618,5 +1619,124 @@ describe("WidgetChart — dual axis follows the visible series (TH-7680)", () =>
     expect(Array.isArray(yaxis)).toBe(false);
     // Identical to the plain single-axis widget on the same data.
     expect(yaxis).toMatchObject({ min: 0, max: 7500 });
+  });
+});
+
+describe("WidgetChart — dense-series budget (TH-7757)", () => {
+  const pointsAt = (count, { everyNthHasValue = 1 } = {}) =>
+    Array.from({ length: count }, (_, i) => ({
+      timestamp: new Date(Date.UTC(2026, 6, 9) + i * 60_000).toISOString(),
+      value: i % everyNthHasValue === 0 ? 1 : null,
+    }));
+
+  const lastChart = () => h.apex.mock.calls.at(-1)[0];
+
+  it("animates a chart that stays within the budget", () => {
+    h.query.data = queryResult(pointsAt(120));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.chart.animations).toMatchObject({
+      enabled: true,
+      speed: 400,
+    });
+    expect(lastChart().options.markers.size).toBeGreaterThan(0);
+  });
+
+  it("draws a dense chart in one static pass", () => {
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.chart.animations.enabled).toBe(false);
+  });
+
+  it("keeps resting markers on a dense series", () => {
+    // Markers are what show where observations actually sit; dropping them made
+    // a sparse series spread over months read as continuous data.
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.markers.size).toBeGreaterThan(0);
+  });
+
+  it("still marks the hovered point on a dense chart", () => {
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().options.markers.hover.size).toBeGreaterThan(0);
+  });
+
+  it("plots every point it was given even when the animation is dropped", () => {
+    h.query.data = queryResult(pointsAt(1200));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().series[0].data).toHaveLength(1200);
+  });
+
+  it("charges the budget after empty buckets are dropped, not before", () => {
+    // 2,000 minute buckets, 20 of them observed: the chart plots 20 points and
+    // stays well inside the budget.
+    h.query.data = queryResult(pointsAt(2000, { everyNthHasValue: 100 }));
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(lastChart().series[0].data).toHaveLength(20);
+    expect(lastChart().options.chart.animations.enabled).toBe(true);
+    expect(lastChart().options.markers.size).toBeGreaterThan(0);
+  });
+});
+
+describe("WidgetChart — table bucket pruning (TH-7757)", () => {
+  const bucketsSpanning = (count, valueAt) =>
+    Array.from({ length: count }, (_, i) => ({
+      timestamp: new Date(Date.UTC(2026, 6, 9) + i * 60_000).toISOString(),
+      value: valueAt(i),
+    }));
+
+  const tableWidget = {
+    ...baseWidget,
+    chart_config: { chart_type: "table" },
+  };
+
+  const bodyRowCount = () =>
+    document.querySelectorAll("tbody tr").length;
+
+  it("renders one row per bucket while the table is short enough to read", () => {
+    h.query.data = queryResult(bucketsSpanning(30, (i) => (i % 3 ? null : i)));
+    render(<WidgetChart widget={tableWidget} globalDateRange={null} />);
+
+    expect(bodyRowCount()).toBe(30);
+  });
+
+  it("drops empty buckets from a minute-granularity range", () => {
+    // 2,000 buckets, 20 observed: the reader gets the 20 that carry data.
+    h.query.data = queryResult(
+      bucketsSpanning(2000, (i) => (i % 100 === 0 ? i : null)),
+    );
+    render(<WidgetChart widget={tableWidget} globalDateRange={null} />);
+
+    expect(bodyRowCount()).toBe(20);
+  });
+
+  it("caps a dense range instead of rendering every bucket", () => {
+    h.query.data = queryResult(bucketsSpanning(2000, (i) => i));
+    render(<WidgetChart widget={tableWidget} globalDateRange={null} />);
+
+    expect(bodyRowCount()).toBe(TABLE_BUCKET_LIMIT);
+  });
+});
+
+describe("WidgetChart — line interpolation", () => {
+  it("smooths without monotoneCubic, which doubles the line back on itself", () => {
+    // monotoneCubic sizes each control handle from the neighbouring gaps, so a
+    // tight cluster next to a long empty stretch produced a handle ~174px past
+    // a 10px segment: the line ran forward, then visibly reversed. Measured on
+    // dev with hand-written data, so it is the interpolation, not the payload.
+    h.query.data = queryResult([
+      { timestamp: "2026-07-09T00:00:00Z", value: 10 },
+      { timestamp: "2026-07-09T01:00:00Z", value: 120 },
+      { timestamp: "2026-08-30T00:00:00Z", value: 10 },
+    ]);
+    render(<WidgetChart widget={baseWidget} globalDateRange={null} />);
+
+    expect(h.apex.mock.calls.at(-1)[0].options.stroke.curve).toBe("smooth");
   });
 });

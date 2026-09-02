@@ -14,6 +14,10 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getChartTimeWindow,
+  getTableBucketPlan,
+  describeTableBuckets,
+  isDenseChartSeries,
   getSeriesScalar,
   getSuggestedUnitConfig,
   getUnitRendering,
@@ -23,7 +27,6 @@ import {
   groupPieSeries,
   resolveSavedSelection,
   seriesHasDataPoints,
-  shouldConnectAcrossMissingBuckets,
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -38,6 +41,7 @@ import {
   getQueryCompletedAt,
 } from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
+import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -177,41 +181,12 @@ export default function WidgetChart({
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
-  const connectsAcrossMissingBuckets =
-    shouldConnectAcrossMissingBuckets(apexType);
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
 
-  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
-  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
-  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
-  // plot therefore gets a negative top and is drawn above the canvas, where the
-  // widget card's `overflow: hidden` slices it. On these cards that is most of the
-  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
-  // (the chart's ResizeObserver then loses its height constraint and the canvas
-  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
-  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
-  // after it, even a frame later. Watching the attribute is what reliably catches
-  // the write, whenever Apex makes it.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const clampTooltips = () => {
-      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
-        const top = Number.parseFloat(tip.style.top);
-        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
-      });
-    };
-    const mo = new MutationObserver(clampTooltips);
-    mo.observe(el, {
-      attributes: true,
-      subtree: true,
-      attributeFilter: ["style"],
-    });
-    return () => mo.disconnect();
-  }, []);
+  useClampedChartTooltips(containerRef);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -543,9 +518,11 @@ export default function WidgetChart({
 
   // A missing aggregate bucket is not a zero: line and area charts drop the
   // null points so Apex connects the neighbouring observed ones.
+  const chartTimeWindow = getChartTimeWindow(result);
+
   const plottedChartSeries = useMemo(
-    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
-    [chartSeries, connectsAcrossMissingBuckets],
+    () => getPlottedChartSeries(chartSeries, { stacked: isStacked }),
+    [chartSeries, isStacked],
   );
 
   // Build from the full `series` list (not filtered chartSeries) so a
@@ -764,6 +741,9 @@ export default function WidgetChart({
   if (isTable) {
     // Time as rows, Segments as columns
     const timeData = series[0]?.data || [];
+    // One row per bucket becomes thousands of rows at minute granularity, so
+    // empty buckets are dropped and the remainder capped (TH-7757).
+    const bucketPlan = getTableBucketPlan(series);
     const granLabel = (queryConfig?.granularity || "day").toLowerCase();
     const dateFmt =
       granLabel === "minute"
@@ -818,6 +798,20 @@ export default function WidgetChart({
                 }}
               >
                 Time
+                {describeTableBuckets(bucketPlan) && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "block",
+                      fontWeight: 400,
+                      fontSize: "10px",
+                      color: "text.disabled",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {describeTableBuckets(bucketPlan)}
+                  </Box>
+                )}
               </th>
               {series.map((s, i) => (
                 <th
@@ -871,7 +865,9 @@ export default function WidgetChart({
             </tr>
           </thead>
           <tbody>
-            {timeData.map((pt, ri) => {
+            {bucketPlan.indices.map((ri) => {
+              const pt = timeData[ri];
+              if (!pt) return null;
               const hasNonZero = series.some(
                 (s) => s.data[ri]?.y != null && s.data[ri].y !== 0,
               );
@@ -1182,7 +1178,11 @@ export default function WidgetChart({
       toolbar: { show: false },
       zoom: { enabled: true },
       stacked: isStacked,
-      animations: { enabled: true, easing: "easeinout", speed: 400 },
+      animations: {
+        enabled: !isDenseChartSeries(plottedChartSeries),
+        easing: "easeinout",
+        speed: 400,
+      },
       events: {
         mouseMove: (event, chartContext, config) => {
           const el = chartContext?.el;
@@ -1292,6 +1292,8 @@ export default function WidgetChart({
     plotOptions: { bar: { horizontal: isHorizontal } },
     xaxis: {
       type: isHorizontal ? undefined : "datetime",
+      // Span the window that was queried, not just the buckets that reported.
+      ...(!isHorizontal && chartTimeWindow ? chartTimeWindow : {}),
       tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
@@ -1390,7 +1392,12 @@ export default function WidgetChart({
       });
     })(),
     stroke: {
-      curve: "monotoneCubic",
+      // Not monotoneCubic: it derives each control handle from the
+      // neighbouring gap widths, so a tight cluster beside a long empty
+      // stretch gets a handle hundreds of px past its own segment and the
+      // line visibly runs forward then doubles back. "smooth" does not, and
+      // is what every other chart in the app already uses.
+      curve: "smooth",
       width: apexType === "area" ? 2 : apexType === "line" ? 2.5 : 0,
     },
     fill: (() => {
