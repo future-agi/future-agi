@@ -20,8 +20,6 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-const existingUrl = "https://storage.example.com/kept.pdf";
-
 function makeParams({ newValue, apiError }) {
   const setDataValue = vi.fn();
   const refreshServerSide = vi.fn();
@@ -31,7 +29,6 @@ function makeParams({ newValue, apiError }) {
     column: { colId: "col-1", colDef: { dataType: "document" } },
     data: { row_id: "row-1" },
     newValue,
-    oldValue: existingUrl,
     fileName: "gone.pdf",
     api: {
       getRowNode: () => ({ setDataValue }),
@@ -61,8 +58,8 @@ describe("onCellValueChangedWrapper document link (#2433)", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());
 
     expect(onSuccess).not.toHaveBeenCalled();
-    expect(refreshServerSide).not.toHaveBeenCalled();
-    expect(setDataValue).toHaveBeenCalledWith("col-1", existingUrl);
+    expect(setDataValue).not.toHaveBeenCalled();
+    expect(refreshServerSide).toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
       "The address cannot be reached.",
       { variant: "error" },
@@ -70,9 +67,10 @@ describe("onCellValueChangedWrapper document link (#2433)", () => {
   });
 
   it("does not report success or drop the existing value when the link is not a document", async () => {
-    const { params, setDataValue, onSuccess, onError } = makeParams({
-      newValue: "https://example.com/index.html",
-    });
+    const { params, setDataValue, refreshServerSide, onSuccess, onError } =
+      makeParams({
+        newValue: "https://example.com/index.html",
+      });
     axios.post.mockRejectedValue({
       response: { data: { message: "The address is not a document." } },
     });
@@ -81,7 +79,8 @@ describe("onCellValueChangedWrapper document link (#2433)", () => {
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());
 
     expect(onSuccess).not.toHaveBeenCalled();
-    expect(setDataValue).toHaveBeenCalledWith("col-1", existingUrl);
+    expect(setDataValue).not.toHaveBeenCalled();
+    expect(refreshServerSide).toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
       "The address is not a document.",
       { variant: "error" },

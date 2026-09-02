@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 DOCUMENT_NOT_A_WEB_ADDRESS = "The value is not a web address."
 DOCUMENT_ADDRESS_UNREACHABLE = "The address cannot be reached."
 DOCUMENT_ADDRESS_NOT_A_DOCUMENT = "The address is not a document."
+DOCUMENT_ADDRESS_TOO_LARGE = "The document is too large."
 
 
 def is_http_web_address(value) -> bool:
@@ -22,7 +23,7 @@ def is_http_web_address(value) -> bool:
         parsed = urlparse(value)
     except Exception:
         return False
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    return parsed.scheme.lower() in ("http", "https") and bool(parsed.netloc)
 
 
 def resolve_document_cell_input(original_value, converted_value):
@@ -63,4 +64,6 @@ def document_link_failure_message(exc: BaseException) -> str:
         return DOCUMENT_ADDRESS_NOT_A_DOCUMENT
     if "url is not valid" in msg or "not a web address" in msg:
         return DOCUMENT_NOT_A_WEB_ADDRESS
+    if "byte limit" in msg:
+        return DOCUMENT_ADDRESS_TOO_LARGE
     return DOCUMENT_ADDRESS_UNREACHABLE

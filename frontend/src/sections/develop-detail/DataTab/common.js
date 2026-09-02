@@ -669,12 +669,15 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
           () => rowNode.setDataValue(columnId, oldValue),
         );
       } else if (dataType === "document") {
+        // Document edits come from FileCellRenderer (no oldValue). Reverting
+        // would setDataValue(undefined) and blank the cell. Reload server state.
+        const refreshDocumentGrid = () => {
+          gridApi?.refreshServerSide({});
+        };
         updateCellValue(
           { column_id: columnId, row_id: rowId, new_value: newValue },
-          () => {
-            gridApi?.refreshServerSide({});
-          },
-          () => rowNode.setDataValue(columnId, oldValue),
+          refreshDocumentGrid,
+          refreshDocumentGrid,
         );
       } else {
         const formattedValue =

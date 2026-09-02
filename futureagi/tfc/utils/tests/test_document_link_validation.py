@@ -4,6 +4,7 @@ import pytest
 
 from tfc.utils.document_link import (
     DOCUMENT_ADDRESS_NOT_A_DOCUMENT,
+    DOCUMENT_ADDRESS_TOO_LARGE,
     DOCUMENT_ADDRESS_UNREACHABLE,
     DOCUMENT_NOT_A_WEB_ADDRESS,
     document_link_failure_message,
@@ -17,6 +18,8 @@ from tfc.utils.document_link import (
     [
         ("https://example.com/report.pdf", True),
         ("http://example.com/a.docx", True),
+        ("HTTPS://EXAMPLE.COM/REPORT.PDF", True),
+        ("HTTP://EXAMPLE.COM/A.DOCX", True),
         ("sssss", False),
         ("not a url", False),
         ("ftp://example.com/a.pdf", False),
@@ -91,7 +94,17 @@ def test_resolve_stores_data_uri_upload():
             ValueError("ERROR_DOWNLOADING_DOCUMENT: blocked"),
             DOCUMENT_ADDRESS_UNREACHABLE,
         ),
+        (
+            ValueError("URL body exceeds 104857600 byte limit."),
+            DOCUMENT_ADDRESS_TOO_LARGE,
+        ),
     ],
 )
 def test_document_link_failure_message(exc, expected):
     assert document_link_failure_message(exc) == expected
+
+
+def test_resolve_stores_uppercase_scheme_url():
+    url = "HTTPS://EXAMPLE.COM/REPORT.PDF"
+    assert is_http_web_address(url) is True
+    assert resolve_document_cell_input(url, url) == ("store", url)

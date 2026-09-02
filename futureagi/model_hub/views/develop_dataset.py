@@ -281,6 +281,7 @@ from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.document_link import (
     document_link_failure_message,
+    is_http_web_address,
     resolve_document_cell_input,
 )
 from tfc.utils.error_codes import get_error_message
@@ -5263,11 +5264,7 @@ class UpdateCellValueView(APIView):
             ):
                 # It's already a base64 string with mime type
                 return new_value
-            elif (
-                new_value
-                and isinstance(new_value, str)
-                and new_value.startswith("http")
-            ):
+            elif is_http_web_address(new_value):
                 return new_value
             elif (
                 new_value
@@ -5557,9 +5554,7 @@ class UpdateCellValueView(APIView):
 
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
-                    is_link = isinstance(converted, str) and converted.startswith(
-                        ("http://", "https://")
-                    )
+                    is_link = is_http_web_address(converted)
                     if is_link:
                         # A failed link must not wipe the document already in the cell.
                         return self._gm.bad_request(document_link_failure_message(e))

@@ -14,6 +14,7 @@ from model_hub.models.choices import CellStatus, DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.utils.document_link import (
     DOCUMENT_ADDRESS_NOT_A_DOCUMENT,
+    DOCUMENT_ADDRESS_TOO_LARGE,
     DOCUMENT_ADDRESS_UNREACHABLE,
     DOCUMENT_NOT_A_WEB_ADDRESS,
 )
@@ -142,3 +143,55 @@ def test_working_document_url_is_stored(auth_client, document_cell):
     if isinstance(infos, str):
         infos = json.loads(infos)
     assert infos.get("document_url") == stored_url
+
+
+def test_uppercase_scheme_url_is_stored(auth_client, document_cell):
+    dataset, row, column, cell = document_cell
+    new_url = "HTTPS://EXAMPLE.COM/REPORT.PDF"
+    stored_url = "https://storage.example.com/report.pdf"
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_document_to_s3",
+        return_value=stored_url,
+    ) as mock_upload:
+        response = _post_link(auth_client, dataset, row, column, new_url)
+
+    assert response.status_code == status.HTTP_200_OK
+    mock_upload.assert_called_once()
+    assert mock_upload.call_args.args[0] == new_url
+    cell.refresh_from_db()
+    assert cell.value == stored_url
+
+
+def test_uppercase_scheme_unreachable_url_keeps_existing_document(
+    auth_client, document_cell
+):
+    dataset, row, column, cell = document_cell
+    new_url = "HTTPS://EXAMPLE.COM/MISSING.PDF"
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_document_to_s3",
+        side_effect=ValueError("ERROR_DOWNLOADING_DOCUMENT: Max retries exceeded"),
+    ):
+        response = _post_link(auth_client, dataset, row, column, new_url)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert DOCUMENT_ADDRESS_UNREACHABLE in (response.data.get("message") or "")
+    _assert_cell_unchanged(cell)
+
+
+def test_oversize_document_url_is_refused_and_keeps_existing_document(
+    auth_client, document_cell
+):
+    dataset, row, column, cell = document_cell
+    too_big = "https://example.com/huge.pdf"
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_document_to_s3",
+        side_effect=ValueError("URL body exceeds 104857600 byte limit."),
+    ):
+        response = _post_link(auth_client, dataset, row, column, too_big)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert DOCUMENT_ADDRESS_TOO_LARGE in (response.data.get("message") or "")
+    _assert_cell_unchanged(cell)

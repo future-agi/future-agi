@@ -5,6 +5,7 @@ describe("isDocumentWebAddress", () => {
   it("accepts http(s) addresses", () => {
     expect(isDocumentWebAddress("https://example.com/report.pdf")).toBe(true);
     expect(isDocumentWebAddress("http://example.com/a.docx")).toBe(true);
+    expect(isDocumentWebAddress("HTTPS://EXAMPLE.COM/REPORT.PDF")).toBe(true);
   });
 
   it("refuses values that are not web addresses", () => {
