@@ -366,7 +366,8 @@ def test_evaluation_metrics_score_avg(ch, project_id, eval_table):
                 {"span_id": sp2["id"], "output_float": 0.6},
             ],
         )
-        assert _eval_value(project_id, cfg, "SCORE") == pytest.approx(0.5)
+        # avg(0.4, 0.6) x100 -> percent scale (matches Charts tab)
+        assert _eval_value(project_id, cfg, "SCORE") == pytest.approx(50.0)
 
 
 @pytest.mark.parametrize("eval_table", ["tracer_eval_logger", "tracer_eval_logger_v2"])
@@ -386,10 +387,10 @@ def test_evaluation_metrics_pass_fail_rate(ch, project_id, eval_table):
                 {"span_id": spans[2]["id"], "output_bool": 0},
             ],
         )
-        # 2 of 3 "Passed" -> 0.666…
+        # 2 of 3 "Passed" -> 66.6…%
         assert _eval_value(
             project_id, cfg, "PASS_FAIL", threshold_metric_value="Passed"
-        ) == pytest.approx(2 / 3)
+        ) == pytest.approx(200 / 3)
 
 
 @pytest.mark.parametrize("eval_table", ["tracer_eval_logger", "tracer_eval_logger_v2"])
@@ -409,10 +410,10 @@ def test_evaluation_metrics_choices_rate(ch, project_id, eval_table):
                 {"span_id": spans[2]["id"], "output_str_list": '["good"]'},
             ],
         )
-        # 2 of 3 contain "good" -> 0.666…
+        # 2 of 3 contain "good" -> 66.6…%
         assert _eval_value(
             project_id, cfg, "CHOICES", threshold_metric_value="good"
-        ) == pytest.approx(2 / 3)
+        ) == pytest.approx(200 / 3)
 
 
 # --- Trailing-window (daily) --------------------------------------------------
@@ -558,6 +559,58 @@ def test_end_to_end_no_data_no_alert(ch, observe_project):
     assert UserAlertMonitorLog.objects.filter(alert=monitor).count() == 0
 
 
+@pytest.mark.django_db
+def test_end_to_end_eval_percent_threshold_fires(ch, observe_project):
+    # TH-7789: the user reads "10% Incomplete" on the Charts tab and types 9.5
+    # as the threshold. The alert metric must be on the same 0-100 percent
+    # scale — on the old 0-1 fraction scale every percent-typed threshold was
+    # unreachable and the alert stayed permanently silent.
+    from model_hub.models.evals_metric import EvalTemplate
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
+    from tracer.utils.monitor import process_monitor_task
+
+    spans = [_span(str(observe_project.id)) for _ in range(10)]
+    _seed_spans(ch, spans)
+    template = EvalTemplate.objects.create(
+        name="completeness",
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        config={"output": "choices", "choices": ["Complete", "Incomplete"]},
+    )
+    cfg = CustomEvalConfig.objects.create(
+        name="completeness",
+        project=observe_project,
+        eval_template=template,
+        config={},
+        mapping={},
+        filters={},
+    )
+    _seed_evals(
+        ch,
+        str(cfg.id),
+        [{"span_id": spans[0]["id"], "output_str_list": '["Incomplete"]'}]
+        + [{"span_id": s["id"], "output_str_list": '["Complete"]'} for s in spans[1:]],
+    )
+    monitor = UserAlertMonitor.objects.create(
+        organization=observe_project.organization,
+        project=observe_project,
+        name="E2E eval percent threshold",
+        metric_type="evaluation_metrics",
+        metric=str(cfg.id),
+        threshold_metric_value="Incomplete",
+        threshold_operator="greater_than",
+        threshold_type="static",
+        critical_threshold_value=9.5,  # percent, as displayed on the Charts tab
+        alert_frequency=60,
+    )
+    process_monitor_task._original_func(
+        str(monitor.id), (NOW + timedelta(seconds=30)).isoformat()
+    )
+    # 1 of 10 "Incomplete" -> 10% > 9.5 -> critical.
+    assert UserAlertMonitorLog.objects.get(alert=monitor).type == "critical"
+
+
 # --- Window boundary + time-series values -------------------------------------
 
 
@@ -636,8 +689,8 @@ def test_eval_windows_on_span_time_not_eval_time(ch, project_id):
         ],
     )
     # Only the in-window span's eval counts, even though BOTH evals were
-    # computed now (outside the window): 1.0, not 0.5 and not None.
-    assert _eval_value(project_id, cfg, "SCORE", start=ws, end=we) == 1.0
+    # computed now (outside the window): 100%, not 50% and not None.
+    assert _eval_value(project_id, cfg, "SCORE", start=ws, end=we) == 100.0
 
 
 def test_eval_excludes_spans_outside_window(ch, project_id):
@@ -659,7 +712,7 @@ def test_eval_excludes_spans_outside_window(ch, project_id):
             {"span_id": old["id"], "output_float": 0.0, "created_at": NOW},
         ],
     )
-    assert _eval_value(project_id, cfg, "SCORE") == 1.0
+    assert _eval_value(project_id, cfg, "SCORE") == 100.0
 
 
 # --- span-attribute filter: windowed trace membership -------------------------

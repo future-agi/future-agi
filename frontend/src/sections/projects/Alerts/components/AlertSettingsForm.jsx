@@ -670,7 +670,11 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          metricType === "evaluation_metrics"
+                            ? "Value (%)"
+                            : "Value"
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -783,7 +787,11 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          metricType === "evaluation_metrics"
+                            ? "Value (%)"
+                            : "Value"
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"

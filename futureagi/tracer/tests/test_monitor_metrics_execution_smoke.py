@@ -73,10 +73,11 @@ EXPECTED_VALUE: dict[str, Any] = {
     "daily_tokens_spent": 350,
     "monthly_tokens_spent": 350,
 }
+# Eval metrics are 0-100 percentages (x100, matching the Charts tab).
 EXPECTED_EVAL_VALUE = {
-    "SCORE": pytest.approx(0.75),
-    "PASS_FAIL": pytest.approx(0.5),
-    "CHOICES": pytest.approx(0.5),
+    "SCORE": pytest.approx(75.0),
+    "PASS_FAIL": pytest.approx(50.0),
+    "CHOICES": pytest.approx(50.0),
 }
 
 

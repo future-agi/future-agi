@@ -571,6 +571,59 @@ class TestUserAlertMonitorUpdateAPI:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestEvalThresholdPercentBounds:
+    """Eval-metric static thresholds are 0-100 percentages (TH-7789)."""
+
+    @pytest.fixture
+    def observe_eval_config(self, db, observe_project, eval_template):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        return CustomEvalConfig.objects.create(
+            name="Observe Eval",
+            project=observe_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+    def _payload(self, observe_project, eval_config, critical):
+        return {
+            "project": str(observe_project.id),
+            "name": "Eval Percent Alert",
+            "metric_type": "evaluation_metrics",
+            "metric": str(eval_config.id),
+            "threshold_operator": "greater_than",
+            "threshold_type": "static",
+            "critical_threshold_value": critical,
+            "alert_frequency": 60,
+        }
+
+    def test_accepts_percent_scale_threshold(
+        self, auth_client, observe_project, observe_eval_config
+    ):
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            self._payload(observe_project, observe_eval_config, 9.5),
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_rejects_threshold_above_100(
+        self, auth_client, observe_project, observe_eval_config
+    ):
+        # 950% can never fire on a 0-100 metric — the exact typo class that
+        # motivated TH-7789 (typing a fraction-scale-era value).
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            self._payload(observe_project, observe_eval_config, 950),
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestUserAlertMonitorDeleteAPI:
     """Tests for DELETE /tracer/user-alerts/ endpoint."""
 

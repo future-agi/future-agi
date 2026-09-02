@@ -28,11 +28,17 @@ class CreateAlertMonitorInput(PydanticBaseModel):
     )
     critical_threshold_value: Optional[float] = Field(
         default=None,
-        description="Critical threshold value that triggers a critical alert",
+        description=(
+            "Critical threshold value that triggers a critical alert. "
+            "For evaluation_metrics this is a 0-100 percentage."
+        ),
     )
     warning_threshold_value: Optional[float] = Field(
         default=None,
-        description="Warning threshold value that triggers a warning alert",
+        description=(
+            "Warning threshold value that triggers a warning alert. "
+            "For evaluation_metrics this is a 0-100 percentage."
+        ),
     )
     threshold_type: str = Field(
         default="percentage_change",
