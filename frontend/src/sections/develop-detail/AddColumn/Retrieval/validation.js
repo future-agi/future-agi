@@ -132,5 +132,27 @@ export const RetrievalValidationSchema = (
       key: z.string().min(1, "Please enter a key"),
       vectorLength: z.number().positive("Please enter vector length"),
     }),
+    ...["chroma", "milvus", "pgvector"].map((subType) =>
+      z.object({
+        subType: z.literal(subType),
+        newColumnName:
+          isConditionalNodez || isEdit
+            ? z.string().optional()
+            : z.string().min(1, "Column name is required"),
+        columnId: z.string().min(1, "Please select a column"),
+        apiKey: z.string().optional(),
+        url: z.string().min(1, "Please enter a connection URL"),
+        collectionName: z.string().min(1, "Please enter a collection name"),
+        topK: z.number().positive("Please enter number of chunks to fetch"),
+        queryKey: z.string().optional(),
+        key: z.string().optional(),
+        embeddingConfig: z.object({
+          model: z.string().min(1, "Model is required"),
+          type: z.string().min(1, "Type is required"),
+        }),
+        concurrency: z.number().positive("Please enter a positive concurrency value"),
+        vectorLength: z.number().positive("Please enter vector length"),
+      }),
+    ),
   ]);
 };

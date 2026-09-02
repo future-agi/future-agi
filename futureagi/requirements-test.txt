@@ -99,6 +99,7 @@ charset-normalizer==3.4.2
     #   pdfminer-six
     #   requests
 chromadb==1.0.13
+pymilvus==2.5.14
     # via core-backend (pyproject.toml)
 click==8.2.1
     # via
