@@ -276,6 +276,17 @@ const getDataSource = (
         if (data?.data?.result?.failure_reason) {
           setFailedToGenerateData(true);
           setFailureReason(data.data.result.failure_reason);
+          // The rows themselves are valid (HTTP 200), so the success() below
+          // clears the loading overlay and the failure screen would never be
+          // visible. Re-show it once the load settles so the reason persists —
+          // mirrors the fetch-error path below.
+          if (overlayTimeoutRef.current) {
+            clearTimeout(overlayTimeoutRef.current);
+            overlayTimeoutRef.current = null;
+          }
+          overlayTimeoutRef.current = setTimeout(() => {
+            params.api.showLoadingOverlay();
+          }, 100);
         } else if (getResultIsSyntheticDataset(result)) {
           // Dataset is synthetic and the backend has no failure reason —
           // clear any stale failure state so the overlay shows the correct
