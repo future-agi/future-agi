@@ -36,6 +36,8 @@ import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
+import CustomTagInput from "./CustomTagInput";
+import { withPendingTag } from "./tagUtils";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import {
   extractVariables,
@@ -483,11 +485,7 @@ const EvalCreatePage = () => {
       return;
     }
     try {
-      const pendingCustomTag = customTagInput.trim();
-      const tagsToSave =
-        pendingCustomTag && !tags.includes(pendingCustomTag)
-          ? [...tags, pendingCustomTag]
-          : tags;
+      const tagsToSave = withPendingTag(tags, customTagInput);
 
       // Publish the draft: set name, mark visible
       await updateDraft.mutateAsync({
@@ -1255,28 +1253,14 @@ const EvalCreatePage = () => {
                           />
                         ))}
                     </Box>
-                    <TextField
-                      size="small"
-                      placeholder="Add custom tag..."
-                      helperText="Press Enter to add"
-                      inputProps={{ "aria-label": "Add custom tag" }}
+                    <CustomTagInput
                       value={customTagInput}
-                      onChange={(event) => setCustomTagInput(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (
-                          event.key !== "Enter" ||
-                          event.nativeEvent.isComposing
-                        )
-                          return;
-                        event.preventDefault();
-                        const newTag = customTagInput.trim();
-                        if (!newTag) return;
+                      onChange={setCustomTagInput}
+                      onAdd={(newTag) =>
                         setTags((prev) =>
                           prev.includes(newTag) ? prev : [...prev, newTag],
-                        );
-                        setCustomTagInput("");
-                      }}
-                      sx={{ mt: 1.5, minWidth: 200 }}
+                        )
+                      }
                     />
                   </Box>
                 </>

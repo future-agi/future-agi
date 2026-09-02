@@ -37,6 +37,17 @@ vi.mock("src/hooks/useDeploymentMode", () => ({
   useDeploymentMode: () => ({ isOSS: false }),
 }));
 
+// The page renders null until capabilities resolve, so the entitlement hooks are
+// stubbed the same way the other hooks here are.
+vi.mock("src/hooks/useCapabilities", () => ({
+  CAPABILITY: { TURING_MODELS: "turing_models", AGENTIC_EVAL: "agentic_eval" },
+  useFeatureLocked: () => ({ locked: false, isLoading: false }),
+}));
+
+vi.mock("src/hooks/useErrorLocalization", () => ({
+  useErrorLocalizationAvailable: () => true,
+}));
+
 vi.mock("src/utils/rolePermissionMapping", () => ({
   PERMISSIONS: { EDIT_CREATE_DELETE_EVALS: "edit" },
   RolePermission: { EVALS: { edit: { owner: true } } },
@@ -149,7 +160,6 @@ describe("Unit: EvalCreatePage custom tags", () => {
     const user = userEvent.setup();
     render(<EvalCreatePage />);
 
-    await user.click(screen.getByRole("button", { name: /advanced/i }));
     const input = screen.getByRole("textbox", { name: "Add custom tag" });
 
     await user.type(input, "  client-demo{Enter}");
@@ -162,7 +172,6 @@ describe("Unit: EvalCreatePage custom tags", () => {
     const user = userEvent.setup();
     render(<EvalCreatePage />);
 
-    await user.click(screen.getByRole("button", { name: /advanced/i }));
     const input = screen.getByPlaceholderText("Add custom tag...");
 
     await user.type(input, "client-demo{Enter}");
@@ -175,14 +184,15 @@ describe("Unit: EvalCreatePage custom tags", () => {
     const user = userEvent.setup();
     render(<EvalCreatePage />);
 
-    const advancedButton = screen.getByRole("button", { name: /advanced/i });
-    await user.click(advancedButton);
     await user.type(
       screen.getByPlaceholderText("Add custom tag..."),
       "   {Enter}",
     );
 
-    expect(advancedButton).not.toHaveTextContent("1 tags");
+    // Custom chips are the only ones drawn with the generic tag icon.
+    expect(
+      document.querySelectorAll('[data-icon="mdi:tag-outline"]'),
+    ).toHaveLength(0);
   });
 
   it("shows custom tags loaded from an existing evaluation", async () => {
@@ -196,10 +206,7 @@ describe("Unit: EvalCreatePage custom tags", () => {
         },
       },
     });
-    const user = userEvent.setup();
     render(<EvalCreatePage />);
-
-    await user.click(screen.getByRole("button", { name: /advanced/i }));
 
     expect(await screen.findByText("client-demo")).toBeInTheDocument();
   });
@@ -208,7 +215,6 @@ describe("Unit: EvalCreatePage custom tags", () => {
     const user = userEvent.setup();
     render(<EvalCreatePage />);
 
-    await user.click(screen.getByRole("button", { name: /advanced/i }));
     const input = screen.getByRole("textbox", { name: "Add custom tag" });
     await user.type(input, "client");
 
@@ -231,7 +237,6 @@ describe("Unit: EvalCreatePage custom tags", () => {
       "Client evaluation",
     );
     await user.click(screen.getByRole("tab", { name: "Code" }));
-    await user.click(screen.getByRole("button", { name: /advanced/i }));
     await user.type(
       screen.getByRole("textbox", { name: "Add custom tag" }),
       "pending-tag",
@@ -254,7 +259,6 @@ describe("Unit: EvalCreatePage custom tags", () => {
       "Client evaluation",
     );
     await user.click(screen.getByRole("tab", { name: "Code" }));
-    await user.click(screen.getByRole("button", { name: /advanced/i }));
     await user.type(
       screen.getByPlaceholderText("Add custom tag..."),
       "client-demo{Enter}",
