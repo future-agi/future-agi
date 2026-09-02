@@ -6,6 +6,7 @@ import Collapse from "@mui/material/Collapse";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import {
+  alignToPlan,
   classifySteps,
   formatElapsed,
   humanize,
@@ -20,8 +21,19 @@ import ToolCallCard from "./ToolCallCard";
  * so a seventy step run does not push the answer off the screen. When the turn
  * finishes the line collapses to what it cost, and the steps are still there
  * on click.
+ *
+ * When the turn ran a skill, the skill already declared the flow it meant to
+ * follow, so the same line also says where in that flow the run is: "Reading
+ * trace span, step 5 of 11" rather than a renamed tool on its own. Without a
+ * declared flow, or when the run matched none of it, the line is exactly what
+ * it was before.
  */
-export default function ThinkingTrail({ toolCalls, isStreaming }) {
+export default function ThinkingTrail({
+  toolCalls,
+  isStreaming,
+  plan,
+  planRun,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [expanded, setExpanded] = useState(false);
@@ -31,6 +43,11 @@ export default function ThinkingTrail({ toolCalls, isStreaming }) {
   const steps = classifySteps(toolCalls);
   const { total, failed, current } = trailSummary(steps);
   const live = isStreaming && Boolean(current);
+
+  const aligned = plan?.length ? alignToPlan(planRun || toolCalls, plan) : null;
+  // A run that matched none of the declared flow is not evidence of the flow,
+  // so the trail claims nothing rather than claiming the wrong thing.
+  const flow = aligned && aligned.done > 0 ? aligned : null;
 
   useEffect(() => {
     if (isStreaming && startedAt.current === null) {
@@ -43,11 +60,25 @@ export default function ThinkingTrail({ toolCalls, isStreaming }) {
 
   if (!total) return null;
 
+  const liveLabel = () => {
+    const activity = humanize(current.tool_name);
+    const at = flow?.byCallId[current.call_id];
+    if (!at) return activity;
+    if (at.planIndex === null) return `${activity} · extra step`;
+    const where = `step ${at.planIndex + 1} of ${flow.planned}`;
+    return at.planKind === "revisit"
+      ? `${activity} · ${where}, again`
+      : `${activity} · ${where}`;
+  };
+
   const label = live
-    ? humanize(current.tool_name)
+    ? liveLabel()
     : [
         elapsed ? `Thought for ${formatElapsed(elapsed)}` : "Thought",
-        `${total} step${total === 1 ? "" : "s"}`,
+        flow
+          ? `${flow.done} of ${flow.planned} steps`
+          : `${total} step${total === 1 ? "" : "s"}`,
+        flow?.extra ? `${flow.extra} extra` : null,
         failed ? `${failed} skipped` : null,
       ]
         .filter(Boolean)
@@ -119,11 +150,9 @@ export default function ThinkingTrail({ toolCalls, isStreaming }) {
               : alpha(theme.palette.common.black, 0.08),
           }}
         >
-          {steps.map((step) => (
-            <Box
-              key={step.call_id}
-              sx={{ opacity: step.outcome === "retried" ? 0.5 : 1 }}
-            >
+          {steps.map((step) => {
+            const at = flow?.byCallId[step.call_id];
+            const card = (
               <ToolCallCard
                 toolCall={
                   step.outcome === "retried"
@@ -131,8 +160,86 @@ export default function ThinkingTrail({ toolCalls, isStreaming }) {
                     : step
                 }
               />
+            );
+            return (
+              <Box
+                key={step.call_id}
+                sx={{
+                  opacity: step.outcome === "retried" ? 0.5 : 1,
+                  ...(flow && {
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 1,
+                  }),
+                }}
+              >
+                {flow && (
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      width: 34,
+                      flexShrink: 0,
+                      pt: 1.15,
+                      fontSize: 11,
+                      textAlign: "right",
+                      color: "text.disabled",
+                    }}
+                  >
+                    {at && at.planIndex !== null ? at.planIndex + 1 : "extra"}
+                  </Typography>
+                )}
+                {flow ? <Box sx={{ flex: 1, minWidth: 0 }}>{card}</Box> : card}
+              </Box>
+            );
+          })}
+
+          {flow?.pending.length > 0 && (
+            <Box sx={{ pb: 1 }}>
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  mb: 0.5,
+                  fontSize: 11,
+                  color: "text.disabled",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                {isStreaming ? "Still to come" : "Declared, not run"}
+              </Typography>
+              {flow.pending.map((p) => (
+                <Box
+                  key={p.index}
+                  sx={{
+                    display: "flex",
+                    gap: 1,
+                    alignItems: "center",
+                    py: 0.4,
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      width: 34,
+                      flexShrink: 0,
+                      fontSize: 11,
+                      textAlign: "right",
+                      color: "text.disabled",
+                    }}
+                  >
+                    {p.index + 1}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{ fontSize: 12, color: "text.disabled", opacity: 0.7 }}
+                  >
+                    {humanize(p.tool)}
+                  </Typography>
+                </Box>
+              ))}
             </Box>
-          ))}
+          )}
         </Box>
       </Collapse>
     </Box>
@@ -142,4 +249,9 @@ export default function ThinkingTrail({ toolCalls, isStreaming }) {
 ThinkingTrail.propTypes = {
   toolCalls: PropTypes.arrayOf(PropTypes.object).isRequired,
   isStreaming: PropTypes.bool,
+  // Ordered tool names the active skill declared for this turn.
+  plan: PropTypes.arrayOf(PropTypes.string),
+  // Every tool call in the turn, when this trail is one of several. The flow
+  // belongs to the turn, so progress cannot be counted from one segment alone.
+  planRun: PropTypes.arrayOf(PropTypes.object),
 };
