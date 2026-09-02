@@ -69,19 +69,21 @@ const renderPreview = (evalsDetails) => {
 // never recoverable from the report, so these tests assert on the value being a
 // non-string — which is the whole gate — and never on a particular inner shape.
 const OBJECT_MAPPING_VALUE = { value: "output.value" };
+const SPAN_LIST_RESPONSE = {
+  data: {
+    status: true,
+    result: {
+      table: [{ span_id: "span-1", output: { value: "hi" } }],
+      metadata: { total_rows: 1, has_more: false, next_cursor: null },
+      config: [],
+    },
+  },
+};
 
 describe("TaskLivePreview — variable mapping", () => {
   beforeEach(() => {
     axiosGetMock.mockReset();
-    axiosGetMock.mockResolvedValue({
-      data: {
-        result: {
-          table: [{ span_id: "span-1", output: { value: "hi" } }],
-          metadata: { total_rows: 1 },
-          config: [],
-        },
-      },
-    });
+    axiosGetMock.mockResolvedValue(SPAN_LIST_RESPONSE);
   });
 
   it("renders a mapping whose value is an object instead of tearing down the page", async () => {
@@ -128,15 +130,7 @@ describe("TaskLivePreview — variable mapping", () => {
 describe("TaskLivePreview — app error boundary", () => {
   beforeEach(() => {
     axiosGetMock.mockReset();
-    axiosGetMock.mockResolvedValue({
-      data: {
-        result: {
-          table: [{ span_id: "span-1", output: { value: "hi" } }],
-          metadata: { total_rows: 1 },
-          config: [],
-        },
-      },
-    });
+    axiosGetMock.mockResolvedValue(SPAN_LIST_RESPONSE);
   });
 
   it("does not trip the boundary that wraps the whole app", async () => {

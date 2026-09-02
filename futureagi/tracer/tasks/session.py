@@ -65,40 +65,13 @@ def _aggregate_spans_by_trace_ids(trace_ids):
         (s.end_time for s in spans if s.end_time is not None),
         default=None,
     )
-    # Coverage check: trace_ids that produced zero spans in CH could be
-    # either (a) traces that legitimately have no spans yet on either
-    # store, or (b) CH lag where the spans exist in PG but haven't
-    # replicated yet. The old PG-aggregate path masked this distinction
-    # (Count returned 0 either way).
-    #
-    # Codex wave-2 P2 (2026-05-26): distinguish (a) from (b) by querying
-    # PG for whether the missing trace_ids have ANY span in PG. If yes,
-    # CH is lagging (treat as not covered → skip the write). If no, the
-    # trace is legitimately empty everywhere (treat as covered → write the
-    # zero aggregate). This restores the original Django semantics: a
-    # trace with zero spans shouldn't block the session write.
+    # Direct-write CH is authoritative: a requested Trace row with no CH span
+    # is legitimately spanless at this instant.  Never probe the removed PG
+    # ObservationSpan table as a coverage oracle; that added latency and could
+    # misclassify every direct-only trace as replication lag.
     seen_trace_ids = {str(s.trace_id) for s in spans}
     requested = {str(tid) for tid in trace_ids}
     missing_trace_ids = sorted(requested - seen_trace_ids)
-
-    lagging_trace_ids: list[str] = []
-    if missing_trace_ids:
-        from tracer.models.observation_span import ObservationSpan
-
-        pg_present_for_missing = set(
-            str(tid) for tid in ObservationSpan.no_workspace_objects.filter(
-                trace_id__in=missing_trace_ids, deleted=False,
-            ).values_list("trace_id", flat=True).distinct()
-        )
-        lagging_trace_ids = sorted(pg_present_for_missing)
-        if lagging_trace_ids:
-            logger.warning(
-                "session_agg_ch_lag",
-                requested=len(requested),
-                ch_seen=len(seen_trace_ids),
-                pg_present_in_gap=len(lagging_trace_ids),
-                lagging_sample=lagging_trace_ids[:10],
-            )
 
     return {
         "span_count": span_count,
@@ -107,12 +80,9 @@ def _aggregate_spans_by_trace_ids(trace_ids):
         "total_duration": total_duration,
         "error_count": error_count,
         "last_activity_at": last_activity_at,
-        # `covered=True` when every requested trace either had spans in CH
-        # OR has no spans in PG either (legitimately empty). Only treat as
-        # uncovered when PG has rows CH doesn't — that's the lag case.
-        "covered": not lagging_trace_ids,
+        "covered": True,
         "missing_trace_ids": missing_trace_ids,
-        "lagging_trace_ids": lagging_trace_ids,
+        "lagging_trace_ids": [],
     }
 
 
@@ -122,14 +92,14 @@ def _get_session_metrics_from_ch(session, project_id):
     Returns a dict with span_count, total_tokens, total_cost, total_duration,
     error_count, trace_count, and last_activity_at on success, or None on failure.
     """
-    from tracer.services.clickhouse.query_builders.session_analytics import (
-        SessionAnalyticsQueryBuilder,
+    from tracer.services.clickhouse.v2.query_builders.session_analytics import (
+        SessionAnalyticsQueryBuilderV2,
     )
-    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
     try:
-        service = AnalyticsQueryService()
-        builder = SessionAnalyticsQueryBuilder(project_id=str(project_id))
+        service = V2AnalyticsQueryService()
+        builder = SessionAnalyticsQueryBuilderV2(project_id=str(project_id))
         query, params = builder.build_session_metrics_query([str(session.id)])
         result = service.execute_ch_query(query, params)
 
@@ -158,14 +128,14 @@ def _get_user_stats_from_ch(user, project_id):
     Returns a dict with session_count, total_tokens, total_cost,
     first_seen, and last_seen on success, or None on failure.
     """
-    from tracer.services.clickhouse.query_builders.session_analytics import (
-        SessionAnalyticsQueryBuilder,
+    from tracer.services.clickhouse.v2.query_builders.session_analytics import (
+        SessionAnalyticsQueryBuilderV2,
     )
-    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
     try:
-        service = AnalyticsQueryService()
-        builder = SessionAnalyticsQueryBuilder(project_id=str(project_id))
+        service = V2AnalyticsQueryService()
+        builder = SessionAnalyticsQueryBuilderV2(project_id=str(project_id))
         query, params = builder.build_user_stats_query(str(user.id))
         result = service.execute_ch_query(query, params)
 
@@ -258,12 +228,8 @@ def update_session_metrics_task():
                         logger.warning(
                             "ch_lag_skip_session_metrics_write",
                             session_id=str(session.id),
-                            missing_trace_ids_count=len(
-                                extra["missing_trace_ids"]
-                            ),
-                            missing_trace_ids_sample=extra[
-                                "missing_trace_ids"
-                            ][:10],
+                            missing_trace_ids_count=len(extra["missing_trace_ids"]),
+                            missing_trace_ids_sample=extra["missing_trace_ids"][:10],
                         )
                         continue
                     session.span_count = extra["span_count"]
@@ -298,12 +264,8 @@ def update_session_metrics_task():
                     logger.warning(
                         "ch_lag_skip_session_metrics_write",
                         session_id=str(session.id),
-                        missing_trace_ids_count=len(
-                            span_metrics["missing_trace_ids"]
-                        ),
-                        missing_trace_ids_sample=span_metrics[
-                            "missing_trace_ids"
-                        ][:10],
+                        missing_trace_ids_count=len(span_metrics["missing_trace_ids"]),
+                        missing_trace_ids_sample=span_metrics["missing_trace_ids"][:10],
                     )
                     continue
 
@@ -545,7 +507,6 @@ def complete_sessions_with_trace_completion_task():
     - No new spans have been added in the last hour
     - The last span has status OK or ERROR (not UNSET)
     """
-    from tracer.models.observation_span import ObservationSpan
     from tracer.models.trace import Trace
     from tracer.models.trace_session import SessionStatus, TraceSession
     from tracer.services.clickhouse.v2 import get_reader
@@ -585,49 +546,9 @@ def complete_sessions_with_trace_completion_task():
                 # under heavy ingest), so the migration is a strict
                 # improvement, not a regression.
                 with get_reader() as reader:
-                    spans = reader.list_by_trace_ids(
-                        [str(tid) for tid in trace_ids]
-                    )
+                    spans = reader.list_by_trace_ids([str(tid) for tid in trace_ids])
                 if not spans:
                     continue
-
-                # CH coverage check before driving a status/ended_at write
-                # (codex P0 from the consolidated review). If any trace in
-                # this session has zero spans in CH while it has spans in
-                # PG (lag), skipping completion until the next tick is the
-                # safe choice — partial coverage could make the "last
-                # span" pick stale and trigger an early COMPLETED write.
-                seen_trace_ids = {str(s.trace_id) for s in spans}
-                requested = {str(tid) for tid in trace_ids}
-                missing = requested - seen_trace_ids
-                if missing:
-                    # Codex final-review P2 (2026-05-26): a Trace row can
-                    # legitimately have zero spans (e.g. trace created but
-                    # ingestion failed). Without this PG existence gate,
-                    # any such trace would keep `missing` non-empty
-                    # forever and the session would never mark COMPLETED.
-                    # Same pattern as `_aggregate_spans_by_trace_ids`.
-                    pg_present = set(
-                        str(tid)
-                        for tid in ObservationSpan.no_workspace_objects.filter(
-                            trace_id__in=missing,
-                            deleted=False,
-                        )
-                        .values_list("trace_id", flat=True)
-                        .distinct()
-                    )
-                    lagging = sorted(missing & pg_present)
-                    if lagging:
-                        logger.warning(
-                            "ch_lag_skip_session_completion",
-                            session_id=str(session.id),
-                            missing_trace_ids_count=len(lagging),
-                            missing_trace_ids_sample=lagging[:10],
-                        )
-                        continue
-                    # All missing traces are legitimately spanless — drop
-                    # them from the requested set and fall through to the
-                    # completion check below.
 
                 # Mirror Django's `order_by("-end_time").first()` ordering
                 # exactly: PostgreSQL defaults NULLs FIRST under DESC, so a

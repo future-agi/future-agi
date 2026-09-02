@@ -144,6 +144,53 @@ export const FILTER_TYPE_MAP = {
   "Median Latency": { type: "number" },
   "Last Used": { type: "date" },
   "First Used": { type: "date" },
+  "No. of traces": { type: "number" },
+};
+
+const FILTER_TYPE_BY_COLUMN_ID = {
+  avg_cost: "number",
+  avg_latency: "number",
+  avg_input_tokens: "number",
+  avg_output_tokens: "number",
+  unique_traces: "number",
+  first_used: "date",
+  last_used: "date",
+};
+
+const FILTER_TYPE_ALIASES = {
+  array: "option",
+  boolean: "boolean",
+  categorical: "option",
+  date: "date",
+  datetime: "date",
+  number: "number",
+  text: "text",
+};
+
+const OPERATOR_LABELS = {
+  greater_than: "Greater Than",
+  less_than: "Less Than",
+  equals: "Equals",
+  not_equals: "Not Equals",
+  greater_than_or_equal: "Greater Than Or Equal",
+  less_than_or_equal: "Less Than Or Equal",
+  between: "Between",
+  not_between: "Not Between",
+  contains: "Contains",
+  not_contains: "Does Not Contain",
+  starts_with: "Starts With",
+  ends_with: "Ends With",
+};
+
+const normalizeOutputType = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[/\s]+/g, "_");
+
+const publishedFilterType = (col) => {
+  const value = col.filterType || col.filter_type;
+  return FILTER_TYPE_ALIASES[String(value || "").toLowerCase()];
 };
 
 export const buildFilterDefinitions = (
@@ -154,32 +201,73 @@ export const buildFilterDefinitions = (
   const filters = [];
 
   columnDefs.forEach((col) => {
+    const outputType = normalizeOutputType(col.outputType || col.output_type);
+    const propertyKind = col.propertyKind || col.property_kind;
+    const isEvalColumn =
+      propertyKind === "eval_config" ||
+      (col.groupBy || col.group_by) === "Evaluation Metrics";
+    const apiFilterType = publishedFilterType(col);
     // Determine filter type from mapping
-    const baseFilter = FILTER_TYPE_MAP[col.name] || { type: "text" };
+    const baseFilter = FILTER_TYPE_MAP[col.name] || {
+      type: FILTER_TYPE_BY_COLUMN_ID[col.id] || "text",
+    };
 
     const filterDef = {
       propertyName: col.name,
       propertyId: col.id,
+      registryId: col.propertyId || col.property_id,
+      propertyKind,
+      propertySource: col.propertySource || col.property_source,
       maxUsage: 1,
       filterType: { type: baseFilter.type },
     };
 
-    // Override type if outputType is float
-    if (col.outputType === "float") {
+    if (apiFilterType) {
+      filterDef.filterType.type = apiFilterType;
+    }
+
+    // Aggregate evals, including expanded choices/pass-fail, are percentages.
+    if (ignoreOutputType && isEvalColumn) {
       filterDef.filterType.type = "number";
     }
+
     if (!ignoreOutputType) {
-      if (col.outputType === "choices" && Array.isArray(col.choices)) {
+      if (
+        outputType === "choices" &&
+        Array.isArray(col.choices || col.choices_map)
+      ) {
         filterDef.filterType.type = "option";
-        filterDef.filterType.options = col.choices.map((choice) => ({
-          label: choice,
-          value: choice,
-        }));
+        filterDef.filterType.options = (col.choices || col.choices_map).map(
+          (choice) => ({
+            label: choice,
+            value: choice,
+          }),
+        );
         filterDef.multiSelect = true;
       }
 
-      if (col.outputType === "Pass/Fail") {
+      if (outputType === "pass_fail") {
         filterDef.filterType.type = "boolean";
+      }
+
+      if (
+        ["score", "float", "numeric", "percentage", "reason"].includes(
+          outputType,
+        )
+      ) {
+        filterDef.filterType.type = "number";
+      }
+    }
+
+    const supportedFilterOps =
+      col.supportedFilterOps || col.supported_filter_ops;
+    if (Array.isArray(supportedFilterOps) && supportedFilterOps.length) {
+      filterDef.overrideOperators = supportedFilterOps.map((value) => ({
+        value,
+        label: OPERATOR_LABELS[value] || value,
+      }));
+      if (filterDef.filterType.type !== "option") {
+        filterDef.showOperator = true;
       }
     }
 
@@ -197,17 +285,18 @@ export const buildFilterDefinitions = (
       filterDef.showOperator = true;
     }
 
-    if (col.groupBy) {
+    const groupBy = col.groupBy || col.group_by;
+    if (groupBy) {
       // Add to group
-      if (!groups[col.groupBy]) {
-        groups[col.groupBy] = {
-          propertyName: col.groupBy,
+      if (!groups[groupBy]) {
+        groups[groupBy] = {
+          propertyName: groupBy,
           stringConnector: "is",
           dependents: [],
         };
-        filters.push(groups[col.groupBy]);
+        filters.push(groups[groupBy]);
       }
-      groups[col.groupBy].dependents.push(filterDef);
+      groups[groupBy].dependents.push(filterDef);
     } else {
       filters.push(filterDef);
     }

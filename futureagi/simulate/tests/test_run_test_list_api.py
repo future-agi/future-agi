@@ -192,6 +192,80 @@ class TestRunTestRuntimeContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["details"]["legacyPageSize"] == ["Unknown field."]
 
+    def test_summary_list_returns_only_bounded_list_card_fields(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        word_count_eval_template,
+    ):
+        SimulateEvalConfig.objects.create(
+            name="Summary eval",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+            model="turing_small",
+            status="completed",
+        )
+
+        response = auth_client.get("/simulate/run-tests/?page=1&limit=50&summary=true")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        item = next(
+            result
+            for result in response.json()["results"]
+            if result["id"] == str(run_test_with_v10_scenario.id)
+        )
+        assert set(item) == {
+            "id",
+            "name",
+            "source_type",
+            "source_type_display",
+            "agent_definition_detail",
+            "scenarios_detail",
+            "evals_detail",
+            "last_run_at",
+        }
+        assert set(item["agent_definition_detail"]) == {
+            "id",
+            "agent_name",
+            "agent_type",
+            "provider",
+            "contact_number",
+        }
+        assert item["scenarios_detail"][0]["dataset_rows"] == 0
+        assert item["evals_detail"][0]["model_type"] == "turing_small"
+        assert "agent_version" not in item
+        assert "simulate_eval_configs_detail" not in item
+
+    def test_summary_list_stays_within_guard_when_full_nested_fields_do_not(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+        agent_definition,
+        monkeypatch,
+    ):
+        from simulate.views import run_test as run_test_view
+
+        agent_definition.description = "a" * 10_000
+        agent_definition.save(update_fields=["description"])
+        scenario_with_prompt_version.source = "s" * 10_000
+        scenario_with_prompt_version.save(update_fields=["source"])
+        monkeypatch.setattr(
+            run_test_view,
+            "_RUN_TEST_READ_MAX_RESPONSE_UNITS",
+            20_000,
+        )
+
+        summary_response = auth_client.get(
+            "/simulate/run-tests/?page=1&limit=50&summary=true"
+        )
+        full_response = auth_client.get("/simulate/run-tests/?page=1&limit=50")
+
+        assert summary_response.status_code == status.HTTP_200_OK, (
+            summary_response.content
+        )
+        assert full_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
     def test_create_accepts_declared_agent_version_field(
         self, auth_client, agent_definition, scenario_with_prompt_version
     ):

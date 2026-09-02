@@ -56,6 +56,11 @@ import { red } from "src/theme/palette";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
+import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
+import {
+  attributeInventoryKey,
+  useCursorAttributeInventory,
+} from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 
 function CustomTabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -202,17 +207,25 @@ const DetailsEdit = ({
     replace(configuredEvalList);
   }, [configuredEvalList]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(filters),
-        },
-      }),
-    select: (data) => data.data?.result,
-  });
+  const [attributeSearch, setAttributeSearch] = useState("");
+  const preservedAttributeKeys = useMemo(() => {
+    const filterKeys = (formValues?.filters || [])
+      .filter((filter) => filter?.property === "attributes")
+      .map((filter) => filter.propertyId);
+    const mappingKeys = (formValues?.evalsDetails || []).flatMap((evaluation) =>
+      Object.values(evaluation?.mapping || {}),
+    );
+    return [...new Set([...filterKeys, ...mappingKeys].filter(Boolean))];
+  }, [formValues]);
+  const { filteredAttributes: evalAttributes, inventoryControlProps } =
+    useCursorAttributeInventory({
+      projectId: project,
+      rowType,
+      discoveryMode: "eval_mapping",
+      search: attributeSearch,
+      preservedKeys: preservedAttributeKeys,
+      enabled: isProjectSelected,
+    });
 
   const { data: projectsList } = useQuery({
     queryKey: ["project-list"],
@@ -224,11 +237,10 @@ const DetailsEdit = ({
   });
 
   const formattedEvalAttributes = useMemo(() => {
-    if (!evalAttributes) return [];
     return (
       evalAttributes?.map((attr) => ({
-        headerName: attr,
-        field: attr,
+        headerName: attributeInventoryKey(attr),
+        field: attributeInventoryKey(attr),
       })) || []
     );
   }, [evalAttributes]);
@@ -359,6 +371,15 @@ const DetailsEdit = ({
       open={open}
       onClose={onClose}
       allColumns={formattedEvalAttributes}
+      onColumnSearchChange={setAttributeSearch}
+      columnInventoryControls={
+        <AttributeInventoryControls
+          {...inventoryControlProps}
+          search={attributeSearch}
+          onSearchChange={setAttributeSearch}
+          searchLabel="Search source properties"
+        />
+      }
       refreshGrid={refreshGrid}
       module="task"
       onSuccess={(data, variables) => {
@@ -604,15 +625,17 @@ const DetailsEdit = ({
                             <NewTaskFilterBox
                               getValues={getValues}
                               setValue={setValue}
-                              attributes={
-                                Array.isArray(evalAttributes)
-                                  ? evalAttributes.map((attr) => ({
-                                      label: attr,
-                                      value: attr,
-                                    }))
-                                  : []
-                              }
+                              attributes={evalAttributes.map((attr) => {
+                                const key = attributeInventoryKey(attr);
+                                return { label: key, value: key };
+                              })}
                               control={control}
+                              onAttributeSearchChange={setAttributeSearch}
+                            />
+                            <AttributeInventoryControls
+                              {...inventoryControlProps}
+                              showSearch={false}
+                              search={attributeSearch}
                             />
                           </AccordionDetails>
                         </Accordion>

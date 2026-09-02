@@ -2,7 +2,7 @@
 Stress tests for the session list ClickHouse queries.
 
 These tests verify that:
-1. The query builder produces optimized queries (no uniqExact, proper LIMIT)
+1. The query builder produces exact aggregate queries with finite page bounds
 2. The count-skip logic correctly eliminates unnecessary count queries
 3. The span attributes query is bounded (root spans + LIMIT)
 4. Large result sets are processed within acceptable time bounds
@@ -82,9 +82,9 @@ class TestSessionListQueryPerformance:
             builder._build_simple_count_query()
         elapsed = time.monotonic() - start
 
-        assert (
-            elapsed < 0.5
-        ), f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
+        assert elapsed < 0.5, (
+            f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
+        )
 
     def test_count_query_generation_speed_aggregated_path(self):
         """Aggregated count query (with HAVING) should be fast to generate."""
@@ -109,16 +109,17 @@ class TestSessionListQueryPerformance:
         assert "LIMIT 500" in query
         assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
 
-    def test_no_uniqExact_in_any_query(self):
-        """No query path should use expensive uniqExact."""
+    def test_trace_count_is_exact_in_every_session_aggregate_query(self):
+        """Published session trace totals must never use approximate uniq()."""
         builder = self._make_builder(aggregate_filters=2)
         builder.build()
 
         main_query, _ = builder.build()
         count_query, _ = builder.build_count_query()
 
-        assert "uniqExact" not in main_query
-        assert "uniqExact" not in count_query
+        assert "uniqExact(trace_id) AS traces_count" in main_query
+        assert "uniq(trace_id)" not in main_query
+        assert "uniq(trace_id)" not in count_query
 
     def test_simple_count_avoids_group_by(self):
         """Simple count path must NOT use GROUP BY."""
@@ -142,15 +143,23 @@ class TestSessionListQueryPerformance:
             created_at_floor=floor, created_at_ceiling=ceil
         )
         # Arrival window replaces the start_time bound on the span scan.
-        assert "created_at >= %(created_at_floor)s" in query
-        assert "created_at < %(created_at_ceiling)s" in query
+        assert (
+            "created_at >= "
+            "fromUnixTimestamp64Micro(%(created_at_floor_us)s, 'UTC')" in query
+        )
+        assert (
+            "created_at < "
+            "fromUnixTimestamp64Micro(%(created_at_ceiling_us)s, 'UTC')" in query
+        )
         assert "start_time >= %(start_date)s" not in query
         assert params["created_at_floor"] == floor
         assert params["created_at_ceiling"] == ceil
 
     def test_id_query_default_keeps_start_time_window(self):
         query, params = self._make_builder().build_id_query()
-        assert "start_time >= %(start_date)s" in query
+        assert (
+            "start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')" in query
+        )
         assert "created_at_ceiling" not in params
 
 
@@ -348,7 +357,7 @@ class TestQueryTimeoutBudget:
     """Verify that the timeout budget allocation is correct."""
 
     def test_timeout_budget_phase1(self):
-        """Phase 1 main aggregation should use uniq (fast) not uniqExact."""
+        """Phase 1 publishes an exact trace count under its finite page bound."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -358,8 +367,8 @@ class TestQueryTimeoutBudget:
             page_size=30,
         )
         query, params = builder.build()
-        assert "uniq(trace_id)" in query
-        assert "uniqExact" not in query
+        assert "uniqExact(trace_id) AS traces_count" in query
+        assert "uniq(trace_id)" not in query
         assert "LIMIT" in query
 
     def test_timeout_budget_count_optimized(self):

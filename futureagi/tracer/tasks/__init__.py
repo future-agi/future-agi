@@ -27,6 +27,9 @@ from tracer.tasks.eval_clustering import (
     cluster_eval_results_task,
 )
 
+# Exact aggregation refreshes
+from tracer.tasks.exact_aggregation import refresh_exact_aggregation_snapshot
+
 # External Eval Tasks
 from tracer.tasks.external_eval import (
     process_external_evals,
@@ -44,4 +47,5 @@ __all__ = [
     # Dataset
     "process_spans_chunk_task",
     "CHUNK_SIZE",
+    "refresh_exact_aggregation_snapshot",
 ]

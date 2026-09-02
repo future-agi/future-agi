@@ -56,6 +56,39 @@ def test_build_count_query_uses_v2_columns():
     assert "is_deleted" in sql
 
 
+def test_normal_v2_span_list_paths_bound_indexed_start_time_only():
+    """Historical/UI span reads must not scan on physical ``created_at``.
+
+    CH25 partitions and orders spans by ``start_time``. ``created_at`` remains
+    valid only for the explicit continuous-arrival ID path tested below.
+    """
+    for end_user_id in (None, "33333333-3333-3333-3333-333333333333"):
+        builder = _make_builder()
+        builder.end_user_id = end_user_id
+        for method_name in ("build", "build_count_query", "build_id_query"):
+            sql, _ = getattr(builder, method_name)()
+            assert "start_time >= %(start_date)s" in sql
+            assert "start_time < %(end_date)s" in sql
+            assert "created_at >= %(start_date)s" not in sql
+
+
+def test_v2_span_continuous_id_path_keeps_arrival_time_bounds():
+    from datetime import datetime
+
+    floor = datetime(2026, 8, 1, 12, 0)
+    ceiling = datetime(2026, 8, 1, 12, 5)
+    sql, params = _make_builder().build_id_query(
+        created_at_floor=floor,
+        created_at_ceiling=ceiling,
+    )
+
+    assert "created_at >= %(created_at_floor)s" in sql
+    assert "created_at < %(created_at_ceiling)s" in sql
+    assert "start_time >= %(start_date)s" not in sql
+    assert params["created_at_floor"] == floor
+    assert params["created_at_ceiling"] == ceiling
+
+
 def test_build_content_query_uses_typed_json_overflow_column():
     # build_content_query reads span_attributes_raw in v1 — v2 must read the
     # typed JSON column (attributes_extra) via toJSONString() wrapping to keep
@@ -98,29 +131,81 @@ def test_filter_compiler_class_yields_v2_columns():
 
 def test_v2_builder_output_includes_critical_settings():
     """Every v2 builder's build*() output MUST end with the SETTINGS clause
-    that enables use_skip_indexes_if_final, optimize_use_projections,
-    optimize_aggregation_in_order. These are required for sub-second query
-    behavior at trillion-row scale — see DECISIONS #026.
+    that keeps FINAL semantically exact while enabling the safe projection and
+    aggregation optimizers.
+
+    Arbitrary list/graph/eval filters can target mutable Map/JSON attributes,
+    so enabling skip indexes globally under FINAL can hide a newer replacement
+    row and return stale state. Stable-key point reads opt in separately.
     """
     for method in ("build", "build_count_query"):
         sql, _ = getattr(_make_builder(), method)()
         assert "SETTINGS" in sql, (
             f"{method}() output missing SETTINGS clause — required for "
-            f"trillion-row scale (use_skip_indexes_if_final etc.)"
+            "the CH25 query-builder correctness/performance contract"
         )
-        assert "use_skip_indexes_if_final = 1" in sql
+        assert "use_skip_indexes_if_final = 0" in sql
+        assert "use_skip_indexes_if_final = 1" not in sql
         assert "optimize_use_projections = 1" in sql
         assert "optimize_aggregation_in_order = 1" in sql
 
     # build_content_query takes args
     sql, _ = _make_builder().build_content_query(span_ids=["s1"])
-    assert "use_skip_indexes_if_final = 1" in sql
+    assert "use_skip_indexes_if_final = 0" in sql
+    assert "use_skip_indexes_if_final = 1" not in sql
+
+
+def test_mutable_map_and_json_filter_statements_keep_final_skip_indexes_off():
+    """The generic setting must remain safe for every attribute representation.
+
+    Typed scalar attributes live in Maps while structured attributes live in
+    the JSON overflow column. Both are mutable across physical span versions,
+    so neither may inherit a blanket FINAL skip-index opt-in.
+    """
+    cases = (
+        (
+            {
+                "column_id": "final_status",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "Rejected",
+                },
+            },
+            "attrs_string",
+        ),
+        (
+            {
+                "column_id": "customer.context",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "map",
+                    "filter_op": "contains",
+                    "filter_value": {"tier": "vip"},
+                },
+            },
+            "attributes_extra",
+        ),
+    )
+
+    for filter_item, storage_column in cases:
+        sql, _ = _make_builder(filters=[filter_item]).build_filter_match_query(
+            ["span-1"]
+        )
+
+        assert storage_column in sql
+        assert "use_skip_indexes_if_final = 0" in sql
+        assert "use_skip_indexes_if_final = 1" not in sql
+        # The bounded candidate classifier performs explicit latest-state
+        # replay; it does not need table-level FINAL on the spans scan.
+        assert "FROM spans FINAL" not in sql
 
 
 # ---------------------------------------------------------------------------
 # Eval-logger table routing: the Phase-2 score query (build_eval_query) is
-# excluded from the v2 rewrite, so it must follow CH25_EVAL_LOGGER_TABLE on its
-# own — else a v2 deployment 500s on the dropped legacy tracer_eval_logger.
+# excluded from the span-column rewrite, so it follows the independently
+# configured eval table while the main span query remains on CH25.
 # (Discovery-query routing is covered in test_eval_config_ids_resolution.py.)
 # ---------------------------------------------------------------------------
 
@@ -135,22 +220,27 @@ def test_build_eval_query_routes_to_v2_table():
     # `ORDER BY _version DESC LIMIT 1 BY id` inside the subquery.
     assert "tracer_eval_logger_v2 FINAL" not in sql
     assert "LIMIT 1 BY id" in sql
-    assert "is_deleted = 0" in sql
+    assert "is_deleted AS latest_state_0" in sql
+    assert "latest_state_0 = 0" in sql
     assert "_peerdb_is_deleted" not in sql
     assert "deleted IS NULL" not in sql
 
 
 @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
-def test_build_eval_query_keeps_legacy_table_and_predicate():
+def test_build_eval_query_uses_authoritative_legacy_named_table():
     sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
         span_ids=["sp1", "sp2"]
     )
-    assert "tracer_eval_logger" in sql
+    assert "FROM tracer_eval_logger\n" in sql
     assert "tracer_eval_logger FINAL" not in sql
     assert "LIMIT 1 BY id" in sql
-    assert "tracer_eval_logger_v2" not in sql
-    assert "_peerdb_is_deleted = 0" in sql
-    assert "deleted = 0 OR deleted IS NULL" in sql
+    assert "ORDER BY _peerdb_version DESC" in sql
+    assert "_peerdb_is_deleted AS latest_state_0" in sql
+    assert "deleted AS latest_state_1" in sql
+    assert "latest_state_0 = 0" in sql
+    assert "(latest_state_1 = 0 OR latest_state_1 IS NULL)" in sql
+    assert "status," in sql
+    assert "skipped_reason," in sql
 
 
 # ── perf-fix shapes: tiebreak, progressive slices, created_at bounds ─────────

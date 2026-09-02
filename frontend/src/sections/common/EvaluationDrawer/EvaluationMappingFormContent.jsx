@@ -115,6 +115,8 @@ export default function EvaluationMappingFormContent({
   formState,
   hideGroupHeader = false,
   hideAddGroupButton = false,
+  onColumnSearchChange,
+  columnInventoryControls,
 }) {
   const [_, setSearchParams] = useSearchParams();
   const theme = useTheme();
@@ -575,6 +577,7 @@ export default function EvaluationMappingFormContent({
                   handleCheckbox={undefined}
                   noOptions={emptyMessage()}
                   hideFieldColumns={hideFieldColumns}
+                  onSearchChange={onColumnSearchChange}
                 />
                 <IconButton
                   sx={{
@@ -708,6 +711,7 @@ export default function EvaluationMappingFormContent({
                         handleCheckbox={undefined}
                         noOptions={emptyMessage()}
                         hideFieldColumns={hideFieldColumns}
+                        onSearchChange={onColumnSearchChange}
                       />
                     ))}
                   </Stack>
@@ -740,6 +744,7 @@ export default function EvaluationMappingFormContent({
                         handleCheckbox={undefined}
                         noOptions={emptyMessage()}
                         hideFieldColumns={hideFieldColumns}
+                        onSearchChange={onColumnSearchChange}
                       />
                     ))}
                   </Stack>
@@ -797,6 +802,7 @@ export default function EvaluationMappingFormContent({
                     handleCheckbox={undefined}
                     noOptions={emptyMessage()}
                     hideFieldColumns={hideFieldColumns}
+                    onSearchChange={onColumnSearchChange}
                   />
                   <IconButton
                     sx={{
@@ -826,6 +832,7 @@ export default function EvaluationMappingFormContent({
             })}
           </Box>
         )}
+      {columnInventoryControls}
       <ShowComponent
         condition={!selectedEval?.isGroupEvals && functionConfigKeys.length > 0}
       >
@@ -1136,4 +1143,6 @@ EvaluationMappingFormContent.propTypes = {
   formState: PropTypes.object,
   hideGroupHeader: PropTypes.bool,
   hideAddGroupButton: PropTypes.bool,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
