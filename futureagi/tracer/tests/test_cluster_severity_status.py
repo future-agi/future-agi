@@ -12,6 +12,7 @@ floor. Fix 7 stops claiming a trend below a threshold where there is none.
 Neither invents a model. They make the existing labels defensible.
 """
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,6 +48,7 @@ def _cluster(project, *, traces=1, title="Queried the wrong period", **kwargs):
 _EMBEDDING = [0.1] * 8
 
 
+@contextmanager
 def _ch_stub():
     """ClickHouseVectorDB double whose reads return no rows.
 
@@ -55,9 +57,11 @@ def _ch_stub():
     """
     db = MagicMock()
     db.client.execute.return_value = []
-    return patch(
+    db.execute_read.return_value = []
+    with patch(
         "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
-    )
+    ):
+        yield
 
 
 def _issue(project, brief="Queried the wrong period"):

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
+from tracer.services.clickhouse.v2.eval_loader import EvalTelemetryReadError
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import mark_terminal, writing_onto_entry
 
@@ -29,8 +30,9 @@ def run_entry(entry: EvalLogger) -> str:
     """Run the eval for one entry and record its terminal status; returns it.
 
     No-op (returns ``"deleted"``) if the entry was soft-deleted mid-run — a
-    Delete & rerun landing while it ran. Every failure converges to a terminal
-    state here so one bad item never aborts the drain.
+    Delete & rerun landing while it ran. Eval/data failures converge to a
+    terminal state; infrastructure read failures propagate to the activity's
+    bounded retry policy.
     """
     fresh = EvalLogger.objects.filter(id=entry.id).first()
     if fresh is None:
@@ -39,10 +41,21 @@ def run_entry(entry: EvalLogger) -> str:
     config = CustomEvalConfig.objects.select_related("project").get(
         id=fresh.custom_eval_config_id
     )
+    # Infrastructure reads happen before the terminalizing evaluator boundary:
+    # a transient PG failure loading task ownership must be retried by Temporal,
+    # not recorded as a permanent eval-entry error on its first attempt.
+    task_project = (
+        EvalTask.objects.select_related("project").get(id=fresh.eval_task_id).project
+    )
     config_hash = resolved_config_hash(config)
 
     try:
-        _run_for_target(fresh, config)
+        _run_for_target(fresh, config, task_project=task_project)
+    except EvalTelemetryReadError:
+        # CH transport/query pressure is infrastructure, not an eval result.
+        # Bubble it to the activity so its bounded retry policy can retry the
+        # same still-RUNNING entry instead of freezing a transient miss.
+        raise
     except Exception as e:  # Every failure becomes a terminal state.
         skipped_reason = getattr(e, "skipped_reason", None)
         if skipped_reason:
@@ -69,10 +82,47 @@ def run_entry(entry: EvalLogger) -> str:
     fresh.refresh_from_db()
     status = EvalEntryStatus.ERRORED if fresh.error else EvalEntryStatus.COMPLETED
     mark_terminal(fresh, status, config_hash=config_hash)
+    if status == EvalEntryStatus.COMPLETED:
+        _reseed_eval_clustering(fresh, config.project_id)
     return status
 
 
-def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
+def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
+    """Re-trigger eval-result clustering for a completed *failing* eval-task eval.
+
+    Clustering used to be seeded inside the ``evaluate_*_observe`` wrappers, which
+    the (now-retired) eval-task cron drove. The per-task workflows that replaced
+    the cron call the inner eval cores directly and bypass those wrappers, so the
+    trigger has to live here or eval-task failures never cluster — the exact gap
+    the cutover opened. ``run_entry`` is the single activity core both the
+    historical AND continuous workflows drain every entry through, so hooking it
+    covers both (a per-task-completion hook would miss continuous tasks, which
+    never finalize).
+
+    The dispatch itself (per-project coalescing, fail-open logging) lives in
+    ``dispatch_eval_clustering`` — shared with the span-eval wrapper, which is
+    the trigger for feedback-driven re-evals that never reach ``run_entry``.
+    A coalesced trigger is dropped by design; the drain it folds into keeps
+    re-fetching until empty, so the rows behind that trigger are still picked up.
+    """
+    # Mirror _FAILING_EVAL_Q's failure clause. A failing eval with no explanation
+    # has nothing to embed/cluster, so skip the no-op dispatch RPC.
+    is_clusterable_failure = (
+        entry.output_bool is False
+        or (entry.output_float is not None and entry.output_float < 1.0)
+    ) and entry.eval_explanation
+    if not is_clusterable_failure:
+        return
+    # Lazy import: the tasks module pulls the tracer task graph, so importing at
+    # module top risks a cycle (mirrors eval.py).
+    from tracer.tasks.eval_clustering import dispatch_eval_clustering
+
+    dispatch_eval_clustering(project_id)
+
+
+def _run_for_target(
+    entry: EvalLogger, config: CustomEvalConfig, *, task_project
+) -> None:
     """Dispatch to the per-target_type evaluation core (reused from eval.py),
     forcing eval input to load from ClickHouse for the duration."""
     from tracer.services.clickhouse.v2.eval_loader import (
@@ -94,10 +144,15 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
     )
 
     task_id = entry.eval_task_id
-    task_project = EvalTask.objects.select_related("project").get(id=task_id).project
     template_id = config.eval_template_id
 
-    with eval_read_source("clickhouse"), writing_onto_entry(entry.id):
+    with (
+        eval_read_source("clickhouse"),
+        writing_onto_entry(
+            entry.id,
+            output_metadata=entry.output_metadata,
+        ),
+    ):
         if entry.target_type == EvalTargetType.SPAN:
             span = get_observation_span(
                 entry.observation_span_id,
@@ -115,6 +170,8 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 eval_task_id=task_id,
                 run_params=run_params,
                 type=OBSERVE,
+                observation_span=span,
+                project_id=task_project.id,
             )
             # Single evals write inside _execute_evaluation; composites return the
             # logger kwargs for the caller to persist (mirrors the span wrapper).
@@ -130,8 +187,21 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 ),
                 project_id=task_project.id,
             )
+            task_selection = (
+                entry.output_metadata.get("_task_selection")
+                if isinstance(entry.output_metadata, dict)
+                else None
+            )
+            filter_witnesses = (
+                task_selection.get("filter_witnesses")
+                if isinstance(task_selection, dict)
+                else None
+            )
             run_params = resolve_trace_mapping_lean_first(
-                config.mapping, trace, template_id
+                config.mapping,
+                trace,
+                template_id,
+                filter_witnesses=filter_witnesses,
             )
             _execute_evaluation_for_trace(
                 trace=trace,

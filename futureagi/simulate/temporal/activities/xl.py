@@ -277,10 +277,11 @@ def _build_transcript_data(call_execution):
                 provider = SpeakerRoleResolver.detect_provider(
                     call_execution.provider_call_data
                 )
-                call_dir = (call_execution.call_metadata or {}).get(
-                    "call_direction", ""
-                )
-                is_outbound = str(call_dir).strip().lower() == "outbound"
+                # Use the resolver's own direction detection, which defaults to
+                # outbound on missing metadata. The prior inline check defaulted
+                # to inbound, which — combined with a provider that fell back to
+                # VAPI — swapped the agent/customer labels on the eval transcript.
+                is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
                 conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
                     if not transcript.content.strip():
@@ -311,7 +312,7 @@ def _build_transcript_data(call_execution):
         # Read assistant/customer recordings from provider_call_data
         if call_execution.provider_call_data:
             for (
-                provider_key,
+                _provider_key,
                 provider_data,
             ) in call_execution.provider_call_data.items():
                 if not isinstance(provider_data, dict):
@@ -424,11 +425,22 @@ def stringify_leaf(v):
 
 
 # Blocked at both attribute and dict-key layers to keep secret-shaped values out of eval prompts.
-_BLOCKED_ATTRS = frozenset({
-    "api_key", "api_secret", "secret", "secret_key", "password",
-    "token", "access_token", "refresh_token", "access_key", "private_key",
-    "credentials", "credentials_legacy",
-})
+_BLOCKED_ATTRS = frozenset(
+    {
+        "api_key",
+        "api_secret",
+        "secret",
+        "secret_key",
+        "password",
+        "token",
+        "access_token",
+        "refresh_token",
+        "access_key",
+        "private_key",
+        "credentials",
+        "credentials_legacy",
+    }
+)
 
 
 def _step_segment(current, part):
@@ -589,8 +601,12 @@ def build_simulation_context_map(call_execution, agent_version):
     rtm = _rtm if _rtm is not None else _cm_lat
     agent_latency_ms = _aal if _aal is not None else _cm_lat
     avg_latency_ms = _cm_lat if _cm_lat is not None else agent_latency_ms
-    talk_ratio = _tr if _tr is not None else (_cm_atp / 100.0 if _cm_atp is not None else None)
-    agent_talk_percentage = _cm_atp if _cm_atp is not None else (_tr * 100.0 if _tr is not None else None)
+    talk_ratio = (
+        _tr if _tr is not None else (_cm_atp / 100.0 if _cm_atp is not None else None)
+    )
+    agent_talk_percentage = (
+        _cm_atp if _cm_atp is not None else (_tr * 100.0 if _tr is not None else None)
+    )
     csat_score = _cm_csat if _cm_csat is not None else call_execution.overall_score
     response_time_seconds = rtm / 1000.0 if rtm is not None else None
     from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -703,10 +719,18 @@ def build_simulation_context_map(call_execution, agent_version):
             ctx[dot_key] = ctx[underscore_key]
 
     try:
-        scenario_columns_subject = _detail_serializer.get_scenario_columns(call_execution) or {}
-        scenario_graph_subject = _detail_serializer.get_scenario_graph(call_execution) or {}
+        scenario_columns_subject = (
+            _detail_serializer.get_scenario_columns(call_execution) or {}
+        )
+        scenario_graph_subject = (
+            _detail_serializer.get_scenario_graph(call_execution) or {}
+        )
     except Exception:
-        logger.warning("eval_ctx.subject_build_failed", call_execution_id=str(call_execution.id), exc_info=True)
+        logger.warning(
+            "eval_ctx.subject_build_failed",
+            call_execution_id=str(call_execution.id),
+            exc_info=True,
+        )
         scenario_columns_subject = scenario_graph_subject = {}
 
     # Walker dispatch roots; order is load-bearing (`call` first for bare heads).
@@ -965,15 +989,21 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 "call_type": call_execution.call_type,
                 "simulation_call_type": call_execution.simulation_call_type,
                 "phone_number": call_execution.phone_number,
-                "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                "started_at": str(call_execution.started_at)
+                if call_execution.started_at
+                else None,
+                "ended_at": str(call_execution.ended_at)
+                if call_execution.ended_at
+                else None,
                 "duration_seconds": call_execution.duration_seconds,
                 "recording_url": call_execution.recording_url,
                 "call_summary": call_execution.call_summary,
                 "ended_reason": call_execution.ended_reason,
                 "error_message": call_execution.error_message,
                 "message_count": call_execution.message_count,
-                "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                "overall_score": float(call_execution.overall_score)
+                if call_execution.overall_score is not None
+                else None,
             }
 
         eval_result = run_eval_func(
@@ -1458,7 +1488,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
     except ImportError:
         if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.tool_eval_agent.tool_eval_agent", exc_info=True)
+            logger.warning(
+                "Could not import ee.agenthub.tool_eval_agent.tool_eval_agent",
+                exc_info=True,
+            )
         return
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
@@ -1466,6 +1499,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
+
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1509,7 +1543,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.tool_eval_agent.adapters",
+                        exc_info=True,
+                    )
                 return
 
             try:
@@ -1526,7 +1563,10 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.tool_eval_agent.adapters",
+                        exc_info=True,
+                    )
                 return
 
             customer_api_key = resolve_api_key_for_version(agent_version)
@@ -1789,6 +1829,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
+
                         def llm_usage_properties(obj):
                             return {}
 

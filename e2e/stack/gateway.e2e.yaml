@@ -1,0 +1,684 @@
+# Agentcc Gateway Configuration
+# Copy to config.yaml and update with your settings.
+
+server:
+  port: 8080
+  host: "0.0.0.0"
+  read_timeout: 5s
+  write_timeout: 300s
+  idle_timeout: 120s
+  shutdown_timeout: 30s
+  max_request_body_size: 10485760 # 10MB
+  default_request_timeout: 60s
+
+providers:
+  openai:
+    base_url: "http://mock-llm:8080"
+    api_key: "e2e-mock"
+    api_format: "openai"
+    default_timeout: 60s
+    max_concurrent: 100
+    conn_pool_size: 100
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+      - gpt-4-turbo
+      - gpt-3.5-turbo
+      - o1
+      - o1-mini
+
+  # anthropic:
+  #   base_url: "https://api.anthropic.com"
+  #   api_key: "${ANTHROPIC_API_KEY}"
+  #   api_format: "anthropic"
+  #   default_timeout: 120s
+  #   max_concurrent: 50
+  #   conn_pool_size: 50
+  #   headers:
+  #     anthropic-version: "2023-06-01"
+  #   models:
+  #     - claude-sonnet-4-20250514
+  #     - claude-3-5-haiku-20241022
+  #     - claude-3-opus-20240229
+
+  # gemini:
+  #   base_url: "https://generativelanguage.googleapis.com"
+  #   api_key: "${GEMINI_API_KEY}"
+  #   api_format: "gemini"
+  #   default_timeout: 120s
+  #   max_concurrent: 50
+  #   conn_pool_size: 50
+  #   models:
+  #     - gemini-2.0-flash
+  #     - gemini-2.0-pro
+  #     - gemini-1.5-pro
+
+  # Google Vertex AI (same api_format as gemini, different base URL + Bearer auth):
+  # vertex:
+  #   base_url: "https://us-central1-aiplatform.googleapis.com"
+  #   api_key: "${GOOGLE_ACCESS_TOKEN}"        # Bearer token from gcloud/service account
+  #   api_format: "gemini"
+  #   headers:
+  #     x-gcp-project: "my-project-id"         # GCP project ID
+  #     x-gcp-location: "us-central1"          # GCP region
+  #   models:
+  #     - gemini-2.0-flash
+  #     - gemini-2.0-pro
+
+  # bedrock:
+  #   base_url: "https://bedrock-runtime.us-east-1.amazonaws.com"
+  #   api_format: "bedrock"
+  #   default_timeout: 120s
+  #   max_concurrent: 50
+  #   conn_pool_size: 50
+  #   headers:
+  #     x-aws-region: "us-east-1"
+  #   models:
+  #     - anthropic.claude-3-sonnet-20240229-v1:0
+  #     - anthropic.claude-3-haiku-20240307-v1:0
+  #   # Auth: Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY env vars
+
+  # Bedrock cross-region (use multiple providers + routing for failover):
+  # bedrock-east:
+  #   base_url: "https://bedrock-runtime.us-east-1.amazonaws.com"
+  #   api_format: "bedrock"
+  #   headers: { x-aws-region: "us-east-1" }
+  #   models: [anthropic.claude-3-sonnet-v1]
+  # bedrock-west:
+  #   base_url: "https://bedrock-runtime.us-west-2.amazonaws.com"
+  #   api_format: "bedrock"
+  #   headers: { x-aws-region: "us-west-2" }
+  #   models: [anthropic.claude-3-sonnet-v1]
+  # # Then configure routing targets for load balancing / failover:
+  # # routing:
+  # #   targets:
+  # #     anthropic.claude-3-sonnet-v1:
+  # #       - provider: bedrock-east
+  # #         weight: 70
+  # #       - provider: bedrock-west
+  # #         weight: 30
+
+  # cohere:
+  #   base_url: "https://api.cohere.com"
+  #   api_key: "${COHERE_API_KEY}"
+  #   api_format: "cohere"
+  #   default_timeout: 60s
+  #   max_concurrent: 50
+  #   conn_pool_size: 50
+  #   models:
+  #     - command-r-plus
+  #     - command-r
+  #     - command
+
+  # ── Self-Hosted / Custom Endpoints ──────────────────────────
+  # vLLM, Ollama, LMStudio, TGI, LocalAI — all use OpenAI-compat format.
+  # Just set api_format: "openai" and point base_url to your server.
+  # No api_key needed for local servers. Models are auto-discovered
+  # from /v1/models if not listed. Local endpoints get optimized defaults
+  # (120s timeout, 10 max_concurrent, 10 pool size).
+
+  # vllm:
+  #   base_url: "http://localhost:8000"
+  #   api_format: "openai"
+  #   type: "vllm"
+  #   # models: auto-discovered from /v1/models
+
+  # ollama:
+  #   base_url: "http://localhost:11434"
+  #   api_format: "openai"
+  #   type: "ollama"
+  #   # Ollama serves OpenAI-compat at /v1/ by default
+
+  # lmstudio:
+  #   base_url: "http://localhost:1234"
+  #   api_format: "openai"
+  #   type: "lmstudio"
+
+  # tgi:
+  #   base_url: "http://localhost:8080"
+  #   api_format: "openai"
+  #   type: "tgi"
+
+  # Custom remote OpenAI-compatible endpoint:
+  # my-server:
+  #   base_url: "https://my-inference.example.com"
+  #   api_key: "${MY_SERVER_KEY}"
+  #   api_format: "openai"
+  #   local: false          # treat as remote (cloud defaults)
+  #   skip_tls: false       # set true for self-signed certs
+  #   auto_discover: true   # fetch models from /v1/models
+  #   models:               # or list explicitly
+  #     - my-model-v1
+
+  # ── Cloud Providers (OpenAI-Compatible) ──────────────────────
+  # These providers use the OpenAI API format. Set type to auto-fill base_url,
+  # or specify base_url explicitly to override. Only api_key is required.
+
+  # azure:
+  #   base_url: "https://my-resource.openai.azure.com"
+  #   api_key: "${AZURE_OPENAI_KEY}"
+  #   type: "azure"                  # auto-sets api_format: "azure"
+  #   headers:
+  #     api-version: "2024-10-21"    # Azure API version (default: 2024-10-21)
+  #   models:
+  #     - gpt-4o                     # Azure deployment names
+  #     - gpt-4o-mini
+
+  # Azure OpenAI with Azure AD token auth (instead of api-key):
+  # azure-ad:
+  #   base_url: "https://my-resource.openai.azure.com"
+  #   api_key: "${AZURE_AD_TOKEN}"   # Bearer token from Azure AD
+  #   type: "azure"
+  #   headers:
+  #     auth-type: "bearer"          # use Authorization: Bearer instead of api-key
+  #     api-version: "2024-10-21"
+  #   models:
+  #     - gpt-4o
+
+  # groq:
+  #   api_key: "${GROQ_API_KEY}"
+  #   type: "groq"                   # auto-sets base_url + api_format
+  #   models:
+  #     - llama-3.3-70b-versatile
+  #     - mixtral-8x7b-32768
+
+  # mistral:
+  #   api_key: "${MISTRAL_API_KEY}"
+  #   type: "mistral"
+  #   models:
+  #     - mistral-large-latest
+  #     - mistral-small-latest
+
+  # together:
+  #   api_key: "${TOGETHER_API_KEY}"
+  #   type: "together"
+  #   models:
+  #     - meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo
+  #     - mistralai/Mixtral-8x7B-Instruct-v0.1
+
+  # fireworks:
+  #   api_key: "${FIREWORKS_API_KEY}"
+  #   type: "fireworks"
+  #   models:
+  #     - accounts/fireworks/models/llama-v3p1-70b-instruct
+
+  # deepinfra:
+  #   api_key: "${DEEPINFRA_API_KEY}"
+  #   type: "deepinfra"
+  #   models:
+  #     - meta-llama/Meta-Llama-3.1-70B-Instruct
+
+  # Perplexity exposes two complementary APIs over the same OpenAI-compatible base URL:
+  #   * Sonar API  (chat completions) - models: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research
+  #   * Agent API  (responses)        - orchestrates third-party LLMs (default model: gpt-5.1)
+  # See https://docs.perplexity.ai for full reference.
+  # perplexity:
+  #   api_key: "${PERPLEXITY_API_KEY}"
+  #   type: "perplexity"
+  #   models:
+  #     - sonar-pro
+  #     - sonar
+  #     - sonar-reasoning-pro
+  #     - sonar-reasoning
+  #     - sonar-deep-research
+  #     # Agent API (third-party model via Perplexity Agent orchestration)
+  #     - gpt-5.1
+
+  # cerebras:
+  #   api_key: "${CEREBRAS_API_KEY}"
+  #   type: "cerebras"
+  #   models:
+  #     - llama3.1-70b
+
+  # xai:
+  #   api_key: "${XAI_API_KEY}"
+  #   type: "xai"
+  #   models:
+  #     - grok-2
+
+  # openrouter:
+  #   api_key: "${OPENROUTER_API_KEY}"
+  #   type: "openrouter"
+  #   models:
+  #     - openai/gpt-4o
+  #     - anthropic/claude-3.5-sonnet
+
+# Explicit model-to-provider mapping (overrides provider-level models).
+# model_map:
+#   gpt-4o: openai
+#   claude-sonnet-4-20250514: anthropic
+
+# Virtual API key authentication.
+# When enabled, all requests must include Authorization: Bearer sk-agentcc-xxx
+# Setting AGENTCC_INTERNAL_API_KEY in the environment turns this on automatically
+# and registers that key. Running with no key and no auth block leaves the
+# gateway open — only do that on a trusted, non-public network.
+# auth:
+#   enabled: true
+#   keys:
+#     - name: "dev-key"
+#       key: "sk-agentcc-dev-key-for-testing"
+#       owner: "dev-team"
+#       models:
+#         - gpt-4o
+#         - gpt-4o-mini
+#     - name: "prod-key"
+#       key: "sk-agentcc-prod-key-unrestricted"
+#       owner: "production"
+#       # no models = unrestricted access to all models
+
+# Load balancing across multiple providers for the same model.
+# routing:
+#   default_strategy: "round-robin"   # round-robin, weighted, least-latency, cost-optimized
+#   failover:
+#     enabled: true                    # Auto-failover to next provider on error (default: true)
+#     max_attempts: 3                  # Max providers to try (default: 3)
+#     on_status_codes: [429, 500, 502, 503, 504]  # HTTP codes that trigger failover
+#     on_timeout: true                 # Failover on timeout errors (default: true)
+#   circuit_breaker:
+#     enabled: true                    # Per-provider circuit breaking (default: false)
+#     failure_threshold: 5             # Consecutive failures to open circuit (default: 5)
+#     success_threshold: 2             # Successes in half-open to close (default: 2)
+#     cooldown: 30s                    # Time before half-open test (default: 30s)
+#   retry:
+#     enabled: true                    # Auto-retry on same provider (default: true when routing)
+#     max_retries: 2                   # Max retries per provider (default: 2)
+#     initial_delay: 500ms             # First retry delay (default: 500ms)
+#     max_delay: 10s                   # Max backoff cap (default: 10s)
+#     multiplier: 2.0                  # Backoff multiplier (default: 2.0)
+#   model_fallbacks:
+#     gpt-4o:                              # If gpt-4o is unavailable, try these in order
+#       - claude-sonnet-4-20250514
+#       - gemini-2.0-pro
+#     claude-sonnet-4-20250514:
+#       - gpt-4o
+#       - gemini-2.0-pro
+#   model_timeouts:                          # Per-model timeout overrides
+#     o1: 300s                               # Reasoning models need more time
+#     o1-mini: 180s
+#     claude-3-opus-20240229: 120s
+#   mirror:                                 # Traffic mirroring for shadow testing
+#     enabled: true
+#     rules:
+#       - source_model: "gpt-4o"            # Mirror gpt-4o requests
+#         target_provider: "anthropic"       # Send copy to Anthropic
+#         target_model: "claude-sonnet-4-20250514"
+#         sample_rate: 0.1                   # Mirror 10% of traffic
+#       - source_model: "*"                  # Mirror all models
+#         target_provider: "staging"
+#         sample_rate: 0.01                  # 1% of all traffic
+#   conditional_routes:
+#     - name: "enterprise-tier"           # Route enterprise users to dedicated provider
+#       priority: 10                      # Lower = higher priority, first match wins
+#       condition:
+#         field: "metadata.tier"
+#         op: "$eq"
+#         value: "enterprise"
+#       action:
+#         provider: "openai-dedicated"
+#     - name: "gpt-models-to-openai"      # Route all GPT models to OpenAI
+#       priority: 50
+#       condition:
+#         field: "model"
+#         op: "$regex"
+#         value: "^gpt-"
+#       action:
+#         provider: "openai"
+#     # Operators: $eq, $ne, $in, $nin, $regex, $gt, $lt, $gte, $lte, $exists
+#     # Combinators: $and, $or, $not (nest conditions for complex rules)
+#     # Fields: model, user, stream, provider, session_id, request_id, metadata.<key>
+#   targets:
+#     gpt-4o:
+#       - provider: openai-east
+#         weight: 50
+#       - provider: openai-west
+#         weight: 50
+
+# cache:
+#   enabled: true
+#   default_ttl: 5m                        # Default cache entry TTL
+#   max_entries: 10000                     # Max entries in LRU cache
+#   # Per-request headers:
+#   #   x-agentcc-cache-ttl: "10m"           # Override TTL for this request
+#   #   x-agentcc-cache-namespace: "prod"    # Isolate cache by namespace
+#   #   x-agentcc-cache-force-refresh: true  # Skip cache read, refresh entry
+#   #   Cache-Control: no-store            # Skip caching entirely
+
+# rate_limiting:
+#   enabled: true
+#   global_rpm: 0              # 0 = unlimited (default). Set to limit all unauthenticated requests.
+
+# cost_tracking:
+#   enabled: true
+#   custom_pricing:
+#     my-custom-model:
+#       input_per_mtok: 1.00
+#       output_per_mtok: 5.00
+
+logging:
+  level: info
+  # request_logging:
+  #   enabled: true              # Log every request (default: true)
+  #   include_bodies: false      # Include full request/response bodies (default: false)
+  #   buffer_size: 4096          # Async buffer size (default: 4096)
+  #   workers: 2                 # Number of log worker goroutines (default: 2)
+# guardrails:
+#   enabled: true
+#   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
+#   default_timeout: 5s                 # Default per-guardrail timeout
+#   rules:
+#     - name: "pii-detection"           # Must match a registered guardrail name
+#       stage: "pre"                    # "pre" (before provider) or "post" (after provider)
+#       mode: "sync"                    # "sync" (blocks pipeline) or "async" (fire-and-forget)
+#       action: "block"                 # "block", "warn", or "log"
+#       threshold: 0.8                  # Score above this triggers the action
+#       timeout: 3s                     # Per-rule timeout override
+#       config:                         # Rule-specific config passed to the guardrail
+#         entities: ["email", "phone", "ssn"]
+#     - name: "content-moderation"
+#       stage: "post"
+#       mode: "sync"
+#       action: "warn"
+#       threshold: 0.7
+#     - name: "usage-logger"
+#       stage: "pre"
+#       mode: "async"                   # Async guardrails don't block the pipeline
+#       action: "log"
+#       threshold: 0.0
+
+# admin:
+#   token: "your-secret-admin-token"
+
+# CORS for browser-based clients hitting the gateway directly.
+# cors:
+#   enabled: true
+#   allowed_origins: ["https://app.example.com", "*"]
+#   allowed_methods: ["GET", "POST", "OPTIONS"]
+#   allowed_headers: ["Authorization", "Content-Type"]
+#   exposed_headers: []
+#   max_age: 86400
+#   allow_credentials: false
+
+# Restrict inbound traffic by IP / CIDR.
+# ip_acl:
+#   enabled: true
+#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
+#   allow: ["10.0.0.0/8", "192.168.1.0/24"]
+#   deny:  ["203.0.113.7"]                # deny takes precedence over allow
+
+# Role-based access control for teams and users.
+# rbac:
+#   enabled: true
+#   default_role: "viewer"
+#   roles:
+#     admin:
+#       permissions: ["*"]
+#     developer:
+#       permissions: ["chat.completions:create", "models:list"]
+#     viewer:
+#       permissions: ["models:list"]
+#   teams:
+#     platform:
+#       role: "admin"
+#       models: ["gpt-4o", "claude-sonnet-4-20250514"]
+#       members:
+#         alice@example.com: {}
+
+# Spend caps per org / team / user / key / tag. Requires cost_tracking enabled.
+# budgets:
+#   enabled: true
+#   default_period: "monthly"       # daily | weekly | monthly | total
+#   warn_threshold: 0.8              # notify at 80% of limit
+#   org:
+#     limit: 10000.0                 # USD
+#     hard: true                     # hard=true rejects once limit hit
+#   teams:
+#     platform:
+#       limit: 5000.0
+#       period: "monthly"
+#       per_model:
+#         gpt-4o: 2000.0
+#   users:
+#     alice@example.com:
+#       limit: 500.0
+#   keys:
+#     sk-agentcc-dev-key-for-testing:
+#       limit: 100.0
+
+# Structured audit log of security-relevant events.
+# audit:
+#   enabled: true
+#   buffer_size: 1024
+#   min_severity: "info"              # info | warn | error | critical
+#   categories: []                     # empty = all (auth, rbac, budget, admin, ...)
+#   sinks:
+#     - type: "stdout"
+#     - type: "file"
+#       path: "/var/log/agentcc/audit.jsonl"
+#     - type: "webhook"
+#       url: "https://siem.example.com/ingest"
+#       headers:
+#         Authorization: "Bearer ${SIEM_TOKEN}"
+
+# OpenTelemetry tracing. One span per request carrying model, provider,
+# latency, token counts, cost, cache status, and any caller dimensions sent in
+# the x-agentcc-metadata header. Attribute names follow the OTel GenAI semantic
+# conventions (gen_ai.*), with session.id / user.id / metadata for the rest, so
+# spans are consumable by any GenAI-aware backend without a translation layer.
+# otel:
+#   enabled: true
+#   service_name: "agentcc-gateway"
+#   exporter: "otlp"                   # stdout | otlp
+#   endpoint: "http://otel-collector:4318"   # required for otlp; /v1/traces is
+#                                            # appended when the URL has no path
+#   protocol: "http/protobuf"          # the only supported OTLP transport
+#   headers:                           # hosted collectors authenticate here;
+#     X-Api-Key: "${FI_API_KEY}"       # keep credentials in the environment,
+#     X-Secret-Key: "${FI_SECRET_KEY}" # not in this file
+#   include_bodies: false              # attach prompt + completion to each span
+#                                      # (input.value / output.value). Off by
+#                                      # default: it sends user content to the
+#                                      # collector. Redacted with the same
+#                                      # privacy config as the request log.
+#   sample_rate: 0.1                   # 10% of requests
+#   attributes:                        # emitted as OTLP resource attributes
+#     environment: "production"
+#     region: "us-east-1"
+#
+# Exporting to the FutureAGI platform: point endpoint at
+# https://api.futureagi.com/v1/traces, authenticate with X-Api-Key/X-Secret-Key,
+# and set project_name (plus project_type: "observe") under attributes — the
+# platform reads those resource attributes to decide which project the spans
+# land in, and creates it on first use.
+#
+# Spans are queued and flushed in the background, so an unreachable collector
+# never adds latency to a request. The gateway's own x-agentcc-trace-id travels
+# as the agentcc.trace_id span attribute, so a span can be matched to its
+# request-log row; agentcc.request_id and agentcc.is_stream are likewise
+# gateway facts with no conventional equivalent.
+
+# Prometheus metrics endpoint.
+# prometheus:
+#   enabled: true
+#   path: "/-/metrics"
+
+# Alerting rules evaluated against rolling metric windows.
+# alerting:
+#   enabled: true
+#   rules:
+#     - name: "high-error-rate"
+#       metric: "error_count"          # error_count | request_count | cost_total | latency_avg | tokens_total
+#       condition: ">="                # >=, >, <=, <, ==
+#       threshold: 50
+#       window: 5m
+#       cooldown: 15m
+#       channels: ["ops-slack"]
+#     - name: "daily-spend-spike"
+#       metric: "cost_total"
+#       condition: ">"
+#       threshold: 500.0
+#       window: 1h
+#       cooldown: 1h
+#       channels: ["ops-slack", "finance-webhook"]
+#   channels:
+#     - name: "ops-slack"
+#       type: "slack"
+#       url: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+#     - name: "finance-webhook"
+#       type: "webhook"
+#       url: "https://alerts.example.com/agentcc"
+#       headers:
+#         Authorization: "Bearer ${ALERT_TOKEN}"
+
+# Override model metadata (pricing, token limits, capabilities, deprecation).
+# model_database:
+#   validation_enabled: true                 # reject requests for unknown models
+#   overrides:
+#     gpt-4o:
+#       provider: "openai"
+#       max_input_tokens: 128000
+#       max_output_tokens: 16384
+#       pricing:
+#         input_per_mtok: 2.50
+#         output_per_mtok: 10.00
+#       deprecation_date: "2026-12-31"
+#       regions: ["us-east-1", "us-west-2"]
+
+# Pull API keys from external secret stores instead of env vars.
+# secrets:
+#   vault:
+#     address: "https://vault.example.com"
+#     token: "${VAULT_TOKEN}"
+#     # or AppRole:
+#     # app_role_id: "${VAULT_ROLE_ID}"
+#     # app_role_secret: "${VAULT_ROLE_SECRET}"
+#   aws:
+#     region: "us-east-1"
+#     # IAM role is preferred; static creds only for local dev:
+#     # access_key_id: "${AWS_ACCESS_KEY_ID}"
+#     # secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+#   gcp: {}
+#   azure: {}
+
+# Redact PII from requests/responses before logging.
+# privacy:
+#   enabled: true
+#   mode: "patterns"                   # full | patterns | none
+#   redact_patterns:
+#     - name: "email"
+#       pattern: '[\w.+-]+@[\w-]+\.[\w.-]+'
+#     - name: "ssn"
+#       pattern: '\d{3}-\d{2}-\d{4}'
+
+# Strip or reject tool-calling requests that don't match an allowlist.
+# tool_policy:
+#   enabled: true
+#   max_tools_per_request: 32
+#   default_action: "strip"            # strip | reject
+#   allow: ["search_*", "code_interpreter"]
+#   deny:  ["shell_exec"]
+
+# Multi-replica coordination (rate limits, budgets, circuit state via Redis).
+# cluster:
+#   enabled: true
+#   node_id: "gateway-1"               # auto-generated if empty
+#   redis_url: "redis://localhost:6379/0"
+#   heartbeat_interval: 5s
+#   heartbeat_ttl: 15s
+#   drain_timeout: 30s
+
+# Shared state across replicas. Fallback to in-memory on Redis outage.
+# redis:
+#   enabled: true
+#   address: "localhost:6379"
+#   password: "${REDIS_PASSWORD}"
+#   db: 0
+#   pool_size: 20
+#   timeout: 2s
+#   prefix: "agentcc:"
+
+# Edge / region-aware routing.
+# edge:
+#   enabled: true
+#   regions:
+#     - name: "us-east"
+#       backend: "openai-east"
+#       weight: 70
+#     - name: "us-west"
+#       backend: "openai-west"
+#       weight: 30
+#   cache:
+#     enabled: true
+#     default_ttl: 300                 # seconds
+#     max_size: 1048576                # 1MB per entry
+
+# Pull config (keys, budgets, RBAC) from a Django control plane.
+# control_plane:
+#   url: "http://localhost:8000"
+#   admin_token: "${CONTROL_PLANE_ADMIN_TOKEN}"
+#   webhook_secret: "${CONTROL_PLANE_WEBHOOK_SECRET}"
+#   sync_on_startup: true
+#   sync_interval: 5m                  # 0 = disabled
+
+# OpenAI-compatible Assistants API proxy.
+# assistants:
+#   enabled: true
+#   run_timeout: 5m
+#   stream_read_timeout: 60s
+
+# Model Context Protocol — expose tools from registered MCP servers to models.
+# mcp:
+#   enabled: true
+#   endpoint: "/mcp"
+#   max_agent_depth: 5
+#   tool_call_timeout: 30s
+#   session_ttl: 30m
+#   separator: "__"                    # server-name__tool-name
+#   servers:
+#     filesystem:
+#       transport: "stdio"
+#       command: "npx"
+#       args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+#       tools_cache_ttl: 5m
+#     search:
+#       transport: "http"
+#       url: "https://mcp.example.com"
+#       auth:
+#         type: "bearer"
+#         token: "${MCP_SEARCH_TOKEN}"
+#   guardrails:
+#     enabled: true
+#     blocked_tools: ["shell_exec"]
+#     allowed_servers: ["filesystem", "search"]
+#     validate_inputs: true
+#     validate_outputs: false
+#     tool_rate_limits:
+#       filesystem__read_file: 100     # per minute
+#   tool_versions:
+#     filesystem__read_file:
+#       version: "v2"
+#       deprecated: false
+#     filesystem__legacy_read:
+#       version: "v1"
+#       deprecated: true
+#       deprecation_message: "Use read_file instead"
+#       replaced_by: "filesystem__read_file"
+
+# Agent-to-Agent protocol: expose Agentcc as an agent and register remote agents.
+# a2a:
+#   enabled: true
+#   card:
+#     name: "agentcc"
+#     description: "LLM gateway with routing and guardrails"
+#     version: "1.0.0"
+#   agents:
+#     research-agent:
+#       url: "https://agents.example.com/research"
+#       description: "Deep research specialist"
+#       auth:
+#         type: "bearer"
+#         token: "${RESEARCH_AGENT_TOKEN}"
+#       skills:
+#         - id: "web-search"
+#           name: "Web Search"
+#           description: "Search the open web"

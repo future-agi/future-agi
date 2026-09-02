@@ -24,16 +24,17 @@ from tracer.models.eval_task import (
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.services.filter_principal_context import bound_my_annotations_principal
+from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.eval import (
     evaluate_observation_span_observe,
     evaluate_trace_observe,
     evaluate_trace_session_observe,
 )
-from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.filters import FilterEngine
+from tracer.utils.helper import get_annotation_labels_for_project
 
 logger = structlog.get_logger(__name__)
-from tracer.utils.helper import get_annotation_labels_for_project
 
 # Cron-side drain window — once the dispatcher has fired every
 # per-span activity, the task stays in RUNNING until either the
@@ -202,11 +203,13 @@ def parsing_evaltask_filters(
             if q_eval:
                 combined_q &= q_eval
 
-            # user_id=None: background activity, so my_annotations is a no-op.
+            # Eval-task creation binds user-relative filters to the creator.
+            # Legacy payloads without that binding fail closed inside
+            # FilterEngine instead of silently broadening the task selection.
             q_anno, anno_anns = (
                 FilterEngine.get_filter_conditions_for_voice_call_annotations(
                     items,
-                    user_id=None,
+                    user_id=bound_my_annotations_principal(items),
                     source_q=annotation_source_q,
                 )
             )
@@ -252,73 +255,6 @@ def parsing_evaltask_filters(
             combined_q &= Q(project_id=value)
 
     return combined_q, extra_anns
-
-
-def parsing_monitor_filters(filters: dict) -> Q:
-    """Legacy filter parser kept for monitor.py and monitor_graphs.py.
-
-    Monitors use a simpler filter UI than eval tasks — only SPAN_ATTRIBUTE
-    chips, no annotation/eval-metric/system-metric col_types. Keeping the
-    old single-handler dispatch here avoids monitor pages paying for the
-    annotate-subqueries cost or surfacing FieldErrors for filters they
-    never carry.
-
-    Eval task create/edit and the eval-task rerun count use the richer
-    ``parsing_evaltask_filters`` (above), which returns ``(Q, dict)`` and
-    routes by col_type.
-    """
-    combined_q = Q()
-
-    if filters is None:
-        return combined_q
-
-    def _as_list(value):
-        if value is None or value == "":
-            return []
-        if isinstance(value, list):
-            return [item for item in value if item not in (None, "")]
-        return [value]
-
-    for key, value in filters.items():
-        if (
-            key == "span_attributes_filters"
-            and value is not None
-            and isinstance(value, list)
-        ):
-            q_span = FilterEngine.get_filter_conditions_for_span_attributes(value)
-            if q_span and (q_span.children or hasattr(q_span, "connector")):
-                combined_q &= q_span
-        elif key == "observation_type":
-            if isinstance(value, list):
-                combined_q &= Q(observation_type__in=list(value))
-            elif isinstance(value, str):
-                combined_q &= Q(observation_type=value)
-            else:
-                raise Exception(
-                    "Invalid value for observation_type filter; expected list or string"
-                )
-        elif key == "session_id":
-            session_ids = _as_list(value)
-            traces = Trace.objects.filter(session_id__in=session_ids).values_list(
-                "id", flat=True
-            )
-            combined_q &= Q(trace_id__in=list(traces))
-        elif key == "trace_id":
-            trace_ids = _as_list(value)
-            combined_q &= Q(trace_id__in=trace_ids)
-        elif key == "span_id":
-            span_ids = _as_list(value)
-            combined_q &= Q(id__in=span_ids)
-        elif key == "date_range":
-            if isinstance(value, list) and len(value) == 2:
-                start_date, end_date = value
-                combined_q &= Q(created_at__range=[start_date, end_date])
-        elif key == "created_at":
-            combined_q &= Q(created_at__gte=value)
-        elif key == "project_id":
-            combined_q &= Q(project_id=value)
-
-    return combined_q
 
 
 def _derive_session_candidate_ids(eval_task) -> list[str]:
@@ -373,6 +309,53 @@ def _derive_session_candidate_ids(eval_task) -> list[str]:
         return reader.distinct_session_ids_with_filters(**ch_kwargs)
 
 
+def _bridge_retired_dispatcher(eval_task: EvalTask) -> bool:
+    """Route legacy eval-task invocations through the cutover workflow.
+
+    ``eval_task_cron`` was removed from the schedule registry at the workflow
+    cutover, but both that activity and ``process_eval_task`` remain registered
+    for in-flight/orphaned Temporal work.  A stale schedule can therefore still
+    call this module after a deploy.  The old branches select candidates outside
+    the current ClickHouse reconciler and directly dispatch evaluators, bypassing
+    live-entry reconciliation (and, for traces, exact filter-witness binding).
+
+    Always return ``True`` so callers stop before the retired engine.  A
+    transient workflow-start failure is deliberately fail-closed: leave the
+    task untouched for retry instead of falling back to the retired picker.
+    """
+    if eval_task.status not in (EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING):
+        logger.info(
+            "legacy_eval_dispatch_skipped_terminal_task",
+            eval_task_id=str(eval_task.id),
+            status=str(eval_task.status),
+        )
+        return True
+
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+    from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
+
+    try:
+        start_eval_task_workflow_sync(eval_task)
+    except WorkflowAlreadyStartedError:
+        # Expected when an orphaned cron overlaps the workflow already started
+        # by create/edit.  Workflow id is per-task, so this is an idempotent no-op.
+        logger.info(
+            "legacy_eval_dispatch_workflow_already_running",
+            eval_task_id=str(eval_task.id),
+        )
+    except Exception:
+        logger.exception(
+            "legacy_eval_dispatch_bridge_failed",
+            eval_task_id=str(eval_task.id),
+        )
+    else:
+        logger.info(
+            "legacy_eval_dispatch_bridged",
+            eval_task_id=str(eval_task.id),
+        )
+    return True
+
+
 @temporal_activity(
     max_retries=0,
     time_limit=3600 * 3,
@@ -411,6 +394,13 @@ def process_eval_task(eval_task_id: str):
             eval_task = EvalTask.objects.get(id=eval_task_id)
         except EvalTask.DoesNotExist:
             logger.error(f"Eval task with id {eval_task_id} not found")
+            return
+
+        # The per-task workflow is the only supported eval-task engine after
+        # cutover.  Keep this guard ahead of every status write/query performed
+        # by the retired dispatcher so a stale Temporal schedule cannot bypass
+        # ClickHouse candidate selection and filter-witness propagation.
+        if _bridge_retired_dispatcher(eval_task):
             return
 
         if eval_task.status == EvalTaskStatus.PENDING:
@@ -756,57 +746,21 @@ def process_eval_task(eval_task_id: str):
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="tasks_s")
 def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
+    """Compatibility shim for already-enqueued legacy batch activities.
+
+    The cutover workflow owns candidate reconciliation and entry draining.  A
+    batch activity emitted before the cutover (or by an orphaned schedule) must
+    therefore ensure that workflow instead of directly dispatching evaluators.
+    ``span_ids``/``eval_ids`` are intentionally ignored: the reconciler derives
+    the authoritative desired set from the persisted task configuration.
+    """
     try:
         eval_task = EvalTask.objects.get(id=eval_task_id)
-        evals = eval_task.evals.filter(id__in=eval_ids)
-        # Read from CH 25.3 (was
-        # ObservationSpan.objects.filter(id__in=span_ids)). The loop only
-        # reads span.id to dispatch a per-span activity; existence (i.e.
-        # the implicit filter behaviour of the queryset for deleted/missing
-        # spans) is preserved by CHSpanReader.list_by_ids which already
-        # filters is_deleted = 0.
-        from tracer.services.clickhouse.v2 import get_reader
+    except EvalTask.DoesNotExist:
+        logger.error(
+            "legacy_eval_batch_task_missing",
+            eval_task_id=str(eval_task_id),
+        )
+        return
 
-        with get_reader() as reader:
-            spans = reader.list_by_ids([str(sid) for sid in span_ids])
-
-        # Codex consolidated review P1 (2026-05-26): under-dispatch is a
-        # silent correctness gap — eval rows the caller selected can be
-        # skipped if CH is lagging. Surface the divergence loudly so it
-        # gets retried (Temporal will re-run on raised exceptions) or
-        # triaged. Don't dispatch ANY evals from this batch if the CH
-        # set doesn't match what the caller selected; partial dispatch
-        # is worse than no dispatch (operator sees nothing or sees
-        # complete success).
-        found_ids = {str(s.id) for s in spans}
-        requested_ids = {str(sid) for sid in span_ids}
-        missing = requested_ids - found_ids
-        if missing:
-            logger.error(
-                "eval_task_ch_spans_missing",
-                eval_task_id=str(eval_task.id),
-                requested=len(requested_ids),
-                found=len(found_ids),
-                missing_count=len(missing),
-                missing_sample=list(missing)[:10],
-            )
-            raise RuntimeError(
-                f"CH missing {len(missing)} of {len(span_ids)} requested "
-                f"spans for eval_task {eval_task.id}; refusing partial "
-                f"dispatch. Sample missing: {list(missing)[:5]}. "
-                f"Temporal will retry; if misses persist, rebackfill CH "
-                f"or wait for the dual-write window to converge."
-            )
-
-        for span in spans:
-            for eval_config in evals:
-                evaluate_observation_span_observe.delay(
-                    str(span.id),
-                    str(eval_config.id),
-                    str(eval_task.id),
-                )
-
-    except Exception as e:
-        logger.exception(f"{e}")
-        eval_task.status = EvalTaskStatus.FAILED
-        eval_task.save()
+    _bridge_retired_dispatcher(eval_task)

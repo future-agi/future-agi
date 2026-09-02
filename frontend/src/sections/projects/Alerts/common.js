@@ -200,7 +200,7 @@ export const getDefaultDateRange = () => {
     return [
       formatDate(
         sub(new Date(), {
-          months: 6,
+          days: 7,
         }),
       ),
       formatDate(endOfToday()),
@@ -209,7 +209,7 @@ export const getDefaultDateRange = () => {
 
   return {
     dateFilter: getDateArray(),
-    dateOption: "6M",
+    dateOption: "7D",
   };
 };
 
@@ -540,7 +540,11 @@ const STATUS_COLORS = {
   INSUFFICIENT_DATA: "#9E9E9E",
 };
 
-export function getCompareChartConfig(apiData, customOptions = {}) {
+export function getCompareChartConfig(
+  apiData,
+  customOptions = {},
+  { isDark = false } = {},
+) {
   if (!apiData?.result?.graph_data || !apiData?.result?.alert_bar_data) {
     throw new Error("Invalid API data structure");
   }
@@ -661,6 +665,7 @@ export function getCompareChartConfig(apiData, customOptions = {}) {
       },
     },
     tooltip: {
+      theme: isDark ? "dark" : "light",
       enabledOnSeries: [1],
       marker: {
         show: true,
@@ -796,6 +801,7 @@ export function getSimpleLineChartConfig(
       },
     },
     tooltip: {
+      theme: isDark ? "dark" : "light",
       y: {
         formatter: (value) => `${value}`,
       },
@@ -882,3 +888,17 @@ export const isSpanAttrFilterValid = (spanFilters = []) => {
 
   return spanFilters.every((filter) => apiFilterHasValue(filter));
 };
+
+// FilterPanel `filterFields` for the issues table. `choices` hold the values
+// the API expects; `choiceLabels` map them to what the user sees.
+export const ISSUE_FILTER_FIELDS = [
+  {
+    value: "type",
+    label: "Trigger Type",
+    type: "enum",
+    operators: ["is"],
+    single: true,
+    choices: ["critical", "warning"],
+    choiceLabels: { critical: "Critical", warning: "Warning" },
+  },
+];

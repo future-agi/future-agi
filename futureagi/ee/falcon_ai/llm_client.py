@@ -28,12 +28,17 @@ def _inline_refs(schema, _defs=None, _depth=0):
     ref = schema.get("$ref", "")
     if isinstance(ref, str) and ref.startswith("#/$defs/") and ref[8:] in pool:
         inlined = _inline_refs(copy.deepcopy(pool[ref[8:]]), pool, _depth + 1)
-        siblings = {k: _inline_refs(v, pool, _depth + 1)
-                    for k, v in schema.items() if k not in ("$ref", "$defs")}
+        siblings = {
+            k: _inline_refs(v, pool, _depth + 1)
+            for k, v in schema.items()
+            if k not in ("$ref", "$defs")
+        }
         if isinstance(inlined, dict) and siblings:
             return {**inlined, **siblings}  # siblings win on overlap (2020-12)
         return inlined
-    return {k: _inline_refs(v, pool, _depth + 1) for k, v in schema.items() if k != "$defs"}
+    return {
+        k: _inline_refs(v, pool, _depth + 1) for k, v in schema.items() if k != "$defs"
+    }
 
 
 class EmptyStreamError(RuntimeError):
@@ -619,14 +624,18 @@ class FalconLLMClient:
             try:
                 payload["tools"] = _inline_refs(tools)
             except Exception:
-                logger.warning("tool_schema_flatten_failed_fallback_to_raw", exc_info=True)
+                logger.warning(
+                    "tool_schema_flatten_failed_fallback_to_raw", exc_info=True
+                )
                 payload["tools"] = tools
             payload["tool_choice"] = "auto"
         if self.response_format:
             try:
                 payload["response_format"] = _inline_refs(self.response_format)
             except Exception:
-                logger.warning("response_format_flatten_failed_fallback_to_raw", exc_info=True)
+                logger.warning(
+                    "response_format_flatten_failed_fallback_to_raw", exc_info=True
+                )
                 payload["response_format"] = self.response_format
 
         headers = {
@@ -683,9 +692,12 @@ class FalconLLMClient:
                                 ),
                                 "total_tokens": usage.get("total_tokens")
                                 or (
-                                    usage.get("prompt_tokens", usage.get("input_tokens", 0))
+                                    usage.get(
+                                        "prompt_tokens", usage.get("input_tokens", 0)
+                                    )
                                     + usage.get(
-                                        "completion_tokens", usage.get("output_tokens", 0)
+                                        "completion_tokens",
+                                        usage.get("output_tokens", 0),
                                     )
                                 ),
                             }

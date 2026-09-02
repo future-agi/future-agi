@@ -9,7 +9,6 @@ Pattern:
 - Helper functions: create, update, delete, pause, unpause, trigger, exists
 """
 
-
 from asgiref.sync import async_to_sync
 from temporalio.client import (
     Client,
@@ -96,7 +95,9 @@ async def a_update_schedule(
     async def updater(input: ScheduleUpdateInput) -> ScheduleUpdate:
         if keep_tz and input.description.schedule.spec:
             # Preserve existing timezone
-            schedule.spec.time_zone_name = input.description.schedule.spec.time_zone_name
+            schedule.spec.time_zone_name = (
+                input.description.schedule.spec.time_zone_name
+            )
         return ScheduleUpdate(schedule=schedule)
 
     await handle.update(updater)
@@ -259,8 +260,8 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
                 activity_name=config.activity_name,
-                args=[],
-                kwargs={},
+                args=list(config.activity_args),
+                kwargs=dict(config.activity_kwargs),
                 queue=config.queue,
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),

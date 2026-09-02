@@ -1,4 +1,4 @@
-import { Box, Typography, Chip } from "@mui/material";
+import { Alert, Box, Button, Typography, Chip } from "@mui/material";
 import { LoadingScreen } from "src/components/loading-screen";
 import { alpha } from "@mui/material/styles";
 import React from "react";
@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { ShowComponent } from "src/components/show";
 import { format } from "date-fns";
+import { readEvalTaskLogs } from "../task_log_read";
 
 const KeyValueOrChip = ({ label, value }) => {
   const chipStyle = {
@@ -73,14 +74,20 @@ KeyValueOrChip.propTypes = {
 };
 
 const TaskLogs = ({ evalTaskId }) => {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalTaskLogs(), {
-        params: { eval_task_id: evalTaskId },
-      }),
-    select: (data) => data?.data?.result,
+    queryFn: ({ signal }) =>
+      readEvalTaskLogs(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.project.getEvalTaskLogs(), {
+            signal: requestSignal,
+            timeout,
+            params: { eval_task_id: evalTaskId },
+          }),
+        signal,
+      ),
     enabled: !!evalTaskId,
+    retry: false,
   });
 
   const truncateErrorLog = (log, length = 320) => {
@@ -92,6 +99,21 @@ const TaskLogs = ({ evalTaskId }) => {
   const warningGroups = data?.warning_groups || data?.warningGroups || [];
   const warningsCount = data?.warnings_count ?? data?.warningsCount ?? 0;
 
+  if (isError && !data) {
+    return (
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        }
+      >
+        We couldn&apos;t load evaluation task logs.
+      </Alert>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -99,6 +121,19 @@ const TaskLogs = ({ evalTaskId }) => {
         // minWidth: "40vw", // Slightly wider container
       }}
     >
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+          sx={{ mb: 1 }}
+        >
+          Could not refresh task logs. The previous summary is still shown.
+        </Alert>
+      )}
       <ShowComponent condition={isLoading}>
         <Box
           sx={{

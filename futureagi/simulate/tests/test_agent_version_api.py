@@ -211,9 +211,7 @@ class TestCreateAgentVersion:
         assert version.credentials.get_api_key() == raw_api_key
         serialized = response.json()
         assert raw_api_key not in str(serialized)
-        assert serialized["version"]["api_key"] == mask_key(
-            raw_api_key
-        )
+        assert serialized["version"]["api_key"] == mask_key(raw_api_key)
 
     def test_create_with_masked_api_key_preserves_direct_version_creds(
         self, auth_client, agent_definition, agent_version
@@ -251,6 +249,52 @@ class TestCreateAgentVersion:
         serialized = response.json()
         assert raw_api_key not in str(serialized)
         assert serialized["version"]["api_key"] == mask_key(raw_api_key)
+
+    def test_create_with_masked_livekit_secret_preserves_existing(
+        self, auth_client, agent_definition, agent_version
+    ):
+        from simulate.services.agent_definition import sync_provider_credentials
+        from simulate.services.types.agent_definition import ProviderCredentialsInput
+
+        raw_key = "APIlivekit-key-abc123"
+        raw_secret = "livekit-secret-def456ghi"
+        sync_provider_credentials(
+            agent_version,
+            ProviderCredentialsInput(
+                provider="livekit",
+                livekit_api_key=raw_key,
+                livekit_api_secret=raw_secret,
+                livekit_url="https://lk.example.com",
+                livekit_agent_name="receptionist-1",
+                provider_was_provided=True,
+            ),
+        )
+        assert agent_version.credentials.get_api_key() == raw_key
+        assert agent_version.credentials.get_api_secret() == raw_secret
+
+        # The UI resends the LiveKit key/secret masked on a new version.
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {
+                "commit_message": "New version, LiveKit secrets unchanged",
+                "provider": "livekit",
+                "livekit_url": "https://lk.example.com",
+                "livekit_agent_name": "receptionist-1",
+                "livekit_api_key": mask_key(raw_key),
+                "livekit_api_secret": "********",
+                "description": "Should preserve masked LiveKit key/secret",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        new_version = agent_definition.latest_version
+        assert new_version.id != agent_version.id
+        assert new_version.credentials.get_api_key() == raw_key
+        assert new_version.credentials.get_api_secret() == raw_secret
+        body = str(response.json())
+        assert raw_key not in body
+        assert raw_secret not in body
 
     def test_creates_snapshot(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(

@@ -53,7 +53,7 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UpdateUserSerializer
 from accounts.services.token_service import issue_tokens
-from accounts.utils import build_password_reset_link, first_signup
+from accounts.utils import WorkEmailRequired, build_password_reset_link, first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -252,6 +252,19 @@ def user_signup(request):
 
         return _gm.success_response(
             {"message": "User Created Successfully, Please Check your email to proceed"}
+        )
+
+    except WorkEmailRequired as exc:
+        logger.info(
+            "signup_rejected_personal_email",
+            email=request.data.get("email", "").lower(),
+        )
+        return _gm.bad_request(
+            {
+                "error": str(exc),
+                "error_code": "SIGNUP_VALIDATION_FAILED",
+                "field_errors": {"email": [str(exc)]},
+            }
         )
 
     except DRFValidationError as exc:
