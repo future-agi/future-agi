@@ -389,6 +389,10 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
 def test_registering_attempt_supersedes_old_capability(organization):
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="attempt-key")
     first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    job.current_stage = "failed"
+    job.failure = {"code": "sandbox_launch_failed"}
+    job.terminal_at = django_timezone.now()
+    job.save(update_fields=["current_stage", "failure", "terminal_at", "updated_at"])
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
 
     first.attempt.refresh_from_db()
@@ -398,6 +402,9 @@ def test_registering_attempt_supersedes_old_capability(organization):
     assert second.document["endpoints"]["ingress"].endswith("/ingress/")
     job.refresh_from_db()
     assert (second.attempt.expires_at - job.deadline_at).total_seconds() == 420
+    assert job.current_stage == "queued"
+    assert job.failure is None
+    assert job.terminal_at is None
 
 
 @pytest.mark.django_db
