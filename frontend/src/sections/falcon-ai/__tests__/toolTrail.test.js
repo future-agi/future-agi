@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  alignToPlan,
   classifySteps,
+  declaredSteps,
   formatElapsed,
   groupBlocks,
   humanize,
+  pickTrajectory,
+  planFor,
+  slugFromMessage,
   trailSummary,
 } from "../helpers/toolTrail";
 
@@ -151,5 +156,184 @@ describe("humanize", () => {
   it("survives an empty name", () => {
     expect(humanize("")).toBe("Working");
     expect(humanize()).toBe("Working");
+  });
+});
+
+// The flow the eval-build skill declares, trimmed to its tool names. Read off
+// the real skill so the alignment is tested against what ships, not a fixture
+// invented to pass.
+const EVAL_BUILD = {
+  user: "Go ahead and build the four evals you recommended.",
+  steps: [
+    { tool: "get_project" },
+    { tool: "get_eval_template_by_name" },
+    { tool: "get_project_eval_attributes" },
+    { tool: "get_trace_spans_by_type" },
+    { tool: "read_trace_span" },
+    { tool: "test_eval_template" },
+    { tool: "check_eval_config_exists" },
+    { tool: "create_custom_eval_config" },
+    { tool: "create_eval_task" },
+    { tool: "get_eval_task" },
+    { tool: "get_eval_task_logs" },
+  ],
+};
+
+const PLAN = declaredSteps(EVAL_BUILD);
+
+const call = (tool, i) => ({ call_id: `c${i}`, tool_name: tool });
+
+describe("declaredSteps", () => {
+  it("reads the ordered tool names off a declared trajectory", () => {
+    expect(PLAN).toHaveLength(11);
+    expect(PLAN[0]).toBe("get_project");
+    expect(PLAN[10]).toBe("get_eval_task_logs");
+  });
+
+  it("survives a skill that declares nothing", () => {
+    expect(declaredSteps(null)).toEqual([]);
+    expect(declaredSteps({ steps: [{ params: {} }] })).toEqual([]);
+  });
+});
+
+describe("pickTrajectory", () => {
+  const short = { steps: [{ tool: "analyze_project_traces" }] };
+  const long = {
+    steps: [
+      { tool: "explore_trace_legacy" },
+      { tool: "read_trace_span" },
+      { tool: "submit_trace_finding" },
+      { tool: "submit_trace_scores" },
+    ],
+  };
+
+  it("picks the flow that explains what actually ran", () => {
+    const picked = pickTrajectory(
+      [short, long],
+      [call("explore_trace_legacy", 1), call("read_trace_span", 2)],
+    );
+    expect(picked).toBe(long);
+  });
+
+  it("picks the fullest flow before anything has run", () => {
+    expect(pickTrajectory([short, long], [])).toBe(long);
+  });
+
+  it("has no flow when the skill declares none", () => {
+    expect(pickTrajectory([], [])).toBeNull();
+    expect(pickTrajectory([{ steps: [] }], [])).toBeNull();
+    expect(planFor([], [])).toEqual([]);
+  });
+});
+
+describe("alignToPlan", () => {
+  it("says which declared step each call is", () => {
+    const { steps, done, planned } = alignToPlan(
+      [
+        call("get_project", 1),
+        call("get_eval_template_by_name", 2),
+        call("get_project_eval_attributes", 3),
+      ],
+      PLAN,
+    );
+    expect(steps.map((s) => s.planIndex)).toEqual([0, 1, 2]);
+    expect(steps.every((s) => s.planKind === "plan")).toBe(true);
+    expect(done).toBe(3);
+    expect(planned).toBe(11);
+  });
+
+  it("keeps a tool that is not in the flow, and calls it extra", () => {
+    const { steps, extra, done } = alignToPlan(
+      [
+        call("get_project", 1),
+        call("search_docs", 2),
+        call("read_trace_span", 3),
+      ],
+      PLAN,
+    );
+    expect(steps).toHaveLength(3);
+    expect(steps[1].planKind).toBe("extra");
+    expect(steps[1].planIndex).toBeNull();
+    expect(extra).toBe(1);
+    expect(done).toBe(2);
+  });
+
+  it("holds one declared step while the tool repeats", () => {
+    const { steps, done, extra } = alignToPlan(
+      [
+        call("get_project", 1),
+        call("read_trace_span", 2),
+        call("read_trace_span", 3),
+        call("read_trace_span", 4),
+      ],
+      PLAN,
+    );
+    expect(steps.map((s) => s.planIndex)).toEqual([0, 4, 4, 4]);
+    expect(steps.map((s) => s.planKind)).toEqual([
+      "plan",
+      "plan",
+      "revisit",
+      "revisit",
+    ]);
+    expect(done).toBe(2);
+    expect(extra).toBe(0);
+  });
+
+  it("credits a declared step taken out of order without going backwards", () => {
+    const { steps, done } = alignToPlan(
+      [
+        call("get_project", 1),
+        call("get_project_eval_attributes", 2),
+        call("get_eval_template_by_name", 3),
+      ],
+      PLAN,
+    );
+    expect(steps.map((s) => s.planIndex)).toEqual([0, 2, 1]);
+    expect(steps[2].planKind).toBe("revisit");
+    expect(done).toBe(3);
+  });
+
+  it("names the declared steps the run never reached", () => {
+    const { pending, done } = alignToPlan(
+      [call("get_project", 1), call("get_eval_template_by_name", 2)],
+      PLAN,
+    );
+    expect(done).toBe(2);
+    expect(pending).toHaveLength(9);
+    expect(pending[0]).toEqual({
+      index: 2,
+      tool: "get_project_eval_attributes",
+    });
+  });
+
+  it("counts a jumped step as not run", () => {
+    const { done, pending } = alignToPlan(
+      [call("get_project", 1), call("get_project_eval_attributes", 2)],
+      PLAN,
+    );
+    expect(done).toBe(2);
+    expect(pending.map((p) => p.index)).toContain(1);
+  });
+
+  it("leaves the run untouched when there is no flow", () => {
+    const calls = [call("get_project", 1)];
+    const out = alignToPlan(calls, []);
+    expect(out.steps).toBe(calls);
+    expect(out.planned).toBe(0);
+    expect(out.done).toBe(0);
+  });
+});
+
+describe("slugFromMessage", () => {
+  it("reads the skill the turn ran from the message that triggered it", () => {
+    expect(slugFromMessage("/eval-build go")).toBe("eval-build");
+    expect(slugFromMessage("/eval-build")).toBe("eval-build");
+  });
+
+  it("finds no skill in a plain message", () => {
+    expect(slugFromMessage("build me four evals")).toBeNull();
+    expect(slugFromMessage("please run /eval-build")).toBeNull();
+    expect(slugFromMessage("/")).toBeNull();
+    expect(slugFromMessage()).toBeNull();
   });
 });

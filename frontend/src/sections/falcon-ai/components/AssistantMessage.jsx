@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
+import useSkillPlan from "../hooks/useSkillPlan";
 import { groupBlocks } from "../helpers/toolTrail";
 import TextBlock from "./TextBlock";
 import ThinkingTrail from "./ThinkingTrail";
@@ -14,7 +15,7 @@ export default function AssistantMessage({ message, onFeedback }) {
   const [hovered, setHovered] = useState(false);
   const [feedback, setFeedback] = useState(message.feedback || null);
   const toolCalls = message.tool_calls || [];
-  const blocks = message.blocks || [];
+  const blocks = useMemo(() => message.blocks || [], [message.blocks]);
   const hasBlocks = blocks.length > 0;
   const isStreaming = useFalconStore((s) => s.isStreaming);
   const streamingMessageId = useFalconStore((s) => s.streamingMessageId);
@@ -22,6 +23,18 @@ export default function AssistantMessage({ message, onFeedback }) {
   const isEmpty =
     !message.content && toolCalls.length === 0 && !hasBlocks && !message.error;
   const hasRunningTool = toolCalls.some((tc) => tc.status === "running");
+
+  const grouped = useMemo(
+    () => (hasBlocks ? groupBlocks(blocks) : []),
+    [hasBlocks, blocks],
+  );
+  const trails = grouped.filter((b) => b.type === "trail");
+  const runCalls = hasBlocks ? trails.flatMap((b) => b.toolCalls) : toolCalls;
+  // Narration between tool calls splits one run into several trails. The
+  // declared flow belongs to the turn, so only the trail the run is currently
+  // in reports progress against it.
+  const lastTrailId = trails.length ? trails[trails.length - 1].id : null;
+  const plan = useSkillPlan(message.id, runCalls);
 
   return (
     <Box
@@ -80,16 +93,19 @@ export default function AssistantMessage({ message, onFeedback }) {
 
         {/* Content blocks — sequential rendering */}
         {hasBlocks ? (
-          groupBlocks(blocks).map((block) => {
+          grouped.map((block) => {
             if (block.type === "text" && block.content) {
               return <TextBlock key={block.id} content={block.content} />;
             }
             if (block.type === "trail") {
+              const carriesFlow = block.id === lastTrailId;
               return (
                 <ThinkingTrail
                   key={block.id}
                   toolCalls={block.toolCalls}
                   isStreaming={isThisStreaming}
+                  plan={carriesFlow ? plan : null}
+                  planRun={carriesFlow ? runCalls : null}
                 />
               );
             }
@@ -104,6 +120,7 @@ export default function AssistantMessage({ message, onFeedback }) {
               <ThinkingTrail
                 toolCalls={toolCalls}
                 isStreaming={isThisStreaming}
+                plan={plan}
               />
             )}
             <TextBlock content={message.content} />
