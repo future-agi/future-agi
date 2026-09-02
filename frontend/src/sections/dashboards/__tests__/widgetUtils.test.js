@@ -11,11 +11,19 @@ import {
   getExactDashboardResult,
   getDashboardMetricSeriesState,
   getPlottedChartSeries,
+  getChartTimeWindow,
+  CHART_DENSE_POINT_BUDGET,
+  countPlottedPoints,
+  getTableBucketPlan,
+  describeTableBuckets,
+  TABLE_BUCKET_LIMIT,
+  isDenseChartSeries,
   getSeriesScalar,
   groupPieSeries,
   isAdditiveAggregation,
   getYAxisRangeWarning,
   getAutoYAxisBounds,
+  getSeriesExtent,
   getFittedYAxisBounds,
   getVisibleIndices,
   resolveAxisBounds,
@@ -25,7 +33,6 @@ import {
   resolveSavedSelection,
   resolveVisibleSeries,
   seriesHasDataPoints,
-  shouldConnectAcrossMissingBuckets,
   toAxisConfigPayload,
 } from "../widgetUtils";
 import { ALL_AGGREGATIONS } from "../constants";
@@ -100,33 +107,56 @@ describe("seriesHasDataPoints", () => {
 });
 
 describe("getPlottedChartSeries", () => {
-  it("connects both line and stacked-line area renderers across missing buckets", () => {
-    expect(shouldConnectAcrossMissingBuckets("line")).toBe(true);
-    expect(shouldConnectAcrossMissingBuckets("area")).toBe(true);
-    expect(shouldConnectAcrossMissingBuckets("bar")).toBe(false);
-  });
+  const source = () => [
+    {
+      name: "Latency (avg)",
+      data: [
+        { x: 1, y: 12 },
+        { x: 2, y: null },
+        { x: 3, y: 0 },
+        { x: 4, y: 18 },
+      ],
+    },
+  ];
 
-  it("connects the widget editor line preview across null buckets without changing zeroes or source data", () => {
-    const source = [
-      {
-        name: "Latency (avg)",
-        data: [
-          { x: 1, y: 12 },
-          { x: 2, y: null },
-          { x: 3, y: 0 },
-          { x: 4, y: 18 },
-        ],
-      },
-    ];
-
-    expect(getPlottedChartSeries(source, true)[0].data).toEqual([
+  it("drops undrawable buckets while keeping zeroes", () => {
+    expect(getPlottedChartSeries(source())[0].data).toEqual([
       { x: 1, y: 12 },
       { x: 3, y: 0 },
       { x: 4, y: 18 },
     ]);
-    expect(source[0].data).toHaveLength(4);
-    expect(source[0].data[1].y).toBeNull();
-    expect(getPlottedChartSeries(source, false)).toBe(source);
+  });
+
+  it("leaves the response untouched for the table, CSV and metric card", () => {
+    const original = source();
+    getPlottedChartSeries(original);
+    expect(original[0].data).toHaveLength(4);
+    expect(original[0].data[1].y).toBeNull();
+  });
+
+  it("drops them for every chart type, bars included", () => {
+    // A bar for an empty bucket has no height, but Apex still emits a node for
+    // it: a column widget over five minute-granularity days drew 7,201 paths
+    // for 36 observed values (TH-7757).
+    const buckets = [
+      {
+        name: "count",
+        data: Array.from({ length: 7201 }, (_, x) => ({
+          x,
+          y: x % 200 === 0 ? 1 : null,
+        })),
+      },
+    ];
+    expect(getPlottedChartSeries(buckets)[0].data).toHaveLength(37);
+  });
+
+  it("handles empty, malformed and missing input", () => {
+    expect(getPlottedChartSeries()).toEqual([]);
+    expect(getPlottedChartSeries([])).toEqual([]);
+    expect(getPlottedChartSeries(null)).toEqual([]);
+    expect(getPlottedChartSeries([{ name: "no data" }])).toEqual([
+      { name: "no data", data: [] },
+    ]);
   });
 });
 
@@ -1048,4 +1078,488 @@ describe("the saved widget and the editor preview share one axis plan", () => {
       expect(src).not.toContain("resolveAxisBounds(");
     },
   );
+});
+
+describe("dense-series budget (TH-7757)", () => {
+  const seriesOf = (...lengths) =>
+    lengths.map((length, index) => ({
+      name: `s${index}`,
+      data: Array.from({ length }, (_, i) => ({ x: i, y: i })),
+    }));
+
+  it("counts points across every series", () => {
+    expect(countPlottedPoints(seriesOf(3, 4))).toBe(7);
+  });
+
+  it("counts nothing for empty, malformed or missing input", () => {
+    expect(countPlottedPoints()).toBe(0);
+    expect(countPlottedPoints([])).toBe(0);
+    expect(countPlottedPoints(null)).toBe(0);
+    expect(countPlottedPoints([{ name: "no data" }, null])).toBe(0);
+  });
+
+  it("calls a series at the budget sparse and one past it dense", () => {
+    expect(isDenseChartSeries(seriesOf(CHART_DENSE_POINT_BUDGET))).toBe(false);
+    expect(isDenseChartSeries(seriesOf(CHART_DENSE_POINT_BUDGET + 1))).toBe(
+      true,
+    );
+  });
+
+  it("spends the budget across series, not per series", () => {
+    const half = Math.ceil(CHART_DENSE_POINT_BUDGET / 2);
+    expect(isDenseChartSeries(seriesOf(half, half + 1))).toBe(true);
+  });
+
+  it("calls an empty chart sparse", () => {
+    expect(isDenseChartSeries([])).toBe(false);
+  });
+
+  it("charges the budget for what is plotted, not what was returned", () => {
+    // A minute-granularity widget: thousands of buckets, a handful of values.
+    const sparse = [
+      {
+        name: "completeness",
+        data: Array.from({ length: 7201 }, (_, i) => ({
+          x: i,
+          y: i % 160 === 0 ? 1 : null,
+        })),
+      },
+    ];
+    expect(isDenseChartSeries(sparse)).toBe(true);
+    expect(isDenseChartSeries(getPlottedChartSeries(sparse))).toBe(false);
+  });
+});
+
+describe("table bucket plan (TH-7757)", () => {
+  const seriesOfValues = (values) => [
+    { name: "a", data: values.map((y, x) => ({ x, y })) },
+  ];
+  const long = (length, valueAt) => [
+    {
+      name: "a",
+      data: Array.from({ length }, (_, x) => ({ x, y: valueAt(x) })),
+    },
+  ];
+
+  it("renders every bucket of a table that already fits, empty ones included", () => {
+    const plan = getTableBucketPlan(seriesOfValues([12, null, 7]));
+    expect(plan.indices).toEqual([0, 1, 2]);
+    expect(plan.omitted).toBe(0);
+  });
+
+  it("drops empty buckets only once the table is too long to read", () => {
+    const plan = getTableBucketPlan(
+      long(12, (x) => (x % 4 === 0 ? 1 : null)),
+      {
+        limit: 5,
+      },
+    );
+    expect(plan.indices).toEqual([0, 4, 8]);
+    expect(plan).toMatchObject({ total: 12, shown: 3, omitted: 9 });
+  });
+
+  it("keeps a bucket that any one series reported", () => {
+    const plan = getTableBucketPlan(
+      [
+        {
+          name: "a",
+          data: Array.from({ length: 8 }, (_, x) => ({ x, y: null })),
+        },
+        {
+          name: "b",
+          data: Array.from({ length: 8 }, (_, x) => ({
+            x,
+            y: x === 5 ? 3 : null,
+          })),
+        },
+      ],
+      { limit: 4 },
+    );
+    expect(plan.indices).toEqual([5]);
+  });
+
+  it("treats zero as a reported value, not an empty bucket", () => {
+    const plan = getTableBucketPlan(
+      long(10, (x) => (x % 5 === 0 ? 0 : null)),
+      {
+        limit: 4,
+      },
+    );
+    expect(plan.indices).toEqual([0, 5]);
+  });
+
+  it("caps a dense series at the limit", () => {
+    const plan = getTableBucketPlan(long(1200, (x) => x));
+    expect(plan.shown).toBe(TABLE_BUCKET_LIMIT);
+    expect(plan.omitted).toBe(1200 - TABLE_BUCKET_LIMIT);
+  });
+
+  it("keeps the most recent buckets, not the oldest (review D5)", () => {
+    // Slicing from the front discarded the newest days: a 721-bucket hourly
+    // table showed Aug 3 to Aug 24 and silently dropped the last nine days.
+    const plan = getTableBucketPlan(long(1200, (x) => x));
+    expect(plan.indices.at(0)).toBe(1200 - TABLE_BUCKET_LIMIT);
+    expect(plan.indices.at(-1)).toBe(1199);
+    expect(plan.truncated).toBe(true);
+  });
+
+  it("does not claim truncation when it only dropped empty buckets", () => {
+    const plan = getTableBucketPlan(
+      long(900, (x) => (x % 100 === 0 ? 1 : null)),
+    );
+    expect(plan.shown).toBe(9);
+    expect(plan.truncated).toBe(false);
+  });
+
+  it("keeps a capped time axis when the whole long range is empty", () => {
+    const plan = getTableBucketPlan(
+      long(10, () => null),
+      { limit: 4 },
+    );
+    expect(plan.indices).toEqual([6, 7, 8, 9]);
+    expect(plan.omitted).toBe(6);
+  });
+
+  it("reports nothing for empty, malformed or missing input", () => {
+    for (const input of [undefined, [], null, [null], [{ name: "x" }]]) {
+      expect(getTableBucketPlan(input)).toMatchObject({
+        indices: [],
+        total: 0,
+        omitted: 0,
+      });
+    }
+  });
+
+  it("sizes a minute-granularity widget down to its observed buckets", () => {
+    const plan = getTableBucketPlan(
+      long(7201, (x) => (x % 160 === 0 ? 1 : null)),
+    );
+    expect(plan.total).toBe(7201);
+    expect(plan.shown).toBe(46);
+  });
+});
+
+describe("chart time window (TH-7757)", () => {
+  it("reads the window the backend actually queried", () => {
+    expect(
+      getChartTimeWindow({
+        time_range: {
+          start: "2026-08-23T00:00:00+00:00",
+          end: "2026-08-30T00:00:00+00:00",
+        },
+      }),
+    ).toEqual({
+      min: Date.parse("2026-08-23T00:00:00+00:00"),
+      max: Date.parse("2026-08-30T00:00:00+00:00"),
+    });
+  });
+
+  it("spans the whole window even when only a few buckets reported", () => {
+    // The point of the helper: the axis must not collapse onto the data.
+    const window = getChartTimeWindow({
+      time_range: {
+        start: "2026-08-23T00:00:00Z",
+        end: "2026-08-30T00:00:00Z",
+      },
+    });
+    const firstObserved = Date.parse("2026-08-24T06:26:00Z");
+    const lastObserved = Date.parse("2026-08-26T13:26:00Z");
+    expect(window.min).toBeLessThan(firstObserved);
+    expect(window.max).toBeGreaterThan(lastObserved);
+  });
+
+  it("defers to Apex rather than emit an unusable axis", () => {
+    for (const result of [
+      undefined,
+      null,
+      {},
+      { time_range: {} },
+      { time_range: { start: "not a date", end: "2026-08-30T00:00:00Z" } },
+      { time_range: { start: "2026-08-30T00:00:00Z", end: "not a date" } },
+      // An inverted window would render an axis running backwards.
+      {
+        time_range: {
+          start: "2026-08-30T00:00:00Z",
+          end: "2026-08-23T00:00:00Z",
+        },
+      },
+      // A zero-width window collapses the plot.
+      {
+        time_range: {
+          start: "2026-08-23T00:00:00Z",
+          end: "2026-08-23T00:00:00Z",
+        },
+      },
+    ]) {
+      expect(getChartTimeWindow(result)).toBeNull();
+    }
+  });
+});
+
+describe("getSeriesExtent — sparse and very long ranges (TH-7757)", () => {
+  const bucketsOf = (length, valueAt) => [
+    {
+      name: "a",
+      data: Array.from({ length }, (_, x) => ({ x, y: valueAt(x) })),
+    },
+  ];
+
+  it("ignores empty buckets instead of reading them as zero", () => {
+    // Number(null) is 0, which would anchor the floor at a value never drawn.
+    const series = bucketsOf(50, (x) => (x % 10 === 0 ? x + 5 : null));
+    expect(getSeriesExtent(series)).toEqual({ min: 5, max: 45 });
+  });
+
+  it("ignores them on the stacked path too", () => {
+    const series = [
+      {
+        name: "a",
+        data: [
+          { x: 0, y: 4 },
+          { x: 1, y: null },
+          { x: 2, y: 6 },
+        ],
+      },
+      {
+        name: "b",
+        data: [
+          { x: 0, y: 3 },
+          { x: 1, y: null },
+          { x: 2, y: null },
+        ],
+      },
+    ];
+    expect(getSeriesExtent(series, { stacked: true })).toEqual({
+      min: 6,
+      max: 7,
+    });
+  });
+
+  it("still reports a real zero", () => {
+    expect(getSeriesExtent(bucketsOf(4, (x) => (x === 0 ? 0 : 9)))).toEqual({
+      min: 0,
+      max: 9,
+    });
+  });
+
+  it("measures a quarter of minute buckets without overflowing the stack", () => {
+    // Spreading a collected array into Math.min is an argument list, and the
+    // engine gives up around 125k. A 90-day minute range carries ~132k.
+    const series = bucketsOf(132_481, (x) => x % 7);
+    expect(() => getSeriesExtent(series)).not.toThrow();
+    expect(getSeriesExtent(series)).toEqual({ min: 0, max: 6 });
+    expect(() => getSeriesExtent(series, { stacked: true })).not.toThrow();
+  });
+
+  it("needs two observations before it will report an extent", () => {
+    expect(
+      getSeriesExtent(bucketsOf(9000, (x) => (x === 3 ? 5 : null))),
+    ).toBeNull();
+    expect(getSeriesExtent([])).toBeNull();
+  });
+});
+
+describe("getPlottedChartSeries — stacked alignment (TH-7757 review D1)", () => {
+  // ApexCharts stacks by array index, so a stacked chart's series must stay the
+  // same length and index j must denote the same bucket in all of them.
+  const padded = () => [
+    {
+      name: "A",
+      data: [10, 10, null, null, null, 10].map((y, x) => ({ x, y })),
+    },
+    {
+      name: "B",
+      data: [null, null, null, null, null, 100].map((y, x) => ({ x, y })),
+    },
+  ];
+
+  it("keeps every series the same length when stacked", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    expect(out[0].data).toHaveLength(out[1].data.length);
+  });
+
+  it("keeps the same array index pointing at the same bucket", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    out[0].data.forEach((point, index) => {
+      expect(point.x).toBe(out[1].data[index].x);
+    });
+  });
+
+  it("still collapses buckets that no series reported", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    expect(out[0].data.map((p) => p.x)).toEqual([0, 1, 5]);
+  });
+
+  it("pads a series that did not report a kept bucket, rather than shifting it", () => {
+    const out = getPlottedChartSeries(padded(), { stacked: true });
+    expect(out[1].data).toEqual([
+      { x: 0, y: null },
+      { x: 1, y: null },
+      { x: 5, y: 100 },
+    ]);
+  });
+
+  it("lets unstacked series drop their own buckets so lines connect across gaps", () => {
+    const out = getPlottedChartSeries(padded());
+    expect(out[0].data).toHaveLength(3);
+    expect(out[1].data).toHaveLength(1);
+  });
+
+  it("collapses a sparse stacked range as hard as an unstacked one", () => {
+    const sparse = [
+      {
+        name: "a",
+        data: Array.from({ length: 7201 }, (_, x) => ({
+          x,
+          y: x % 200 === 0 ? 1 : null,
+        })),
+      },
+      {
+        name: "b",
+        data: Array.from({ length: 7201 }, (_, x) => ({
+          x,
+          y: x % 200 === 0 ? 2 : null,
+        })),
+      },
+    ];
+    expect(
+      getPlottedChartSeries(sparse, { stacked: true })[0].data,
+    ).toHaveLength(37);
+  });
+});
+
+describe("getChartTimeWindow — bucket alignment (TH-7757 review D2)", () => {
+  // The reported window is the instant the query resolved to, but buckets snap
+  // to the start of their period, so bucket 0 precedes it. Pinning the axis at
+  // the raw instant drew that bucket off-canvas.
+  const result = {
+    time_range: {
+      start: "2026-08-26T12:17:18.076Z",
+      end: "2026-09-02T12:17:18.076Z",
+    },
+    metrics: [
+      {
+        series: [
+          {
+            data: [
+              { timestamp: "2026-08-26T00:00:00Z", value: 1 },
+              { timestamp: "2026-09-02T00:00:00Z", value: 2 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("floors the window at the first bucket, not the resolved instant", () => {
+    expect(getChartTimeWindow(result).min).toBe(
+      Date.parse("2026-08-26T00:00:00Z"),
+    );
+  });
+
+  it("never starts after the earliest point it has to draw", () => {
+    const { min } = getChartTimeWindow(result);
+    const firstPoint = Date.parse(
+      result.metrics[0].series[0].data[0].timestamp,
+    );
+    expect(min).toBeLessThanOrEqual(firstPoint);
+  });
+
+  it("keeps the reported end when no bucket runs past it", () => {
+    expect(getChartTimeWindow(result).max).toBe(
+      Date.parse("2026-09-02T12:17:18.076Z"),
+    );
+  });
+
+  it("extends the end if a bucket somehow runs past the window", () => {
+    const late = JSON.parse(JSON.stringify(result));
+    late.metrics[0].series[0].data.push({
+      timestamp: "2026-09-03T00:00:00Z",
+      value: 3,
+    });
+    expect(getChartTimeWindow(late).max).toBe(
+      Date.parse("2026-09-03T00:00:00Z"),
+    );
+  });
+
+  it("falls back to the reported window when there are no buckets", () => {
+    expect(
+      getChartTimeWindow({ time_range: result.time_range, metrics: [] }),
+    ).toEqual({
+      min: Date.parse("2026-08-26T12:17:18.076Z"),
+      max: Date.parse("2026-09-02T12:17:18.076Z"),
+    });
+  });
+});
+
+describe("describeTableBuckets (review D5)", () => {
+  it("says nothing when nothing was left out", () => {
+    expect(
+      describeTableBuckets({ shown: 30, total: 30, omitted: 0 }),
+    ).toBeNull();
+    expect(describeTableBuckets()).toBeNull();
+  });
+
+  it("names the end it kept when the cap was hit", () => {
+    expect(
+      describeTableBuckets({
+        shown: 500,
+        total: 721,
+        omitted: 221,
+        truncated: true,
+      }),
+    ).toBe("latest 500 of 721 buckets");
+  });
+
+  it("does not claim truncation when only empty buckets were dropped", () => {
+    expect(
+      describeTableBuckets({
+        shown: 46,
+        total: 7201,
+        omitted: 7155,
+        truncated: false,
+      }),
+    ).toBe("46 of 7,201 buckets");
+  });
+});
+
+describe("getSeriesScalar — unbounded ranges (review D4)", () => {
+  const points = (n, valueAt) =>
+    Array.from({ length: n }, (_, i) => ({ x: i, y: valueAt(i) }));
+
+  it("takes min and max over a quarter of minute buckets without crashing", () => {
+    // Spreading into Math.min is an argument list; ~132k values crashed the
+    // whole page through the metric card, not just the widget.
+    const dense = points(132_481, (i) => (i % 97) + 1);
+    expect(() => getSeriesScalar(dense, "min")).not.toThrow();
+    expect(getSeriesScalar(dense, "min")).toBe(1);
+    expect(getSeriesScalar(dense, "max")).toBe(97);
+  });
+
+  it("still handles small, negative and single-value series", () => {
+    expect(
+      getSeriesScalar(
+        points(5, (i) => i - 2),
+        "min",
+      ),
+    ).toBe(-2);
+    expect(
+      getSeriesScalar(
+        points(5, (i) => i - 2),
+        "max",
+      ),
+    ).toBe(2);
+    expect(getSeriesScalar([{ x: 0, y: 7 }], "min")).toBe(7);
+    expect(getSeriesScalar([{ x: 0, y: 7 }], "max")).toBe(7);
+  });
+
+  it("ignores empty buckets and reports nothing for an empty series", () => {
+    expect(
+      getSeriesScalar(
+        points(6, (i) => (i === 3 ? 9 : null)),
+        "min",
+      ),
+    ).toBe(9);
+    expect(getSeriesScalar([], "min")).toBeNull();
+  });
 });
