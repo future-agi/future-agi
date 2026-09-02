@@ -1430,14 +1430,13 @@ export const endpoints = {
   },
   scenarios: {
     list: apiPath("/simulate/scenarios/"),
+    delete: apiPath("/simulate/scenarios/"),
     getColumns: apiPath("/simulate/scenarios/get-columns/"),
     create: apiPath("/simulate/scenarios/create/"),
     detail: (id) =>
       apiPath("/simulate/scenarios/{scenario_id}/", { scenario_id: id }),
     edit: (id) =>
       apiPath("/simulate/scenarios/{scenario_id}/edit/", { scenario_id: id }),
-    delete: (id) =>
-      apiPath("/simulate/scenarios/{scenario_id}/delete/", { scenario_id: id }),
     addRowUsingAi: (scenarioId) =>
       apiPath("/simulate/scenarios/{scenario_id}/add-rows/", {
         scenario_id: scenarioId,
