@@ -608,6 +608,19 @@ def _connector_egress_domains(
         config = {}
     domains: set[str] = set()
 
+    # Resolve 'auto' from the creds present so LiveKit TURN/media edges are allowlisted.
+    if connector == "auto":
+        aliases = {str(name).upper() for name in secrets_map}
+        has_livekit = "LIVEKIT_URL" in aliases or bool(
+            _config_value(config, "livekit_url", "LIVEKIT_URL")
+        )
+        if has_livekit:
+            connector = "livekit"
+        elif "VAPI_API_KEY" in aliases:
+            connector = "vapi"
+        elif "RETELL_API_KEY" in aliases:
+            connector = "retell"
+
     if connector == "livekit":
         livekit_url = None
         for alias, value in secrets_map.items():

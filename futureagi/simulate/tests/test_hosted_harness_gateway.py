@@ -345,6 +345,21 @@ def test_retell_connector_includes_default_livekit_cloud_egress(settings):
     }
 
 
+def test_auto_connector_resolves_livekit_and_adds_cloud_turn_edges():
+    payload = {
+        "agent": {"connector": "auto", "config": {}},
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _connector_egress_domains(
+        payload, {"LIVEKIT_URL": "wss://tenant-abc.livekit.cloud"}
+    ) == {
+        "tenant-abc.livekit.cloud",
+        "*.livekit.cloud",
+        "*.turn.livekit.cloud",
+    }
+
+
 def test_resolved_egress_cap_applies_after_wildcard_minimization(settings):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
     payload = {
