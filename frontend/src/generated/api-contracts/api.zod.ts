@@ -60435,17 +60435,6 @@ export const TracerV1HealthListResponse = zod.object({
   service: zod.string().min(1),
 });
 
-export const TracerWebhookCreateBody = zod.object({
-  call: zod.object({}).passthrough(),
-});
-
-export const tracerWebhookCreateResponseStatusDefault = true;
-
-export const TracerWebhookCreateResponse = zod.object({
-  status: zod.boolean().default(tracerWebhookCreateResponseStatusDefault),
-  result: zod.string().min(1),
-});
-
 /**
  * Get custom plan summary for an org.
  */
