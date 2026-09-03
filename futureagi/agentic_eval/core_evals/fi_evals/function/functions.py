@@ -4004,6 +4004,231 @@ def calculate_fleiss_kappa(output, expected=None, **kwargs):
     return {"result": score, "reason": f"Fleiss' Kappa: {kappa:.4f}, normalized={score:.4f}"}
 
 
+def _parse_bbox(value):
+    """Parse a bbox from list, dict, or JSON string.
+
+    Accepted: [x1, y1, x2, y2], [x, y, w, h] with format hint,
+    {"x1":.., "y1":.., "x2":.., "y2":..} or {"x":.., "y":.., "w":.., "h":..}.
+    Returns (x1, y1, x2, y2) floats or None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if isinstance(value, dict):
+        if all(key in value for key in ("x1", "y1", "x2", "y2")):
+            try:
+                return (
+                    float(value["x1"]),
+                    float(value["y1"]),
+                    float(value["x2"]),
+                    float(value["y2"]),
+                )
+            except (TypeError, ValueError):
+                return None
+        if all(key in value for key in ("x", "y", "w", "h")):
+            try:
+                x = float(value["x"])
+                y = float(value["y"])
+                return (x, y, x + float(value["w"]), y + float(value["h"]))
+            except (TypeError, ValueError):
+                return None
+        if "bbox" in value:
+            return _parse_bbox(value["bbox"])
+        return None
+    if isinstance(value, (list, tuple)) and len(value) == 4:
+        try:
+            numbers = [float(item) for item in value]
+        except (TypeError, ValueError):
+            return None
+        return (numbers[0], numbers[1], numbers[2], numbers[3])
+    return None
+
+
+def _normalize_bbox(box, box_format="xyxy"):
+    if box is None:
+        return None
+    x1, y1, x2, y2 = box
+    if str(box_format).lower() in ("xywh", "x_y_w_h"):
+        x1, y1, x2, y2 = x1, y1, x1 + x2, y1 + y2
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2, y2)
+
+
+def _bbox_metrics(pred, gold):
+    px1, py1, px2, py2 = pred
+    gx1, gy1, gx2, gy2 = gold
+    inter_x1, inter_y1 = max(px1, gx1), max(py1, gy1)
+    inter_x2, inter_y2 = min(px2, gx2), min(py2, gy2)
+    inter = max(0.0, inter_x2 - inter_x1) * max(0.0, inter_y2 - inter_y1)
+    pred_area = (px2 - px1) * (py2 - py1)
+    gold_area = (gx2 - gx1) * (gy2 - gy1)
+    union = pred_area + gold_area - inter
+    iou = inter / union if union else 0.0
+    outer_x1, outer_y1 = min(px1, gx1), min(py1, gy1)
+    outer_x2, outer_y2 = max(px2, gx2), max(py2, gy2)
+    outer = (outer_x2 - outer_x1) * (outer_y2 - outer_y1)
+    giou = iou - ((outer - union) / outer if outer else 0.0)
+    pred_cx, pred_cy = (px1 + px2) / 2, (py1 + py2) / 2
+    gold_cx, gold_cy = (gx1 + gx2) / 2, (gy1 + gy2) / 2
+    diag = ((outer_x2 - outer_x1) ** 2 + (outer_y2 - outer_y1) ** 2) ** 0.5
+    center = (((pred_cx - gold_cx) ** 2 + (pred_cy - gold_cy) ** 2) ** 0.5) / diag if diag else 0.0
+    contained = px1 >= gx1 and py1 >= gy1 and px2 <= gx2 and py2 <= gy2
+    return {
+        "iou": iou,
+        "giou": max(-1.0, min(1.0, giou)),
+        "center": center,
+        "contained": contained,
+        "inter": inter,
+    }
+
+
+def _jaccard_text(first, second):
+    def _tokens(text):
+        return set(re.findall(r"\w+", str(text).lower()))
+
+    left, right = _tokens(first), _tokens(second)
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def calculate_bbox_iou(output, expected=None, box_format="xyxy", **kwargs):
+    """Bounding-box IoU for UI grounding.
+
+    Pure coordinate math with no model dependency, so CUA click accuracy
+    can be scored offline on CPU.
+    """
+    fmt = kwargs.get("box_format", box_format)
+    pred = _normalize_bbox(_parse_bbox(output), fmt)
+    gold = _normalize_bbox(
+        _parse_bbox(expected if expected is not None else kwargs.get("expected")), fmt
+    )
+    if pred is None or gold is None:
+        return {"result": 0.0, "reason": "BoundingBoxIoU: 0.0000 (invalid bbox on one side)"}
+    metrics = _bbox_metrics(pred, gold)
+    return {
+        "result": float(max(0.0, min(1.0, metrics["iou"]))),
+        "reason": (
+            f"BoundingBoxIoU: {metrics['iou']:.4f} "
+            f"(GIoU={metrics['giou']:.3f}, center_dist={metrics['center']:.3f}, "
+            f"contained={metrics['contained']})"
+        ),
+    }
+
+
+def calculate_element_grounding(output, expected=None, **kwargs):
+    """UI element grounding: box overlap plus label match.
+
+    Output and expected accept {"bbox": [...], "label": str}. Label match
+    uses Jaccard on OCR strings supplied as context, so no OCR engine is
+    needed for offline verification.
+    """
+    def _split(value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return {}, value
+        if isinstance(value, dict):
+            return value, value.get("label", value.get("text", ""))
+        return {}, value
+
+    pred_meta, pred_label = _split(output)
+    gold_meta, gold_label = _split(
+        expected if expected is not None else kwargs.get("expected")
+    )
+    fmt = kwargs.get("box_format", "xyxy")
+    pred = _normalize_bbox(_parse_bbox(pred_meta.get("bbox", output)), fmt)
+    gold = _normalize_bbox(_parse_bbox(gold_meta.get("bbox", expected)), fmt)
+    if pred is None or gold is None:
+        return {"result": 0.0, "reason": "ElementGrounding: 0.0000 (invalid bbox)"}
+    metrics = _bbox_metrics(pred, gold)
+    text = _jaccard_text(pred_label, gold_label)
+    score = 0.7 * metrics["iou"] + 0.3 * text
+    return {
+        "result": float(max(0.0, min(1.0, score))),
+        "reason": (
+            f"ElementGrounding: {score:.4f} "
+            f"(IoU={metrics['iou']:.3f}, text={text:.3f}, contained={metrics['contained']})"
+        ),
+    }
+
+
+def _load_gray_image(value):
+    from PIL import Image
+    import io
+    import base64
+
+    if isinstance(value, Image.Image):
+        return value.convert("L")
+    if isinstance(value, bytes):
+        return Image.open(io.BytesIO(value)).convert("L")
+    if isinstance(value, str):
+        if os.path.isfile(value):
+            return Image.open(value).convert("L")
+        data = base64.b64decode(value)
+        return Image.open(io.BytesIO(data)).convert("L")
+    raise ValueError(f"Cannot load image from {type(value)}")
+
+
+def _ssim_gray(arr1, arr2):
+    c1 = (0.01 * 255) ** 2
+    c2 = (0.03 * 255) ** 2
+    mu1, mu2 = arr1.mean(), arr2.mean()
+    s1, s2 = arr1.var(), arr2.var()
+    cov = ((arr1 - mu1) * (arr2 - mu2)).mean()
+    return float(((2 * mu1 * mu2 + c1) * (2 * cov + c2)) / ((mu1**2 + mu2**2 + c1) * (s1 + s2 + c2)))
+
+
+def calculate_region_similarity(output, expected=None, region=None, **kwargs):
+    """Crop-aware similarity for a cited screen region.
+
+    Whole-screenshot SSIM stays high when the background matches even if
+    the target widget differs. This evaluator crops both images to region
+    before scoring, using PIL and numpy only.
+    """
+    first = output if output is not None else kwargs.get("image")
+    second = expected if expected is not None else kwargs.get("expected_image", kwargs.get("reference"))
+    box = region if region is not None else kwargs.get("region", kwargs.get("bbox"))
+    parsed = _parse_bbox(box)
+    if parsed is None:
+        return {"result": 0.0, "reason": "RegionSimilarity: 0.0000 (invalid region)"}
+    try:
+        img1 = _load_gray_image(first)
+        img2 = _load_gray_image(second)
+    except Exception as exc:
+        return {"result": 0.0, "reason": f"RegionSimilarity error: {exc}"}
+    if img1.size != img2.size:
+        img2 = img2.resize(img1.size)
+    width, height = img1.size
+    x1, y1, x2, y2 = [int(round(item)) for item in parsed]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(width, x2), min(height, y2)
+    if x2 <= x1 or y2 <= y1:
+        return {"result": 0.0, "reason": "RegionSimilarity: 0.0000 (empty crop)"}
+    crop1 = np.array(img1.crop((x1, y1, x2, y2)), dtype=np.float64)
+    crop2 = np.array(img2.crop((x1, y1, x2, y2)), dtype=np.float64)
+    try:
+        score = max(0.0, min(1.0, _ssim_gray(crop1, crop2)))
+    except Exception as exc:
+        return {"result": 0.0, "reason": f"RegionSimilarity error: {exc}"}
+    return {
+        "result": float(score),
+        "reason": f"RegionSimilarity: {score:.4f} (crop {x2 - x1}x{y2 - y1} at [{x1},{y1},{x2},{y2}])",
+    }
+
+
 """
 A dictionary containing the available operations and their corresponding functions.
 """
@@ -4098,4 +4323,7 @@ operations = {
     "IsRefusal": is_refusal,
     "LatencyCheck": latency_check,
     "FleissKappa": calculate_fleiss_kappa,
+    "BoundingBoxIoU": calculate_bbox_iou,
+    "ElementGrounding": calculate_element_grounding,
+    "RegionSimilarity": calculate_region_similarity,
 }

@@ -664,6 +664,105 @@ DEAD_AIR_DETECTION = '''def evaluate(input, output, expected, context, **kwargs)
 '''
 
 
+BOUNDING_BOX_IOU = '''def evaluate(input, output, expected, context, **kwargs):
+    import json
+    def _box(value):
+        if isinstance(value, str):
+            try: value = json.loads(value)
+            except Exception: return None
+        if isinstance(value, dict) and "bbox" in value:
+            value = value["bbox"]
+        if isinstance(value, (list, tuple)) and len(value) == 4:
+            return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+        return None
+    pred = _box(kwargs.get("output", output))
+    gold = _box(kwargs.get("expected", expected))
+    if pred is None or gold is None:
+        return {"score": 0.0, "reason": "BoundingBoxIoU: 0.0000 (invalid bbox)"}
+    ix1, iy1 = max(pred[0], gold[0]), max(pred[1], gold[1])
+    ix2, iy2 = min(pred[2], gold[2]), min(pred[3], gold[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    union = (pred[2] - pred[0]) * (pred[3] - pred[1]) + (gold[2] - gold[0]) * (gold[3] - gold[1]) - inter
+    iou = inter / union if union else 0.0
+    return {"score": float(iou), "reason": f"BoundingBoxIoU: {iou:.4f}"}
+'''
+
+
+ELEMENT_GROUNDING = '''def evaluate(input, output, expected, context, **kwargs):
+    import json, re
+    def _split(value):
+        if isinstance(value, str):
+            try: value = json.loads(value)
+            except Exception: return {}, value
+        if isinstance(value, dict):
+            return value, value.get("label", value.get("text", ""))
+        return {}, value
+    pred_meta, pred_label = _split(kwargs.get("output", output))
+    gold_meta, gold_label = _split(kwargs.get("expected", expected))
+    def _box(value):
+        if isinstance(value, dict) and "bbox" in value:
+            value = value["bbox"]
+        if isinstance(value, (list, tuple)) and len(value) == 4:
+            return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+        return None
+    pred = _box(pred_meta.get("bbox", kwargs.get("output", output)))
+    gold = _box(gold_meta.get("bbox", kwargs.get("expected", expected)))
+    if pred is None or gold is None:
+        return {"score": 0.0, "reason": "ElementGrounding: 0.0000 (invalid bbox)"}
+    ix1, iy1 = max(pred[0], gold[0]), max(pred[1], gold[1])
+    ix2, iy2 = min(pred[2], gold[2]), min(pred[3], gold[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    union = (pred[2] - pred[0]) * (pred[3] - pred[1]) + (gold[2] - gold[0]) * (gold[3] - gold[1]) - inter
+    iou = inter / union if union else 0.0
+    left = set(re.findall(r"\\w+", str(pred_label).lower()))
+    right = set(re.findall(r"\\w+", str(gold_label).lower()))
+    text = 1.0 if not left and not right else (len(left & right) / len(left | right) if (left and right) else 0.0)
+    score = 0.7 * iou + 0.3 * text
+    return {"score": float(score), "reason": f"ElementGrounding: {score:.4f} (IoU={iou:.3f})"}
+'''
+
+
+REGION_SIMILARITY = '''def evaluate(input, output, expected, context, **kwargs):
+    from PIL import Image
+    import io, base64, json
+    import numpy as np
+    def _load(value):
+        if isinstance(value, Image.Image): return value.convert("L")
+        if isinstance(value, bytes): return Image.open(io.BytesIO(value)).convert("L")
+        if isinstance(value, str):
+            import os
+            if os.path.isfile(value): return Image.open(value).convert("L")
+            return Image.open(io.BytesIO(base64.b64decode(value))).convert("L")
+        raise ValueError("bad image")
+    box = kwargs.get("region", kwargs.get("bbox"))
+    if isinstance(box, str):
+        try: box = json.loads(box)
+        except Exception: box = None
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return {"score": 0.0, "reason": "RegionSimilarity: 0.0000 (invalid region)"}
+    try:
+        img1 = _load(kwargs.get("output", output))
+        img2 = _load(kwargs.get("expected", expected))
+    except Exception as exc:
+        return {"score": 0.0, "reason": f"RegionSimilarity error: {exc}"}
+    if img1.size != img2.size:
+        img2 = img2.resize(img1.size)
+    width, height = img1.size
+    x1, y1, x2, y2 = max(0, int(box[0])), max(0, int(box[1])), min(width, int(box[2])), min(height, int(box[3]))
+    if x2 <= x1 or y2 <= y1:
+        return {"score": 0.0, "reason": "RegionSimilarity: 0.0000 (empty crop)"}
+    arr1 = np.array(img1.crop((x1, y1, x2, y2)), dtype=np.float64)
+    arr2 = np.array(img2.crop((x1, y1, x2, y2)), dtype=np.float64)
+    c1 = (0.01 * 255) ** 2
+    c2 = (0.03 * 255) ** 2
+    mu1, mu2 = arr1.mean(), arr2.mean()
+    s1, s2 = arr1.var(), arr2.var()
+    cov = ((arr1 - mu1) * (arr2 - mu2)).mean()
+    score = ((2 * mu1 * mu2 + c1) * (2 * cov + c2)) / ((mu1 ** 2 + mu2 ** 2 + c1) * (s1 + s2 + c2))
+    return {"score": float(max(0.0, min(1.0, score))), "reason": f"RegionSimilarity: {score:.4f}"}
+'''
+
+
 # =============================================================================
 # Registry: eval_name → code string
 # =============================================================================
@@ -704,4 +803,7 @@ CODE_REGISTRY = {
     "clip_score": CLIP_SCORE,
     "fid_score": FID_SCORE,
     "dead_air_detection": DEAD_AIR_DETECTION,
+    "bounding_box_iou": BOUNDING_BOX_IOU,
+    "element_grounding": ELEMENT_GROUNDING,
+    "region_similarity": REGION_SIMILARITY,
 }
