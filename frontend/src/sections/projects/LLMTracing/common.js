@@ -2,6 +2,7 @@ import { getRandomId, safeParse } from "src/utils/utils";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { AnnotationLabelTypes, PROJECT_SOURCE } from "src/utils/constants";
+import { SpanTypes } from "src/utils/constant";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
 import {
   getAnnotationMetricFilterDefinition,
@@ -22,7 +23,29 @@ import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { isCellValueEmpty } from "src/components/table/utils";
 import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
-import headerComponentLabels from "../../agents/headerComponetLabels";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+
+// Normalize config object keys from snake_case to camelCase while preserving
+// id values as snake_case. Shared by the trace and span grids. Dedup by id: the
+// spans config can list a column twice → AG Grid would otherwise mint a phantom
+// `<id>_1` column.
+export const normalizeConfigKeys = (config) => {
+  if (!Array.isArray(config)) return config;
+  const seen = new Set();
+  const out = [];
+  for (const obj of config) {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
+    }
+    if (result.id != null) {
+      if (seen.has(result.id)) continue;
+      seen.add(result.id);
+    }
+    out.push(result);
+  }
+  return out;
+};
 
 export const AllowedGroups = [
   "Evaluation Metrics",
@@ -70,15 +93,7 @@ export const generateObserveTraceFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
     {
@@ -164,15 +179,7 @@ export const generateSpanObserveFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
   ];
@@ -200,9 +207,12 @@ const NUMBER_FILTER_FIELDS = [
 const DATE_FILTER_FIELDS = ["Last Used", "First Used", "Start Time"];
 
 export const applyQuickFilters =
-  (setFilters, openQuickFilter, setFilterOpen) =>
+  (setFilters, openQuickFilter, _setFilterOpen) =>
   ({ col, value, filterAnchor }) => {
     let filter = null;
+    const registryId =
+      col?.propertyId || col?.property_id || col?.registryId || undefined;
+    const registryIdentity = registryId ? { registryId } : {};
 
     // Early return for number fields with popup
     if (NUMBER_FILTER_FIELDS.includes(col.name)) {
@@ -210,11 +220,15 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          ...registryIdentity,
+          // The popover renders "Where <display_name> is"; without it the
+          // heading reads "Where value is".
+          display_name: col.name,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: col.id,
@@ -225,18 +239,43 @@ export const applyQuickFilters =
       return;
     }
 
+    if (col.groupBy === "System Metrics") {
+      openQuickFilter({
+        filterAnchor,
+        value,
+        filter: {
+          column_id: col.id,
+          // FilterChips looks labels up at the top level; these are nested.
+          display_name: col.name,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
+            col_type: "SYSTEM_METRIC",
+          },
+          _meta: {
+            parentProperty: "System Metrics",
+            "System Metrics": col.id,
+          },
+          id: getRandomId(),
+        },
+      });
+      return;
+    }
+
     if (!col.groupBy) {
-      let filterType = "text";
+      let filter_type = "text";
       if (DATE_FILTER_FIELDS.includes(col.name)) {
-        filterType = "date";
+        filter_type = "date";
       }
 
       filter = {
-        columnId: col.id,
-        filterConfig: {
-          filterType: filterType,
-          filterOp: "equals",
-          filterValue: value,
+        column_id: col.id,
+        ...registryIdentity,
+        filter_config: {
+          filter_type: filter_type,
+          filter_op: "equals",
+          filter_value: value,
         },
         _meta: {
           parentProperty: col.id,
@@ -245,19 +284,20 @@ export const applyQuickFilters =
       };
 
       if (col.id === "node_type") {
-        filter.filterConfig = {
-          filterType: "text",
-          filterOp: "contains",
-          filterValue: [value],
+        filter.filter_config = {
+          filter_type: "text",
+          filter_op: "contains",
+          filter_value: [value],
         };
       }
       if (DATE_FILTER_FIELDS.includes(col.name)) {
         filter = {
-          columnId: _.snakeCase(col.id),
-          filterConfig: {
-            filterType: "datetime",
-            filterOp: "equals",
-            filterValue: [value],
+          column_id: _.snakeCase(col.id),
+          ...registryIdentity,
+          filter_config: {
+            filter_type: "datetime",
+            filter_op: "equals",
+            filter_value: [value],
           },
           _meta: {
             parentProperty: col.id,
@@ -267,17 +307,47 @@ export const applyQuickFilters =
       }
     } else if (
       col?.groupBy === "Evaluation Metrics" &&
+      col?.sourceField !== "reason" &&
+      String(col?.outputType || "")
+        .toUpperCase()
+        .replace(/[/ ]/g, "_") === "PASS_FAIL"
+    ) {
+      // Pass/Fail is filtered by token, not score. Casing matches the value
+      // picker's choices; the backend lowercases before matching.
+      // Number("") and Number(null) are 0, which would apply a wrong "Failed".
+      if (value === "" || value === null || value === undefined) return;
+      const rate = Number(value);
+      if (rate !== 0 && rate !== 100) return;
+      filter = {
+        column_id: col.id,
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: rate === 100 ? "Passed" : "Failed",
+        },
+        _meta: {
+          parentProperty: "Evaluation Metrics",
+          "Evaluation Metrics": col.id,
+        },
+        id: getRandomId(),
+      };
+    } else if (
+      col?.groupBy === "Evaluation Metrics" &&
       col?.sourceField !== "reason"
     ) {
       openQuickFilter({
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          ...registryIdentity,
+          // Eval ids are UUIDs, so the chip has no label without this.
+          display_name: col.name,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
+            col_type: "EVAL_METRIC",
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -288,7 +358,12 @@ export const applyQuickFilters =
       });
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
-        columnId: col.id,
+        column_id: col.id,
+        ...registryIdentity,
+        // Annotation ids are UUIDs, so both the chip and the number popover
+        // have nothing to show without this. On the base filter rather than the
+        // NUMERIC branch so every label type gets it.
+        display_name: col.name,
         _meta: {
           parentProperty: "Annotation Metrics",
           "Annotation Metrics": col.id,
@@ -299,10 +374,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.STAR: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "number",
-              filterOp: "equals",
-              filterValue: [value, ""],
+            filter_config: {
+              filter_type: "number",
+              filter_op: "equals",
+              filter_value: [value, ""],
             },
           };
           break;
@@ -310,10 +385,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.TEXT: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "equals",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: value,
             },
           };
           break;
@@ -321,10 +396,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.THUMBS_UP_DOWN: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "boolean",
-              filterOp: "equals",
-              filterValue: value === "up" ? true : false,
+            filter_config: {
+              filter_type: "boolean",
+              filter_op: "equals",
+              filter_value: value === "up" ? true : false,
             },
           };
           break;
@@ -332,10 +407,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.CATEGORICAL: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "contains",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "contains",
+              filter_value: value,
             },
           };
           break;
@@ -346,10 +421,11 @@ export const applyQuickFilters =
             value,
             filter: {
               ...filter,
-              filterConfig: {
-                filterType: "number",
-                filterOp: "equals",
-                filterValue: [value, ""],
+              filter_config: {
+                filter_type: "number",
+                filter_op: "equals",
+                filter_value: [value, ""],
+                col_type: "ANNOTATION",
               },
             },
           });
@@ -359,26 +435,47 @@ export const applyQuickFilters =
     }
 
     if (filter) {
-      // Convert to extraFilters format (snake_case) for the new filter state
-      const extraFilter = {
-        column_id: filter.columnId,
-        filter_config: {
-          filter_type: filter.filterConfig?.filterType || "text",
-          filter_op: filter.filterConfig?.filterOp || "equals",
-          filter_value: Array.isArray(filter.filterConfig?.filterValue)
-            ? filter.filterConfig.filterValue.join(",")
-            : filter.filterConfig?.filterValue,
-        },
-      };
-      setFilters((prev) => {
-        const exists = (prev || []).some(
-          (f) =>
-            f.column_id === extraFilter.column_id &&
-            f.filter_config?.filter_value ===
-              extraFilter.filter_config.filter_value,
-        );
-        return exists ? prev : [...(prev || []), extraFilter];
+      // Quick filters skip the toolbar normalization, so attach the col_type
+      // the backend needs — without it the list 400s on a NORMAL col_type.
+      let field = filter.column_id;
+      // Eval and annotation ids are both UUIDs, so the chip has no readable
+      // label without this.
+      let fieldName =
+        col?.groupBy === "Evaluation Metrics" ||
+        col?.groupBy === "Annotation Metrics"
+          ? col?.name
+          : undefined;
+      const apiColType =
+        col?.groupBy === "Annotation Metrics"
+          ? "ANNOTATION"
+          : col?.groupBy === "Evaluation Metrics"
+            ? "EVAL_METRIC"
+            : "SYSTEM_METRIC";
+      let operator = filter.filter_config?.filter_op;
+      let value = filter.filter_config?.filter_value;
+
+      // Trace Name's column id is `trace_name`, but the backend canonical
+      // field is `name`. Remap to the wire shape the panel sends.
+      if (field === "trace_name") {
+        field = "name";
+        fieldName = "Trace Name";
+        operator = "in";
+        value = Array.isArray(value) ? value : [value];
+      }
+
+      const extraFilter = buildApiFilterFromPanelRow({
+        field,
+        registryId,
+        fieldName,
+        fieldType: filter.filter_config?.filter_type,
+        apiColType,
+        operator,
+        value,
       });
+      // Replace by column_id, matching the popover path's avoidDuplicateFilterSet.
+      // Appending instead would AND two values for one column — the grid empties
+      // and the chips give no clue which of the two to remove.
+      setFilters((prev) => avoidDuplicateFilterSet(prev || [], extraFilter));
     }
   };
 
@@ -503,7 +600,7 @@ const COLUMN_SIZE_MAP = {
   status: { minWidth: 130, maxWidth: 160, flex: 0 },
   latency: { minWidth: 100, maxWidth: 140, flex: 0 },
   latency_ms: { minWidth: 100, maxWidth: 140, flex: 0 },
-  total_tokens: { minWidth: 200, flex: 1 },
+  total_tokens: { minWidth: 240, flex: 1 },
   prompt_tokens: { minWidth: 100, maxWidth: 130, flex: 0 },
   completion_tokens: { minWidth: 100, maxWidth: 130, flex: 0 },
   total_cost: { minWidth: 130, flex: 0 },
@@ -574,7 +671,7 @@ export const getTraceListColumnDefs = (col) => {
     headerName: COLUMN_NAME_OVERRIDES[colId] || col.name,
     ...(isCustomColumn ? { colId: col.id } : { field: col.id }),
     hide: !col?.isVisible,
-    col,
+    context: { sourceColumn: col },
     minWidth: defaultMinWidth,
     flex: 1,
     resizable: true,
@@ -605,7 +702,10 @@ export const getTraceListColumnDefs = (col) => {
         : {}),
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      // The tags column keeps its default left alignment so an empty "+ Tag"
+      // sits where the chips will, instead of jumping from center to left.
+      const cellColId = params?.colDef?.context?.sourceColumn?.id;
+      if (isCellValueEmpty(value) && cellColId !== "tags") {
         return {
           display: "flex",
           height: "100%",
@@ -624,12 +724,15 @@ export const getTraceListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
+      const column = params?.colDef?.context?.sourceColumn;
+      const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
         return null;
       }
-      const column = params?.colDef?.col;
-      const colId = column?.id;
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {
@@ -689,9 +792,8 @@ export const generateAnnotationColumnsForTracing = (
     }
   }
 
-  return Object.entries(grouping).map(([groupName, metrics]) => ({
-    headerName: groupName,
-    children: metrics.map((metric) => {
+  return Object.values(grouping).flatMap((metrics) =>
+    metrics.flatMap((metric) => {
       const metricId = metric?.id;
       const displayName = metric?.name?.replace(/_/g, " ") || metricId;
       const outputType = metric?.annotationLabelType;
@@ -700,7 +802,6 @@ export const generateAnnotationColumnsForTracing = (
         outputType === "text" || expandedMetrics.includes(metricId);
 
       if (!isExpanded) {
-        // Collapsed: flat column under group → 2 header rows
         return {
           headerName: displayName,
           field: metricId,
@@ -711,6 +812,7 @@ export const generateAnnotationColumnsForTracing = (
             displayName: displayName,
             metricId,
             isTextType: outputType === "text",
+            showActions: true,
           },
           valueGetter: (params) => {
             const metricData = params?.data?.[metricId];
@@ -729,7 +831,8 @@ export const generateAnnotationColumnsForTracing = (
         };
       }
 
-      // Expanded: nested group → 3 header rows with annotator columns
+      // Expanded columns stay flat so AG Grid does not create a tall global
+      // grouped-header row that makes unrelated columns look oversized.
       const metricAnnotators = Object.values(metric?.annotators || {});
 
       const avgColumn = {
@@ -737,10 +840,14 @@ export const generateAnnotationColumnsForTracing = (
         field: `${metricId}.score`,
         flex: 1,
         minWidth: 200,
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: "Avg",
-          isAverage: true,
+          displayName,
+          metricId,
+          isTextType: false,
+          subLabel: "Avg",
+          subLabelType: "average",
+          showActions: true,
         },
         valueGetter: (params) => {
           const metricData = params?.data?.[metricId];
@@ -764,10 +871,14 @@ export const generateAnnotationColumnsForTracing = (
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: annotator?.user_name,
-          isAverage: false,
+          displayName,
+          metricId,
+          isTextType: outputType === "text",
+          subLabel: annotator?.user_name,
+          subLabelType: "person",
+          showActions: outputType === "text",
         },
         valueGetter: (params) => {
           const annotatorData =
@@ -786,21 +897,40 @@ export const generateAnnotationColumnsForTracing = (
         },
       }));
 
-      return {
-        headerName: displayName,
-        headerGroupComponent: AnnotationHeaderCellRenderer,
-        headerGroupComponentParams: {
-          displayName,
-          metricId,
-          isTextType: outputType === "text",
-        },
-        children: [
-          ...(outputType !== "text" ? [avgColumn] : []),
-          ...annotatorColumns,
-        ],
-      };
+      if (outputType === "text" && metricAnnotators.length === 0) {
+        return [
+          {
+            headerName: displayName,
+            field: metricId,
+            flex: 1,
+            minWidth: 200,
+            wrapText: true,
+            autoHeight: true,
+            headerComponent: AnnotationHeaderCellRenderer,
+            headerComponentParams: {
+              displayName,
+              metricId,
+              isTextType: true,
+              showActions: false,
+            },
+            valueGetter: () => null,
+            cellRenderer: NewAnnotationCellRenderer,
+            cellRendererParams: {
+              annotationType: outputType,
+              isAverage: false,
+              settings,
+              originType: "Tracing",
+            },
+          },
+        ];
+      }
+
+      return [
+        ...(outputType !== "text" ? [avgColumn] : []),
+        ...annotatorColumns,
+      ];
     }),
-  }));
+  );
 };
 
 export const DOC_LINKS = {
@@ -808,7 +938,8 @@ export const DOC_LINKS = {
   sessions: "https://docs.futureagi.com/docs/observe/features/session",
   evals: "https://docs.futureagi.com/docs/observe/features/evals",
   alerts: "https://docs.futureagi.com/docs/observe/features/alerts",
-  users: "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
+  users:
+    "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
   charts: "https://docs.futureagi.com/docs/observe/features/evals",
 };
 
@@ -818,13 +949,20 @@ export const LLM_TABS = {
 };
 
 export const FILTER_FOR_HAS_EVAL = {
-  columnId: "has_eval",
-  filterConfig: {
-    filterType: "boolean",
-    filterOp: "equals",
-    filterValue: true,
+  column_id: "has_eval",
+  filter_config: {
+    filter_type: "boolean",
+    filter_op: "equals",
+    filter_value: true,
   },
 };
+
+// Strip UI-only keys per UI_FILTER_ITEM_KEYS in src/api/contracts/filter-contract.js.
+export const toBackendFilters = (filters) =>
+  (filters || []).map(({ id, registryId, _meta, col_type, ...rest }) => ({
+    ...rest,
+    ...(registryId && !rest.property_id ? { property_id: registryId } : {}),
+  }));
 
 export const FILTER_FOR_ERRORS = {
   column_id: "status",

@@ -169,25 +169,40 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	}
 
 	// Phase 2: Parallel post-plugins (logging, audit, metrics, alerting, otel).
+	//
+	// All of them read the same RequestContext, whose Metadata and Timings are
+	// plain maps. Nothing may write to rc inside this window: a concurrent map
+	// read and write is a Go runtime fatal, not a recoverable panic, and takes
+	// the process down along with every in-flight request. Locking the writes
+	// would not help either — the readers are unsynchronized by design, and the
+	// race detector fires on read-versus-write regardless of which side holds a
+	// mutex. So each goroutine times itself into its own slot, and the timings
+	// are recorded once the window has closed and execution is serial again.
 	if len(e.postParallel) == 0 {
 		return
 	}
 
-	var wg sync.WaitGroup
-	for _, p := range e.postParallel {
-		if isCacheHit {
+	toRun := e.postParallel
+	if isCacheHit {
+		toRun = make([]Plugin, 0, len(e.postParallel))
+		for _, p := range e.postParallel {
 			if skipper, ok := p.(SkipOnCacheHit); ok && skipper.ShouldSkipOnCacheHit() {
 				continue
 			}
+			toRun = append(toRun, p)
 		}
+	}
 
+	durations := make([]time.Duration, len(toRun))
+	var wg sync.WaitGroup
+	for i, p := range toRun {
 		wg.Add(1)
-		go func(plug Plugin) {
+		go func(slot int, plug Plugin) {
 			defer wg.Done()
 
 			start := time.Now()
 			result := plug.ProcessResponse(ctx, rc)
-			rc.RecordTiming("post_"+plug.Name(), time.Since(start))
+			durations[slot] = time.Since(start)
 
 			if result.Error != nil {
 				slog.Warn("post-plugin error",
@@ -196,9 +211,13 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 					"request_id", rc.RequestID,
 				)
 			}
-		}(p)
+		}(i, p)
 	}
 	wg.Wait()
+
+	for i, p := range toRun {
+		rc.RecordTiming("post_"+p.Name(), durations[i])
+	}
 }
 
 // PluginCount returns the number of registered plugins.

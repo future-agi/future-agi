@@ -13,7 +13,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
 
 export function useDeploymentMode() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isSuccess } = useQuery({
     queryKey: ["deployment-info"],
     queryFn: () => axios.get(endpoints.settings.v2.deploymentInfo),
     select: (res) => res.data?.result?.mode || "oss",
@@ -29,14 +29,14 @@ export function useDeploymentMode() {
     isOSS: mode === "oss",
     isEE: mode === "ee",
     isLoading,
+    isSuccess,
   };
 }
 
 export function usePostLoginPath() {
   const { isOSS } = useDeploymentMode();
 
-
- const returnTo = localStorage.getItem("redirectUrl");
+  const returnTo = localStorage.getItem("redirectUrl");
   if (returnTo) return returnTo;
-  return isOSS ? paths.dashboard.develop : paths.dashboard.falconAI;
+  return isOSS ? paths.dashboard.getstarted : paths.dashboard.falconAI;
 }

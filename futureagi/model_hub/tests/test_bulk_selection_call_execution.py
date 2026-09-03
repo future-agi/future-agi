@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from accounts.models.organization import Organization
@@ -14,6 +16,44 @@ from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from simulate.models.test_execution import CallExecution, TestExecution
+from tracer.services.clickhouse.list_cursor import ListCursor
+
+
+def _created_at_filter(operator: str, value) -> dict:
+    return {
+        "column_id": "created_at",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "datetime",
+            "filter_op": operator,
+            "filter_value": value,
+        },
+    }
+
+
+class _RecordingCallExecutionQuerySet:
+    """Minimal queryset double for inspecting PostgreSQL predicate composition."""
+
+    def __init__(self):
+        self.filter_calls = []
+        self.exclude_calls = []
+
+    def filter(self, *args, **kwargs):
+        self.filter_calls.append((args, kwargs))
+        return self
+
+    def exclude(self, *args, **kwargs):
+        self.exclude_calls.append((args, kwargs))
+        return self
+
+    def order_by(self, *_fields):
+        return self
+
+    def values(self, *_fields):
+        return self
+
+    def __getitem__(self, _key):
+        return []
 
 
 # --------------------------------------------------------------------------
@@ -67,9 +107,7 @@ def scenario(db, organization, workspace):
 def seeded_call_executions(db, test_execution, scenario):
     """12 call executions attached to the single test_execution."""
     return [
-        CallExecution.objects.create(
-            test_execution=test_execution, scenario=scenario
-        )
+        CallExecution.objects.create(test_execution=test_execution, scenario=scenario)
         for _ in range(12)
     ]
 
@@ -164,9 +202,7 @@ class TestExcludeIds:
 
 @pytest.mark.django_db
 class TestCap:
-    def test_cap_truncates_ids(
-        self, agent_def, seeded_call_executions, organization
-    ):
+    def test_cap_truncates_ids(self, agent_def, seeded_call_executions, organization):
         result = resolve_filtered_call_execution_ids(
             project_id=agent_def.id,
             filters=[],
@@ -174,7 +210,8 @@ class TestCap:
             cap=5,
         )
         assert len(result.ids) == 5
-        assert result.total_matching == 12
+        # Capped resolvers return a cap+1 sentinel instead of a precise count.
+        assert result.total_matching == 6
         assert result.truncated is True
 
     def test_cap_above_total_is_not_truncated(
@@ -200,6 +237,191 @@ class TestCap:
             cap=3,
         )
         assert result.ids[0] == seeded_call_executions[-1].id
+
+
+# --------------------------------------------------------------------------
+# Resumable created_at contract
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("filter_case", ["equals", "between", "not_equals"])
+def test_resumable_continuation_only_adds_request_upper_fence(
+    filter_case,
+    monkeypatch,
+):
+    """A cursor must not reinterpret PostgreSQL datetime filter semantics."""
+    base = datetime(2020, 1, 15, tzinfo=UTC)
+    lower = base + timedelta(hours=1)
+    upper = base + timedelta(hours=3)
+    if filter_case == "between":
+        filter_item = _created_at_filter(
+            "between",
+            [lower.isoformat(), upper.isoformat()],
+        )
+    else:
+        filter_item = _created_at_filter(filter_case, base.isoformat())
+
+    window_end = datetime(2021, 1, 1, tzinfo=UTC)
+    cursor = ListCursor(
+        window_start=datetime(2019, 1, 1, tzinfo=UTC),
+        window_end=window_end,
+        order=(base, "00000000-0000-0000-0000-000000000001"),
+        seen_rows=2,
+    )
+    queryset = _RecordingCallExecutionQuerySet()
+    monkeypatch.setattr(CallExecution.objects, "filter", lambda **_kwargs: queryset)
+
+    result = resolve_filtered_call_execution_ids(
+        project_id="agent-definition-id",
+        filters=[filter_item],
+        organization=object(),
+        cap=2,
+        cursor=cursor,
+        resumable=True,
+    )
+
+    assert result.ids == []
+    assert result.continuation is None
+    assert queryset.filter_calls[-2] == ((), {"created_at__lte": window_end})
+    assert queryset.filter_calls[-1][1] == {}
+    assert len(queryset.filter_calls[-1][0]) == 1
+
+    if filter_case == "equals":
+        assert queryset.filter_calls[0] == ((), {"created_at__date": base.date()})
+    elif filter_case == "between":
+        assert queryset.filter_calls[0] == (
+            (),
+            {"created_at__gte": lower, "created_at__lte": upper},
+        )
+    else:
+        assert queryset.exclude_calls == [((), {"created_at__date": base.date()})]
+
+
+@pytest.mark.django_db
+class TestResumableCreatedAtContract:
+    @pytest.mark.parametrize("filter_case", ["equals", "between", "not_equals"])
+    def test_pages_preserve_postgres_created_at_semantics(
+        self,
+        filter_case,
+        agent_def,
+        seeded_call_executions,
+        organization,
+    ):
+        base = datetime(2020, 1, 15, tzinfo=UTC)
+        targets = seeded_call_executions[:3]
+
+        if filter_case == "equals":
+            target_times = [
+                base + timedelta(hours=1),
+                base + timedelta(hours=12),
+                base + timedelta(hours=23),
+            ]
+            filter_item = _created_at_filter(
+                "equals",
+                (base + timedelta(hours=12)).isoformat(),
+            )
+            outside_time = base - timedelta(days=1)
+        elif filter_case == "between":
+            lower = base + timedelta(hours=1)
+            upper = base + timedelta(hours=3)
+            target_times = [lower, base + timedelta(hours=2), upper]
+            filter_item = _created_at_filter(
+                "between",
+                [lower.isoformat(), upper.isoformat()],
+            )
+            outside_time = lower - timedelta(microseconds=1)
+        else:
+            excluded_day = base.date()
+            target_times = [
+                base - timedelta(days=10),
+                base - timedelta(days=1),
+                base + timedelta(days=1),
+            ]
+            filter_item = _created_at_filter(
+                "not_equals",
+                datetime.combine(
+                    excluded_day,
+                    datetime.min.time(),
+                    tzinfo=UTC,
+                ).isoformat(),
+            )
+            outside_time = base + timedelta(hours=12)
+
+        for call_execution, created_at in zip(targets, target_times, strict=True):
+            CallExecution.objects.filter(pk=call_execution.pk).update(
+                created_at=created_at
+            )
+        CallExecution.objects.filter(
+            pk__in=[item.pk for item in seeded_call_executions[3:]]
+        ).update(created_at=outside_time)
+
+        first = resolve_filtered_call_execution_ids(
+            project_id=agent_def.id,
+            filters=[filter_item],
+            organization=organization,
+            cap=2,
+            resumable=True,
+        )
+        assert first.truncated is True
+        assert first.continuation is not None
+        assert len(first.ids) == 2
+
+        terminal = resolve_filtered_call_execution_ids(
+            project_id=agent_def.id,
+            filters=[filter_item],
+            organization=organization,
+            cap=2,
+            cursor=first.continuation,
+            resumable=True,
+        )
+
+        assert terminal.truncated is False
+        assert terminal.continuation is None
+        assert len(terminal.ids) == 1
+        assert set(first.ids + terminal.ids) == {item.id for item in targets}
+
+    def test_request_upper_fence_excludes_rows_added_after_first_page(
+        self,
+        agent_def,
+        seeded_call_executions,
+        organization,
+        test_execution,
+        scenario,
+    ):
+        first = resolve_filtered_call_execution_ids(
+            project_id=agent_def.id,
+            filters=[],
+            organization=organization,
+            cap=5,
+            resumable=True,
+        )
+        assert first.continuation is not None
+
+        inserted = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+        )
+        CallExecution.objects.filter(pk=inserted.pk).update(
+            created_at=first.continuation.window_end + timedelta(microseconds=1)
+        )
+
+        resolved_ids = list(first.ids)
+        cursor = first.continuation
+        while cursor is not None:
+            page = resolve_filtered_call_execution_ids(
+                project_id=agent_def.id,
+                filters=[],
+                organization=organization,
+                cap=5,
+                cursor=cursor,
+                resumable=True,
+            )
+            resolved_ids.extend(page.ids)
+            cursor = page.continuation
+
+        assert inserted.id not in resolved_ids
+        assert len(resolved_ids) == len(seeded_call_executions)
+        assert set(resolved_ids) == {item.id for item in seeded_call_executions}
 
 
 # --------------------------------------------------------------------------

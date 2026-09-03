@@ -331,6 +331,18 @@ class GraphEngine:
     def _truncate_timestamp(self, objects=None):
         """
         Truncate timestamps for grouping
+
+        CH25-TODO(generic-helper-needs-callers-migrated): operates on a
+        Django queryset (self.objects, passed by the caller) and annotates
+        it with TruncHour/Day/Month("created_at"). The only live direct
+        caller of GraphEngine today is
+        model_hub/views/separate_evals.py:391 (eval-metric data path) —
+        tracer/views/* import the newer graphs_optimized module instead.
+        Migrating GraphEngine requires migrating that caller first;
+        CHSpanReader.time_bucket_aggregate is the right primitive for
+        the ObservationSpan-only branches once the caller switches from
+        "build queryset, hand to GraphEngine" to "ask CH for buckets
+        directly" (the pattern graphs_optimized.py uses today).
         """
         if not objects or len(objects) == 0:
             objects = ObservationSpan.objects.filter(
@@ -734,6 +746,13 @@ class GraphEngine:
                 base_query = Score.objects.filter(deleted=False).select_related(
                     "observation_span"
                 )
+            # CH25-TODO(generic-helper-needs-callers-migrated): SPAN and
+            # SYSTEM_METRIC both materialize an ObservationSpan queryset
+            # that downstream `.annotate(ArrayAgg("id"))` aggregation
+            # depends on (line ~780 below). Same blocker as
+            # _truncate_timestamp — migrate callers to ask CH for the
+            # bucket aggregate directly instead of constructing the
+            # queryset here.
             elif type == "SPAN":
                 base_query = ObservationSpan.objects.select_related("trace")
             elif type == "SYSTEM_METRIC":

@@ -7,6 +7,7 @@ import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import anthropic
@@ -24,6 +25,8 @@ from google import genai
 from google.genai.types import GenerateContentConfig, HttpOptions, Part, ThinkingConfig
 from litellm import completion
 from openai import AsyncOpenAI, OpenAI
+
+from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
@@ -88,13 +91,7 @@ def log_to_clickhouse(log_data: LogData) -> None:
         Exception: If there's an error connecting to or writing to ClickHouse.
     """
     try:
-        client = Client(
-            host=os.getenv("CH_HOST"),
-            port=os.getenv("CH_PORT"),
-            user=os.getenv("CH_USERNAME"),
-            password=os.getenv("CH_PASSWORD"),
-            database=os.getenv("CH_DATABASE"),
-        )
+        client = Client(**get_clickhouse_client_kwargs())
 
         query = """
         INSERT INTO llm_logs (
@@ -293,7 +290,7 @@ class LLM:
             "aws_bedrock": {
                 "aws_access_key": os.getenv("AWS_ACCESS_KEY_ID"),
                 "aws_secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-                "aws_region": "us-west-2",
+                "aws_region": os.getenv("AWS_BEDROCK_REGION", "us-west-2"),
             },
         }
 
@@ -393,34 +390,60 @@ class LLM:
         # Initialize gateway client for internal LLM routing (all providers)
         self._gateway_client = None
         try:
-            try:
-                from ee.usage.services.gateway_llm_client import get_gateway_client
-            except ImportError:
-                get_gateway_client = None
+            from ee.usage.services.gateway_llm_client import get_gateway_client
 
             self._gateway_client = get_gateway_client()
-        except (ImportError, Exception):
-            pass  # Gateway not available — litellm fallback will be used
+        except ImportError:
+            if self._requires_managed_transport():
+                raise
+        except Exception:
+            if self._requires_managed_transport():
+                raise
 
         # Initialize async gateway client for non-blocking LLM routing
         self._async_gateway_client = None
         try:
-            try:
-                from ee.usage.services.gateway_llm_client import get_async_gateway_client
-            except ImportError:
-                get_async_gateway_client = None
+            from ee.usage.services.gateway_llm_client import get_async_gateway_client
 
             self._async_gateway_client = get_async_gateway_client()
-        except (ImportError, Exception):
-            pass
+        except ImportError:
+            if self._requires_managed_transport():
+                raise
+        except Exception:
+            if self._requires_managed_transport():
+                raise
 
     GATEWAY_MAX_ATTEMPTS = 3
     GATEWAY_RETRY_BACKOFF = (0.5, 1.0, 2.0)
 
+    def _requires_managed_transport(self, model: object | None = None) -> bool:
+        try:
+            from ee.licensing.managed_ai import is_managed_model
+            from ee.usage.deployment import DeploymentMode
+        except ImportError:
+            return False
+        return DeploymentMode.is_ee() and is_managed_model(model or self.model_name)
+
     def _try_gateway_completion(
-        self, payload: dict, tools: Optional[list] = None
+        self,
+        payload: dict,
+        tools: Optional[list] = None,
+        deadline_monotonic: Optional[float] = None,
     ) -> Optional[Any]:
         """Attempt completion via the Agentcc gateway. Returns response or None on failure."""
+        if deadline_monotonic is not None and self._requires_managed_transport(
+            payload.get("model")
+        ):
+            # The managed transport currently owns a separate 300s request
+            # timeout. A bounded caller must get an explicit refusal instead
+            # of entering that path under a wall it cannot enforce.
+            raise TimeoutError(
+                "bounded tool completion is unavailable for managed transport"
+            )
+        managed_response = self._try_managed_ai_completion(payload, tools=tools)
+        if managed_response is not None:
+            return managed_response
+
         if not getattr(self, "_gateway_client", None):
             return None
         if getattr(self, "api_key", None):
@@ -438,7 +461,22 @@ class LLM:
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
             try:
-                return self._gateway_client.chat.completions.create(**kwargs)
+                gateway_client = self._gateway_client
+                if deadline_monotonic is not None:
+                    remaining = deadline_monotonic - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("tool completion deadline exceeded")
+                    # The shared deadline is more important than the gateway
+                    # client's default retry policy. Keep retries in this loop,
+                    # where every attempt is charged against the same wall.
+                    if callable(getattr(gateway_client, "with_options", None)):
+                        gateway_client = gateway_client.with_options(
+                            timeout=remaining,
+                            max_retries=0,
+                        )
+                    else:
+                        kwargs["timeout"] = remaining
+                return gateway_client.chat.completions.create(**kwargs)
             except Exception as gw_err:
                 logger.warning(
                     "gateway_attempt_failed",
@@ -448,8 +486,40 @@ class LLM:
                     max_attempts=self.GATEWAY_MAX_ATTEMPTS,
                 )
                 if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
-                    time.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+                    delay = self.GATEWAY_RETRY_BACKOFF[attempt]
+                    if deadline_monotonic is not None:
+                        remaining = deadline_monotonic - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError(
+                                "tool completion deadline exceeded"
+                            ) from gw_err
+                        delay = min(delay, remaining)
+                    time.sleep(delay)
         return None
+
+    def _try_managed_ai_completion(
+        self, payload: dict, tools: Optional[list] = None
+    ) -> Optional[Any]:
+        model = payload.get("model", self.model_name)
+        if not self._requires_managed_transport(model):
+            return None
+
+        from ee.licensing.managed_ai import chat_completion
+
+        managed_payload = dict(payload)
+        if tools:
+            managed_payload["tools"] = tools
+        response = chat_completion(managed_payload)
+        return self._to_openai_like_response(response)
+
+    def _to_openai_like_response(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            return SimpleNamespace(
+                **{key: self._to_openai_like_response(val) for key, val in value.items()}
+            )
+        if isinstance(value, list):
+            return [self._to_openai_like_response(item) for item in value]
+        return value
 
     def _build_gateway_request_kwargs(
         self,
@@ -474,6 +544,10 @@ class LLM:
         self, payload: dict, tools: Optional[list] = None
     ) -> Optional[Any]:
         """Async version: attempt completion via Agentcc gateway."""
+        managed_response = await self._try_managed_ai_completion_async(payload, tools=tools)
+        if managed_response is not None:
+            return managed_response
+
         if not getattr(self, "_async_gateway_client", None):
             return None
         if getattr(self, "api_key", None):
@@ -503,6 +577,21 @@ class LLM:
                 if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
                     await asyncio.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
         return None
+
+    async def _try_managed_ai_completion_async(
+        self, payload: dict, tools: Optional[list] = None
+    ) -> Optional[Any]:
+        model = payload.get("model", self.model_name)
+        if not self._requires_managed_transport(model):
+            return None
+
+        from ee.licensing.managed_ai import chat_completion
+
+        managed_payload = dict(payload)
+        if tools:
+            managed_payload["tools"] = tools
+        response = await asyncio.to_thread(chat_completion, managed_payload)
+        return self._to_openai_like_response(response)
 
     def _update_token_usage(self, response: Any) -> None:
         """
@@ -620,16 +709,19 @@ class LLM:
                     payload.pop("max_tokens", None)
 
                 litellm.set_verbose = False
+                managed_transport = self._requires_managed_transport(
+                    payload.get("model")
+                )
 
                 # Handle different providers
-                if self.provider == "vllm":
+                if self.provider == "vllm" and not managed_transport:
                     vllm_result = self._handle_vllm_completion(payload)
                     return str(vllm_result)
-                elif self.provider == "protect":
+                elif self.provider == "protect" and not managed_transport:
                     protect_result = self._handle_protect_completion(payload)
                     # Return the full protect_result dict for DeterministicEvaluator
                     return protect_result
-                elif self.provider == "protect_flash":
+                elif self.provider == "protect_flash" and not managed_transport:
                     protect_flash_result = self._handle_protect_flash_completion(
                         payload
                     )
@@ -734,6 +826,8 @@ class LLM:
                     return content if content is not None else ""
 
             except Exception as e:
+                if self._requires_managed_transport(payload.get("model")):
+                    raise
                 logger.exception(
                     f"{self.provider} API error: {str(e)}",
                     attempt=attempt,
@@ -762,6 +856,7 @@ class LLM:
         model: Optional[str] = None,
         tool_choice: Optional[Any] = None,
         drop_params: Optional[bool] = None,
+        timeout_ms: Optional[int] = None,
     ) -> Any:
         """
         Get completion with tool calling support. Returns the full response.
@@ -775,6 +870,8 @@ class LLM:
             tools: List of tool definitions (OpenAI function calling format).
             model: Optional model override.
             drop_params: Whether to drop unsupported params.
+            timeout_ms: Optional shared wall-clock budget for gateway/litellm
+                attempts and retry sleeps.
 
         Returns:
             The full litellm ModelResponse object.
@@ -791,9 +888,25 @@ class LLM:
         payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if timeout_ms is not None and timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+        deadline_monotonic = (
+            time.monotonic() + (timeout_ms / 1000)
+            if timeout_ms is not None
+            else None
+        )
+
+        def remaining_timeout() -> Optional[float]:
+            if deadline_monotonic is None:
+                return None
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("tool completion deadline exceeded")
+            return remaining
 
         for attempt in range(MAX_RETRIES):
             try:
+                remaining = remaining_timeout()
                 if self.provider == "vertex_ai":
                     payload.pop("max_tokens", None)
 
@@ -811,7 +924,11 @@ class LLM:
                         payload["messages"], self.provider
                     )
 
-                gw_response = self._try_gateway_completion(payload, tools=tools)
+                gw_response = self._try_gateway_completion(
+                    payload,
+                    tools=tools,
+                    deadline_monotonic=deadline_monotonic,
+                )
                 if gw_response is not None:
                     self._set_last_finish_reason_from_response(gw_response)
                     self._update_token_usage(gw_response)
@@ -820,9 +937,11 @@ class LLM:
                         raise ValueError("Empty response from gateway")
                     return gw_response
 
+                remaining = remaining_timeout()
                 response = litellm.completion(
                     **payload,
-                    num_retries=LITELLM_NUM_RETRIES,
+                    **({"timeout": remaining} if remaining is not None else {}),
+                    num_retries=(0 if remaining is not None else LITELLM_NUM_RETRIES),
                     retry_strategy=LITELLM_RETRY_STRATEGY,
                 )
 
@@ -836,6 +955,8 @@ class LLM:
                 return response
 
             except Exception as e:
+                if deadline_monotonic is not None and isinstance(e, TimeoutError):
+                    raise
                 logger.exception(
                     f"{self.provider} API error (tool completion): {str(e)}",
                     attempt=attempt,
@@ -845,7 +966,11 @@ class LLM:
                 if attempt == MAX_RETRIES - 1:
                     raise
 
-                time.sleep(RETRY_DELAY)
+                delay = RETRY_DELAY
+                if deadline_monotonic is not None:
+                    remaining = remaining_timeout()
+                    delay = min(delay, remaining)
+                time.sleep(delay)
 
         raise ValueError("FAILED_TO_PROCESS_TOOL_COMPLETION")
 
@@ -900,15 +1025,18 @@ class LLM:
                     payload.pop("max_tokens", None)
 
                 litellm.set_verbose = False
+                managed_transport = self._requires_managed_transport(
+                    payload.get("model")
+                )
 
                 # Handle different providers
-                if self.provider == "vllm":
+                if self.provider == "vllm" and not managed_transport:
                     vllm_result = self._handle_vllm_completion(payload)
                     return str(vllm_result)
-                elif self.provider == "protect":
+                elif self.provider == "protect" and not managed_transport:
                     protect_result = self._handle_protect_completion(payload)
                     return protect_result
-                elif self.provider == "protect_flash":
+                elif self.provider == "protect_flash" and not managed_transport:
                     protect_flash_result = self._handle_protect_flash_completion(
                         payload
                     )
@@ -928,9 +1056,9 @@ class LLM:
 
                 # Default litellm handling for all other providers
                 else:
-                    # Skip gateway for WebSocket streaming — gateway returns
-                    # non-streaming responses, bypassing incremental chunk emission.
-                    if not (streaming and ws_manager):
+                    # Managed models must use the gateway even when the caller
+                    # requested incremental WebSocket streaming.
+                    if managed_transport or not (streaming and ws_manager):
                         gw_response = await self._try_gateway_completion_async(payload)
                         if gw_response is not None:
                             self._update_token_usage(gw_response)
@@ -1112,6 +1240,8 @@ class LLM:
                     return content if content is not None else ""
 
             except Exception as e:
+                if self._requires_managed_transport(payload.get("model")):
+                    raise
                 logger.exception(
                     "API error",
                     provider=self.provider,
@@ -1235,6 +1365,8 @@ class LLM:
                     threshold = max_output
             except Exception:
                 pass
+        if not isinstance(threshold, (int, float)):
+            threshold = None
         if threshold and _max_tokens > threshold:
             _max_tokens = threshold
 
@@ -2036,10 +2168,10 @@ class LLM:
             max_tokens=self.max_tokens,
         )
 
-        # Try gateway first — but only when the caller has NOT supplied their
-        # own API key. When api_key is set the request must go through the
-        # customer's own provider credentials via litellm, not our gateway.
-        if not getattr(self, "api_key", None):
+        # User-supplied provider keys bypass the gateway only for non-managed
+        # models. Self-hosted managed models always use the licensed transport.
+        managed_transport = self._requires_managed_transport(self.model_name)
+        if managed_transport or not getattr(self, "api_key", None):
             try:
                 try:
                     from ee.usage.services.gateway_llm_client import get_gateway_client
@@ -2047,6 +2179,8 @@ class LLM:
                     get_gateway_client = None
 
                 gateway = get_gateway_client()
+                if gateway is None and managed_transport:
+                    raise RuntimeError("Managed gateway client is unavailable")
                 if gateway is not None:
                     logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
                     gateway_kwargs = {
@@ -2072,8 +2206,11 @@ class LLM:
                     )
                     return content if content is not None else ""
             except ImportError:
-                pass  # usage module not available — fall through to litellm
+                if managed_transport:
+                    raise
             except Exception as e:
+                if managed_transport:
+                    raise
                 logger.debug(f"Gateway call failed, falling back to litellm: {str(e)}")
 
         # Fallback: existing litellm path
@@ -2090,10 +2227,11 @@ class LLM:
 
             # Handle API key scenarios
             if isinstance(self.api_key, dict):
-                payload["custom_llm_provider"] = provider
-                if provider == "bedrock" or provider.startswith("azure"):
+                provider_str = provider or ""
+                payload["custom_llm_provider"] = provider_str
+                if provider_str == "bedrock" or provider_str.startswith("azure"):
                     payload.update(self.api_key)
-                elif provider.startswith("vertex_ai"):
+                elif provider_str.startswith("vertex_ai"):
                     vertex_location = (
                         self.api_key.get("location")
                         if isinstance(self.api_key, dict)
@@ -2107,7 +2245,7 @@ class LLM:
                     payload["vertex_credentials"] = json.dumps(creds)
                     if vertex_location:
                         payload["vertex_location"] = vertex_location
-                elif provider == "openai":
+                elif provider_str == "openai":
                     if "key" in self.api_key:
                         api_key_dict = self.api_key.copy()
                         if "api_base" in api_key_dict:

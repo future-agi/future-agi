@@ -10,6 +10,8 @@ const EvalPickerProvider = ({
   sourceId = "",
   sourceRowType = null,
   sourceColumns = [],
+  onSourceColumnSearchChange,
+  sourceColumnInventoryControls,
   extraColumns = [],
   existingEvals = [],
   onEvalAdded,
@@ -39,6 +41,7 @@ const EvalPickerProvider = ({
   keepOpenAfterSave = false,
   sourceFilters = null,
   onFiltersChange = null,
+  sourceTimeWindow = null,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -84,6 +87,8 @@ const EvalPickerProvider = ({
         sourceId,
         sourceRowType,
         sourceColumns,
+        onSourceColumnSearchChange,
+        sourceColumnInventoryControls,
         extraColumns,
         sourcePreviewData,
         selectedEval,
@@ -99,6 +104,7 @@ const EvalPickerProvider = ({
         keepOpenAfterSave,
         sourceFilters,
         onFiltersChange,
+        sourceTimeWindow,
         filterForm,
       }}
     >
@@ -113,6 +119,8 @@ EvalPickerProvider.propTypes = {
   sourceId: PropTypes.string,
   sourceRowType: PropTypes.string,
   sourceColumns: PropTypes.array,
+  onSourceColumnSearchChange: PropTypes.func,
+  sourceColumnInventoryControls: PropTypes.node,
   extraColumns: PropTypes.array,
   existingEvals: PropTypes.array,
   onEvalAdded: PropTypes.func,
@@ -125,6 +133,10 @@ EvalPickerProvider.propTypes = {
   keepOpenAfterSave: PropTypes.bool,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
+  sourceTimeWindow: PropTypes.shape({
+    startDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+    endDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+  }),
 };
 
 export default EvalPickerProvider;

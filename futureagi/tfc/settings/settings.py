@@ -11,11 +11,24 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Structured logging configuration
 from tfc.logging import configure_structlog, get_logging_config, init_sentry
+from tfc.settings.runtime_setting_specs import (
+    RUNTIME_NUMERIC_SETTING_SPECS as _runtime_numeric_setting_specs,
+)
+from tfc.settings.runtime_setting_specs import (
+    NumericSettingSpec as _NumericSettingSpec,
+)
+from tfc.settings.runtime_setting_specs import (
+    load_numeric_settings as _load_numeric_settings,
+)
+from tfc.settings.runtime_setting_specs import (
+    validate_runtime_numeric_settings as _validate_runtime_numeric_settings,
+)
 
 configure_structlog()
 
@@ -34,11 +47,98 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_TYPE = os.getenv("ENV_TYPE", "local").lower()
 _IS_LOCAL = ENV_TYPE in ("local", "test")
 
+# Exact analytics continue to use the existing XL queue unless a deployment
+# explicitly provisions the dedicated single-slot worker.  This keeps local,
+# development, EU, and self-hosted installs compatible while allowing the US
+# ClickHouse cluster to opt into strict refresh admission.
+EXACT_AGGREGATION_TASK_QUEUE = os.getenv(
+    "EXACT_AGGREGATION_TASK_QUEUE",
+    "tasks_xl",
+)
+
+# Eval-usage API reads use ClickHouse in deployed environments. Keep the
+# source selection explicit so contract tests and standalone installs can use
+# the existing PostgreSQL fallback without changing global ClickHouse routing.
+EVAL_USAGE_CLICKHOUSE_ENABLED = os.getenv(
+    "EVAL_USAGE_CLICKHOUSE_ENABLED",
+    "true",
+).lower() in ("true", "1", "t", "yes", "y")
+
 
 def _split_env(name: str, default: str = "") -> list[str]:
     """Parse a comma-separated env var into a list."""
     raw = os.getenv(name, default)
     return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def _bounded_env_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Parse one setting whose default or bound depends on another setting."""
+
+    spec = _NumericSettingSpec(int, default, minimum, maximum)
+    return int(spec.parse(name, os.getenv(name)))
+
+
+# Numeric runtime knobs are declared once in runtime_setting_specs.py. Parse
+# and cross-validate them before database/cache configuration consumes them.
+_runtime_numeric_settings = _load_numeric_settings(
+    _runtime_numeric_setting_specs,
+    source=os.environ,
+)
+del _runtime_numeric_setting_specs
+_validate_runtime_numeric_settings(_runtime_numeric_settings)
+globals().update(_runtime_numeric_settings)
+
+# Optional ClickHouse cluster whose entries intentionally expose each physical
+# replica as one read shard. Dashboard heavy reads use it only after validating
+# the identifier in the query builder; an empty value keeps the local-table
+# fallback for OSS and single-node installations.
+DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER = os.getenv(
+    "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER", ""
+).strip()
+
+SIMULATOR_PHONE_NUMBERS = tuple(
+    _split_env(
+        "SIMULATOR_PHONE_NUMBERS",
+        ",".join(
+            (
+                "+18568806998",
+                "+17755715840",
+                "+13463424590",
+                "+12175683677",
+                "+12175696753",
+                "+12175683493",
+                "+12175681887",
+                "+12176018447",
+                "+12176018280",
+                "+12175696862",
+                "+19168660414",
+                "+19163473349",
+                "+18563161617",
+                "+13463619738",
+                "+19847339395",
+            )
+        ),
+    )
+)
+
+# These three values are consumed in this module before application code
+# imports the remaining dynamically published Django settings. Explicit aliases
+# keep static analysis honest without duplicating their parsing or defaults.
+PG_CONNECT_TIMEOUT_SECONDS = int(
+    _runtime_numeric_settings["PG_CONNECT_TIMEOUT_SECONDS"]
+)
+REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+    _runtime_numeric_settings["REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS"]
+)
+REDIS_CACHE_SOCKET_TIMEOUT_SECONDS = float(
+    _runtime_numeric_settings["REDIS_CACHE_SOCKET_TIMEOUT_SECONDS"]
+)
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -129,13 +229,16 @@ INSTALLED_APPS = [
     "model_hub",
     "tracer",
     "simulate",
-    "agent_playground",
+    "agent_playground.apps.AgentPlaygroundConfig",
     "integrations",
     # AI tools shared layer (MCP + AI Assistant)
     "ai_tools",
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "tfc.deployment_telemetry",
+    "tfc.licensing",
+    "tfc.capabilities",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
@@ -153,6 +256,14 @@ if ee_feature_enabled("ee.falcon_ai"):
     INSTALLED_APPS.append("ee.falcon_ai.apps.FalconAIConfig")
 if has_ee("ee.usage"):
     INSTALLED_APPS.append("ee.usage")
+if has_ee("ee.licensing"):
+    INSTALLED_APPS.append("ee.licensing")
+if has_ee("ee.cloud.control_plane") and os.environ.get("CLOUD_DEPLOYMENT", "") in (
+    "US",
+    "EU",
+    "DEV",
+):
+    INSTALLED_APPS.append("ee.cloud.control_plane.apps.CloudControlPlaneConfig")
 
 # Site ID for django.contrib.sites
 SITE_ID = 1
@@ -191,6 +302,7 @@ MIDDLEWARE += [
 # To check all the APIs
 SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
+    "DEFAULT_AUTO_SCHEMA_CLASS": "tfc.utils.api_contracts.ManagementAPIAutoSchema",
     "SECURITY_DEFINITIONS": {
         "X-Api-Key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
         "X-Secret-Key": {
@@ -226,31 +338,102 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
+
+def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
+    """
+    Build a Postgres config dict for a Django DATABASES alias.
+
+    Mirrors PostHog's `postgres_config()` helper. The `default`, `replica`,
+    and `default_direct` aliases differ only by host/port and (for
+    default_direct) cursor + lock-timeout options, so we factor the shared
+    config here.
+
+    Behaviour note: an empty-string `port` or `name` falls back to the
+    PG_DB / PGBOUNCER_PORT defaults via `or` semantics. The previous
+    DATABASES block preserved empty strings verbatim — this is a small,
+    intentional behaviour change because an empty PORT / NAME would have
+    failed anyway at connection time.
+    """
+    connection_options = {
+        "connect_timeout": PG_CONNECT_TIMEOUT_SECONDS,
+        **(options or {}),
+    }
+    cfg = {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("PG_DB", "tfc"),
+        "NAME": name or os.getenv("PG_DB", "tfc"),
         "USER": os.getenv("PG_USER", "user"),
         "PASSWORD": os.getenv("PG_PASSWORD", "password"),
-        "HOST": os.getenv("PGBOUNCER_HOST", "pgbouncer"),
-        "PORT": os.getenv("PGBOUNCER_PORT", 6432),
+        "HOST": host,
+        "PORT": port or os.getenv("PGBOUNCER_PORT", 6432),
         "CONN_MAX_AGE": 0,
-        "CONN_HEALTH_CHECKS": True,  # Verify connection is alive before use (prevents stale PgBouncer connections)
-        "DISABLE_SERVER_SIDE_CURSORS": True,  # Required for PgBouncer transaction pooling
-    },
+        # Verify connection is alive before use (prevents stale PgBouncer connections)
+        "CONN_HEALTH_CHECKS": True,
+        # Required for PgBouncer transaction pooling (server-side cursors need session persistence)
+        "DISABLE_SERVER_SIDE_CURSORS": disable_cursors,
+        # CONN_MAX_AGE=0 opens a socket on every request. Keep that transport
+        # step inside the same sub-ten-second interactive budget as the
+        # endpoint's request-owned statement deadlines.
+        "OPTIONS": connection_options,
+    }
+    return cfg
+
+
+DATABASES = {
+    "default": _pg_config(os.getenv("PGBOUNCER_HOST", "pgbouncer")),
 }
 
 # Read replica — only enabled when PGBOUNCER_READ_HOST is set.
 # Falls back to default when not configured, so safe to deploy without a replica.
 _read_host = os.getenv("PGBOUNCER_READ_HOST")
 if _read_host:
-    DATABASES["replica"] = {
-        **DATABASES["default"],
-        "HOST": _read_host,
-        "PORT": os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
-        "NAME": os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
-        "TEST": {"MIRROR": "default"},  # Tests use default DB, not a real replica
-    }
+    DATABASES["replica"] = _pg_config(
+        _read_host,
+        port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
+        name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
+    )
+    DATABASES["replica"]["TEST"] = {
+        "MIRROR": "default"
+    }  # Tests use default DB, not a real replica
+
+# Direct connection (bypasses PgBouncer) — used for migrations that need
+# `lock_timeout` set at connection time. PgBouncer transaction-pool mode
+# does not persist session-level SET statements between transactions, so a
+# `SET lock_timeout` issued by the migration runner would not survive.
+# This connection has server-side cursors ENABLED (no PgBouncer to break
+# them) — useful for data-migration scripts that iterate over large tables.
+_direct_host = os.getenv("PG_DIRECT_HOST")
+if _direct_host:
+    # Defensive: malformed env var should not crash Django at import time.
+    try:
+        _lock_timeout_ms = int(os.getenv("PG_MIGRATION_LOCK_TIMEOUT_MS", "20000"))
+    except (TypeError, ValueError):
+        _lock_timeout_ms = 20000
+    DATABASES["default_direct"] = _pg_config(
+        _direct_host,
+        port=os.getenv("PG_DIRECT_PORT", "5432"),
+        disable_cursors=False,
+        options={"options": f"-c lock_timeout={_lock_timeout_ms}"},
+    )
+    DATABASES["default_direct"]["TEST"] = {"MIRROR": "default"}
+
+# Opt-in list for read-replica routing. Comma-separated.
+# Accepts TWO kinds of strings, NAMESPACED to avoid collision:
+#   - Bare model class names (e.g. "Dashboard", "SavedView") — ReadReplicaRouter
+#     routes those models to the replica.
+#   - Feature/path keys prefixed with "feature:" (e.g. "feature:dashboard_render")
+#     — hot-path code checks these and switches its `db_manager()` target
+#     manually. The router ignores prefixed keys.
+# Special value 'ALL_MODELS_USE_READ_REPLICA' routes every model — DO NOT use
+# outside a controlled load-shed experiment (we have ~245 atomic/locking
+# sites; routing everything is a consistency incident waiting to happen).
+#
+# IMPORTANT: env-var changes only take effect after worker restart. The
+# router re-reads settings per call, but feature-key constants in hot paths
+# are computed at import time.
+_opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
+READ_REPLICA_OPT_IN: list[str] = [
+    s.strip() for s in _opt_in_raw.split(",") if s.strip()
+]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 
@@ -268,34 +451,17 @@ CLICKHOUSE = {
     "CH_FLUSH_INTERVAL_SECONDS": int(os.getenv("CH_FLUSH_INTERVAL_SECONDS", "5")),
     "CH_MAX_RETRIES": int(os.getenv("CH_MAX_RETRIES", "3")),
     "CH_RETRY_DELAY_SECONDS": int(os.getenv("CH_RETRY_DELAY_SECONDS", "1")),
-    # Query routing: "clickhouse", "postgres", or "auto" (ClickHouse with PG fallback)
-    "CH_ANALYTICS_BACKEND": os.getenv("CH_ANALYTICS_BACKEND", "postgres"),
     # Connection pool settings
     "CH_POOL_SIZE": int(os.getenv("CH_POOL_SIZE", "10")),
     "CH_CONNECT_TIMEOUT": int(os.getenv("CH_CONNECT_TIMEOUT", "10")),
     "CH_SEND_TIMEOUT": int(os.getenv("CH_SEND_TIMEOUT", "300")),
     "CH_RECEIVE_TIMEOUT": int(os.getenv("CH_RECEIVE_TIMEOUT", "300")),
-    # Per-query-type routing for gradual rollout
-    # Values: "postgres", "clickhouse", "auto" (CH with PG fallback), "shadow" (both, compare, return PG)
-    "CH_ROUTE_TIME_SERIES": os.getenv("CH_ROUTE_TIME_SERIES", "postgres"),
-    "CH_ROUTE_TRACE_LIST": os.getenv("CH_ROUTE_TRACE_LIST", "postgres"),
-    "CH_ROUTE_SESSION_LIST": os.getenv("CH_ROUTE_SESSION_LIST", "postgres"),
-    "CH_ROUTE_EVAL_METRICS": os.getenv("CH_ROUTE_EVAL_METRICS", "postgres"),
-    "CH_ROUTE_ERROR_ANALYSIS": os.getenv("CH_ROUTE_ERROR_ANALYSIS", "postgres"),
-    "CH_ROUTE_SPAN_LIST": os.getenv("CH_ROUTE_SPAN_LIST", "postgres"),
-    "CH_ROUTE_TRACE_OF_SESSION_LIST": os.getenv(
-        "CH_ROUTE_TRACE_OF_SESSION_LIST", "postgres"
-    ),
-    "CH_ROUTE_SPAN_GRAPH": os.getenv("CH_ROUTE_SPAN_GRAPH", "postgres"),
-    "CH_ROUTE_VOICE_CALL_LIST": os.getenv("CH_ROUTE_VOICE_CALL_LIST", "postgres"),
-    "CH_ROUTE_SESSION_ANALYTICS": os.getenv("CH_ROUTE_SESSION_ANALYTICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_GRAPH": os.getenv("CH_ROUTE_ANNOTATION_GRAPH", "postgres"),
-    "CH_ROUTE_TRACE_DETAIL": os.getenv("CH_ROUTE_TRACE_DETAIL", "postgres"),
-    "CH_ROUTE_MONITOR_METRICS": os.getenv("CH_ROUTE_MONITOR_METRICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_DETAIL": os.getenv("CH_ROUTE_ANNOTATION_DETAIL", "postgres"),
-    "CH_ROUTE_VOICE_CALL_DETAIL": os.getenv("CH_ROUTE_VOICE_CALL_DETAIL", "postgres"),
-    # Shadow mode: run both PG+CH, compare results, return PG
-    "CH_SHADOW_MODE": os.getenv("CH_SHADOW_MODE", "false").lower()
+    # Dedicated SOS/read-replica profiles may lock readonly=1 and every
+    # resource ceiling server-side. Such profiles reject per-query setting
+    # overrides, so the client must transmit none.
+    "CH_SERVER_ENFORCED_READONLY": os.getenv(
+        "CH_SERVER_ENFORCED_READONLY", "false"
+    ).lower()
     in ("true", "1", "yes"),
 }
 
@@ -427,16 +593,46 @@ SERVER_EMAIL = os.getenv("SERVER_EMAIL")  # ditto (default from-email for Django
 APP_URL = os.getenv("APP_URL")
 
 # ── Billing ───────────────────────────────────────────────────
+# Ships only with the cloud overlay, which is the future-agi/ee repo checked
+# out at futureagi/ee/cloud/. Absent on OSS/EE — BillingConfig falls open to
+# empty defaults there (and fails closed on cloud).
 BILLING_CONFIG_PATH = os.environ.get(
     "BILLING_CONFIG_PATH",
-    os.path.join(BASE_DIR, "..", "ee", "billing.yaml"),
+    os.path.join(BASE_DIR, "..", "ee", "cloud", "billing.yaml"),
 )
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
+EE_LICENSE_PUBLIC_KEYS = os.environ.get("EE_LICENSE_PUBLIC_KEYS", "")
+EE_LICENSE_CLOCK_SKEW_SECONDS = os.environ.get("EE_LICENSE_CLOCK_SKEW_SECONDS", "300")
+EE_LICENSE_KEY_ID = os.environ.get("EE_LICENSE_KEY_ID", "default")
+EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
+
+# Activation signing key (cloud control plane uses this to mint service tokens)
+ACTIVATION_PRIVATE_KEY = os.environ.get("ACTIVATION_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
+ACTIVATION_KEY_ID = os.environ.get("ACTIVATION_KEY_ID", "default")
+ACTIVATION_SIGNING_SERVICE_URL = os.environ.get("ACTIVATION_SIGNING_SERVICE_URL", "")
+ACTIVATION_TOKEN_ISSUER = os.environ.get(
+    "ACTIVATION_TOKEN_ISSUER", "https://licenses.futureagi.com"
+)
+ACTIVATION_TOKEN_AUDIENCE = os.environ.get(
+    "ACTIVATION_TOKEN_AUDIENCE", "futureagi-agentcc-gateway"
+)
+ACTIVATION_TOKEN_TYPE = os.environ.get(
+    "ACTIVATION_TOKEN_TYPE", "futureagi-managed-service-token"
+)
+ACTIVATION_TOKEN_TTL_SECONDS = os.environ.get("ACTIVATION_TOKEN_TTL_SECONDS", "3600")
+ACTIVATION_RUNTIME_STATE_REQUIRED = os.environ.get(
+    "ACTIVATION_RUNTIME_STATE_REQUIRED", "true"
+).lower() in ("1", "true", "yes")
 FUTUREAGI_CLOUD_GATEWAY_URL = os.environ.get(
     "FUTUREAGI_CLOUD_GATEWAY_URL", "https://gateway.futureagi.com"
 )
@@ -481,6 +677,21 @@ TEMPORAL_TEST_EXECUTION_ENABLED = os.getenv(
     "TEMPORAL_TEST_EXECUTION_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
+# to the simulation-runner worker which executes the released SDK, instead of the
+# native in-backend simulation path. Default off — no regression.
+HOSTED_RUNNER_ENABLED = os.getenv("HOSTED_RUNNER_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Route VOICE runs to the hosted simulation runner too (default off: voice stays
+# on the native path). Requires HOSTED_RUNNER_ENABLED.
+HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
+    "HOSTED_RUNNER_VOICE_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
 # Structured logging configuration with django-structlog
 # This provides:
 # - JSON output in production, colored console in development
@@ -495,6 +706,10 @@ AIRBYTE_HOST = os.getenv("AIRBYTE_HOST")
 AIRBYTE_PORT = os.getenv("AIRBYTE_PORT")
 AIRBYTE_API_URL = f"http://{AIRBYTE_HOST}:{AIRBYTE_PORT}/api/v1"
 SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "")
+DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK = os.getenv(
+    "DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK",
+    SLACK_WEBHOOK_CHANNEL,
+)
 ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "")
 
 AIRBYTE_HEADERS = {
@@ -563,13 +778,19 @@ RETELL_LIVEKIT_URL = os.getenv(
 )
 
 # Stripe
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 STRIPE_REDIRECT_DOMAIN = os.getenv("STRIPE_REDIRECT_DOMAIN")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 BUSINESS_MONTHLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_MONTHLY_STRIPE_PRICE_ID")
 BUSINESS_YEARLY_STRIPE_PRICE_ID = os.getenv("BUSINESS_YEARLY_STRIPE_PRICE_ID")
 
 STRIPE_LIVE = bool(STRIPE_SECRET_KEY and STRIPE_SECRET_KEY.startswith("sk_live"))
+
+# Signing secret for the billing webhook endpoint. Keyed off the same
+# live/test signal StripeService._is_live() uses, so the secret can never
+# disagree with the API key the events were generated against.
+STRIPE_WEBHOOK_SECRET = os.getenv(
+    "WEBHOOK_SECRET_LIVE" if STRIPE_LIVE else "WEBHOOK_SECRET_TEST", ""
+)
 
 BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL = [
     x
@@ -600,7 +821,7 @@ _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else f"https://api.futureagi.com"
+    "BASE_URL", "http://localhost:8000" if _is_local else "https://api.futureagi.com"
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 MINIO_URL = os.getenv(
@@ -647,6 +868,9 @@ get_started_url = f"{_ssl}{APP_URL}/dashboard/get-started"
 default_error_next_url = f"{_ssl}{APP_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
 
+# APP_URL is a bare host; each region is its own deployment with its own value.
+APP_BASE_URL = f"{_ssl}{APP_URL}" if APP_URL else ""
+
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
 AUTH0_ALGORITHM = "RS256"
@@ -691,17 +915,28 @@ CHANNEL_LAYERS = {
 }
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        },
-        "KEY_PREFIX": "futureagi",
-        "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+
+if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "futureagi-local-cache",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "SOCKET_CONNECT_TIMEOUT": REDIS_CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS,
+                "SOCKET_TIMEOUT": REDIS_CACHE_SOCKET_TIMEOUT_SECONDS,
+            },
+            "KEY_PREFIX": "futureagi",
+            "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+        }
+    }
 
 # Authentication Security Settings
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
@@ -737,3 +972,940 @@ WEBAUTHN_ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3031")
 # 2FA challenge token TTLs (seconds)
 TWO_FACTOR_CHALLENGE_TTL = 300  # 5 minutes
 WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
+
+# ─── ClickHouse 25.3 (v2) span store ────────────────────────────────────────
+# The new spans cluster (typed Maps + typed JSON; PLAN_V2_NO_CDC). Falls back
+# to the legacy CLICKHOUSE dict above for connection details if not set
+# explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
+CLICKHOUSE_V2 = {
+    "CH25_HOST": os.getenv("CH25_HOST"),
+    "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT"),
+    "CH25_USER": os.getenv("CH25_USER"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD"),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE"),
+    # ``None`` means the v2-specific flag was not configured and lets
+    # ``get_v2_config`` inherit the legacy single-cluster setting.  A concrete
+    # False must be reserved for an explicit CH25 override; defaulting to False
+    # here silently disabled inheritance for server-locked read profiles.
+    "CH25_SERVER_ENFORCED_READONLY": (
+        None
+        if os.getenv("CH25_SERVER_ENFORCED_READONLY") is None
+        else os.getenv("CH25_SERVER_ENFORCED_READONLY", "").lower()
+        in ("true", "1", "yes")
+    ),
+    # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
+    # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
+    # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
+    "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+}
+
+# ``off`` is the production-safe default. ``shadow`` is fail-open observation;
+# ``read`` can affect public results only in an explicitly acknowledged DEV
+# deployment. The runtime helper repeats this guard so an override cannot turn
+# a production process into a catalog reader after settings import.
+SPAN_ATTRIBUTE_CATALOG_READ_MODE = (
+    os.getenv("SPAN_ATTRIBUTE_CATALOG_READ_MODE", "off").strip().lower()
+)
+SPAN_ATTRIBUTE_CATALOG_DATABASE = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_DATABASE", ""
+).strip()
+SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK", ""
+).strip()
+_span_attribute_catalog_dev_snapshot_raw = (
+    os.getenv("SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED", "false").strip().lower()
+)
+if _span_attribute_catalog_dev_snapshot_raw not in {"true", "false"}:
+    raise ValueError(
+        "SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED must be true or false"
+    )
+SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED = (
+    _span_attribute_catalog_dev_snapshot_raw == "true"
+)
+_span_attribute_catalog_is_dev_deployment = ENV_TYPE in {
+    "dev",
+    "development",
+} or (ENV_TYPE == "staging" and CLOUD_DEPLOYMENT == "DEV")
+_span_attribute_catalog_handoff_start_raw = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_HANDOFF_START", ""
+).strip()
+_span_attribute_catalog_handoff_end_raw = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_HANDOFF_END", ""
+).strip()
+
+
+def _span_attribute_catalog_bound(raw_value):
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+SPAN_ATTRIBUTE_CATALOG_HANDOFF_START = _span_attribute_catalog_bound(
+    _span_attribute_catalog_handoff_start_raw
+)
+SPAN_ATTRIBUTE_CATALOG_HANDOFF_END = _span_attribute_catalog_bound(
+    _span_attribute_catalog_handoff_end_raw
+)
+SPAN_ATTRIBUTE_CATALOG_CH_HOST = os.getenv("SPAN_ATTRIBUTE_CATALOG_CH_HOST", "").strip()
+_span_attribute_catalog_ch_port_raw = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_CH_PORT", ""
+).strip()
+SPAN_ATTRIBUTE_CATALOG_CH_DATABASE = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_CH_DATABASE", ""
+).strip()
+SPAN_ATTRIBUTE_CATALOG_CH_USER = os.getenv("SPAN_ATTRIBUTE_CATALOG_CH_USER", "").strip()
+# Do not strip or interpolate secrets. Runtime connection construction consumes
+# this value directly and its redacted config object excludes it from repr().
+SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD = os.getenv("SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD", "")
+try:
+    SPAN_ATTRIBUTE_CATALOG_CH_PORT = (
+        int(_span_attribute_catalog_ch_port_raw)
+        if _span_attribute_catalog_ch_port_raw
+        else 0
+    )
+except ValueError:
+    SPAN_ATTRIBUTE_CATALOG_CH_PORT = 0
+if SPAN_ATTRIBUTE_CATALOG_READ_MODE not in {"off", "shadow", "read"}:
+    raise ValueError("SPAN_ATTRIBUTE_CATALOG_READ_MODE must be off, shadow, or read")
+try:
+    SPAN_ATTRIBUTE_CATALOG_EPOCH = int(os.getenv("SPAN_ATTRIBUTE_CATALOG_EPOCH", "0"))
+except ValueError as exc:
+    raise ValueError("SPAN_ATTRIBUTE_CATALOG_EPOCH must be a UInt16") from exc
+if not 0 <= SPAN_ATTRIBUTE_CATALOG_EPOCH <= 65_535:
+    raise ValueError("SPAN_ATTRIBUTE_CATALOG_EPOCH must be a UInt16")
+if SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED and (
+    SPAN_ATTRIBUTE_CATALOG_READ_MODE != "read"
+    or not _span_attribute_catalog_is_dev_deployment
+    or SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK
+    != "I_ACKNOWLEDGE_DEV_ONLY_ATTRIBUTE_CATALOG_READS"
+):
+    raise ValueError(
+        "span attribute catalog DEV snapshot requires acknowledged DEV read mode"
+    )
+if SPAN_ATTRIBUTE_CATALOG_READ_MODE == "read":
+    if (
+        not _span_attribute_catalog_is_dev_deployment
+        or SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK
+        != "I_ACKNOWLEDGE_DEV_ONLY_ATTRIBUTE_CATALOG_READS"
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require DEV and explicit "
+            "acknowledgement"
+        )
+    if not 1 <= SPAN_ATTRIBUTE_CATALOG_EPOCH <= 65_535:
+        raise ValueError(
+            "span attribute catalog public reads require an epoch from 1 to 65535"
+        )
+    if not SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED:
+        raise ValueError(
+            "span attribute catalog public reads require the pinned DEV snapshot"
+        )
+    if (
+        SPAN_ATTRIBUTE_CATALOG_HANDOFF_START is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_END is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_START.tzinfo is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_END.tzinfo is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_START.utcoffset() != timedelta(0)
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_END.utcoffset() != timedelta(0)
+        or any(
+            (
+                bound.minute,
+                bound.second,
+                bound.microsecond,
+            )
+            != (0, 0, 0)
+            for bound in (
+                SPAN_ATTRIBUTE_CATALOG_HANDOFF_START,
+                SPAN_ATTRIBUTE_CATALOG_HANDOFF_END,
+            )
+        )
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_START >= SPAN_ATTRIBUTE_CATALOG_HANDOFF_END
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require aligned increasing UTC "
+            "handoff bounds"
+        )
+    if (
+        not SPAN_ATTRIBUTE_CATALOG_CH_DATABASE
+        or len(SPAN_ATTRIBUTE_CATALOG_CH_DATABASE.encode("utf-8")) > 128
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", SPAN_ATTRIBUTE_CATALOG_CH_DATABASE)
+        is None
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require a safe dedicated "
+            "catalog database"
+        )
+    if (
+        SPAN_ATTRIBUTE_CATALOG_DATABASE != SPAN_ATTRIBUTE_CATALOG_CH_DATABASE
+        or "dev" not in SPAN_ATTRIBUTE_CATALOG_CH_DATABASE.lower()
+        or SPAN_ATTRIBUTE_CATALOG_CH_DATABASE.lower()
+        in {"default", "system", "information_schema", "futureagi"}
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require the same isolated "
+            "development catalog database for qualification and connection"
+        )
+    if (
+        not SPAN_ATTRIBUTE_CATALOG_CH_HOST
+        or not 1 <= SPAN_ATTRIBUTE_CATALOG_CH_PORT <= 65_535
+        or not SPAN_ATTRIBUTE_CATALOG_CH_USER
+        or not SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require complete dedicated "
+            "ClickHouse connection settings"
+        )
+    _span_attribute_catalog_source_users = {
+        str(CLICKHOUSE_V2.get("CH25_USER") or "").strip(),
+        str(CLICKHOUSE.get("CH_USERNAME") or "").strip(),
+    } - {""}
+    if SPAN_ATTRIBUTE_CATALOG_CH_USER in _span_attribute_catalog_source_users:
+        raise ValueError(
+            "span attribute catalog public reads require a dedicated ClickHouse "
+            "read identity distinct from source application users"
+        )
+
+# Unified property-definition catalog. This is a separate read-only path from
+# the frozen span-attribute snapshot above. It resolves its immutable
+# epoch/revision from the activation ledger and therefore has no process-wide
+# epoch/window setting. Production reads remain off by default and require a
+# separate, exact acknowledgement; this admission policy does not enable any
+# writer, backfill, schema, or reconciliation path.
+PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT = (
+    "I_ACKNOWLEDGE_DEV_ONLY_UNIFIED_PROPERTY_CATALOG"
+)
+PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT = (
+    "I_ACKNOWLEDGE_PROD_READ_ONLY_UNIFIED_PROPERTY_CATALOG"
+)
+PROPERTY_CATALOG_MAX_READ_WORKSPACES = 256
+PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODES = frozenset({"allowlist", "all"})
+PROPERTY_CATALOG_PRODUCTION_DATABASE_ENV = "PROPERTY_CATALOG_PRODUCTION_DATABASE"
+PROPERTY_CATALOG_DEFAULT_PRODUCTION_DATABASE = "property_catalog"
+_PROPERTY_CATALOG_DATABASE_IDENTIFIER = re.compile(r"\A[a-z][a-z0-9_]*\Z")
+_PROPERTY_CATALOG_RESERVED_DATABASES = {
+    "default",
+    "futureagi",
+    "information_schema",
+    "system",
+}
+
+
+def property_catalog_read_deployment(
+    environment_type: object,
+    cloud_deployment: object,
+) -> str:
+    """Classify one explicitly supported catalog read deployment."""
+
+    normalized_environment = (
+        environment_type.strip().lower() if isinstance(environment_type, str) else ""
+    )
+    normalized_cloud = (
+        cloud_deployment.strip().upper() if isinstance(cloud_deployment, str) else ""
+    )
+    if normalized_environment in {"dev", "development"} or (
+        normalized_environment == "staging" and normalized_cloud == "DEV"
+    ):
+        return "dev"
+    # ``ENV_TYPE`` is documented and deployed as ``prod``. Keep the longer
+    # spelling as a backwards-compatible alias, but never classify either as
+    # production when the cloud deployment is explicitly DEV.
+    if normalized_environment in {"prod", "production"} and normalized_cloud != "DEV":
+        return "prod"
+    raise ValueError(
+        "unified property catalog reads require an explicitly supported DEV "
+        "or production deployment"
+    )
+
+
+def validate_property_catalog_database(
+    database: object,
+    *,
+    deployment: str | None = None,
+) -> str:
+    """Validate a safe catalog identifier and configurable deployment binding."""
+
+    if (
+        not isinstance(database, str)
+        or not database
+        or len(database.encode("utf-8")) > 128
+        or _PROPERTY_CATALOG_DATABASE_IDENTIFIER.fullmatch(database) is None
+    ):
+        raise ValueError(
+            "property catalog database must be a safe ClickHouse identifier"
+        )
+    if database in _PROPERTY_CATALOG_RESERVED_DATABASES:
+        raise ValueError(
+            "property catalog database must be isolated from source databases"
+        )
+    if deployment not in {None, "dev", "prod"}:
+        raise ValueError("unsupported property catalog deployment")
+    production_database = os.getenv(
+        PROPERTY_CATALOG_PRODUCTION_DATABASE_ENV,
+        PROPERTY_CATALOG_DEFAULT_PRODUCTION_DATABASE,
+    ).strip()
+    if (
+        not production_database
+        or len(production_database.encode("utf-8")) > 128
+        or _PROPERTY_CATALOG_DATABASE_IDENTIFIER.fullmatch(production_database) is None
+        or production_database in _PROPERTY_CATALOG_RESERVED_DATABASES
+    ):
+        raise ValueError(
+            "configured production property catalog database must be a safe "
+            "isolated ClickHouse identifier"
+        )
+    if (deployment == "prod" and database != production_database) or (
+        deployment == "dev" and database == production_database
+    ):
+        raise ValueError(
+            "property catalog database namespace does not match the deployment"
+        )
+    return database
+
+
+def validate_property_catalog_read_connection(
+    *,
+    host: object,
+    port: object,
+    database: object,
+    api_read_user: object,
+    password: object,
+    source_users: object,
+    deployment: str,
+) -> None:
+    """Validate the bounded, dedicated API connection for one deployment."""
+
+    validate_property_catalog_database(database, deployment=deployment)
+    if (
+        not isinstance(host, str)
+        or not host.strip()
+        or type(port) is not int
+        or not 1 <= port <= 65_535
+        or not isinstance(api_read_user, str)
+        or not api_read_user.strip()
+        or not isinstance(password, str)
+        or not password
+    ):
+        raise ValueError(
+            "complete dedicated property catalog ClickHouse settings are required"
+        )
+    try:
+        normalized_source_users = {
+            str(user).strip() for user in source_users if str(user).strip()
+        }
+    except TypeError as exc:
+        raise ValueError("property catalog source users must be iterable") from exc
+    if api_read_user.strip() in normalized_source_users:
+        raise ValueError(
+            "property catalog reads require a dedicated API identity distinct "
+            "from source application users"
+        )
+
+
+def validate_property_catalog_read_admission(
+    *,
+    read_mode: object,
+    environment_type: object,
+    cloud_deployment: object,
+    dev_acknowledgement: object,
+    prod_acknowledgement: object,
+    database: object,
+    host: object,
+    port: object,
+    api_read_user: object,
+    password: object,
+    source_users: object,
+    dev_workspace_allowlist: object,
+    prod_workspace_allowlist: object,
+    prod_workspace_scope_mode: object = "allowlist",
+) -> str | None:
+    """Fail closed unless one bounded DEV or production read is admitted."""
+
+    if read_mode not in {"off", "shadow", "read"}:
+        raise ValueError("PROPERTY_CATALOG_READ_MODE must be off, shadow, or read")
+    if read_mode == "off":
+        return None
+
+    deployment = property_catalog_read_deployment(
+        environment_type,
+        cloud_deployment,
+    )
+    if deployment == "dev":
+        acknowledgement = dev_acknowledgement
+        expected_acknowledgement = PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT
+        cross_wired_acknowledgement = prod_acknowledgement
+        workspace_allowlist = dev_workspace_allowlist
+        cross_wired_workspace_allowlist = prod_workspace_allowlist
+        workspace_scope_mode = "allowlist"
+        if prod_workspace_scope_mode != "allowlist":
+            raise ValueError(
+                "global property catalog workspace scope is production-only"
+            )
+    else:
+        acknowledgement = prod_acknowledgement
+        expected_acknowledgement = PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT
+        cross_wired_acknowledgement = dev_acknowledgement
+        workspace_allowlist = prod_workspace_allowlist
+        cross_wired_workspace_allowlist = dev_workspace_allowlist
+        workspace_scope_mode = prod_workspace_scope_mode
+        if workspace_scope_mode not in PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODES:
+            raise ValueError(
+                "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE must be allowlist or all"
+            )
+    if (
+        acknowledgement != expected_acknowledgement
+        or cross_wired_acknowledgement not in {None, ""}
+    ):
+        raise ValueError(
+            "unified property catalog reads require the exact deployment-specific "
+            "acknowledgement"
+        )
+    try:
+        cross_wired_workspaces = tuple(cross_wired_workspace_allowlist)
+    except TypeError as exc:
+        raise ValueError(
+            "property catalog workspace allowlists must be deployment-specific"
+        ) from exc
+    if cross_wired_workspaces:
+        raise ValueError(
+            "property catalog workspace allowlists must be deployment-specific"
+        )
+
+    validate_property_catalog_read_connection(
+        host=host,
+        port=port,
+        database=database,
+        api_read_user=api_read_user,
+        password=password,
+        source_users=source_users,
+        deployment=deployment,
+    )
+    if isinstance(workspace_allowlist, (str, bytes)):
+        raise ValueError(
+            "property catalog workspace allowlist must contain 1 to 256 entries"
+        )
+    try:
+        workspaces = tuple(workspace_allowlist)
+    except TypeError as exc:
+        raise ValueError(
+            "property catalog workspace allowlist must contain 1 to 256 entries"
+        ) from exc
+    if workspace_scope_mode == "all":
+        if workspaces:
+            raise ValueError(
+                "global property catalog workspace scope requires an empty allowlist"
+            )
+        return deployment
+    if not 1 <= len(workspaces) <= PROPERTY_CATALOG_MAX_READ_WORKSPACES or any(
+        not isinstance(workspace, str) or not workspace.strip()
+        for workspace in workspaces
+    ):
+        raise ValueError(
+            "property catalog workspace allowlist must contain 1 to 256 entries"
+        )
+    return deployment
+
+
+def property_catalog_read_workspace_allowlist(source: object) -> tuple[object, ...]:
+    """Return only the allowlist bound to the admitted read deployment."""
+
+    deployment = getattr(source, "PROPERTY_CATALOG_READ_DEPLOYMENT", None)
+    if deployment == "dev":
+        configured = getattr(source, "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", ())
+    elif deployment == "prod":
+        configured = getattr(source, "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", ())
+    else:
+        return ()
+    try:
+        return tuple(configured)
+    except TypeError:
+        return ()
+
+
+def property_catalog_reads_all_production_workspaces(source: object) -> bool:
+    """Return whether admitted production reads use authenticated workspace scope."""
+
+    return (
+        getattr(source, "PROPERTY_CATALOG_READ_DEPLOYMENT", None) == "prod"
+        and getattr(
+            source,
+            "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
+            "allowlist",
+        )
+        == "all"
+    )
+
+
+PROPERTY_CATALOG_READ_MODE = (
+    os.getenv("PROPERTY_CATALOG_READ_MODE", "off").strip().lower()
+)
+PROPERTY_CATALOG_PRODUCTION_DATABASE = os.getenv(
+    PROPERTY_CATALOG_PRODUCTION_DATABASE_ENV,
+    PROPERTY_CATALOG_DEFAULT_PRODUCTION_DATABASE,
+).strip()
+PROPERTY_CATALOG_DATABASE = os.getenv("PROPERTY_CATALOG_DATABASE", "").strip()
+PROPERTY_CATALOG_DEV_READ_ACK = os.getenv("PROPERTY_CATALOG_DEV_READ_ACK", "").strip()
+PROPERTY_CATALOG_PROD_READ_ACK = os.getenv("PROPERTY_CATALOG_PROD_READ_ACK", "").strip()
+PROPERTY_CATALOG_CH_HOST = os.getenv("PROPERTY_CATALOG_CH_HOST", "").strip()
+_property_catalog_ch_port_raw = os.getenv("PROPERTY_CATALOG_CH_PORT", "").strip()
+PROPERTY_CATALOG_CH_USER = os.getenv("PROPERTY_CATALOG_CH_USER", "").strip()
+PROPERTY_CATALOG_CH_PASSWORD = os.getenv("PROPERTY_CATALOG_CH_PASSWORD", "")
+
+# Periodic unified reconciliation is a separate, write-capable DEV control
+# plane. It is disabled unless the exact boolean is enabled and its activity
+# revalidates the runtime deployment, isolated target, acknowledgement, and
+# workspace allowlist before importing the reviewed runtime factory.
+_property_catalog_dev_reconcile_enabled = (
+    os.getenv("PROPERTY_CATALOG_DEV_RECONCILE_ENABLED", "false").strip().lower()
+)
+if _property_catalog_dev_reconcile_enabled not in {"true", "false"}:
+    raise ValueError(
+        "PROPERTY_CATALOG_DEV_RECONCILE_ENABLED must be exactly true or false"
+    )
+PROPERTY_CATALOG_DEV_RECONCILE_ENABLED = (
+    _property_catalog_dev_reconcile_enabled == "true"
+)
+PROPERTY_CATALOG_DEV_ORGANIZATION_ID = os.getenv(
+    "PROPERTY_CATALOG_DEV_ORGANIZATION_ID", ""
+).strip()
+PROPERTY_CATALOG_DEV_WORKSPACE_ID = os.getenv(
+    "PROPERTY_CATALOG_DEV_WORKSPACE_ID", ""
+).strip()
+PROPERTY_CATALOG_DEV_ENVIRONMENT = os.getenv(
+    "PROPERTY_CATALOG_DEV_ENVIRONMENT", ""
+).strip()
+PROPERTY_CATALOG_DEV_CLOUD_DEPLOYMENT = os.getenv(
+    "PROPERTY_CATALOG_DEV_CLOUD_DEPLOYMENT", ""
+).strip()
+PROPERTY_CATALOG_DEV_IDENTITY = os.getenv("PROPERTY_CATALOG_DEV_IDENTITY", "").strip()
+PROPERTY_CATALOG_DEV_SOURCE_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_DEV_SOURCE_DATABASE", ""
+).strip()
+PROPERTY_CATALOG_DEV_TARGET_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_DEV_TARGET_DATABASE", ""
+).strip()
+PROPERTY_CATALOG_DEV_ACKNOWLEDGEMENT = os.getenv(
+    "PROPERTY_CATALOG_DEV_ACKNOWLEDGEMENT", ""
+).strip()
+PROPERTY_CATALOG_DEV_RUNTIME_FACTORY = os.getenv(
+    "PROPERTY_CATALOG_DEV_RUNTIME_FACTORY",
+    "tracer.services.clickhouse.v2.property_catalog.dev_runtime."
+    "configured_property_catalog_dev_runtime",
+).strip()
+PROPERTY_CATALOG_DEV_WRITE_CH_HOST = os.getenv(
+    "PROPERTY_CATALOG_DEV_WRITE_CH_HOST", ""
+).strip()
+_property_catalog_dev_write_ch_port_raw = os.getenv(
+    "PROPERTY_CATALOG_DEV_WRITE_CH_PORT", ""
+).strip()
+PROPERTY_CATALOG_DEV_WRITE_CH_USER = os.getenv(
+    "PROPERTY_CATALOG_DEV_WRITE_CH_USER", ""
+).strip()
+PROPERTY_CATALOG_DEV_WRITE_CH_PASSWORD = os.getenv(
+    "PROPERTY_CATALOG_DEV_WRITE_CH_PASSWORD", ""
+)
+PROPERTY_CATALOG_DEV_WRITE_CH_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_DEV_WRITE_CH_DATABASE", ""
+).strip()
+PROPERTY_CATALOG_DEV_EXPECTED_WRITE_CH_HOSTNAME = os.getenv(
+    "PROPERTY_CATALOG_DEV_EXPECTED_WRITE_CH_HOSTNAME", ""
+).strip()
+PROPERTY_CATALOG_DEV_EXPECTED_SOURCE_CH_HOSTNAME = os.getenv(
+    "PROPERTY_CATALOG_DEV_EXPECTED_SOURCE_CH_HOSTNAME", ""
+).strip()
+PROPERTY_CATALOG_DEV_EXPECTED_WRITE_CH_HOSTNAMES = tuple(
+    _split_env("PROPERTY_CATALOG_DEV_EXPECTED_WRITE_CH_HOSTNAMES")
+)
+PROPERTY_CATALOG_DEV_EXPECTED_SOURCE_CH_HOSTNAMES = tuple(
+    _split_env("PROPERTY_CATALOG_DEV_EXPECTED_SOURCE_CH_HOSTNAMES")
+)
+PROPERTY_CATALOG_DEV_EXPECTED_PG_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_DEV_EXPECTED_PG_DATABASE", ""
+).strip()
+PROPERTY_CATALOG_DEV_EXPECTED_PG_USER = os.getenv(
+    "PROPERTY_CATALOG_DEV_EXPECTED_PG_USER", ""
+).strip()
+PROPERTY_CATALOG_DEV_EXPECTED_PG_SERVER_ADDRESS = os.getenv(
+    "PROPERTY_CATALOG_DEV_EXPECTED_PG_SERVER_ADDRESS", ""
+).strip()
+_property_catalog_dev_expected_pg_port_raw = os.getenv(
+    "PROPERTY_CATALOG_DEV_EXPECTED_PG_SERVER_PORT", ""
+).strip()
+_property_catalog_dev_epoch_raw = os.getenv(
+    "PROPERTY_CATALOG_DEV_CATALOG_EPOCH", ""
+).strip()
+_property_catalog_dev_projection_raw = os.getenv(
+    "PROPERTY_CATALOG_DEV_PROJECTION_VERSION", ""
+).strip()
+PROPERTY_CATALOG_DEV_PROJECT_ALLOWLIST = tuple(
+    sorted(
+        {
+            value.strip()
+            for value in os.getenv("PROPERTY_CATALOG_DEV_PROJECT_ALLOWLIST", "").split(
+                ","
+            )
+            if value.strip()
+        }
+    )
+)
+PROPERTY_CATALOG_DEV_SPAN_SINCE = os.getenv(
+    "PROPERTY_CATALOG_DEV_SPAN_SINCE", ""
+).strip()
+PROPERTY_CATALOG_DEV_SPAN_UNTIL = os.getenv(
+    "PROPERTY_CATALOG_DEV_SPAN_UNTIL", ""
+).strip()
+PROPERTY_CATALOG_DEV_HOT_PRODUCER_STREAM_ID = os.getenv(
+    "PROPERTY_CATALOG_DEV_HOT_PRODUCER_STREAM_ID", ""
+).strip()
+PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE = os.getenv(
+    "PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE", ""
+).strip()
+PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE = os.getenv(
+    "PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE", ""
+).strip()
+PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE = os.getenv(
+    "PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE", ""
+).strip()
+PROPERTY_CATALOG_RUNTIME_UID = _bounded_env_int(
+    "PROPERTY_CATALOG_RUNTIME_UID",
+    65_532,
+    minimum=1,
+    maximum=2_147_483_647,
+)
+PROPERTY_CATALOG_DEV_MUTATION_LOCK_DIRECTORY = os.getenv(
+    "PROPERTY_CATALOG_DEV_MUTATION_LOCK_DIRECTORY", ""
+).strip()
+PROPERTY_CATALOG_DEV_SIDECAR_ACK = os.getenv(
+    "PROPERTY_CATALOG_DEV_SIDECAR_ACK", ""
+).strip()
+PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = tuple(
+    sorted(
+        {
+            value.strip()
+            for value in os.getenv(
+                "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", ""
+            ).split(",")
+            if value.strip()
+        }
+    )
+)
+PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = tuple(
+    sorted(
+        {
+            value.strip()
+            for value in os.getenv(
+                "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", ""
+            ).split(",")
+            if value.strip()
+        }
+    )
+)
+PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE = (
+    os.getenv(
+        "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
+        "allowlist",
+    )
+    .strip()
+    .lower()
+)
+try:
+    PROPERTY_CATALOG_CH_PORT = (
+        int(_property_catalog_ch_port_raw) if _property_catalog_ch_port_raw else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_CH_PORT = 0
+try:
+    PROPERTY_CATALOG_DEV_WRITE_CH_PORT = (
+        int(_property_catalog_dev_write_ch_port_raw)
+        if _property_catalog_dev_write_ch_port_raw
+        else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_DEV_WRITE_CH_PORT = 0
+try:
+    PROPERTY_CATALOG_DEV_EXPECTED_PG_SERVER_PORT = (
+        int(_property_catalog_dev_expected_pg_port_raw)
+        if _property_catalog_dev_expected_pg_port_raw
+        else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_DEV_EXPECTED_PG_SERVER_PORT = 0
+try:
+    PROPERTY_CATALOG_DEV_CATALOG_EPOCH = (
+        int(_property_catalog_dev_epoch_raw) if _property_catalog_dev_epoch_raw else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_DEV_CATALOG_EPOCH = 0
+try:
+    PROPERTY_CATALOG_DEV_PROJECTION_VERSION = (
+        int(_property_catalog_dev_projection_raw)
+        if _property_catalog_dev_projection_raw
+        else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_DEV_PROJECTION_VERSION = 0
+PROPERTY_CATALOG_DEV_MAX_WALL_MS = _bounded_env_int(
+    "PROPERTY_CATALOG_DEV_MAX_WALL_MS",
+    int(_runtime_numeric_settings["PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS"]),
+    minimum=100,
+    maximum=int(
+        _runtime_numeric_settings["PROPERTY_CATALOG_DEV_INITIAL_BACKFILL_MAX_WALL_MS"]
+    ),
+)
+PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_WALL_MS = _bounded_env_int(
+    "PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_WALL_MS",
+    int(
+        _runtime_numeric_settings["PROPERTY_CATALOG_RECONCILE_DEFAULT_EXTENDED_WALL_MS"]
+    ),
+    minimum=100,
+    maximum=int(
+        _runtime_numeric_settings[
+            "PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_MAX_WALL_MS"
+        ]
+    ),
+)
+
+# Production lifecycle controller.  This is a distinct write-capable process,
+# disabled by default, with a dedicated ClickHouse writer and server-enforced
+# read-only source identities.  The management command repeats every gate.
+_property_catalog_lifecycle_enabled_raw = (
+    os.getenv("PROPERTY_CATALOG_LIFECYCLE_ENABLED", "false").strip().lower()
+)
+if _property_catalog_lifecycle_enabled_raw not in {"true", "false"}:
+    raise ValueError("PROPERTY_CATALOG_LIFECYCLE_ENABLED must be exactly true or false")
+PROPERTY_CATALOG_LIFECYCLE_ENABLED = _property_catalog_lifecycle_enabled_raw == "true"
+_property_catalog_lifecycle_bootstrap_enabled_raw = (
+    os.getenv("PROPERTY_CATALOG_LIFECYCLE_BOOTSTRAP_ENABLED", "false").strip().lower()
+)
+if _property_catalog_lifecycle_bootstrap_enabled_raw not in {"true", "false"}:
+    raise ValueError(
+        "PROPERTY_CATALOG_LIFECYCLE_BOOTSTRAP_ENABLED must be exactly true or false"
+    )
+PROPERTY_CATALOG_LIFECYCLE_BOOTSTRAP_ENABLED = (
+    _property_catalog_lifecycle_bootstrap_enabled_raw == "true"
+)
+_property_catalog_lifecycle_repair_expired_raw = (
+    os.getenv(
+        "PROPERTY_CATALOG_LIFECYCLE_REPAIR_EXPIRED_INCOMPLETE",
+        "false",
+    )
+    .strip()
+    .lower()
+)
+if _property_catalog_lifecycle_repair_expired_raw not in {"true", "false"}:
+    raise ValueError(
+        "PROPERTY_CATALOG_LIFECYCLE_REPAIR_EXPIRED_INCOMPLETE must be exactly "
+        "true or false"
+    )
+PROPERTY_CATALOG_LIFECYCLE_REPAIR_EXPIRED_INCOMPLETE = (
+    _property_catalog_lifecycle_repair_expired_raw == "true"
+)
+PROPERTY_CATALOG_LIFECYCLE_ACK = os.getenv("PROPERTY_CATALOG_LIFECYCLE_ACK", "").strip()
+PROPERTY_CATALOG_LIFECYCLE_IDENTITY = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_IDENTITY", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_SOURCE_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_SOURCE_DATABASE", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_TARGET_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_TARGET_DATABASE", "property_catalog"
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_HOST = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_HOST", ""
+).strip()
+_property_catalog_lifecycle_write_ch_port_raw = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PORT", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_USER = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_USER", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PASSWORD = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PASSWORD", ""
+)
+PROPERTY_CATALOG_ACTIVATION_CONTROL_ACK = os.getenv(
+    "PROPERTY_CATALOG_ACTIVATION_CONTROL_ACK", ""
+).strip()
+PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_USER = os.getenv(
+    "PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_USER", ""
+).strip()
+PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_PASSWORD = os.getenv(
+    "PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_PASSWORD", ""
+)
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAME = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAME", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_SOURCE_CH_HOSTNAME = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_SOURCE_CH_HOSTNAME", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAMES = tuple(
+    _split_env("PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAMES")
+)
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_SOURCE_CH_HOSTNAMES = tuple(
+    _split_env("PROPERTY_CATALOG_LIFECYCLE_EXPECTED_SOURCE_CH_HOSTNAMES")
+)
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_DATABASE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_DATABASE", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_USER = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_USER", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_SERVER_ADDRESS = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_SERVER_ADDRESS", ""
+).strip()
+_property_catalog_lifecycle_expected_pg_port_raw = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_SERVER_PORT", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_CATALOG_EPOCH = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_CATALOG_EPOCH", 0, minimum=0, maximum=65_535
+)
+PROPERTY_CATALOG_LIFECYCLE_PROJECTION_VERSION = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_PROJECTION_VERSION",
+    0,
+    minimum=0,
+    maximum=65_535,
+)
+PROPERTY_CATALOG_LIFECYCLE_PRODUCER_STREAM_ID = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_PRODUCER_STREAM_ID", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_REVISION_FENCE_FILE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_REVISION_FENCE_FILE", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_DRAIN_PROOF_FILE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_DRAIN_PROOF_FILE", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_PRODUCER_RETIREMENT_FILE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_PRODUCER_RETIREMENT_FILE", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_HEALTH_FILE = os.getenv(
+    "PROPERTY_CATALOG_LIFECYCLE_HEALTH_FILE", ""
+).strip()
+PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE = (
+    os.getenv("PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE", "allowlist")
+    .strip()
+    .lower()
+)
+PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST = tuple(
+    sorted(
+        {
+            value.strip()
+            for value in os.getenv(
+                "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST", ""
+            ).split(",")
+            if value.strip()
+        }
+    )
+)
+PROPERTY_CATALOG_LIFECYCLE_POLL_SECONDS = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_POLL_SECONDS", 60, minimum=5, maximum=3_600
+)
+PROPERTY_CATALOG_LIFECYCLE_FAILURE_BACKOFF_SECONDS = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_FAILURE_BACKOFF_SECONDS",
+    30,
+    minimum=5,
+    maximum=3_600,
+)
+PROPERTY_CATALOG_LIFECYCLE_SPAN_WINDOW_DAYS = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_SPAN_WINDOW_DAYS", 366, minimum=1, maximum=366
+)
+PROPERTY_CATALOG_LIFECYCLE_MAX_WALL_MS = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_MAX_WALL_MS",
+    int(_runtime_numeric_settings["PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS"]),
+    minimum=100,
+    maximum=int(_runtime_numeric_settings["PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS"]),
+)
+PROPERTY_CATALOG_LIFECYCLE_SCHEDULED_RECONCILE_WALL_MS = _bounded_env_int(
+    "PROPERTY_CATALOG_LIFECYCLE_SCHEDULED_RECONCILE_WALL_MS",
+    int(
+        _runtime_numeric_settings["PROPERTY_CATALOG_RECONCILE_DEFAULT_EXTENDED_WALL_MS"]
+    ),
+    minimum=int(_runtime_numeric_settings["PROPERTY_CATALOG_DEV_STANDARD_MAX_WALL_MS"])
+    + 1,
+    maximum=int(
+        _runtime_numeric_settings[
+            "PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_MAX_WALL_MS"
+        ]
+    ),
+)
+try:
+    PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PORT = (
+        int(_property_catalog_lifecycle_write_ch_port_raw)
+        if _property_catalog_lifecycle_write_ch_port_raw
+        else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PORT = 0
+try:
+    PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_SERVER_PORT = (
+        int(_property_catalog_lifecycle_expected_pg_port_raw)
+        if _property_catalog_lifecycle_expected_pg_port_raw
+        else 0
+    )
+except ValueError:
+    PROPERTY_CATALOG_LIFECYCLE_EXPECTED_PG_SERVER_PORT = 0
+del _runtime_numeric_settings
+PROPERTY_CATALOG_READ_DEPLOYMENT = validate_property_catalog_read_admission(
+    read_mode=PROPERTY_CATALOG_READ_MODE,
+    environment_type=ENV_TYPE,
+    cloud_deployment=CLOUD_DEPLOYMENT,
+    dev_acknowledgement=PROPERTY_CATALOG_DEV_READ_ACK,
+    prod_acknowledgement=PROPERTY_CATALOG_PROD_READ_ACK,
+    database=PROPERTY_CATALOG_DATABASE,
+    host=PROPERTY_CATALOG_CH_HOST,
+    port=PROPERTY_CATALOG_CH_PORT,
+    api_read_user=PROPERTY_CATALOG_CH_USER,
+    password=PROPERTY_CATALOG_CH_PASSWORD,
+    source_users={
+        str(CLICKHOUSE_V2.get("CH25_USER") or "").strip(),
+        str(CLICKHOUSE.get("CH_USERNAME") or "").strip(),
+    }
+    - {""},
+    dev_workspace_allowlist=PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST,
+    prod_workspace_allowlist=PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST,
+    prod_workspace_scope_mode=PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE,
+)
+PROPERTY_CATALOG_READ_WORKSPACE_ALLOWLIST = (
+    PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST
+    if PROPERTY_CATALOG_READ_DEPLOYMENT == "dev"
+    else PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST
+    if PROPERTY_CATALOG_READ_DEPLOYMENT == "prod"
+    else ()
+)
+
+# Fail-closed: rollup routing requires both flag=on and window >= coverage date.
+# Set COVERED_SINCE (ISO-8601) after running rebuild_dashboard_attr_rollup.
+DASHBOARD_ATTR_ROLLUP_ENABLED = (
+    os.getenv("DASHBOARD_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
+)
+_dashboard_attr_rollup_covered_since = os.getenv("DASHBOARD_ATTR_ROLLUP_COVERED_SINCE")
+DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
+    datetime.fromisoformat(_dashboard_attr_rollup_covered_since)
+    if _dashboard_attr_rollup_covered_since
+    else None
+)
+
+# Eval-logger table read by the trace/voice/user eval-config discovery queries.
+# The CH25 spans cutover intentionally kept the legacy peerdb CDC table
+# `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table
+# `tracer_eval_logger_v2` (`is_deleted`) is its prepared replacement. Flip this
+# per-deployment (default = legacy so the peerdb-backed stacks are unaffected;
+# CH-direct stacks set it to `tracer_eval_logger_v2`). See
+# tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
+CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Where the eval runner reads span data from.
+#   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
+#   "clickhouse" — reads span data from CH 25.3 via the hybrid loader
+#                  (tracer/services/clickhouse/v2/eval_loader.py). Django FK
+#                  navigation (project, trace, end_user, …) still hits PG.
+# Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
+# the backfill + validator pass and a soak period.
+EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()

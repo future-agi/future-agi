@@ -11,6 +11,18 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.observability.yml up
 
 services:
+  backend:
+    environment:
+      - HOSTED_RUNNER_ENABLED=${HOSTED_RUNNER_ENABLED:-false}
+      - HOSTED_RUNNER_VOICE_ENABLED=${HOSTED_RUNNER_VOICE_ENABLED:-false}
+      - ALK_RUNNER_API_URL=${ALK_RUNNER_API_URL:-http://backend}
+
+  # The dev LiveKit target agent greets immediately on room dispatch. Let it
+  # speak before the simulator so the two agents do not interrupt each other.
+  worker-simulation-runner:
+    environment:
+      - SIMULATOR_CONVERSATION_DIRECTION=${SIMULATOR_CONVERSATION_DIRECTION:-agent_first}
+
   # Single Temporal worker for all queues (development only)
   temporal-worker-dev:
     platform: linux/amd64
@@ -28,6 +40,10 @@ services:
       - TEMPORAL_HOST=temporal:7233
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
       - TEMPORAL_ALL_QUEUES=true
+      # The hosted runner has a separate dependency-heavy image/process. If the
+      # general worker polls this queue it can steal jobs and fail before the
+      # dedicated runner sees them.
+      - TEMPORAL_EXCLUDED_QUEUES=${TEMPORAL_EXCLUDED_QUEUES:-simulation_runner}
       - FAST_STARTUP=${FAST_STARTUP:-true}
       # Lower concurrency for dev (saves memory)
       - TEMPORAL_MAX_CONCURRENT_ACTIVITIES=${TEMPORAL_DEV_MAX_ACTIVITIES:-20}

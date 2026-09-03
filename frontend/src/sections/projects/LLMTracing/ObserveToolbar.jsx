@@ -1,31 +1,18 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import {
-  Badge,
-  Box,
-  Button,
-  MenuItem,
-  Popover,
-  Stack,
-  Typography,
-} from "@mui/material";
-import {
-  format,
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
-import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
+import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
+import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
 import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -41,6 +28,14 @@ const DATE_OPTIONS = [
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
   mode = "traces",
+  // Explicit project scope for mounts whose route has no `observeId` (for
+  // example a cross-project Users detail page after its Project filter is
+  // selected). TraceFilterPanel otherwise cannot load either its property
+  // catalog or retained attribute-key catalog on those mounts.
+  projectId,
+  // Cross-project user detail has no route project. Its unified catalog is
+  // authorized by the active workspace until a Project filter narrows it.
+  allowWorkspaceScope = false,
   // When true, always render inline (skip the #observe-toolbar-slot portal).
   // Used by pages that mount their own toolbar outside the main ObserveTabBar,
   // e.g., the User Detail Page.
@@ -55,10 +50,6 @@ const ObserveToolbar = ({
   onSaveView,
   isFilterOpen,
   onFilterToggle,
-  filters,
-  setFilters,
-  filterDefinition,
-  defaultFilter,
   onApplyExtraFilters,
   // Called when the panel's Clear all (or empty Apply) resets extraFilters
   // — owns the localStorage cleanup parent state can't reach from here.
@@ -82,6 +73,7 @@ const ObserveToolbar = ({
   // View mode (graph/agentGraph/agentPath)
   viewMode,
   onViewModeChange,
+  agentGraphEnabled = true,
   // Evals
   hasEvalFilter,
   onToggleEvalFilter,
@@ -96,7 +88,6 @@ const ObserveToolbar = ({
   hiddenGroupByOptions,
   onGroupByChange,
   // Grid
-  rowCount,
   // Compare
   onCompareToggle,
   isCompareActive,
@@ -107,6 +98,7 @@ const ObserveToolbar = ({
   bulkActions,
   isSimulator,
   allMatching,
+  selectedCountIsLowerBound,
   // Add Evals button
   excludeSimulationCalls,
   onToggleSimulationCalls,
@@ -124,16 +116,37 @@ const ObserveToolbar = ({
   // Spans view — swaps "Trace Name" filter label to "Span Name"
   isSpansView = false,
 }) => {
-  const isTraces = mode === "traces";
-  const showAddEvals =
-    typeof onAddEvals === "function" &&
-    (mode === "traces" || mode === "sessions");
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
+  const [filterButtonEl, setFilterButtonEl] = useState(null);
   const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
+  // Simulator projects render CallLogsGrid in the trace slot. The URL/tab
+  // remains `trace`, but the visible rows and list endpoint use the canonical
+  // voice-call field contract.
+  const effectiveFilterTab = isSimulator ? "voiceCalls" : tab;
+  const propertyNamespace =
+    effectiveFilterTab === "voiceCalls"
+      ? "voice_calls"
+      : mode === "sessions"
+        ? "sessions"
+        : mode === "users"
+          ? "users"
+          : "traces";
+  const filterValueSource =
+    mode === "sessions" || mode === "users" ? "sessions" : "traces";
+  // Session and user rows retain their native list/value transport, while
+  // custom-attribute definitions and values live in the tracing catalog.
+  // Keep those identities separate: using the session source for definitions
+  // is unsupported, while the spans source misses trace catalog attributes.
+  const attributeSource =
+    mode === "sessions" || mode === "users" ? "traces" : undefined;
+  const setFilterButtonNode = useCallback((node) => {
+    filterButtonRef.current = node;
+    setFilterButtonEl(node);
+  }, []);
 
   const handleDateOptionChange = (option) => {
     setDateAnchor(null);
@@ -201,11 +214,19 @@ const ObserveToolbar = ({
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
       const rawType = gf.filter_config?.filter_type;
+      const rawVal = gf.filter_config?.filter_value;
       // Trust explicit `filter_type` only; ops are shared across types.
       const isNumberType = rawType === "number";
       const isBooleanType = rawType === "boolean";
+      const isArrayType = rawType === "array" || rawType === "list";
+      const isMapType =
+        rawType === "map" ||
+        rawType === "object" ||
+        (rawType === "json" &&
+          rawVal !== null &&
+          typeof rawVal === "object" &&
+          !Array.isArray(rawVal));
       const isRange = RANGE_OPS.has(rawOp);
-      const rawVal = gf.filter_config?.filter_value;
       let value;
       if (isRange) {
         // Normalize to a 2-element string array for the TextField pair.
@@ -223,6 +244,14 @@ const ObserveToolbar = ({
         value = rawVal === true || rawVal === "true" ? "true" : "false";
       } else if (isNumberType) {
         value = rawVal != null ? String(rawVal) : "";
+      } else if (isMapType) {
+        value = rawVal && typeof rawVal === "object" ? rawVal : "";
+      } else if (isArrayType || rawType === "json") {
+        value = Array.isArray(rawVal)
+          ? rawVal
+          : rawVal !== undefined && rawVal !== null && rawVal !== ""
+            ? [rawVal]
+            : [];
       } else {
         value = rawVal
           ? String(rawVal)
@@ -237,9 +266,11 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      const rawColType = ID_ONLY_FIELDS.has(gf.column_id)
-        ? undefined
-        : gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+      const isDirectIdFilter = ID_ONLY_FIELDS.has(gf.column_id);
+      const rawColType =
+        gf.filter_config?.col_type ||
+        gf.col_type ||
+        (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
       const rawFilterType = gf.filter_config?.filter_type;
       const isGlobalAnnotatorFilter = gf.column_id === "annotator";
       // Auto-migrate legacy saved views: thumbs annotations used to be
@@ -257,29 +288,42 @@ const ObserveToolbar = ({
       })();
       return {
         field: gf.column_id,
+        registryId: gf.property_id,
         fieldName:
           gf.display_name || (isGlobalAnnotatorFilter ? "Annotator" : null),
-        fieldCategory: isGlobalAnnotatorFilter
-          ? "annotation"
-          : colTypeReverseMap[rawColType] || "system",
+        fieldCategory: isDirectIdFilter
+          ? undefined
+          : isGlobalAnnotatorFilter
+            ? "annotation"
+            : colTypeReverseMap[rawColType] || "system",
         fieldType: isGlobalAnnotatorFilter
           ? "annotator"
           : isBooleanType
-          ? "boolean"
-          : isNumberType
-            ? "number"
-            : rawFilterType === "number"
+            ? "boolean"
+            : isNumberType
               ? "number"
-              : rawFilterType === "thumbs" || looksLikeThumbsValues
-                ? "thumbs"
-                : rawFilterType === "categorical"
-                  ? "categorical"
-                  : rawFilterType === "text" && rawColType === "ANNOTATION"
-                    ? "text"
-                    : "string",
-        apiColType: isGlobalAnnotatorFilter ? "SYSTEM_METRIC" : rawColType,
+              : isMapType
+                ? "map"
+                : isArrayType || rawFilterType === "json"
+                  ? "array"
+                  : rawFilterType === "number"
+                    ? "number"
+                    : rawFilterType === "thumbs" || looksLikeThumbsValues
+                      ? "thumbs"
+                      : rawFilterType === "categorical"
+                        ? "categorical"
+                        : rawFilterType === "text" &&
+                            rawColType === "ANNOTATION"
+                          ? "text"
+                          : "string",
+        apiColType: isDirectIdFilter
+          ? undefined
+          : isGlobalAnnotatorFilter
+            ? "SYSTEM_METRIC"
+            : rawColType,
         operator: rawOp,
         value,
+        valueTypes: gf.filter_config?.attribute_value_types,
       };
     });
     setPanelFilters(newPanelFilters);
@@ -287,22 +331,6 @@ const ObserveToolbar = ({
   const { openCreateModal } = useTabStoreShallow((s) => ({
     openCreateModal: s.openCreateModal,
   }));
-
-  // Shared pill button style — 26px bordered
-  const pillSx = {
-    textTransform: "none",
-    fontWeight: 500,
-    fontSize: 13,
-    fontFamily: "'IBM Plex Sans', sans-serif",
-    height: 26,
-    border: "1px solid",
-    borderColor: "divider",
-    borderRadius: "4px",
-    color: "text.primary",
-    bgcolor: "background.paper",
-    px: 1,
-    "&:hover": { bgcolor: "background.neutral", borderColor: "text.disabled" },
-  };
 
   // Find the portal target in the tab bar
   const [portalTarget, setPortalTarget] = useState(null);
@@ -381,13 +409,14 @@ const ObserveToolbar = ({
           isSimulator={isSimulator}
           actions={bulkActions}
           allMatching={allMatching}
+          selectedCountIsLowerBound={selectedCountIsLowerBound}
         />
       ) : (
         <>
           {/* Filter — hidden in compare mode (each graph has its own) */}
           {!isCompareActive && (
             <Button
-              ref={filterButtonRef}
+              ref={setFilterButtonNode}
               variant="outlined"
               size="small"
               startIcon={
@@ -411,21 +440,21 @@ const ObserveToolbar = ({
 
           {/* Filter Panel (popover) */}
           <TraceFilterPanel
-            anchorEl={externalFilterAnchor || filterButtonRef.current}
-            open={isFilterOpen}
+            anchorEl={externalFilterAnchor || filterButtonEl}
+            open={
+              isFilterOpen && Boolean(externalFilterAnchor || filterButtonEl)
+            }
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
-            tab={tab}
+            tab={effectiveFilterTab}
             isSimulator={isSimulator}
             isSpansView={isSpansView}
-            source={
-              mode === "sessions"
-                ? "sessions"
-                : mode === "users"
-                  ? "users"
-                  : "traces"
-            }
+            source={filterValueSource}
+            propertyNamespace={propertyNamespace}
+            attributeSource={attributeSource}
+            projectId={projectId}
+            allowWorkspaceScope={allowWorkspaceScope}
             onApply={(newFilters) => {
               setPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
@@ -442,91 +471,7 @@ const ObserveToolbar = ({
                 }
                 return;
               }
-              // Panel and backend share canonical op names — no translation.
-              const typeMap = {
-                string: "text",
-                number: "number",
-                boolean: "boolean",
-                categorical: "categorical",
-                thumbs: "thumbs",
-                text: "text",
-                annotator: "text",
-              };
-              const colTypeMap = {
-                attribute: "SPAN_ATTRIBUTE",
-                system: "SYSTEM_METRIC",
-                eval: "EVAL_METRIC",
-                annotation: "ANNOTATION",
-              };
-              const RANGE_OPS = new Set(["between", "not_between"]);
-              const LIST_OPS = new Set(["in", "not_in"]);
-              // Legacy panel ops emitted by THUMBS_OPS / CATEGORICAL_OPS /
-              // ID_ONLY_OPS — translate to canonical so BE accepts them.
-              const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
-              const apiFilters = newFilters.map((f) => {
-                const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
-                const apiColType = ID_ONLY_FIELDS.has(f.field)
-                  ? undefined
-                  : f.apiColType || colTypeMap[f.fieldCategory];
-                let filterValue = NULL_OPERATORS.includes(filterOp)
-                  ? ""
-                  : f.value;
-                  if (Array.isArray(filterValue)) {
-                  if (RANGE_OPS.has(filterOp)) {
-                    // Coerce numeric range bounds.
-                    filterValue = filterValue.map((v) =>
-                      f.fieldType === "number" && v !== "" && v !== null
-                        ? Number(v)
-                        : v,
-                    );
-                  } else if (LIST_OPS.has(filterOp)) {
-                    filterValue = filterValue.filter(
-                      (v) => v !== "" && v !== null && v !== undefined,
-                    );
-                  } else if (filterValue.length === 1) {
-                    filterValue = filterValue[0];
-                  }
-                } else if (LIST_OPS.has(filterOp)) {
-                  // Scalar handed to a list op; wrap as 1-element list.
-                  filterValue =
-                    filterValue === "" ||
-                    filterValue === null ||
-                    filterValue === undefined
-                      ? []
-                      : [filterValue];
-                }
-                // Coerce TextField string to Number for the wire.
-                if (
-                  f.fieldType === "number" &&
-                  !Array.isArray(filterValue) &&
-                  filterValue !== "" &&
-                  filterValue !== null &&
-                  filterValue !== undefined
-                ) {
-                  const n = Number(filterValue);
-                  if (!Number.isNaN(n)) filterValue = n;
-                }
-                // Coerce MUI Select "true"/"false" string to native bool.
-                if (f.fieldType === "boolean") {
-                  if (filterValue === "true" || filterValue === true) {
-                    filterValue = true;
-                  } else if (filterValue === "false" || filterValue === false) {
-                    filterValue = false;
-                  }
-                }
-                return {
-                  column_id: f.field,
-                  ...(f.fieldName && { display_name: f.fieldName }),
-                  filter_config: {
-                    filter_type: typeMap[f.fieldType] || "text",
-                    filter_op: filterOp,
-                    filter_value: filterValue,
-                    ...(apiColType && {
-                      col_type: apiColType,
-                    }),
-                  },
-                };
-              });
+              const apiFilters = newFilters.map(buildApiFilterFromPanelRow);
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
                 onApplyCompareExtraFilters(apiFilters);
@@ -592,6 +537,7 @@ const ObserveToolbar = ({
             mode={mode}
             viewMode={viewMode}
             onViewModeChange={onViewModeChange}
+            agentGraphEnabled={agentGraphEnabled}
             columns={columns}
             onColumnVisibilityChange={onColumnVisibilityChange}
             onAutoSize={onAutoSize}
@@ -645,6 +591,8 @@ const ObserveToolbar = ({
 
 ObserveToolbar.propTypes = {
   mode: PropTypes.oneOf(["traces", "sessions", "users"]),
+  projectId: PropTypes.string,
+  allowWorkspaceScope: PropTypes.bool,
   inline: PropTypes.bool,
   dateLabel: PropTypes.string,
   dateFilter: PropTypes.object,
@@ -668,6 +616,7 @@ ObserveToolbar.propTypes = {
   setCellHeight: PropTypes.func,
   viewMode: PropTypes.string,
   onViewModeChange: PropTypes.func,
+  agentGraphEnabled: PropTypes.bool,
   hasEvalFilter: PropTypes.bool,
   onToggleEvalFilter: PropTypes.func,
   showEvalToggle: PropTypes.bool,
@@ -682,6 +631,7 @@ ObserveToolbar.propTypes = {
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
   selectedCount: PropTypes.number,
+  selectedCountIsLowerBound: PropTypes.bool,
   allMatching: PropTypes.bool,
   onClearSelection: PropTypes.func,
   onBulkAction: PropTypes.func,
@@ -694,7 +644,7 @@ ObserveToolbar.propTypes = {
   onClearExtraFilters: PropTypes.func,
   onClearCompareExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
-  tab: PropTypes.oneOf(["trace", "spans"]),
+  tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,

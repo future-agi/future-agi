@@ -19,7 +19,8 @@ const ModeConfig = () => {
   const { defaultMetric, isMetricAdded } = modelDetails;
 
   const { mutate: onModelDelete, isPending: isDeleting } = useMutation({
-    mutationFn: () => axios.delete(endpoints.model.deleteModel(id)),
+    mutationFn: () =>
+      axios.delete(endpoints.model.deleteModel(), { data: { ids: [id] } }),
     onSuccess: () => {
       setDeleteOpen(false);
       navigate("/dashboard/models");

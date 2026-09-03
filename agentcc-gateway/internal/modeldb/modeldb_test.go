@@ -785,6 +785,35 @@ func TestBundledModels_MiniMaxM27(t *testing.T) {
 	}
 }
 
+func TestBundledModels_MiniMaxM3(t *testing.T) {
+	db := New(BundledModels, nil)
+	model, ok := db.Get("minimax/MiniMax-M3")
+	if !ok {
+		t.Fatal("expected MiniMax-M3 to exist in BundledModels")
+	}
+	if model.Provider != "minimax" {
+		t.Errorf("Provider = %q, want minimax", model.Provider)
+	}
+	if model.Mode != ModeChat {
+		t.Errorf("Mode = %q, want chat", model.Mode)
+	}
+	if model.MaxInputTokens != 1_000_000 {
+		t.Errorf("MaxInputTokens = %d, want 1000000", model.MaxInputTokens)
+	}
+	if math.Abs(model.Pricing.InputPerToken-0.6e-6) > 1e-15 {
+		t.Errorf("InputPerToken = %g, want 0.6e-6", model.Pricing.InputPerToken)
+	}
+	if math.Abs(model.Pricing.OutputPerToken-2.4e-6) > 1e-15 {
+		t.Errorf("OutputPerToken = %g, want 2.4e-6", model.Pricing.OutputPerToken)
+	}
+	if math.Abs(model.Pricing.CachedInputPerToken-0.12e-6) > 1e-15 {
+		t.Errorf("CachedInputPerToken = %g, want 0.12e-6", model.Pricing.CachedInputPerToken)
+	}
+	if !model.Capabilities.Vision || !model.Capabilities.Reasoning || !model.Capabilities.PromptCaching {
+		t.Error("expected vision, reasoning, and prompt caching capabilities")
+	}
+}
+
 func TestBundledModels_ListSorted(t *testing.T) {
 	db := New(BundledModels, nil)
 	list := db.List()

@@ -11,38 +11,48 @@ Key Optimizations:
 6. Composite index utilization
 """
 
-import hashlib
-import json
+from collections.abc import Generator
 from datetime import datetime, timedelta
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any
 
 import structlog
-from django.db import models
 from django.db.models import (
     Avg,
     Case,
     Count,
-    F,
     FloatField,
-    OuterRef,
     Q,
-    Subquery,
     Value,
     When,
 )
 from django.db.models.fields.json import KeyTextTransform
-from django.db.models.functions import Cast, Coalesce, TruncDay, TruncHour, TruncMonth
+from django.db.models.functions import Cast, TruncDay, TruncHour, TruncMonth
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
-from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.models.trace import Trace
+from tracer.models.observation_span import ObservationSpan
+from tracer.services.clickhouse.read_budget import (
+    is_clickhouse_api_read_unavailable_error,
+)
+
+logger = structlog.get_logger(__name__)
 
 
-def parse_time_filters(filters: List[Dict]) -> tuple:
+class EvalGraphConfigurationError(ValueError):
+    """The requested eval is missing or outside the authorized project."""
+
+
+class EvalGraphReadError(RuntimeError):
+    """The direct-write ClickHouse eval read could not be completed."""
+
+
+class SystemMetricGraphReadError(RuntimeError):
+    """The direct-write ClickHouse system-metric read could not be completed."""
+
+
+def parse_time_filters(filters: list[dict]) -> tuple:
     """
     Extract start and end dates from filter configuration.
 
@@ -98,211 +108,98 @@ def get_truncate_function(interval: str):
 
 def get_eval_graph_data(
     interval: str,
-    filters: List[Dict],
+    filters: list[dict],
     property: str,
     observe_type: str,
-    req_data_config: Dict,
-    eval_logger_filters: Dict,
+    req_data_config: dict,
+    eval_logger_filters: dict,
+    refresh: bool = False,
+    organization_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> Any:
-    """
-    Optimized version of get_eval_graph_data using database-level aggregation.
+    """Read an eval graph from the authoritative direct-write CH25 tables."""
+    del property
 
-    Handles 1M+ datapoints efficiently by:
-    1. Using subqueries instead of loading IDs into memory
-    2. Database-level time bucketing and aggregation
-    3. Query result caching
-    4. Minimal memory footprint
-
-    Args:
-        interval: Time interval ('hour', 'day', 'week', 'month')
-        filters: List of filter configurations
-        property: Aggregation property (e.g., 'average')
-        observe_type: Type of observation ('trace' or 'span')
-        req_data_config: Request data configuration
-        eval_logger_filters: Filters containing:
-            - trace_ids_queryset: Lazy queryset for trace filtering (for observe_type='trace')
-            - span_ids_queryset: Lazy queryset for span filtering (for observe_type='span')
-
-    Returns:
-        Graph data dictionary or list
-    """
-    # Extract configuration
     custom_eval_config_id = req_data_config.get("id")
     if not custom_eval_config_id:
-        raise ValueError("Custom eval config ID is required")
+        raise EvalGraphConfigurationError(
+            "Evaluation config is not available for this project"
+        )
 
-    # Get custom eval config
-    try:
-        custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
-    except CustomEvalConfig.DoesNotExist:
-        raise ValueError("Custom eval config does not exist")
-
-    # --- ClickHouse dispatch ---
-    # Try CH if a project_id is available in eval_logger_filters
+    # The raw eval logger has no project column, so config ownership must be
+    # established before a config-scoped ClickHouse read can run. Direct-write
+    # deployments have no authoritative PostgreSQL telemetry fallback: every
+    # caller must supply the request-owned project or fail before any read.
     ch_project_id = eval_logger_filters.get("project_id")
-    if ch_project_id:
-        try:
-            from tracer.services.clickhouse.query_builders import (
-                EvalMetricsQueryBuilder,
-            )
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-                QueryType,
-            )
-
-            analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.EVAL_METRICS):
-                eval_output_type_ch = custom_eval_config.eval_template.config.get(
-                    "output", "SCORE"
-                )
-                choices = []
-                if eval_output_type_ch == "CHOICES":
-                    choices = custom_eval_config.eval_template.choices or []
-
-                ch_start, ch_end = parse_time_filters(filters)
-                builder = EvalMetricsQueryBuilder(
-                    project_id=str(ch_project_id),
-                    custom_eval_config_id=str(custom_eval_config_id),
-                    start_date=ch_start,
-                    end_date=ch_end,
-                    interval=interval,
-                    eval_output_type=eval_output_type_ch,
-                    eval_name=custom_eval_config.name,
-                    choices=choices,
-                )
-                query, params = builder.build()
-                result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                ch_data = builder.format_result(result.data, result.columns or [])
-                # For observe_type="charts" with non-CHOICES types, the PG code
-                # wraps single-series results in a list. Match that behavior.
-                if observe_type == "charts" and eval_output_type_ch != "CHOICES":
-                    if isinstance(ch_data, dict):
-                        ch_data = [ch_data]
-                return ch_data
-        except Exception as e:
-            logger.warning(
-                "ch_eval_graph_dispatch_failed",
-                error=str(e),
-                eval_config_id=str(custom_eval_config_id),
-            )
-            # Fall through to existing PG code below
-
-    # Parse time filters
-    start_date, end_date = parse_time_filters(filters)
-
-    # Get output type for processing
-    eval_output_type = custom_eval_config.eval_template.config.get("output")
-
-    # Build base queryset using subqueries - NO ID MATERIALIZATION
-    # This is the key optimization: we filter using subqueries
-    # instead of evaluating IDs into memory
-
-    if observe_type == "trace":
-        # For trace-level filtering, use trace_ids_queryset as a subquery
-        trace_ids_queryset = eval_logger_filters.get("trace_ids_queryset")
-        if trace_ids_queryset is None:
-            return _empty_result(
-                custom_eval_config.name, start_date, end_date, interval
-            )
-
-        # ✅ Use subquery filter - PostgreSQL will optimize this efficiently
-        # Never evaluates the trace IDs into Python memory
-        base_queryset = EvalLogger.objects.filter(
-            trace_id__in=trace_ids_queryset.values("id"),
-            custom_eval_config_id=custom_eval_config_id,
-            created_at__gte=start_date,
-            created_at__lte=end_date,
+    if not ch_project_id:
+        raise EvalGraphConfigurationError(
+            "Evaluation config is not available for this project"
         )
 
-        # Perform aggregation based on output type
-        result = _aggregate_for_observe_screen(
-            base_queryset,
-            custom_eval_config,
-            eval_output_type,
-            req_data_config,
-            interval,
-            start_date,
-            end_date,
+    config_lookup = {
+        "id": custom_eval_config_id,
+        "deleted": False,
+        "project_id": ch_project_id,
+    }
+
+    try:
+        custom_eval_config = CustomEvalConfig.objects.select_related(
+            "eval_template"
+        ).get(**config_lookup)
+    except CustomEvalConfig.DoesNotExist:
+        raise EvalGraphConfigurationError(
+            "Evaluation config is not available for this project"
+        ) from None
+
+    try:
+        from tracer.services.clickhouse.graph_dispatch import (
+            fetch_eval_chart_series_ch,
+        )
+        from tracer.services.clickhouse.v2.query_service import (
+            V2AnalyticsQueryService,
         )
 
-        return result
-
-    elif observe_type == "span":
-        # For span-level filtering, use span_ids_queryset as a subquery
-        span_ids_queryset = eval_logger_filters.get("span_ids_queryset")
-        if span_ids_queryset is None:
-            return _empty_result(
-                custom_eval_config.name, start_date, end_date, interval
-            )
-
-        # ✅ Use subquery filter - PostgreSQL handles this as a JOIN internally
-        # Memory efficient even with 1M+ records
-        base_queryset = EvalLogger.objects.filter(
-            observation_span_id__in=span_ids_queryset.values("id"),
-            custom_eval_config_id=custom_eval_config_id,
-            created_at__gte=start_date,
-            created_at__lte=end_date,
+        output_type = custom_eval_config.eval_template.config.get("output", "SCORE")
+        choices = custom_eval_config.eval_template.choices or []
+        tenant_scope = {}
+        if organization_id is not None:
+            tenant_scope["organization_id"] = organization_id
+        if workspace_id is not None:
+            tenant_scope["workspace_id"] = workspace_id
+        return fetch_eval_chart_series_ch(
+            analytics=V2AnalyticsQueryService(),
+            project_id=str(ch_project_id),
+            filters=filters,
+            interval=interval,
+            req_data_config={
+                **req_data_config,
+                "eval_output_type": output_type,
+                "choices": choices,
+            },
+            eval_name=custom_eval_config.name,
+            refresh=refresh,
+            **tenant_scope,
         )
-
-        # Perform aggregation based on output type
-        result = _aggregate_for_observe_screen(
-            base_queryset,
-            custom_eval_config,
-            eval_output_type,
-            req_data_config,
-            interval,
-            start_date,
-            end_date,
+    except Exception as exc:
+        logger.exception(
+            "ch_eval_graph_read_failed",
+            error_type=type(exc).__name__,
+            eval_config_id=str(custom_eval_config_id),
         )
-
-        return result
-
-    elif observe_type == "charts":
-
-        project_id = eval_logger_filters.get("project_id")
-        if project_id is None:
-            return _empty_result(
-                custom_eval_config.name, start_date, end_date, interval
-            )
-
-        span_subquery = ObservationSpan.objects.filter(project_id=project_id).values(
-            "id"
-        )
-
-        base_queryset = EvalLogger.objects.filter(
-            observation_span__in=span_subquery,
-            custom_eval_config_id=custom_eval_config_id,
-            created_at__gte=start_date,
-            created_at__lte=end_date,
-        )
-
-        # Perform aggregation based on output type
-        result = _aggregate_for_observe_screen(
-            base_queryset,
-            custom_eval_config,
-            eval_output_type,
-            req_data_config,
-            interval,
-            start_date,
-            end_date,
-            screen_type="charts",
-        )
-
-        return result
-
-    else:
-        raise ValueError(f"Invalid observe type: {observe_type}")
+        raise EvalGraphReadError(
+            "Evaluation graph data is temporarily unavailable"
+        ) from None
 
 
 def _aggregate_for_standard_view(
     queryset,
     custom_eval_config: CustomEvalConfig,
     eval_output_type: str,
-    req_data_config: Dict,
+    req_data_config: dict,
     interval: str,
     start_date: datetime,
     end_date: datetime,
-) -> Dict:
+) -> dict:
     """
     Aggregate evaluation data for standard view (single metric).
 
@@ -407,12 +304,12 @@ def _aggregate_for_observe_screen(
     queryset,
     custom_eval_config: CustomEvalConfig,
     eval_output_type: str,
-    req_data_config: Dict,
+    req_data_config: dict,
     interval: str,
     start_date: datetime,
     end_date: datetime,
     screen_type="observe",
-) -> List[Dict]:
+) -> list[dict]:
     """
     Aggregate evaluation data for monitor screen (multiple series for choices/bool).
 
@@ -437,7 +334,6 @@ def _aggregate_for_observe_screen(
             return result
 
     elif eval_output_type == EvalOutputType.PASS_FAIL:
-
         if screen_type == "charts":
             results = []
             for value in [True, False]:
@@ -525,7 +421,7 @@ def _aggregate_for_observe_screen(
 
 def _empty_result(
     name: str, start_date: datetime, end_date: datetime, interval: str
-) -> Dict:
+) -> dict:
     """Generate empty result structure."""
     return {
         "name": name or "Unknown",
@@ -533,158 +429,86 @@ def _empty_result(
     }
 
 
+def _read_direct_system_metrics(
+    *,
+    project_id: str,
+    filters: list[dict],
+    interval: str,
+    refresh: bool = False,
+    organization_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Execute the direct-write system-metric builder on the CH25 service."""
+    try:
+        from tracer.services.clickhouse.graph_dispatch import (
+            fetch_all_system_metrics_ch,
+        )
+        from tracer.services.clickhouse.v2.query_service import (
+            V2AnalyticsQueryService,
+        )
+
+        tenant_scope = {}
+        if organization_id is not None:
+            tenant_scope["organization_id"] = organization_id
+        if workspace_id is not None:
+            tenant_scope["workspace_id"] = workspace_id
+        return fetch_all_system_metrics_ch(
+            analytics=V2AnalyticsQueryService(),
+            project_id=project_id,
+            filters=filters,
+            interval=interval,
+            refresh=refresh,
+            **tenant_scope,
+        )
+    except Exception as exc:
+        logger.exception(
+            "ch_system_metric_graph_read_failed",
+            error_type=type(exc).__name__,
+        )
+        if is_clickhouse_api_read_unavailable_error(exc):
+            raise SystemMetricGraphReadError(
+                "System metric graph data is temporarily unavailable"
+            ) from None
+        raise
+
+
 def get_all_system_metrics(
     interval: str,
-    filters: List[Dict],
+    filters: list[dict],
     property: str,
-    system_metric_filters: Dict,
-) -> Dict:
-    """
-    Get ALL system metrics (latency, tokens, cost) in a single optimized query.
+    system_metric_filters: dict,
+    refresh: bool = False,
+    organization_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    """Read latency, token, cost, and traffic series in one CH25 query."""
+    del property
 
-    More efficient than making 3 separate requests.
-
-    Args:
-        interval: Time interval
-        filters: Filter configurations
-        property: Metric property (not used, kept for compatibility)
-        system_metric_filters: System metric filters (must contain project_id or span_ids)
-        use_cache: Whether to use caching
-
-    Returns:
-        Dictionary with all three metrics:
-        {
-            "latency": {"metric_name": "latency", "data": [...]},
-            "tokens": {"metric_name": "tokens", "data": [...]},
-            "cost": {"metric_name": "cost", "data": [...]}
-        }
-    """
-    # Parse time filters
-    start_date, end_date = parse_time_filters(filters)
-
-    # Build base queryset
     project_id = system_metric_filters.get("project_id")
+    if not project_id:
+        raise ValueError("project_id must be provided")
 
-    if project_id:
-        base_queryset = ObservationSpan.objects.filter(
-            project_id=project_id,
-            created_at__gte=start_date,
-            created_at__lte=end_date,
-        )
-    else:
-        raise ValueError("Either project_id or span_ids must be provided")
-
-    # Get truncate function
-    trunc_func = get_truncate_function(interval)
-
-    aggregated_data = (
-        base_queryset.annotate(time_bucket=trunc_func("created_at"))
-        .values("time_bucket")
-        .annotate(
-            latency_value=Avg("latency_ms"),
-            tokens_value=models.Sum("total_tokens"),
-            cost_value=Avg("cost"),
-            count=Count("id"),
-        )
-        .order_by("time_bucket")
-    )
-
-    # Separate the combined data into individual metric responses
-    latency_data = []
-    tokens_data = []
-    cost_data = []
-    traffic_data = []
-
-    for item in aggregated_data:
-        timestamp = item["time_bucket"].isoformat() if item["time_bucket"] else None
-        primary_traffic = item["count"] if item["count"] is not None else 0
-
-        latency_data.append(
-            {
-                "timestamp": timestamp,
-                "value": (
-                    round(item["latency_value"], 2)
-                    if item["latency_value"] is not None
-                    else 0
-                ),
-                "latency": (
-                    round(item["latency_value"], 2)
-                    if item["latency_value"] is not None
-                    else 0
-                ),
-            }
-        )
-
-        tokens_data.append(
-            {
-                "timestamp": timestamp,
-                "value": (
-                    round(item["tokens_value"], 2)
-                    if item["tokens_value"] is not None
-                    else 0
-                ),
-                "tokens": (
-                    round(item["tokens_value"], 2)
-                    if item["tokens_value"] is not None
-                    else 0
-                ),
-            }
-        )
-
-        cost_data.append(
-            {
-                "timestamp": timestamp,
-                "value": (
-                    round(item["cost_value"], 9)
-                    if item["cost_value"] is not None
-                    else 0
-                ),
-                "cost": (
-                    round(item["cost_value"], 9)
-                    if item["cost_value"] is not None
-                    else 0
-                ),
-            }
-        )
-
-        traffic_data.append(
-            {
-                "timestamp": timestamp,
-                "traffic": primary_traffic,
-            }
-        )
-
-    # Fill in missing timestamps with zero values for all metrics
-    # Optimized: Fill all 4 metrics in a single pass instead of 4 separate passes
-    (
-        latency_data,
-        tokens_data,
-        cost_data,
-        traffic_data,
-    ) = fill_missing_timestamps_bulk(
-        datasets={
-            "latency": (latency_data, ["value", "latency"]),
-            "tokens": (tokens_data, ["value", "tokens"]),
-            "cost": (cost_data, ["value", "cost"]),
-            "traffic": (traffic_data, ["traffic"]),
-        },
-        start_date=start_date,
-        end_date=end_date,
+    metrics = _read_direct_system_metrics(
+        project_id=str(project_id),
+        filters=filters,
         interval=interval,
+        refresh=refresh,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
     )
-
-    result = {
-        "latency": latency_data,
-        "tokens": tokens_data,
-        "cost": cost_data,
-        "traffic": traffic_data,
+    # Preserve the historical public response exactly; the shared builder also
+    # exposes additional aliases used by newer dashboard endpoints.
+    return {
+        **{
+            key: metrics.get(key, [])
+            for key in ("latency", "tokens", "cost", "traffic")
+        },
+        **{key: value for key, value in metrics.items() if key.startswith("query_")},
     }
-
-    return result
 
 
 def fill_missing_timestamps_bulk(
-    datasets: Dict[str, tuple],
+    datasets: dict[str, tuple],
     start_date: datetime,
     end_date: datetime,
     interval: str,
@@ -772,7 +596,7 @@ def fill_missing_timestamps_bulk(
             else:
                 # Create zero-filled data point
                 zero_point = {"timestamp": ts_iso}
-                zero_point.update({key: 0 for key in value_keys})
+                zero_point.update(dict.fromkeys(value_keys, 0))
                 results_per_dataset[name].append(zero_point)
 
     # Return results in the same order as input dictionary
@@ -870,198 +694,64 @@ def generate_timestamp_range(
 
 def get_system_metric_data(
     interval: str,
-    filters: List[Dict],
+    filters: list[dict],
     property: str,
-    req_data_config: Dict,
-    system_metric_filters: Dict,
+    req_data_config: dict,
+    system_metric_filters: dict,
     observe_type: str = "span",
-) -> Dict:
-    """
-    Optimized version of get_system_metric_data using database-level aggregation.
+    refresh: bool = False,
+    organization_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict:
+    """Read one public system-metric series from direct-write CH25."""
+    del property
 
-    Handles 1M+ datapoints efficiently by using subqueries instead of IN clauses.
-    NEVER materializes ID lists in memory - uses lazy querysets throughout.
-
-    Args:
-        interval: Time interval
-        filters: Filter configurations
-        property: Metric property
-        req_data_config: Request configuration
-        system_metric_filters: System metric filters containing:
-            - trace_ids_queryset: Lazy queryset for trace filtering (for observe_type='trace')
-            - span_ids_queryset: Lazy queryset for span filtering (for observe_type='span')
-        observe_type: Type of observation ('trace' or 'span')
-        use_cache: Whether to use caching
-
-    Returns:
-        Graph data dictionary
-    """
     metric_name = req_data_config.get("id")
     if not metric_name:
         raise ValueError("Metric name is required")
 
-    # --- ClickHouse dispatch ---
-    # Try CH if a project_id is available in system_metric_filters
-    ch_project_id = system_metric_filters.get("project_id")
-    if ch_project_id:
-        try:
-            from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-                QueryType,
-            )
+    if observe_type != "charts":
+        raise ValueError("Only project-scoped chart metrics are supported")
 
-            analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.TIME_SERIES):
-                builder = TimeSeriesQueryBuilder(
-                    project_id=str(ch_project_id),
-                    filters=filters,
-                    interval=interval,
-                )
-                query, params = builder.build()
-                result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                ch_data = builder.format_result(result.data, result.columns or [])
-                # Transform CH all-metrics format to match PG single-metric format
-                # CH returns: {latency: [...], tokens: [...], cost: [...], traffic: [...]}
-                # PG returns: {metric_name: "latency", data: [{timestamp, value, primary_traffic}]}
-                metric_key = metric_name if metric_name in ch_data else "latency"
-                metric_points = ch_data.get(metric_key, [])
-                traffic_points = ch_data.get("traffic", [])
-                traffic_by_ts = {
-                    t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
-                }
-                return {
-                    "metric_name": metric_name,
-                    "data": [
-                        {
-                            "timestamp": p.get("timestamp"),
-                            "value": p.get("value", 0),
-                            "primary_traffic": traffic_by_ts.get(p.get("timestamp"), 0),
-                        }
-                        for p in metric_points
-                    ],
-                }
-        except Exception as e:
-            logger.warning(
-                "ch_system_metric_dispatch_failed",
-                error=str(e),
-                metric=metric_name,
-            )
-            # Fall through to existing PG code below
+    project_id = system_metric_filters.get("project_id")
+    if not project_id:
+        raise ValueError("project_id must be provided")
 
-    # Parse time filters
-    start_date, end_date = parse_time_filters(filters)
-
-    # Build base queryset using subqueries - NO ID MATERIALIZATION
-    # This is the key optimization: we filter using EXISTS/IN with subqueries
-    # instead of evaluating IDs into memory
-
-    if observe_type == "trace":
-        # For trace-level filtering, use trace_ids_queryset as a subquery
-        trace_ids_queryset = system_metric_filters.get("trace_ids_queryset")
-        if trace_ids_queryset is None:
-            return {
-                "metric_name": metric_name,
-                "data": [],
-            }
-
-        # Use subquery filter - PostgreSQL will optimize this efficiently
-        # Never evaluates the trace IDs into Python memory
-        base_queryset = ObservationSpan.objects.filter(
-            trace_id__in=trace_ids_queryset.values("id"),
-            created_at__gte=start_date,
-            created_at__lte=end_date,
-        )
-
-    elif observe_type == "span":
-        # For span-level filtering, use span_ids_queryset as a subquery
-        span_ids_queryset = system_metric_filters.get("span_ids_queryset")
-        if span_ids_queryset is None:
-            return {
-                "metric_name": metric_name,
-                "data": [],
-            }
-
-        # Use subquery filter - PostgreSQL handles this as a JOIN internally
-        # Memory efficient even with 1M+ records
-        base_queryset = ObservationSpan.objects.filter(
-            id__in=span_ids_queryset.values("id"),
-            created_at__gte=start_date,
-            created_at__lte=end_date,
-        )
-
-    else:
-        raise ValueError(f"Unsupported observe_type: {observe_type}")
-
-    # Get truncate function
-    trunc_func = get_truncate_function(interval)
-
-    # Aggregate based on metric type
-    if metric_name == "latency":
-        aggregated_data = (
-            base_queryset.annotate(time_bucket=trunc_func("created_at"))
-            .values("time_bucket")
-            .annotate(value=Avg("latency_ms"), count=Count("id"))
-            .order_by("time_bucket")
-        )
-
-    elif metric_name == "tokens":
-        aggregated_data = (
-            base_queryset.annotate(time_bucket=trunc_func("created_at"))
-            .values("time_bucket")
-            .annotate(value=models.Sum("total_tokens"), count=Count("id"))
-            .order_by("time_bucket")
-        )
-
-    elif metric_name == "cost":
-        aggregated_data = (
-            base_queryset.annotate(time_bucket=trunc_func("created_at"))
-            .values("time_bucket")
-            .annotate(value=Avg("cost"), count=Count("id"))
-            .order_by("time_bucket")
-        )
-    else:
-        raise ValueError(f"Unsupported metric: {metric_name}")
-
-    # Format results
-    data_points = [
-        {
-            "timestamp": (
-                item["time_bucket"].isoformat() if item["time_bucket"] else None
-            ),
-            "value": (
-                round(item["value"], 9 if metric_name == "cost" else 2)
-                if item["value"] is not None
-                else 0
-            ),
-            "primary_traffic": item["count"] if item["count"] is not None else 0,
-        }
-        for item in aggregated_data
-    ]
-
-    (data_points,) = fill_missing_timestamps_bulk(
-        datasets={"data": (data_points, ["value", "primary_traffic"])},
-        start_date=start_date,
-        end_date=end_date,
+    metrics = _read_direct_system_metrics(
+        project_id=str(project_id),
+        filters=filters,
         interval=interval,
+        refresh=refresh,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
     )
-
-    result = {
-        "metric_name": metric_name,
-        "data": data_points,
+    metric_key = metric_name if metric_name in metrics else "latency"
+    traffic_by_timestamp = {
+        point.get("timestamp"): point.get("traffic", 0)
+        for point in metrics.get("traffic", [])
     }
-
-    return result
+    return {
+        "metric_name": metric_name,
+        "data": [
+            {
+                "timestamp": point.get("timestamp"),
+                "value": point.get("value", 0),
+                "primary_traffic": traffic_by_timestamp.get(point.get("timestamp"), 0),
+            }
+            for point in metrics.get(metric_key, [])
+        ],
+        **{key: value for key, value in metrics.items() if key.startswith("query_")},
+    }
 
 
 def get_annotation_graph_data(
     interval: str,
-    filters: List[Dict],
+    filters: list[dict],
     property: str,
     observe_type: str,
-    req_data_config: Dict,
-    annotation_logger_filters: Dict,
-) -> Dict:
+    req_data_config: dict,
+    annotation_logger_filters: dict,
+) -> dict:
     """
     Optimized version of get_annotation_graph_data using database-level aggregation.
 
@@ -1097,7 +787,7 @@ def get_annotation_graph_data(
     try:
         annotation_label = AnnotationsLabels.objects.get(id=annotation_label_id)
     except AnnotationsLabels.DoesNotExist:
-        raise Exception("Annotation label does not exist")
+        raise Exception("Annotation label does not exist") from None
 
     # Parse time filters
     start_date, end_date = parse_time_filters(filters)
@@ -1120,25 +810,23 @@ def get_annotation_graph_data(
             )
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.ANNOTATION_GRAPH):
-                builder = AnnotationGraphQueryBuilder(
-                    project_id=str(ch_project_id),
-                    annotation_label_id=str(annotation_label_id),
-                    annotation_name=annotation_label.name,
-                    start_date=start_date,
-                    end_date=end_date,
-                    interval=interval,
-                    output_type=output_type,
-                    value=req_data_config.get("value"),
-                )
-                query, params = builder.build()
-                result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                ch_data = builder.format_result(result.data, result.columns or [])
-                return ch_data
+            builder = AnnotationGraphQueryBuilder(
+                project_id=str(ch_project_id),
+                annotation_label_id=str(annotation_label_id),
+                annotation_name=annotation_label.name,
+                start_date=start_date,
+                end_date=end_date,
+                interval=interval,
+                output_type=output_type,
+                value=req_data_config.get("value"),
+            )
+            query, params = builder.build()
+            result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+            ch_data = builder.format_result(result.data, result.columns or [])
+            return ch_data
         except Exception as e:
             logger.warning(
                 "ch_annotation_graph_dispatch_failed",
@@ -1162,7 +850,11 @@ def get_annotation_graph_data(
         trace_id_values = trace_ids_queryset.values("id")
         base_queryset = Score.objects.filter(
             Q(trace_id__in=trace_id_values)
-            | Q(observation_span__trace_id__in=trace_id_values),
+            | Q(
+                observation_span_id__in=ObservationSpan.objects.filter(
+                    trace_id__in=trace_id_values
+                ).values("id")
+            ),
             label_id=annotation_label_id,
             deleted=False,
             created_at__gte=start_date,
@@ -1228,11 +920,11 @@ def _aggregate_annotation_data(
     queryset,
     annotation_label: AnnotationsLabels,
     output_type: str,
-    req_data_config: Dict,
+    req_data_config: dict,
     interval: str,
     start_date: datetime,
     end_date: datetime,
-) -> Dict:
+) -> dict:
     """
     Aggregate annotation data based on output type.
 

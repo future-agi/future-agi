@@ -6,15 +6,39 @@ query builders inherit from.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from collections.abc import Generator
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
+from django.conf import settings
 
 # ClickHouse zero-value for UUID columns. dictGetOrDefault on Nullable(UUID)
 # dictionary columns may return this instead of NULL — see dashboard.py:1919.
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 
 
-def _parse_dt(val: Any) -> Optional[datetime]:
+def _unix_microseconds(value: datetime) -> int:
+    """Encode a UTC DateTime64(6) bound without driver precision loss."""
+
+    utc_value = (
+        value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    )
+    delta = utc_value - datetime(1970, 1, 1, tzinfo=UTC)
+    return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
+@dataclass(frozen=True)
+class BoundedDateTimeRange:
+    """One finite base window plus conjunctive exclusions inside it."""
+
+    start: datetime
+    end: datetime
+    exclusions: tuple[tuple[datetime, datetime], ...]
+    empty: bool
+
+
+def _parse_dt(val: Any) -> datetime | None:
     """Parse a datetime value from various formats.
 
     Handles ISO 8601 strings (with or without timezone), Python datetime
@@ -30,13 +54,17 @@ def _parse_dt(val: Any) -> Optional[datetime]:
     if val is None:
         return None
     if isinstance(val, datetime):
-        return val.replace(tzinfo=None) if val.tzinfo else val
+        return (
+            val.astimezone(UTC).replace(tzinfo=None) if val.tzinfo is not None else val
+        )
     if isinstance(val, str):
         # Try standard ISO format first (handles 'Z' and '+00:00')
         cleaned = val.replace("Z", "+00:00")
         try:
             dt = datetime.fromisoformat(cleaned)
-            return dt.replace(tzinfo=None)
+            return (
+                dt.astimezone(UTC).replace(tzinfo=None) if dt.tzinfo is not None else dt
+            )
         except (ValueError, AttributeError):
             pass
         # Fallback: try strptime with common formats
@@ -66,8 +94,8 @@ class BaseQueryBuilder(ABC):
 
     def __init__(
         self,
-        project_id: Optional[str] = None,
-        project_ids: Optional[List[str]] = None,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         # Either a single project_id (per-project mode) OR a list of
@@ -76,10 +104,10 @@ class BaseQueryBuilder(ABC):
         # `project_where()` which switches its emitted SQL based on which
         # mode is active.
         self.project_id = project_id
-        self.project_ids: Optional[List[str]] = (
+        self.project_ids: list[str] | None = (
             [str(p) for p in project_ids] if project_ids else None
         )
-        self.params: Dict[str, Any] = {}
+        self.params: dict[str, Any] = {}
         if self.project_ids:
             # ClickHouse parameterized IN expects a tuple
             self.params["project_ids"] = tuple(self.project_ids)
@@ -91,7 +119,7 @@ class BaseQueryBuilder(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build and return ``(query_string, params_dict)``."""
         pass
 
@@ -113,9 +141,12 @@ class BaseQueryBuilder(ABC):
             A ``WHERE`` clause fragment.
         """
         prefix = f"{table_alias}." if table_alias else ""
+        # CH25 close-out: the v2 spans table uses `is_deleted` (UInt8 column
+        # from schema 002_spans_v2.sql) rather than the PeerDB-managed
+        # `_peerdb_is_deleted` of the legacy CDC mirror. All query builders
+        # that inherit from BaseQueryBuilder target the v2 spans table.
         return (
-            f"WHERE {self.project_filter_sql(table_alias)} "
-            f"AND {prefix}_peerdb_is_deleted = 0"
+            f"WHERE {self.project_filter_sql(table_alias)} AND {prefix}is_deleted = 0"
         )
 
     def project_filter_sql(self, table_alias: str = "") -> str:
@@ -134,8 +165,8 @@ class BaseQueryBuilder(ABC):
         """Return the ClickHouse time-bucketing function name for *interval*.
 
         Args:
-            interval: One of ``"hour"``, ``"day"``, ``"week"``, ``"month"``,
-                ``"year"``.
+            interval: One of ``"minute"``, ``"hour"``, ``"day"``, ``"week"``,
+                ``"month"``, ``"year"``.
 
         Returns:
             The ClickHouse function name, e.g. ``"toStartOfHour"``.
@@ -151,66 +182,394 @@ class BaseQueryBuilder(ABC):
         return mapping.get(interval, "toStartOfHour")
 
     @staticmethod
+    def is_datetime_complement_filter(item: dict[str, Any]) -> bool:
+        """Return whether a time leaf must survive base-window replacement."""
+
+        column_id = item.get("column_id") or item.get("columnId")
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        operator = config.get("filter_op") or config.get("filterOp")
+        return column_id in {"created_at", "start_time"} and operator in {
+            "not_equals",
+            "not_between",
+            "is_null",
+        }
+
+    @staticmethod
     def parse_time_range(
-        filters: List[Dict],
-    ) -> Tuple[Optional[datetime], Optional[datetime]]:
-        """Extract ``start_date`` and ``end_date`` from the frontend filter format.
+        filters: list[dict],
+        *,
+        strict: bool = False,
+    ) -> tuple[datetime | None, datetime | None]:
+        """Extract one exact half-open request window from datetime filters.
 
         The frontend sends filters as a list of dicts.  This method looks for
         entries whose ``column_id`` is ``"created_at"`` or ``"start_time"``
         and extracts the time boundaries from the ``filter_config``.
 
-        Supported ``filter_op`` values:
-        - ``"greater_than"`` -- sets *start_date*.
-        - ``"less_than"`` -- sets *end_date*.
-        - ``"between"`` -- sets both from a two-element list.
+        Contiguous operators are represented exactly against the direct-write
+        ``DateTime64(6)`` column while keeping every downstream read in the
+        half-open form ``start_time >= start_date AND start_time < end_date``:
 
-        If no start date is found the default is *now - 7 days*.  If no end
+        - ``equals value`` becomes ``[value, value + 1 microsecond)``.
+        - ``greater_than value`` becomes ``[value + 1 microsecond, ...)``.
+        - ``greater_than_or_equal value`` becomes ``[value, ...)``.
+        - ``less_than value`` becomes ``[..., value)``.
+        - ``less_than_or_equal value`` becomes ``[..., value + 1 microsecond)``.
+        - ``between [start, end]`` is the list time-range contract and remains
+          the half-open interval ``[start, end)``.
+
+        Multiple positive time filters are intersected. ``is_not_null`` is a
+        no-op for the non-null ``spans.start_time`` column. Missing bounds
+        retain the historical finite defaults: 30 days ago for the lower bound
+        and request-time ``now`` for the upper bound. In strict mode the
+        complement operators are retained inside that finite base window:
+        ``not_equals`` excludes one DateTime64(6) point, ``not_between``
+        excludes the half-open range ``[start, end)``, and ``is_null`` is an
+        exact empty set because the physical time column is non-null.
+
+        This tuple API returns an equal boundary for an exact-empty request.
+        Bounded readers recognize that shape before issuing a ClickHouse query;
+        query builders also add ``0 = 1`` as a fail-closed SQL guard.
+
+        If no start date is found the default is *now - 30 days*. If no end
         date is found the default is *now*.
 
         Args:
             filters: The list of filter dicts from the frontend request.
+            strict: Validate malformed values and retain complement semantics
+                instead of preserving the historical best-effort behaviour
+                used by older non-list consumers.
 
         Returns:
             A ``(start_date, end_date)`` tuple of ``datetime`` objects.
         """
-        start_date: Optional[datetime] = None
-        end_date: Optional[datetime] = None
+        analyzed = BaseQueryBuilder.analyze_bounded_datetime_filters(
+            filters,
+            strict=strict,
+        )
+        return analyzed.start, analyzed.end
+
+    @staticmethod
+    def analyze_bounded_datetime_filters(
+        filters: list[dict],
+        *,
+        strict: bool = True,
+    ) -> BoundedDateTimeRange:
+        """Normalize bounded datetime leaves without widening their meaning.
+
+        Positive leaves form one prunable base interval. Complement leaves are
+        conjunctive exclusions evaluated only inside that interval. Malformed
+        values remain request errors; a logically contradictory but otherwise
+        valid filter is an exact empty result, not a validation error.
+        """
+
+        start_date: datetime | None = None
+        end_date: datetime | None = None
+        precision = timedelta(microseconds=1)
+        exclusions: list[tuple[datetime, datetime]] = []
+        force_empty = False
+        has_explicit_lower = False
+        has_explicit_upper = False
+
+        def parsed_bound(value: Any, *, operator: str) -> datetime | None:
+            parsed = _parse_dt(value)
+            if parsed is None and strict:
+                raise ValueError(
+                    f"Datetime filter operator {operator!r} requires a valid "
+                    "ISO-8601 timestamp."
+                )
+            return parsed
+
+        def exclusive_after(value: datetime, *, operator: str) -> datetime:
+            try:
+                return value + precision
+            except OverflowError as exc:
+                raise ValueError(
+                    f"Datetime filter operator {operator!r} exceeds the "
+                    "DateTime64(6) range."
+                ) from exc
+
+        def intersect_lower(value: datetime) -> None:
+            nonlocal start_date
+            start_date = value if start_date is None else max(start_date, value)
+
+        def intersect_upper(value: datetime) -> None:
+            nonlocal end_date
+            end_date = value if end_date is None else min(end_date, value)
 
         for f in filters:
             col_id = f.get("column_id") or f.get("columnId")
-            config = f.get("filter_config") or f.get("filterConfig", {})
+            config = f.get("filter_config") or f.get("filterConfig") or {}
             if col_id not in ("created_at", "start_time"):
                 continue
 
             op = config.get("filter_op") or config.get("filterOp")
             val = config.get("filter_value", config.get("filterValue"))
+            filter_type = config.get("filter_type") or config.get("filterType")
+            if filter_type and str(filter_type).lower() not in {
+                "date",
+                "datetime",
+                "timestamp",
+            }:
+                if strict:
+                    raise ValueError(
+                        f"{col_id!r} must use the datetime filter type on "
+                        "bounded analytics endpoints."
+                    )
+                continue
 
-            if op == "greater_than" and val:
-                start_date = _parse_dt(val)
-            elif op == "less_than" and val:
-                end_date = _parse_dt(val)
-            elif op == "between" and isinstance(val, list) and len(val) == 2:
-                start_date = _parse_dt(val[0])
-                end_date = _parse_dt(val[1])
+            if op == "is_null":
+                if strict:
+                    force_empty = True
+                continue
+            if op == "is_not_null":
+                continue
 
+            if op == "not_equals":
+                if not strict:
+                    continue
+                parsed = parsed_bound(val, operator=op)
+                if parsed is None:
+                    continue
+                exclusions.append((parsed, exclusive_after(parsed, operator=op)))
+                continue
+
+            if op == "not_between":
+                if not strict:
+                    continue
+                if not isinstance(val, (list, tuple)) or len(val) != 2:
+                    if strict:
+                        raise ValueError(
+                            "Datetime filter operator 'not_between' requires two "
+                            "ISO-8601 timestamps."
+                        )
+                    continue
+                lower = parsed_bound(val[0], operator=op)
+                upper = parsed_bound(val[1], operator=op)
+                if lower is None or upper is None:
+                    continue
+                if lower > upper:
+                    if strict:
+                        raise ValueError(
+                            "Datetime filter operator 'not_between' requires its "
+                            "start timestamp to be before or equal to its end."
+                        )
+                    continue
+                if lower < upper:
+                    exclusions.append((lower, upper))
+                continue
+
+            if op in {
+                "equals",
+                "greater_than",
+                "greater_than_or_equal",
+                "less_than",
+                "less_than_or_equal",
+            }:
+                parsed = parsed_bound(val, operator=str(op))
+                if parsed is None:
+                    continue
+                if op == "equals":
+                    intersect_lower(parsed)
+                    intersect_upper(exclusive_after(parsed, operator=op))
+                    has_explicit_lower = True
+                    has_explicit_upper = True
+                elif op == "greater_than":
+                    intersect_lower(exclusive_after(parsed, operator=op))
+                    has_explicit_lower = True
+                elif op == "greater_than_or_equal":
+                    intersect_lower(parsed)
+                    has_explicit_lower = True
+                elif op == "less_than":
+                    intersect_upper(parsed)
+                    has_explicit_upper = True
+                else:
+                    intersect_upper(exclusive_after(parsed, operator=op))
+                    has_explicit_upper = True
+                continue
+
+            if op == "between":
+                if not isinstance(val, (list, tuple)) or len(val) != 2:
+                    if strict:
+                        raise ValueError(
+                            "Datetime filter operator 'between' requires two "
+                            "ISO-8601 timestamps."
+                        )
+                    continue
+                lower = parsed_bound(val[0], operator=op)
+                upper = parsed_bound(val[1], operator=op)
+                if lower is None or upper is None:
+                    continue
+                if lower > upper:
+                    if strict:
+                        raise ValueError(
+                            "Datetime filter operator 'between' requires its "
+                            "start timestamp to be before or equal to its end."
+                        )
+                    continue
+                intersect_lower(lower)
+                intersect_upper(upper)
+                has_explicit_lower = True
+                has_explicit_upper = True
+                continue
+
+            if strict:
+                raise ValueError(f"Unsupported datetime filter operator {op!r}.")
+
+        # The default bounded lookback applies when no time filter is supplied.
+        # An earlier ten-year window bypassed partition pruning
+        # and forced full-history scans for every dashboard-default page-load
+        # (regression caught in kartik perf sweep; 100ms+ p95 just from the
+        # unbounded window). The reviewed default matches the dashboard view;
+        # users wanting older data set an explicit filter, which uses the path
+        # above and gets accurate pruning anyway.
+        request_now = datetime.utcnow()
         if not start_date:
-            start_date = datetime.utcnow() - timedelta(days=3650)
+            start_date = request_now - timedelta(
+                days=settings.ANALYTICS_DEFAULT_LOOKBACK_DAYS
+            )
         if not end_date:
-            end_date = datetime.utcnow()
-        return start_date, end_date
+            end_date = request_now
+
+        if start_date >= end_date:
+            return BoundedDateTimeRange(
+                start=start_date,
+                end=start_date,
+                exclusions=(),
+                empty=True,
+            )
+
+        # Merge raw exclusions for SQL. Do not clamp their bound parameters to
+        # a relative default window: builders freeze that window independently,
+        # and even a few microseconds of request-time drift at the lower edge
+        # would otherwise re-include rows that the customer excluded.
+        merged_exclusions: list[tuple[datetime, datetime]] = []
+        for lower, upper in sorted(exclusions):
+            if merged_exclusions and lower <= merged_exclusions[-1][1]:
+                merged_exclusions[-1] = (
+                    merged_exclusions[-1][0],
+                    max(merged_exclusions[-1][1], upper),
+                )
+            else:
+                merged_exclusions.append((lower, upper))
+
+        # Clamp only for contradiction proof. Coverage is asserted only when
+        # both base edges came from explicit request values; relative defaults
+        # deliberately remain queryable rather than guessing across clocks.
+        clamped = sorted(
+            (
+                max(start_date, lower),
+                min(end_date, upper),
+            )
+            for lower, upper in exclusions
+            if upper > start_date and lower < end_date
+        )
+        merged: list[tuple[datetime, datetime]] = []
+        for lower, upper in clamped:
+            if lower >= upper:
+                continue
+            if merged and lower <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], upper))
+            else:
+                merged.append((lower, upper))
+
+        exclusion_covers_base = bool(
+            has_explicit_lower
+            and has_explicit_upper
+            and merged
+            and merged[0][0] <= start_date
+            and merged[-1][1] >= end_date
+            and all(
+                current[1] >= following[0]
+                for current, following in zip(merged, merged[1:], strict=False)
+            )
+        )
+        if force_empty or exclusion_covers_base:
+            return BoundedDateTimeRange(
+                start=start_date,
+                end=start_date,
+                exclusions=tuple(merged_exclusions),
+                empty=True,
+            )
+        return BoundedDateTimeRange(
+            start=start_date,
+            end=end_date,
+            exclusions=tuple(merged_exclusions),
+            empty=False,
+        )
+
+    @staticmethod
+    def bounded_datetime_exclusion_sql(
+        filters: list[dict],
+        *,
+        column: str = "start_time",
+        param_prefix: str = "bounded_datetime",
+    ) -> tuple[str, dict[str, Any]]:
+        """Compile strict datetime complements inside the finite base window.
+
+        Positive operators deliberately emit no residual fragment, preserving
+        their existing SQL byte-for-byte. Every value remains a driver-bound
+        parameter; ``column`` and ``param_prefix`` are internal constants at
+        call sites, never request-controlled identifiers.
+        """
+
+        if not column.replace("_", "").isalnum():
+            raise ValueError("datetime predicate column must be an identifier")
+        if not param_prefix.replace("_", "").isalnum():
+            raise ValueError("datetime predicate prefix must be an identifier")
+
+        analyzed = BaseQueryBuilder.analyze_bounded_datetime_filters(
+            filters,
+            strict=True,
+        )
+        if analyzed.empty:
+            return "0 = 1", {}
+
+        predicates: list[str] = []
+        params: dict[str, Any] = {}
+        for index, (lower, upper) in enumerate(analyzed.exclusions):
+            lower_param = f"{param_prefix}_{index}_start"
+            upper_param = f"{param_prefix}_{index}_end"
+            # clickhouse-driver renders a bound ``datetime`` at whole-second
+            # precision.  Complements such as ``not_equals`` deliberately use
+            # one-microsecond ranges, so bind epoch microseconds explicitly.
+            params[lower_param] = _unix_microseconds(lower)
+            params[upper_param] = _unix_microseconds(upper)
+            predicates.append(
+                f"({column} < fromUnixTimestamp64Micro(%({lower_param})s) OR "
+                f"{column} >= fromUnixTimestamp64Micro(%({upper_param})s))"
+            )
+        return " AND ".join(predicates), params
+
+    @staticmethod
+    def window_days_covering(filters: list[dict]) -> int:
+        """Look-back days (from ``now()``) that cover the requested time window.
+
+        Eval-config discovery bounds its scan to ``created_at >= now() - N
+        days``. To surface every config with data anywhere in the *requested*
+        range — not a fixed 30 days — ``N`` must reach back to the window start.
+        Returns the ceil day-count from the parsed start to now (min 1); with no
+        explicit time filter the parsed default is ``now - 30d``, so the default
+        view stays ~30. Pair with ``candidate_config_ids`` so the scan stays
+        bounded by the eval table's leading sort key regardless of depth.
+        """
+        start_date, _ = BaseQueryBuilder.parse_time_range(filters)
+        delta = datetime.utcnow() - start_date
+        return max(1, delta.days + (1 if (delta.seconds or delta.microseconds) else 0))
 
     # ------------------------------------------------------------------
     # Time-series zero-fill helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_timestamp(ts: datetime, interval: str) -> datetime:
+    def _normalize_timestamp(ts: date | datetime, interval: str) -> datetime:
         """Normalize *ts* to the start of its time bucket.
 
         Strips timezone info and truncates to the start of the given
         interval bucket.
         """
+        if isinstance(ts, date) and not isinstance(ts, datetime):
+            ts = datetime(ts.year, ts.month, ts.day)
         if ts.tzinfo:
             ts = ts.replace(tzinfo=None)
 
@@ -246,7 +605,9 @@ class BaseQueryBuilder(ABC):
 
         while current <= end_date:
             yield current
-            if interval == "hour":
+            if interval == "minute":
+                current += timedelta(minutes=1)
+            elif interval == "hour":
                 current += timedelta(hours=1)
             elif interval == "day":
                 current += timedelta(days=1)
@@ -264,13 +625,13 @@ class BaseQueryBuilder(ABC):
 
     def format_time_series(
         self,
-        rows: List[Tuple],
-        columns: List[str],
+        rows: list[tuple],
+        columns: list[str],
         interval: str,
         start_date: datetime,
         end_date: datetime,
-        value_keys: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        value_keys: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Convert ClickHouse result rows to time-series format with zero-fill.
 
         The first column is assumed to be the time bucket.  Remaining columns
@@ -294,7 +655,7 @@ class BaseQueryBuilder(ABC):
             value_keys = columns[1:] if len(columns) > 1 else []
 
         # Build lookup of existing data keyed by normalized timestamp
-        existing: Dict[datetime, Dict[str, Any]] = {}
+        existing: dict[datetime, dict[str, Any]] = {}
         for row in rows:
             # Support both dict rows (from execute_ch_query) and tuple rows
             if isinstance(row, dict):
@@ -316,12 +677,12 @@ class BaseQueryBuilder(ABC):
             existing[normalized] = point
 
         # Generate full timestamp range and fill gaps
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         for ts in self._generate_timestamp_range(start_date, end_date, interval):
             if ts in existing:
                 result.append(existing[ts])
             else:
-                zero_point: Dict[str, Any] = {"timestamp": ts.isoformat()}
+                zero_point: dict[str, Any] = {"timestamp": ts.isoformat()}
                 for key in value_keys:
                     zero_point[key] = 0
                 result.append(zero_point)

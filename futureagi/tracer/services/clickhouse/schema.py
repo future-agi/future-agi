@@ -33,7 +33,11 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+
+from tracer.services.clickhouse.eval_expressions import (
+    EVAL_STRUCTURED_SCORE_KEY,
+    eval_has_structured_score,
+)
 
 # Resolve the configured CH database name for use in DDL templates.
 # Falls back to "futureagi" which is the production default.
@@ -44,6 +48,49 @@ _USE_REPLICATED_ENGINES = os.getenv("CH_USE_REPLICATED_ENGINES", "true").lower()
     "yes",
     "on",
 }
+
+# Gate the legacy CDC chain (tracer_observation_span + spans_mv +
+# span_metrics_hourly* MVs) for the spans cutover. Default False keeps
+# the legacy chain alive in prod so PeerDB CDC and `spans_mv` continue
+# to write into `spans` alongside fi-collector. Dev/local docker compose
+# sets this to True to drop the chain entirely — fi-collector becomes
+# the sole writer for `spans`. See docs/CH25_MIGRATION.md for the
+# cutover playbook.
+_DROP_LEGACY_CDC_CHAIN = os.getenv("CH25_DROP_LEGACY_CDC_CHAIN", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+# Names of the 4 legacy DDL entries that the CH25 cutover retires.
+# Order matters for DROP — MVs first, then their source tables, so we
+# can issue them as DROP IF EXISTS without dependency errors.
+_LEGACY_CDC_CHAIN_NAMES = (
+    "span_metrics_hourly_mv",
+    "spans_mv",
+    "span_metrics_hourly",
+    "tracer_observation_span",
+    "eval_metrics_hourly_mv",
+    "enduser_dict",
+    "trace_session_dict",
+    "tracer_trace",
+    "tracer_enduser",
+    "trace_session",
+    "eval_metrics_hourly",
+)
+# tracer_eval_logger is deliberately NOT retired with the chain: the eval-config
+# discovery reads still query it (CH25_EVAL_LOGGER_TABLE), so the boot apply keeps
+# creating it and the PeerDB CDC mirror keeps filling it.
+
+# The legacy v1 ``spans`` DDL in this module conflicts with the v2 spans
+# schema applied by ``tracer/services/clickhouse/v2/schema/002_spans_v2.sql``.
+# Both use the same table name but different column shapes. When the
+# CH25 flag is set, the v1 registry entry is filtered out so v2 is the
+# only definition that ever lands; ``_migrate_v1_spans_if_needed`` in
+# the boot hook handles the drop + v2 reapply when an older volume
+# carries the v1 table.
+_V1_TO_V2_TABLES = ("spans",)
 
 
 def _to_single_node_engine(ddl: str) -> str:
@@ -285,6 +332,12 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     error UInt8 DEFAULT 0,
     error_message Nullable(String),
 
+    -- Work-item state (mirror of EvalLogger.status / config_hash)
+    status LowCardinality(String) DEFAULT 'completed',
+    config_hash Nullable(String),
+    skipped_reason Nullable(String),
+    attempts Int32 DEFAULT 0,
+
     -- Explanation / metadata
     eval_explanation Nullable(String),
     output_metadata String DEFAULT '{}',
@@ -298,11 +351,16 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
 
     -- Soft-delete
     deleted UInt8 DEFAULT 0,
-    deleted_at Nullable(DateTime64(3)),
+    deleted_at Nullable(DateTime64(6)),
 
     -- Timestamps
-    created_at DateTime64(3),
-    updated_at DateTime64(3),
+    -- DateTime64(6) REQUIRED: PeerDB (v0.36.x) normalize writes epoch-micros
+    -- regardless of destination precision. With DateTime64(3) every synced row
+    -- landed ~year 58356 (1000x off), exploding the toYYYYMM partition key so
+    -- ReplacingMergeTree FINAL never deduped (2026-07-18 us2 incident). All
+    -- other PeerDB-mirrored tables already use (6).
+    created_at DateTime64(6),
+    updated_at DateTime64(6),
 
     -- PeerDB CDC meta-columns
     _peerdb_synced_at DateTime64(6),
@@ -943,7 +1001,6 @@ CREATE TABLE IF NOT EXISTS span_metrics_hourly (
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/span_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, hour, observation_type, model, status)
-TTL hour + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
@@ -1005,7 +1062,6 @@ CREATE TABLE IF NOT EXISTS eval_metrics_hourly (
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, custom_eval_config_id, hour)
-TTL hour + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
@@ -1675,6 +1731,17 @@ WHERE c._peerdb_is_deleted = 0;
 #   simulation, SDK, playground) writes here with source_id = eval_template_id.
 # ---------------------------------------------------------------------------
 
+# Comma-joined JSON arguments, not a path: spliced into JSONExtract*(...) calls.
+EVAL_OUTPUT_JSON_ARGS = "JSONExtractString(config), 'output', 'output'"
+
+CH_EVAL_SCORE_EXPR = (
+    f"if({eval_has_structured_score(EVAL_OUTPUT_JSON_ARGS)}, "
+    f"JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS}, '{EVAL_STRUCTURED_SCORE_KEY}'), "
+    f"JSONExtractFloat({EVAL_OUTPUT_JSON_ARGS}))"
+)
+
+CH_EVAL_OUTPUT_STR_EXPR = f"JSONExtractString({EVAL_OUTPUT_JSON_ARGS})"
+
 CDC_USAGE_APICALLLOG = """
 CREATE TABLE IF NOT EXISTS usage_apicalllog (
     id Int64,
@@ -1698,8 +1765,9 @@ CREATE TABLE IF NOT EXISTS usage_apicalllog (
 
     -- Materialized columns: pre-extracted from config JSON at insert time.
     -- Config is double-encoded (JSONB string), so JSONExtractString unwraps first.
-    eval_score Float64 MATERIALIZED JSONExtractFloat(JSONExtractString(config), 'output', 'output'),
-    eval_output_str String MATERIALIZED JSONExtractString(JSONExtractString(config), 'output', 'output'),
+    -- The two placeholders below are substituted from the CH_EVAL_* constants.
+    eval_score Float64 MATERIALIZED __CH_EVAL_SCORE_EXPR__,
+    eval_output_str String MATERIALIZED __CH_EVAL_OUTPUT_STR_EXPR__,
     eval_trace_id String MATERIALIZED JSONExtractString(JSONExtractString(config), 'trace_id'),
     eval_dataset_id String MATERIALIZED JSONExtractString(JSONExtractString(config), 'dataset_id'),
 
@@ -1734,7 +1802,9 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/usage_apicalll
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (organization_id, source_id, created_at, id)
 SETTINGS index_granularity = 8192;
-"""
+""".replace("__CH_EVAL_SCORE_EXPR__", CH_EVAL_SCORE_EXPR).replace(
+    "__CH_EVAL_OUTPUT_STR_EXPR__", CH_EVAL_OUTPUT_STR_EXPR
+)
 
 # ============================================================================
 # Ordered list of all DDL statements
@@ -1781,7 +1851,7 @@ ORDER BY (organization_id, project_id, trace_id, started_at);
 """
 
 
-SCHEMA_DDL_STATEMENTS: List[Tuple[str, str]] = [
+SCHEMA_DDL_STATEMENTS: list[tuple[str, str]] = [
     # Layer 1 — CDC landing tables
     ("tracer_observation_span", CDC_OBSERVATION_SPAN),
     ("tracer_trace", CDC_TRACE),
@@ -1843,13 +1913,22 @@ SCHEMA_DDL_STATEMENTS: List[Tuple[str, str]] = [
 
 # Post-DDL ALTER statements to ensure materialized columns exist on CDC tables
 # that PeerDB may recreate without them during RESYNC operations.
-POST_DDL_ALTERS: List[str] = [
+POST_DDL_ALTERS: list[str] = [
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_score Float64 MATERIALIZED "
-    "JSONExtractFloat(JSONExtractString(config), 'output', 'output')",
+    f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
+    # ADD COLUMN IF NOT EXISTS no-ops once the column exists, so a deployed
+    # table keeps its old expression until MODIFYed. ClickHouse refuses to
+    # modify a column referenced by a skip index, so sandwich MODIFY between
+    # an idempotent DROP and ADD. The separately authorized backfill command
+    # materializes index marks for historical parts; startup never does so.
+    "ALTER TABLE usage_apicalllog DROP INDEX IF EXISTS idx_eval_score",
+    "ALTER TABLE usage_apicalllog MODIFY COLUMN "
+    f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}",
+    # Restores idx_eval_score if a backfill run died between its DROP and ADD.
+    "ALTER TABLE usage_apicalllog ADD INDEX IF NOT EXISTS "
+    "idx_eval_score eval_score TYPE minmax GRANULARITY 1",
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_output_str String MATERIALIZED "
-    "JSONExtractString(JSONExtractString(config), 'output', 'output')",
+    f"eval_output_str String MATERIALIZED {CH_EVAL_OUTPUT_STR_EXPR}",
     "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
     "eval_trace_id String MATERIALIZED "
     "JSONExtractString(JSONExtractString(config), 'trace_id')",
@@ -1880,6 +1959,27 @@ POST_DDL_ALTERS: List[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    # Work-item columns (mirror of EvalLogger.status / config_hash).
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "status LowCardinality(String) DEFAULT 'completed'",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "config_hash Nullable(String)",
+    # skipped_reason / attempts exist on the PG source (EvalLogger work-item
+    # columns) and are in the PeerDB normalize INSERT column list; without them
+    # the CH normalize fails with "No such column ..." and the mirror never
+    # drains.
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "skipped_reason Nullable(String)",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "attempts Int32 DEFAULT 0",
+    # Strip the legacy 365d TTL from the v1 hourly rollup tables. The CREATE
+    # strings above no longer declare TTL, but existing prod clusters carry
+    # the original TTL on the live tables — these ALTERs remove it.
+    # In dev/test where the legacy CDC chain is gated off, the tables don't
+    # exist and these ALTERs error out; _ensure_analytics_schema() catches
+    # those as warnings (model_hub/apps.py:88-93).
+    "ALTER TABLE span_metrics_hourly REMOVE TTL",
+    "ALTER TABLE eval_metrics_hourly REMOVE TTL",
 ]
 
 
@@ -1911,7 +2011,7 @@ POST_DDL_ALTERS: List[str] = [
 #
 # The command verifies the deployed MV's SHOW CREATE matches the canonical
 # DDL after recreation, so a misconfigured manifest fails loudly.
-MV_RECREATE_MANIFEST: Dict[str, Dict[str, Optional[str]]] = {
+MV_RECREATE_MANIFEST: dict[str, dict[str, str | None]] = {
     "eval_metrics_hourly_mv": {
         "ddl_constant_name": "EVAL_METRICS_HOURLY_MV",
         "source_table": "tracer_eval_logger",
@@ -1952,7 +2052,7 @@ MV_RECREATE_MANIFEST: Dict[str, Dict[str, Optional[str]]] = {
 }
 
 
-def get_all_schema_ddl() -> List[Tuple[str, str]]:
+def get_all_schema_ddl() -> list[tuple[str, str]]:
     """Return all schema DDL statements in correct creation order.
 
     The order ensures that dependencies are satisfied:
@@ -1961,20 +2061,115 @@ def get_all_schema_ddl() -> List[Tuple[str, str]]:
       3. spans + spans_mv (depends on tracer_observation_span + trace_dict)
       4. span_metrics_hourly + MV (depends on spans)
       5. eval_metrics_hourly + MV (depends on tracer_eval_logger + trace_dict)
+
+    When ``CH25_DROP_LEGACY_CDC_CHAIN`` is set, the four legacy entries
+    in ``_LEGACY_CDC_CHAIN_NAMES`` are filtered out — fi-collector is
+    expected to be the sole writer for ``spans`` and the legacy aggregate
+    table is unread.
     """
+    statements = SCHEMA_DDL_STATEMENTS
+    if _DROP_LEGACY_CDC_CHAIN:
+        excluded = set(_LEGACY_CDC_CHAIN_NAMES) | set(_V1_TO_V2_TABLES)
+        statements = [(name, ddl) for name, ddl in statements if name not in excluded]
+
     if _USE_REPLICATED_ENGINES:
-        return list(SCHEMA_DDL_STATEMENTS)
+        return list(statements)
 
-    return [(name, _to_single_node_engine(ddl)) for name, ddl in SCHEMA_DDL_STATEMENTS]
+    return [(name, _to_single_node_engine(ddl)) for name, ddl in statements]
 
 
-def get_drop_statements() -> List[str]:
+def get_legacy_chain_drop_statements() -> list[tuple[str, str]]:
+    """Return DROP statements for the legacy CDC chain.
+
+    Used at boot when ``CH25_DROP_LEGACY_CDC_CHAIN`` is set, to clean up
+    existing instances that were created by an earlier deploy (since
+    ``CREATE IF NOT EXISTS`` cannot drop). Order is MV → source so that
+    drops never trip dependency errors. Each statement is wrapped in
+    ``IF EXISTS`` so reruns are no-ops.
+
+    Returns a list of ``(name, statement)`` tuples so callers can log
+    per-target failures without inspecting SQL.
+    """
+    statements: list[tuple[str, str]] = []
+    for name in _LEGACY_CDC_CHAIN_NAMES:
+        if name.endswith("_mv"):
+            statements.append((name, f"DROP VIEW IF EXISTS {name}"))
+        elif name.endswith("_dict"):
+            statements.append((name, f"DROP DICTIONARY IF EXISTS {name}"))
+        else:
+            statements.append((name, f"DROP TABLE IF EXISTS {name}"))
+    return statements
+
+
+def should_drop_legacy_chain() -> bool:
+    """Whether ``CH25_DROP_LEGACY_CDC_CHAIN`` is enabled.
+
+    Module-level constant captures the env var at import time. Callers
+    (the boot hook, the warm-cache routine, tests) use this helper so
+    the env semantics live in one place.
+    """
+    return _DROP_LEGACY_CDC_CHAIN
+
+
+def detect_spans_table_shape(execute_fn) -> str:
+    """Classify the existing ``spans`` table as v1, v2, absent, or unknown.
+
+    The two schemas use different typed-attribute Map column names:
+
+    - v1 (legacy ``SPANS_TABLE`` in this module): ``span_attr_str``,
+      ``span_attr_num``, ``span_attr_bool``.
+    - v2 (``v2/schema/002_spans_v2.sql``): ``attrs_string``,
+      ``attrs_number``, ``attrs_bool``, plus ``attributes_extra JSON``.
+
+    ``CREATE TABLE IF NOT EXISTS`` silently no-ops on shape drift, so a
+    dev box upgrading from an old CH 24.x volume keeps the v1 table and
+    every v2 read fails with "column doesn't exist". This detector lets
+    the boot hook notice and migrate.
+
+    Args:
+        execute_fn: Callable that takes a SQL string and returns rows
+            (list of tuples). Threads through ``ClickHouseClient.execute``
+            without coupling this module to the client class — also makes
+            the detector unit-testable with a stub.
+
+    Returns:
+        ``"v2"`` — the v2 column ``attrs_string`` is present.
+        ``"v1"`` — only the v1 column ``span_attr_str`` is present.
+        ``"absent"`` — the table doesn't exist (fresh CH).
+        ``"unknown"`` — the table exists but matches neither shape;
+            don't auto-migrate, let the operator decide.
+    """
+    rows = execute_fn(
+        """
+        SELECT name FROM system.columns
+        WHERE database = currentDatabase()
+          AND table = 'spans'
+          AND name IN ('attrs_string', 'span_attr_str')
+        """
+    )
+    names = {r[0] for r in rows}
+    if "attrs_string" in names:
+        return "v2"
+    if "span_attr_str" in names:
+        return "v1"
+    exists_rows = execute_fn(
+        """
+        SELECT count() FROM system.tables
+        WHERE database = currentDatabase() AND name = 'spans'
+        """
+    )
+    if exists_rows and exists_rows[0][0] > 0:
+        return "unknown"
+    return "absent"
+
+
+def get_drop_statements() -> list[str]:
     """Return DROP statements in reverse dependency order for clean teardown.
 
     Materialized views are dropped first so that the underlying target
     tables and dictionaries can be removed safely.
     """
-    drops: List[str] = []
+    drops: list[str] = []
     for name, _ in reversed(SCHEMA_DDL_STATEMENTS):
         if name.endswith("_mv"):
             drops.append(f"DROP VIEW IF EXISTS {name};")
@@ -1987,7 +2182,7 @@ def get_drop_statements() -> List[str]:
     return drops
 
 
-def get_backfill_statements() -> List[str]:
+def get_backfill_statements() -> list[str]:
     """Return INSERT … SELECT statements for initial backfill of derived tables.
 
     After the CDC landing tables have been populated by PeerDB, run these

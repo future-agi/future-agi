@@ -129,257 +129,261 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
             </Typography>
           </Box>
         ) : (
-        <>
-        <Box
-          sx={{
-            gap: "8px",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Typography
-            fontWeight={typographyTheme.fontWeightMedium}
-            fontSize={typographyTheme.subtitle2.fontSize}
-            color={theme.palette.text.primary}
-          >
-            Score
-          </Typography>
-          {isPending ? (
+          <>
             <Box
               sx={{
-                display: "flex",
                 gap: "8px",
-                flexDirection: "row",
-              }}
-            >
-              {[1, 2, 3].map((i, k) => (
-                <Skeleton
-                  key={k}
-                  sx={{
-                    width: "60px",
-                    height: "24px",
-                    borderRadius: "8px",
-                  }}
-                />
-              ))}
-            </Box>
-          ) : Array.isArray(data?.score) ? (
-            <Box
-              sx={{
                 display: "flex",
-                flexDirection: "row",
+                flexDirection: "column",
               }}
             >
-              {data?.score.map((item, idx) => (
+              <Typography
+                fontWeight={typographyTheme.fontWeightMedium}
+                fontSize={typographyTheme.subtitle2.fontSize}
+                color={theme.palette.text.primary}
+              >
+                Score
+              </Typography>
+              {isPending ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    gap: "8px",
+                    flexDirection: "row",
+                  }}
+                >
+                  {[1, 2, 3].map((i, k) => (
+                    <Skeleton
+                      key={k}
+                      sx={{
+                        width: "60px",
+                        height: "24px",
+                        borderRadius: "8px",
+                      }}
+                    />
+                  ))}
+                </Box>
+              ) : Array.isArray(data?.score) ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "row",
+                  }}
+                >
+                  {data?.score.map((item, idx) => (
+                    <Chip
+                      key={idx}
+                      variant="soft"
+                      label={item}
+                      size="small"
+                      sx={{
+                        marginRight: 0.5,
+                        backgroundColor: theme.palette.action.hover,
+                        color: theme.palette.primary.main,
+                        fontWeight: typographyTheme.fontWeightRegular,
+                        width: "fit-content",
+                      }}
+                    />
+                  ))}
+                </Box>
+              ) : (
                 <Chip
-                  key={idx}
                   variant="soft"
-                  label={item}
+                  label={getChipLabel(data)}
                   size="small"
                   sx={{
-                    marginRight: 0.5,
-                    backgroundColor: theme.palette.action.hover,
-                    color: theme.palette.primary.main,
-                    fontWeight: typographyTheme.fontWeightRegular,
+                    backgroundColor: getChipColor(data),
+                    color: getFontColor(data),
                     width: "fit-content",
                   }}
                 />
-              ))}
+              )}
             </Box>
-          ) : (
-            <Chip
-              variant="soft"
-              label={getChipLabel(data)}
-              size="small"
-              sx={{
-                backgroundColor: getChipColor(data),
-                color: getFontColor(data),
-                width: "fit-content",
-              }}
-            />
-          )}
-        </Box>
-        <Box
-          sx={{
-            gap: "8px",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Typography
-            fontWeight={typographyTheme.fontWeightMedium}
-            fontSize={typographyTheme.subtitle2.fontSize}
-            color={theme.palette.text.primary}
-          >
-            Explanation
-          </Typography>
-          {isPending ? (
-            <Skeleton
-              sx={{
-                minHeight: "128px",
-                borderRadius: "8px",
-              }}
-            />
-          ) : (
             <Box
               sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: theme.spacing(1),
+                gap: "8px",
+                display: "flex",
+                flexDirection: "column",
               }}
             >
-              {data?.explanation ? (
-                <Typography
-                  fontSize={typographyTheme.body2.fontSize}
-                  sx={{ padding: (theme) => theme.spacing(2) }}
-                >
-                  <CellMarkdown spacing={0} text={data?.explanation} />
-                </Typography>
+              <Typography
+                fontWeight={typographyTheme.fontWeightMedium}
+                fontSize={typographyTheme.subtitle2.fontSize}
+                color={theme.palette.text.primary}
+              >
+                Explanation
+              </Typography>
+              {isPending ? (
+                <Skeleton
+                  sx={{
+                    minHeight: "128px",
+                    borderRadius: "8px",
+                  }}
+                />
               ) : (
                 <Box
                   sx={{
-                    padding: theme.spacing(2),
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: theme.spacing(1),
                   }}
                 >
-                  <Typography
-                    fontSize={typographyTheme.body2.fontSize}
-                    fontWeight={typographyTheme.fontWeightRegular}
-                    color={theme.palette.text.primary}
-                  >
-                    Unable to fetch explanation
-                  </Typography>
+                  {data?.explanation ? (
+                    <Typography
+                      fontSize={typographyTheme.body2.fontSize}
+                      sx={{ padding: (theme) => theme.spacing(2) }}
+                    >
+                      <CellMarkdown spacing={0} text={data?.explanation} />
+                    </Typography>
+                  ) : (
+                    <Box
+                      sx={{
+                        padding: theme.spacing(2),
+                      }}
+                    >
+                      <Typography
+                        fontSize={typographyTheme.body2.fontSize}
+                        fontWeight={typographyTheme.fontWeightRegular}
+                        color={theme.palette.text.primary}
+                      >
+                        Unable to fetch explanation
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
               )}
             </Box>
-          )}
-        </Box>
-        <Box
-          sx={{
-            gap: "8px",
-            display: "flex",
-            flexDirection: "column",
-            flexGrow: 1,
-          }}
-        >
-          <Typography
-            fontWeight={typographyTheme.fontWeightMedium}
-            fontSize={typographyTheme.subtitle2.fontSize}
-            color="text.primary"
-          >
-            Possible Error
-          </Typography>
-          {isPending ? (
-            <Skeleton
-              sx={{
-                flexGrow: 1,
-                minHeight: "280px",
-                borderRadius: "8px",
-              }}
-            />
-          ) : data?.score === "error" ? (
             <Box
               sx={{
-                display: "flex",
-                gap: 1,
-                bgcolor: "red.o5",
-                border: "1px solid",
-                borderColor: "red.200",
-                borderRadius: theme.spacing(0.5),
-                padding: 2,
-                justifyContent: "space-between",
-                height: theme.spacing(7.5),
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  gap: theme.spacing(1),
-                  alignItems: "center",
-                }}
-              >
-                <Iconify
-                  icon="uil:exclamation-triangle"
-                  color="red.500"
-                  width={20}
-                />
-                <Typography
-                  color={theme.palette.red["500"]}
-                  fontSize={typographyTheme.body2.fontSize}
-                  fontWeight={typographyTheme.fontWeightMedium}
-                >
-                  We couldn&apos;t fetch the errors right now.
-                </Typography>
-              </Box>
-              {isRefreshing ? (
-                <Box display="flex" alignItems="center" justifyContent="center">
-                  <CircularProgress size={18} color="error" />
-                </Box>
-              ) : (
-                <Button
-                  aria-label="fetch-error"
-                  style={{
-                    fontSize: typographyTheme.body2.fontSize,
-                    textDecoration: "underline",
-                    padding: 0,
-                    fontWeight: typographyTheme.fontWeightMedium,
-                    color: theme.palette.text.primary,
-                  }}
-                  // onClick={handleTryAgain}
-                >
-                  Try again
-                </Button>
-              )}
-            </Box>
-          ) : Array.isArray(input1) && input1.length > 0 ? (
-            <Box
-              sx={{
+                gap: "8px",
                 display: "flex",
                 flexDirection: "column",
-                gap: theme.spacing(1.5),
+                flexGrow: 1,
               }}
             >
-              {data &&
-                typeof data === "object" &&
-                data?.errorAnalysis &&
-                (() => {
-                  const errorAnalysisEntries = canonicalEntries(
-                    data?.errorAnalysis,
-                  );
-                  const hasOrgSegment = errorAnalysisEntries
-                    .map(([, value]) => value)
-                    .flat()
-                    .some((entry) => entry?.orgSegment);
+              <Typography
+                fontWeight={typographyTheme.fontWeightMedium}
+                fontSize={typographyTheme.subtitle2.fontSize}
+                color="text.primary"
+              >
+                Possible Error
+              </Typography>
+              {isPending ? (
+                <Skeleton
+                  sx={{
+                    flexGrow: 1,
+                    minHeight: "280px",
+                    borderRadius: "8px",
+                  }}
+                />
+              ) : data?.score === "error" ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    gap: 1,
+                    bgcolor: "red.o5",
+                    border: "1px solid",
+                    borderColor: "red.200",
+                    borderRadius: theme.spacing(0.5),
+                    padding: 2,
+                    justifyContent: "space-between",
+                    height: theme.spacing(7.5),
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: "flex",
+                      gap: theme.spacing(1),
+                      alignItems: "center",
+                    }}
+                  >
+                    <Iconify
+                      icon="uil:exclamation-triangle"
+                      color="red.500"
+                      width={20}
+                    />
+                    <Typography
+                      color={theme.palette.red["500"]}
+                      fontSize={typographyTheme.body2.fontSize}
+                      fontWeight={typographyTheme.fontWeightMedium}
+                    >
+                      We couldn&apos;t fetch the errors right now.
+                    </Typography>
+                  </Box>
+                  {isRefreshing ? (
+                    <Box
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      <CircularProgress size={18} color="error" />
+                    </Box>
+                  ) : (
+                    <Button
+                      aria-label="fetch-error"
+                      style={{
+                        fontSize: typographyTheme.body2.fontSize,
+                        textDecoration: "underline",
+                        padding: 0,
+                        fontWeight: typographyTheme.fontWeightMedium,
+                        color: theme.palette.text.primary,
+                      }}
+                      // onClick={handleTryAgain}
+                    >
+                      Try again
+                    </Button>
+                  )}
+                </Box>
+              ) : Array.isArray(input1) && input1.length > 0 ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: theme.spacing(1.5),
+                  }}
+                >
+                  {data &&
+                    typeof data === "object" &&
+                    data?.errorAnalysis &&
+                    (() => {
+                      const errorAnalysisEntries = canonicalEntries(
+                        data?.errorAnalysis,
+                      );
+                      const hasOrgSegment = errorAnalysisEntries
+                        .map(([, value]) => value)
+                        .flat()
+                        .some((entry) => entry?.orgSegment);
 
-                  if (hasOrgSegment) {
-                    return (
-                      <AudioPlaybackProvider>
-                        <AudioErrorCard
-                          valueInfos={data}
-                          column={data?.selectedInputKey}
-                        />
-                      </AudioPlaybackProvider>
-                    );
-                  }
+                      if (hasOrgSegment) {
+                        return (
+                          <AudioPlaybackProvider>
+                            <AudioErrorCard
+                              valueInfos={data}
+                              column={data?.selectedInputKey}
+                            />
+                          </AudioPlaybackProvider>
+                        );
+                      }
 
-                  return errorAnalysisEntries
-                    .filter(([_, value]) => value?.length)
-                    .map(([key, value]) => (
-                      <ErrorLocalizeCard
-                        key={key}
-                        value={value}
-                        column={data?.selectedInputKey}
-                        datapoint={data}
-                      />
-                    ));
-                })()}
+                      return errorAnalysisEntries
+                        .filter(([_, value]) => value?.length)
+                        .map(([key, value]) => (
+                          <ErrorLocalizeCard
+                            key={key}
+                            value={value}
+                            column={data?.selectedInputKey}
+                            datapoint={data}
+                          />
+                        ));
+                    })()}
+                </Box>
+              ) : (
+                <Typography fontSize="14px" color="text.primary">
+                  No errors found.
+                </Typography>
+              )}
             </Box>
-          ) : (
-            <Typography fontSize="14px" color="text.primary">
-              No errors found.
-            </Typography>
-          )}
-        </Box>
-        </>
+          </>
         )}
         {/* <Box
           sx={{

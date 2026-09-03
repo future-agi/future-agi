@@ -14,11 +14,14 @@ Covers:
 """
 
 import uuid
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime
 
 import pytest
 
+from tracer.serializers.dashboard import DashboardQuerySerializer
+from tracer.services.clickhouse.query_builders.dashboard import (
+    InvalidMetricCombinationError,
+)
 from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DATASET_AGGREGATIONS,
     DATASET_BREAKDOWN_COLUMNS,
@@ -64,7 +67,7 @@ def eval_score_config(base_query_config):
     eval_id = str(uuid.uuid4())
     base_query_config["metrics"] = [
         {
-            "id": f"faithfulness_avg",
+            "id": "faithfulness_avg",
             "name": "faithfulness",
             "type": "eval_metric",
             "aggregation": "avg",
@@ -140,6 +143,11 @@ class TestDatasetSystemMetricsConstants:
             "total_tokens",
             "response_time",
             "cell_error_rate",
+            "dataset",
+            "eval_template",
+            "column_name",
+            "column_source",
+            "cell_status",
         }
         assert set(DATASET_SYSTEM_METRICS.keys()) == expected
 
@@ -199,15 +207,27 @@ class TestDatasetDimensions:
     """Test breakdown and filter dimension maps."""
 
     def test_breakdown_dimensions(self):
-        expected = {"dataset", "eval_template", "column_name", "cell_status"}
+        expected = {
+            "dataset",
+            "eval_template",
+            "column_name",
+            "column_source",
+            "cell_status",
+        }
         assert set(DATASET_BREAKDOWN_COLUMNS.keys()) == expected
 
     def test_filter_dimensions(self):
-        expected = {"dataset", "column_name", "column_source", "cell_status"}
+        expected = {
+            "dataset",
+            "eval_template",
+            "column_name",
+            "column_source",
+            "cell_status",
+        }
         assert set(DATASET_FILTER_COLUMNS.keys()) == expected
 
     def test_breakdown_columns_use_supported_expressions(self):
-        for name, expr in DATASET_BREAKDOWN_COLUMNS.items():
+        for _name, expr in DATASET_BREAKDOWN_COLUMNS.items():
             assert "c." in expr or "dictGet" in expr or "toString" in expr
 
 
@@ -249,7 +269,7 @@ class TestDatasetSystemMetricQueries:
         ]
         builder = DatasetQueryBuilder(base_query_config)
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
-        assert "quantile(0.9)(response_time)" in sql
+        assert "quantileExact(0.9)(response_time)" in sql
 
     def test_cell_error_rate_avg(self, base_query_config):
         base_query_config["metrics"] = [
@@ -258,6 +278,57 @@ class TestDatasetSystemMetricQueries:
         builder = DatasetQueryBuilder(base_query_config)
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
         assert "CASE WHEN status = 'error'" in sql
+
+    def test_dataset_string_metric_defaults_to_count_distinct(self, base_query_config):
+        base_query_config["metrics"] = [
+            {
+                "id": "dataset",
+                "name": "dataset",
+                "type": "system_metric",
+                "aggregation": "avg",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+
+        queries = builder.build_all_queries()
+        sql, _, metric_info = queries[0]
+
+        assert "uniqExactIf(" in sql
+        assert "dataset_dict" in sql
+        assert metric_info["aggregation"] == "count_distinct"
+
+    def test_dataset_string_metric_count_counts_present_values(self, base_query_config):
+        base_query_config["metrics"] = [
+            {
+                "id": "dataset",
+                "name": "dataset",
+                "type": "system_metric",
+                "aggregation": "count",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+
+        assert "countIf(" in sql
+        assert "dataset_dict" in sql
+
+    def test_column_source_string_metric_is_queryable(self, base_query_config):
+        base_query_config["metrics"] = [
+            {
+                "id": "column_source",
+                "name": "column_source",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+
+        assert "uniqExactIf(" in sql
+        assert "column_dict" in sql
+        assert "source" in sql
 
     def test_total_tokens_sum(self, base_query_config):
         base_query_config["metrics"] = [
@@ -334,7 +405,7 @@ class TestDatasetEvalMetricQueries:
         eval_score_config["metrics"][0]["aggregation"] = "p90"
         builder = DatasetQueryBuilder(eval_score_config)
         sql, _ = builder.build_metric_query(eval_score_config["metrics"][0])
-        assert "quantile(0.9)" in sql
+        assert "quantileExact(0.9)" in sql
 
     def test_passfail_defaults_to_pass_rate(self, eval_passfail_config):
         builder = DatasetQueryBuilder(eval_passfail_config)
@@ -490,7 +561,8 @@ class TestDatasetBreakdowns:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "breakdown_value" in sql
-        assert "toString(c.dataset_id)" in sql
+        assert "dataset_dict" in sql
+        assert "name" in sql
         assert "GROUP BY" in sql
 
     def test_eval_template_breakdown(self, system_metric_config):
@@ -516,13 +588,33 @@ class TestDatasetBreakdowns:
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "breakdown_value" not in sql
 
-    def test_unknown_breakdown_returns_none(self, system_metric_config):
+    def test_unknown_dataset_breakdown_fails_closed(self, system_metric_config):
         system_metric_config["breakdowns"] = [
             {"name": "nonexistent", "type": "system_metric"}
         ]
         builder = DatasetQueryBuilder(system_metric_config)
-        sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
-        assert "breakdown_value" not in sql
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Unsupported dataset breakdown dimension",
+        ):
+            builder.build_metric_query(system_metric_config["metrics"][0])
+
+    def test_non_system_dataset_breakdown_fails_closed(self, system_metric_config):
+        system_metric_config["breakdowns"] = [
+            {
+                "name": "quality",
+                "type": "annotation_metric",
+                "source": "datasets",
+            }
+        ]
+        builder = DatasetQueryBuilder(system_metric_config)
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Dataset breakdowns do not support this property type",
+        ):
+            builder.build_metric_query(system_metric_config["metrics"][0])
 
 
 # ============================================================================
@@ -546,6 +638,8 @@ class TestDatasetFilters:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "FROM model_hub_dataset FINAL" in sql
+        assert "WHERE _peerdb_is_deleted = 0" in sql
+        assert "AND deleted = 0" in sql
         assert "AND name IN %(df_0_val)s" in sql
         assert "IN" in sql
         assert "df_0_val" in params
@@ -554,6 +648,8 @@ class TestDatasetFilters:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "SELECT id FROM model_hub_dataset FINAL" in sql
+        assert "WHERE _peerdb_is_deleted = 0" in sql
+        assert "AND deleted = 0" in sql
         assert "workspace_id = toUUID(%(workspace_id)s)" in sql
         assert "workspace_id" in params
 
@@ -612,31 +708,149 @@ class TestDatasetFilters:
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "df_0_val" not in sql
 
-    def test_non_system_filter_skipped(self, system_metric_config):
+    def test_non_system_dataset_filter_fails_closed(self, system_metric_config):
         system_metric_config["filters"] = [
             {
                 "metric_type": "custom_attribute",
                 "metric_name": "some_attr",
                 "operator": "contains",
                 "value": ["val"],
+                "source": "datasets",
             }
         ]
         builder = DatasetQueryBuilder(system_metric_config)
-        sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
-        assert "some_attr" not in sql
 
-    def test_unknown_metric_name_filter_skipped(self, system_metric_config):
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Dataset filters do not support this property type",
+        ):
+            builder.build_metric_query(system_metric_config["metrics"][0])
+
+    def test_unknown_dataset_filter_fails_closed(self, system_metric_config):
         system_metric_config["filters"] = [
             {
                 "metric_type": "system_metric",
                 "metric_name": "nonexistent_filter",
                 "operator": "contains",
                 "value": ["val"],
+                "source": "datasets",
             }
         ]
         builder = DatasetQueryBuilder(system_metric_config)
-        sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
-        assert "nonexistent_filter" not in sql
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Unsupported dataset filter dimension",
+        ):
+            builder.build_metric_query(system_metric_config["metrics"][0])
+
+    def test_unified_dashboard_skips_trace_filter_for_dataset_metric(
+        self, system_metric_config
+    ):
+        system_metric_config["workflow"] = "observability"
+        system_metric_config["filters"] = [
+            {
+                "metric_type": "custom_attribute",
+                "metric_name": "trace_attr",
+                "operator": "contains",
+                "value": ["val"],
+                "source": "traces",
+            }
+        ]
+        builder = DatasetQueryBuilder(system_metric_config)
+
+        sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
+
+        assert "trace_attr" not in sql
+
+
+@pytest.mark.unit
+class TestDatasetQueryValidation:
+    @staticmethod
+    def _query_config(**overrides):
+        data = {
+            "workflow": "dataset",
+            "time_range": {"preset": "7D"},
+            "granularity": "day",
+            "metrics": [
+                {
+                    "name": "row_count",
+                    "type": "system_metric",
+                    "aggregation": "count",
+                    "source": "datasets",
+                }
+            ],
+        }
+        data.update(overrides)
+        return data
+
+    @staticmethod
+    def _filter(*, column_id, col_type, property_id=None):
+        item = {
+            "column_id": column_id,
+            "source": "datasets",
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": "in",
+                "filter_value": ["value"],
+                "col_type": col_type,
+            },
+        }
+        if property_id is not None:
+            item["property_id"] = property_id
+        return item
+
+    def test_serializer_rejects_dataset_custom_column_filter(self):
+        column_id = str(uuid.uuid4())
+        serializer = DashboardQuerySerializer(
+            data=self._query_config(
+                filters=[
+                    self._filter(
+                        column_id=column_id,
+                        col_type="CUSTOM_COLUMN",
+                        property_id=f"dataset_column:{column_id}",
+                    )
+                ]
+            )
+        )
+
+        assert not serializer.is_valid()
+        assert "Dataset filters currently support only" in str(serializer.errors)
+
+    def test_serializer_rejects_dataset_eval_breakdown(self):
+        eval_config_id = str(uuid.uuid4())
+        serializer = DashboardQuerySerializer(
+            data=self._query_config(
+                breakdowns=[
+                    {
+                        "name": eval_config_id,
+                        "property_id": f"eval_config:{eval_config_id}",
+                        "type": "eval_metric",
+                        "source": "datasets",
+                        "config_id": eval_config_id,
+                    }
+                ]
+            )
+        )
+
+        assert not serializer.is_valid()
+        assert "Dataset breakdowns currently support only" in str(serializer.errors)
+
+    def test_serializer_accepts_dataset_system_breakdown(self):
+        serializer = DashboardQuerySerializer(
+            data=self._query_config(
+                breakdowns=[
+                    {
+                        "name": "cell_status",
+                        "property_id": "system_attribute:datasets:cell_status",
+                        "type": "system_metric",
+                        "source": "datasets",
+                    }
+                ]
+            )
+        )
+
+        assert serializer.is_valid(), serializer.errors
 
 
 # ============================================================================

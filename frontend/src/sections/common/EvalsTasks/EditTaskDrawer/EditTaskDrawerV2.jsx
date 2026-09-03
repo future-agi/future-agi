@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Drawer,
   FormHelperText,
   IconButton,
@@ -38,10 +40,11 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { red } from "src/theme/palette";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
   extractAttributeFilters,
+  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -51,6 +54,8 @@ import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 // ── Configured Eval Card ──
 
@@ -88,7 +93,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",
@@ -185,7 +190,8 @@ const EditTaskDrawerV2Content = ({
     enabled: !!observeId,
   });
 
-  // Debounced filters for API calls
+  // Debounced filters for configured-eval lookup only. Attribute mapping uses
+  // the exact retained-key cursor below and is independent of task filters.
   const _filters = useMemo(() => {
     return getNewTaskFilters(formValues, project, true).filters || {};
   }, [formValues, project]);
@@ -198,7 +204,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -210,27 +216,16 @@ const EditTaskDrawerV2Content = ({
     if (configuredEvalList) replace(configuredEvalList);
   }, [configuredEvalList, replace]);
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
-        },
-      }),
-    select: (d) => d.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
+    enabled: Boolean(project),
   });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Fetch project list
   const { data: projectsList } = useQuery({
@@ -266,20 +261,24 @@ const EditTaskDrawerV2Content = ({
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
 
-      // Generic system filter aggregation: every non-attribute filter
-      // row contributes its value to a BE key named after `f.property`.
-      // Mirrors the create-side getNewTaskFilters (validation.js) so
-      // span_kind, latency_ms, total_tokens, etc. all round-trip
-      // without each one being hard-coded.
+      // Task system filter aggregation. Keep the update payload aligned with
+      // the backend-supported task filter contract instead of saving fields
+      // that the dispatcher would ignore.
       const systemFilters = {};
       (data.filters || []).forEach((f) => {
         if (!f?.property || f.property === "attributes") return;
+        const apiKey = getTaskFilterApiKey(f.property);
         const v = f?.filterConfig?.filterValue;
-        if (v === undefined || v === null || v === "") return;
-        if (systemFilters[f.property]) {
-          systemFilters[f.property].push(v);
+        const values = Array.isArray(v)
+          ? v
+          : v !== undefined && v !== null && v !== ""
+            ? [v]
+            : [];
+        if (!values.length) return;
+        if (systemFilters[apiKey]) {
+          systemFilters[apiKey].push(...values);
         } else {
-          systemFilters[f.property] = [v];
+          systemFilters[apiKey] = [...values];
         }
       });
 
@@ -679,7 +678,11 @@ const EditTaskDrawerV2Content = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />
@@ -709,7 +712,14 @@ const EditTaskDrawerV2 = ({
   const theme = useTheme();
   const taskId = selectedRow?.id;
 
-  const { data: taskDetails } = useGetTaskData(taskId, {
+  const {
+    data: taskDetails,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useGetTaskData(taskId, {
     enabled: !!taskId && open,
   });
 
@@ -736,6 +746,40 @@ const EditTaskDrawerV2 = ({
         BackdropProps: { style: { backgroundColor: "rgba(0, 0, 0, 0.3)" } },
       }}
     >
+      {isLoading && !taskDetails && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      )}
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ m: 2, flexShrink: 0 }}
+        >
+          {getSafeActionErrorMessage(
+            error,
+            "Task details could not be loaded.",
+          )}
+          {taskDetails ? " Existing task details are still shown." : ""}
+        </Alert>
+      )}
       {taskDetails && (
         <EditTaskDrawerV2Content
           selectedRow={selectedRow}

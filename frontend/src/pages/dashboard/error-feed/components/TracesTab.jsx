@@ -1,8 +1,15 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { Box, Drawer, Skeleton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Drawer,
+  Skeleton,
+  Stack,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
-import { useAgTheme } from "src/hooks/use-ag-theme";
+import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
@@ -11,21 +18,26 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
 
 const EMPTY_AGG = {
-  totalTraces: 0,
-  avgScore: 0,
-  avgTurns: 0,
-  p50Latency: 0,
-  p95Latency: 0,
+  total_traces: 0,
+  avg_score: 0,
+  avg_turns: 0,
+  p50_latency: 0,
+  p95_latency: 0,
+};
+
+const TRACES_GRID_THEME_PARAMS = {
+  wrapperBorder: { width: 0 },
+  wrapperBorderRadius: 4,
 };
 
 // ── Aggregate bar (no Failing / Passing) ────────────────────────────────────
 function AggregateBar({ agg }) {
   const items = [
-    { label: "Total traces", value: agg.totalTraces.toLocaleString() },
-    { label: "Avg score", value: agg.avgScore.toFixed(2) },
-    { label: "Avg turns", value: agg.avgTurns.toFixed(1) },
-    { label: "P50 latency", value: `${(agg.p50Latency / 1000).toFixed(1)}s` },
-    { label: "P95 latency", value: `${(agg.p95Latency / 1000).toFixed(1)}s` },
+    { label: "Total traces", value: agg.total_traces.toLocaleString() },
+    { label: "Avg score", value: agg.avg_score.toFixed(2) },
+    { label: "Avg turns", value: agg.avg_turns.toFixed(1) },
+    { label: "P50 latency", value: `${(agg.p50_latency / 1000).toFixed(1)}s` },
+    { label: "P95 latency", value: `${(agg.p95_latency / 1000).toFixed(1)}s` },
   ];
 
   return (
@@ -62,15 +74,25 @@ function AggregateBar({ agg }) {
 AggregateBar.propTypes = { agg: PropTypes.object.isRequired };
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
-function scoreColors(pct) {
+function scoreColors(pct, isDark) {
   if (pct >= 70)
-    return { backgroundColor: "rgba(90,206,109,0.12)", color: "#3a9e50" };
+    return {
+      backgroundColor: "rgba(90,206,109,0.12)",
+      color: isDark ? "#94DFA0" : "#3a9e50",
+    };
   if (pct >= 50)
-    return { backgroundColor: "rgba(245,166,35,0.12)", color: "#c47d00" };
-  return { backgroundColor: "rgba(219,47,45,0.10)", color: "#c0392b" };
+    return {
+      backgroundColor: "rgba(245,166,35,0.12)",
+      color: isDark ? "#E8A13A" : "#c47d00",
+    };
+  return {
+    backgroundColor: "rgba(219,47,45,0.10)",
+    color: isDark ? "#E87876" : "#c0392b",
+  };
 }
 
 function ScoreCellRenderer({ value }) {
+  const theme = useTheme();
   if (value == null) {
     return (
       <div
@@ -88,7 +110,10 @@ function ScoreCellRenderer({ value }) {
     );
   }
   const pct = Math.round(value * 100);
-  const { backgroundColor, color } = scoreColors(pct);
+  const { backgroundColor, color } = scoreColors(
+    pct,
+    theme.palette.mode === "dark",
+  );
   return (
     <div
       style={{
@@ -111,7 +136,7 @@ ScoreCellRenderer.propTypes = { value: PropTypes.number };
 
 // ── Traces AG Grid ────────────────────────────────────────────────────────────
 function TracesGrid({ rows, onRowClick }) {
-  const agTheme = useAgTheme();
+  const agTheme = useAgThemeWith(TRACES_GRID_THEME_PARAMS);
   const gridRef = useRef(null);
 
   const colDefs = useMemo(
@@ -147,7 +172,7 @@ function TracesGrid({ rows, onRowClick }) {
       },
       {
         headerName: "Duration",
-        field: "latencyMs",
+        field: "latency_ms",
         width: 110,
         sortable: true,
         valueFormatter: (p) =>
@@ -219,10 +244,7 @@ function TracesGrid({ rows, onRowClick }) {
         suppressRowClickSelection
         onRowClicked={(e) => onRowClick?.(e.data?.id)}
         rowStyle={{ cursor: "pointer" }}
-        theme={agTheme.withParams({
-          wrapperBorder: { width: 0 },
-          wrapperBorderRadius: 4,
-        })}
+        theme={agTheme}
       />
     </Box>
   );
@@ -234,15 +256,14 @@ TracesGrid.propTypes = {
 
 // ── Main TracesTab ─────────────────────────────────────────────────────────────
 export default function TracesTab({ error }) {
-  const clusterId = error?.clusterId;
-  const projectId = error?.projectId;
+  const clusterId = error?.cluster_id;
+  const projectId = error?.project_id;
   const { data, isLoading } = useErrorFeedTraces(clusterId, { limit: 200 });
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.
   const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
-  const isVoiceProject =
-    projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
+  const isVoiceProject = projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: voiceCallData, isFetching: voiceLoading } = useVoiceCallDetail(
     drawerTraceId,
     isVoiceProject && !!drawerTraceId,
@@ -305,7 +326,8 @@ export default function TracesTab({ error }) {
       {isVoiceProject ? (
         // Match TraceDetailDrawerV2's overlay shape so the two drawers feel
         // identical: persistent variant (no backdrop, page stays interactive),
-        // fixed right-anchored, sized in vw.
+        // fixed right-anchored.
+
         <Drawer
           anchor="right"
           variant="persistent"
@@ -313,7 +335,7 @@ export default function TracesTab({ error }) {
           onClose={() => setDrawerTraceId(null)}
           PaperProps={{
             sx: {
-              width: "60vw",
+              width: "auto",
               height: "100vh",
               position: "fixed",
               right: 0,

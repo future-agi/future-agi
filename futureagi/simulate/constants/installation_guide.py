@@ -3,8 +3,8 @@ pip install agent-simulate
 """
 
 CHAT_SDK_CODE = """
-# export FI_API_KEY="{fi_api_key}"
-# export FI_SECRET_KEY="{fi_secret_key}"
+# export FI_API_KEY="<YOUR_FI_API_KEY>"
+# export FI_SECRET_KEY="<YOUR_FI_SECRET_KEY>"
 
 import asyncio
 import os
@@ -37,7 +37,7 @@ async def main():
 
     # Run simulation
     report = await runner.run_test(
-        run_test_name= "{run_test_name}",
+        run_id="{run_id}",
         agent_callback=customer_support_agent
     )
 

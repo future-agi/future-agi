@@ -73,7 +73,7 @@ const DevelopBarLeftSection = ({
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.syntheticDataset);
+  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
   const theme = useTheme();
   const { search, setSearch } = useDevelopSearchStore();
   const setCellHeight = useDevelopCellHeight((s) => s.setCellHeight);
@@ -144,21 +144,17 @@ const DevelopBarLeftSection = ({
     queryClient.setQueryData(
       getDatasetQueryKey(dataset, 0, [], [], ""),
       (oldData) => {
-        const existingColumnOrder = oldData?.data?.result?.columnConfig;
+        const existingColumnOrder = oldData?.data?.result?.column_config;
 
         const newColumnOrder = existingColumnOrder.map((col) => {
           columnOrder.push(col.id);
-          const currentVisible = col.is_visible ?? col.isVisible;
+          const currentVisible = col.is_visible;
           const nextVisible =
             col.id === columnId ? !currentVisible : currentVisible;
           columnConfig[col.id] = {
             is_visible: nextVisible,
             is_frozen: col.pinned,
           };
-          // Update BOTH snake_case (canonical) and camelCase (alias) keys
-          // so downstream reads of either form stay in sync. Without this,
-          // `col.is_visible` would remain stale and downstream code using
-          // `col?.is_visible ?? col?.isVisible` would read the old value.
           return col.id === columnId
             ? { ...col, is_visible: nextVisible, isVisible: nextVisible }
             : col;
@@ -170,7 +166,7 @@ const DevelopBarLeftSection = ({
             ...oldData.data,
             result: {
               ...oldData.data.result,
-              columnConfig: newColumnOrder,
+              column_config: newColumnOrder,
             },
           },
         };
@@ -191,7 +187,7 @@ const DevelopBarLeftSection = ({
     queryClient.setQueryData(
       getDatasetQueryKey(dataset, 0, [], [], ""),
       (oldData) => {
-        const existingColumnOrder = oldData?.data?.result?.columnConfig;
+        const existingColumnOrder = oldData?.data?.result?.column_config;
         const colDefMap = existingColumnOrder.reduce((acc, col) => {
           acc[col.id] = col;
           return acc;
@@ -212,7 +208,7 @@ const DevelopBarLeftSection = ({
             ...oldData.data,
             result: {
               ...oldData.data.result,
-              columnConfig: newColumnOrder,
+              column_config: newColumnOrder,
             },
           },
         };

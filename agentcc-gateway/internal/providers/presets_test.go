@@ -73,16 +73,18 @@ func TestPreset_Groq(t *testing.T) {
 
 func TestPreset_MiniMax(t *testing.T) {
 	tests := []struct {
-		name    string
-		cfg     config.ProviderConfig
-		wantURL string
-		wantFmt string
+		name         string
+		cfg          config.ProviderConfig
+		wantURL      string
+		wantFmt      string
+		wantEndpoint string
 	}{
 		{
-			name:    "global OpenAI default",
-			cfg:     config.ProviderConfig{Type: "minimax"},
-			wantURL: "https://api.minimax.io",
-			wantFmt: "openai",
+			name:         "global OpenAI default",
+			cfg:          config.ProviderConfig{Type: "minimax"},
+			wantURL:      "https://api.minimax.io",
+			wantFmt:      "openai",
+			wantEndpoint: "https://api.minimax.io/v1/chat/completions",
 		},
 		{
 			name: "China OpenAI override",
@@ -91,8 +93,9 @@ func TestPreset_MiniMax(t *testing.T) {
 				BaseURL:   "https://api.minimaxi.com",
 				APIFormat: "openai",
 			},
-			wantURL: "https://api.minimaxi.com",
-			wantFmt: "openai",
+			wantURL:      "https://api.minimaxi.com",
+			wantFmt:      "openai",
+			wantEndpoint: "https://api.minimaxi.com/v1/chat/completions",
 		},
 		{
 			name: "global Anthropic override",
@@ -124,6 +127,11 @@ func TestPreset_MiniMax(t *testing.T) {
 			}
 			if tt.cfg.APIFormat != tt.wantFmt {
 				t.Errorf("APIFormat = %q, want %q", tt.cfg.APIFormat, tt.wantFmt)
+			}
+			if tt.wantEndpoint != "" {
+				if got := tt.cfg.EndpointURL("/v1/chat/completions"); got != tt.wantEndpoint {
+					t.Errorf("EndpointURL = %q, want %q", got, tt.wantEndpoint)
+				}
 			}
 		})
 	}
@@ -196,20 +204,20 @@ func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
 
 func TestPreset_KnownProvidersComplete(t *testing.T) {
 	expected := map[string]ProviderPreset{
-		"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai"},
-		"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai"},
-		"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai"},
-		"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai"},
-		"deepinfra":   {BaseURL: "https://api.deepinfra.com", APIFormat: "openai"},
-		"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai"},
-		"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai"},
-		"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai"},
-		"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai"},
-		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
-		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
-		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
-		"minimax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai"},
-		"azure":       {BaseURL: "", APIFormat: "azure"},
+		"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai", PathPrefix: "/v1"},
+		"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai", PathPrefix: "/v1"},
+		"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai", PathPrefix: "/v1"},
+		"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai", PathPrefix: "/v1"},
+		"deepinfra":   {BaseURL: "https://api.deepinfra.com", APIFormat: "openai", PathPrefix: "/v1"},
+		"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai", PathPrefix: "/v1"},
+		"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai", PathPrefix: "/v1"},
+		"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai", PathPrefix: "/v1"},
+		"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
+		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai", PathPrefix: "/v1"},
+		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
+		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
+		"minimax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai", PathPrefix: "/v1"},
+		"azure":       {BaseURL: "", APIFormat: "azure", PathPrefix: ""},
 	}
 
 	// Verify every expected provider is present with the correct values.
@@ -224,6 +232,12 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 			}
 			if got.APIFormat != want.APIFormat {
 				t.Errorf("APIFormat = %q, want %q", got.APIFormat, want.APIFormat)
+			}
+			// PathPrefix is a plain string, so a row that simply omits it reads
+			// as "" — which means "no version segment" and silently strips /v1.
+			// Assert it per row so that omission fails here rather than in prod.
+			if got.PathPrefix != want.PathPrefix {
+				t.Errorf("PathPrefix = %q, want %q", got.PathPrefix, want.PathPrefix)
 			}
 		})
 	}
@@ -270,6 +284,44 @@ func TestPreset_AllKnownProviders_ApplyDefaults(t *testing.T) {
 			// For non-azure providers, BaseURL must be non-empty.
 			if name != "azure" && cfg.BaseURL == "" {
 				t.Errorf("BaseURL is empty after applying preset for %q (expected non-empty)", name)
+			}
+
+			// The preset's prefix must reach the config, and an openai-format
+			// preset must state one: an omitted row would resolve to "" and
+			// drop the version segment from every URL the provider builds.
+			if preset.APIFormat == "openai" {
+				if cfg.APIPathPrefix == nil {
+					t.Fatalf("APIPathPrefix is nil after applying preset for %q", name)
+				}
+				if *cfg.APIPathPrefix != preset.PathPrefix {
+					t.Errorf("APIPathPrefix = %q, want %q", *cfg.APIPathPrefix, preset.PathPrefix)
+				}
+				if preset.PathPrefix == "" {
+					t.Errorf("preset %q states no PathPrefix; an openai-format preset "+
+						"must state one explicitly, or every URL loses its version segment", name)
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 10. A preset prefix is a default, not an override — an explicit
+//     api_path_prefix in the config must survive applyProviderPreset.
+// ---------------------------------------------------------------------------
+
+func TestPreset_ExplicitPathPrefixPreserved(t *testing.T) {
+	for _, want := range []string{"", "/v1/openai"} {
+		t.Run("prefix="+want, func(t *testing.T) {
+			explicit := want
+			cfg := &config.ProviderConfig{Type: "groq", APIPathPrefix: &explicit}
+			applyProviderPreset(cfg)
+
+			if cfg.APIPathPrefix == nil {
+				t.Fatal("APIPathPrefix became nil")
+			}
+			if *cfg.APIPathPrefix != want {
+				t.Errorf("APIPathPrefix = %q, want %q (explicit value must not be overridden)", *cfg.APIPathPrefix, want)
 			}
 		})
 	}

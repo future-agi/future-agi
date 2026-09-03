@@ -14,6 +14,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import PropTypes from "prop-types";
 import { formatDistanceToNow } from "date-fns";
 import SvgColor from "../svg-color";
+import { isBlackBackgroundLogo } from "../custom-model-dropdown/common";
 
 const SimulatorAgentCellRenderer = (params) => {
   const theme = useTheme();
@@ -90,7 +91,7 @@ const SimulatorAgentCellRenderer = (params) => {
                   height: theme.spacing(2),
                   objectFit: "cover",
                   ...(theme.palette.mode === "dark" &&
-                    data?.logoUrl?.includes("provider-logos") && {
+                    isBlackBackgroundLogo(data?.logoUrl) && {
                       filter: "invert(1) brightness(2)",
                     }),
                 }}

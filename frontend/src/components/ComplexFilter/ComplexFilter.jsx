@@ -4,6 +4,7 @@ import React, { useCallback, useMemo } from "react";
 import { getRandomId } from "src/utils/utils";
 import FilterRow from "./FilterRow";
 import logger from "../../utils/logger";
+import { getFilterUsageCounts, isFilterDefinitionAtMaxUsage } from "./common";
 
 /**
  * Complex filter component for handling multiple filter rows
@@ -16,13 +17,13 @@ import logger from "../../utils/logger";
  *  {
  *    "propertyName": "Name of property 1",
  *    "propertyId" : "" // parent property ID for which the filter value in eventually set
- *    "filterType" : "filterType" // filter type (options, number, text)
+ *    "filter_type" : "filter_type" // filter type (options, number, text)
  *    "dependents" : [
  *      {
  *        "stringConnector" : "is",
  *        "propertyName": "Dependent property name 1",
  *        "propertyId" : "" // dependent property ID (on priority) for which the filter value in eventually set
- *        "filterType" : "filterType" // filter type (options, number),
+ *        "filter_type" : "filter_type" // filter type (options, number),
  *        "options" : [
  *          {
  *            "value": "value 1",
@@ -55,18 +56,16 @@ const ComplexFilter = ({
   setFilters,
   filterDefinition,
   onClose,
+  className,
+  projectId,
+  onAttributeSearchChange,
 }) => {
   const addFilter = useCallback(() => {
     setFilters(() => [...filters, { ...defaultFilter, id: getRandomId() }]);
   }, [defaultFilter, filters, setFilters]);
   const propertyIdCount = useMemo(() => {
     logger.debug({ filters });
-    return filters.reduce((acc, curr) => {
-      if (curr.columnId) {
-        acc[curr.columnId] = (acc[curr.columnId] || 0) + 1;
-      }
-      return acc;
-    }, {});
+    return getFilterUsageCounts(filters);
   }, [filters]);
 
   const removeFilter = useCallback(
@@ -105,14 +104,7 @@ const ComplexFilter = ({
   const filterRows = useMemo(() => {
     return filters.map((filter, index) => {
       const adjustedFilterDefinition = filterDefinition.filter((def) => {
-        if (
-          def.maxUsage &&
-          propertyIdCount[def.propertyId] >= def.maxUsage &&
-          filter.columnId !== def.propertyId
-        ) {
-          return false;
-        }
-        return true;
+        return !isFilterDefinitionAtMaxUsage(def, propertyIdCount, filter);
       });
 
       return (
@@ -126,6 +118,8 @@ const ComplexFilter = ({
           filterDefinition={adjustedFilterDefinition}
           defaultFilter={defaultFilter}
           propertyIdCount={propertyIdCount}
+          projectId={projectId}
+          onAttributeSearchChange={onAttributeSearchChange}
         />
       );
     });
@@ -137,10 +131,13 @@ const ComplexFilter = ({
     addFilter,
     updateFilter,
     removeFilter,
+    projectId,
+    onAttributeSearchChange,
   ]);
 
   return (
     <Box
+      className={className}
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -159,6 +156,7 @@ const ComplexFilter = ({
         </Typography>
       </Box> */}
       <Box
+        className="cf-rows"
         sx={{
           border: "1px solid",
           borderRadius: "8px",
@@ -181,6 +179,9 @@ ComplexFilter.propTypes = {
   setFilters: PropTypes.func,
   filterDefinition: PropTypes.array,
   onClose: PropTypes.func,
+  className: PropTypes.string,
+  projectId: PropTypes.string,
+  onAttributeSearchChange: PropTypes.func,
 };
 
 export default ComplexFilter;

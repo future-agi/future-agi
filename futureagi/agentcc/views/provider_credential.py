@@ -220,7 +220,19 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 deleted=False,
             ).first()
             if cred:
-                decrypted = CredentialManager.decrypt(cred.encrypted_credentials)
+                try:
+                    decrypted = CredentialManager.decrypt(cred.encrypted_credentials)
+                except Exception:
+                    logger.warning(
+                        "provider_credential_decrypt_failed",
+                        provider_name=provider_name,
+                        organization_id=str(organization.id),
+                        exc_info=True,
+                    )
+                    return self._gm.bad_request(
+                        "Saved provider credential could not be decrypted. "
+                        "Rotate the credential or check the encryption configuration."
+                    )
                 api_key = decrypted.get("api_key", "")
                 base_url = cred.base_url.rstrip("/") if cred.base_url else ""
                 api_format = cred.api_format

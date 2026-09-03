@@ -178,8 +178,10 @@ func main() {
 		}
 	}
 
-	// Create keystore and auth plugin.
-	var keyStore *auth.KeyStore
+	// Create the keystore even when request auth is disabled. Admin key
+	// lifecycle routes still need a store, while /v1 auth remains controlled
+	// by cfg.Auth.Enabled.
+	keyStore := auth.NewKeyStore(cfg.Auth)
 	var plugins []pipeline.Plugin
 
 	// Create IP ACL plugin (priority 50: runs before auth).
@@ -191,7 +193,6 @@ func main() {
 	}
 
 	if cfg.Auth.Enabled {
-		keyStore = auth.NewKeyStore(cfg.Auth)
 		plugins = append(plugins, authplugin.New(keyStore, true))
 		slog.Info("auth enabled", "config_keys", keyStore.Count())
 	}
@@ -534,15 +535,17 @@ func main() {
 	// Create logging plugin.
 	loggingPlugin := loggingplugin.New(cfg.Logging.RequestLogging, tenantStore)
 
-	// Attach privacy redactor if enabled.
+	// Attach privacy redactor if enabled. Kept in scope because every sink
+	// that exports request or response content redacts through it.
+	var globalRedactor *privacy.Redactor
 	if cfg.Privacy.Enabled {
 		patterns := make([]privacy.PatternConfig, len(cfg.Privacy.Patterns))
 		for i, p := range cfg.Privacy.Patterns {
 			patterns[i] = privacy.PatternConfig{Name: p.Name, Pattern: p.Pattern}
 		}
-		redactor := privacy.New(cfg.Privacy.Mode, patterns)
-		loggingPlugin.SetRedactor(redactor)
-		slog.Info("privacy mode enabled", "mode", cfg.Privacy.Mode, "patterns", redactor.PatternCount())
+		globalRedactor = privacy.New(cfg.Privacy.Mode, patterns)
+		loggingPlugin.SetRedactor(globalRedactor)
+		slog.Info("privacy mode enabled", "mode", cfg.Privacy.Mode, "patterns", globalRedactor.PatternCount())
 	}
 
 	plugins = append(plugins, loggingPlugin)
@@ -581,6 +584,8 @@ func main() {
 		slog.Info("alerting enabled", "rules", alertManager.RuleCount())
 	}
 
+	// The logging plugin is deliberately absent here: its redactor cache moved
+	// onto tenantStore, which invalidates itself on every config change.
 	if onOrgConfigChange != nil {
 		prev := onOrgConfigChange
 		onOrgConfigChange = func(orgID string) {
@@ -588,17 +593,11 @@ func main() {
 			if alertingPlugin != nil {
 				alertingPlugin.InvalidateOrg(orgID)
 			}
-			if loggingPlugin != nil {
-				loggingPlugin.InvalidateOrg(orgID)
-			}
 		}
-	} else if alertingPlugin != nil || loggingPlugin != nil || ipaclPlugin != nil {
+	} else if alertingPlugin != nil || ipaclPlugin != nil {
 		onOrgConfigChange = func(orgID string) {
 			if alertingPlugin != nil {
 				alertingPlugin.InvalidateOrg(orgID)
-			}
-			if loggingPlugin != nil {
-				loggingPlugin.InvalidateOrg(orgID)
 			}
 			if ipaclPlugin != nil {
 				ipaclPlugin.InvalidateOrg(orgID)
@@ -618,6 +617,8 @@ func main() {
 	var otelPlugin *otelplugin.Plugin
 	if cfg.OTel.Enabled {
 		otelPlugin = otelplugin.New(cfg.OTel)
+		otelPlugin.SetTenantStore(tenantStore)
+		otelPlugin.SetRedactor(globalRedactor)
 		plugins = append(plugins, otelPlugin)
 		slog.Info("otel enabled", "exporter", cfg.OTel.Exporter, "sample_rate", cfg.OTel.SampleRate)
 	}
@@ -626,7 +627,7 @@ func main() {
 	engine := pipeline.NewEngine(plugins...)
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
-	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange)
+	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

@@ -94,7 +94,7 @@ export const refreshTokenRequest = async () => {
     endpoints.auth.refreshToken,
     {
       refresh: refreshToken,
-      "recaptcha-response": recaptchaToken,
+      recaptcha_response: recaptchaToken,
     },
     {
       headers: {

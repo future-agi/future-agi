@@ -81,8 +81,10 @@ const NewAnnotationCellRenderer = ({
   }
 
   if (annotationType === ANNOTATION_TYPES.THUMBS_UP_DOWN) {
-    // avg: value = { thumbsUp: N, thumbsDown: N }
+    // avg: value = { thumbs_up: N, thumbs_down: N }
     if (isAverage && value && typeof value === "object") {
+      const thumbsUp = value.thumbs_up ?? value.thumbsUp ?? 0;
+      const thumbsDown = value.thumbs_down ?? value.thumbsDown ?? 0;
       return (
         <Box
           sx={{
@@ -95,9 +97,9 @@ const NewAnnotationCellRenderer = ({
           }}
         >
           <Iconify icon="octicon:thumbsup-24" color="purple.600" />
-          <Typography typography="s2_1">{value.thumbsUp ?? 0}</Typography>
+          <Typography typography="s2_1">{thumbsUp}</Typography>
           <Iconify icon="octicon:thumbsdown-24" color="red.500" />
-          <Typography typography="s2_1">{value.thumbsDown ?? 0}</Typography>
+          <Typography typography="s2_1">{thumbsDown}</Typography>
         </Box>
       );
     }

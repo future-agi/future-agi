@@ -7,7 +7,7 @@ Temporal schedules across all domains (model_hub, tracer, simulate, etc.).
 
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any
 
 from temporalio.client import ScheduleOverlapPolicy
 
@@ -27,17 +27,24 @@ class ScheduleConfig:
     deterministic state at fire time (e.g. a closing period derived from
     ``workflow.now()``) that the activity cannot reconstruct reliably
     from its own wall clock.
+
+    ``activity_args`` and ``activity_kwargs`` are serialized into the generic
+    task-runner input. They let one registered activity own many independently
+    scheduled scopes without performing an unbounded fan-out inside one run.
     """
 
     schedule_id: str
     activity_name: str
     interval_seconds: int = 0
-    cron_expression: Optional[str] = None
+    cron_expression: str | None = None
+    jitter_seconds: int = 0
     catchup_window_seconds: int = 0
     queue: str = "default"
-    description: Optional[str] = None
+    description: str | None = None
     overlap_policy: ScheduleOverlapPolicy = field(default=ScheduleOverlapPolicy.SKIP)
-    workflow_class: Optional[Any] = None
+    workflow_class: Any | None = None
+    activity_args: tuple[Any, ...] = ()
+    activity_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.cron_expression and self.interval_seconds <= 0:
@@ -51,10 +58,16 @@ class ScheduleConfig:
         return timedelta(seconds=self.interval_seconds)
 
     @property
-    def catchup_window(self) -> Optional[timedelta]:
+    def catchup_window(self) -> timedelta | None:
         if self.catchup_window_seconds <= 0:
             return None
         return timedelta(seconds=self.catchup_window_seconds)
+
+    @property
+    def jitter(self) -> timedelta | None:
+        if self.jitter_seconds <= 0:
+            return None
+        return timedelta(seconds=self.jitter_seconds)
 
 
 __all__ = ["ScheduleConfig"]

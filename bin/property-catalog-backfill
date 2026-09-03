@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Explicit, bounded historical backfill for the unified property catalog.
+#
+# This command intentionally contains no source-control or image-pull step. It
+# runs the management command from the exact property-catalog-supervisor image
+# already selected by the current Compose deployment.
+
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+EXECUTE=0
+WALL_MS="${PROPERTY_CATALOG_INITIAL_BACKFILL_WALL_MS:-1740000}"
+
+usage() {
+  cat <<'EOF'
+Usage: ./bin/property-catalog-backfill --execute [--wall-ms MILLISECONDS]
+
+Backfill inactive workspace catalogs from the existing deployed data. Already
+active catalogs are skipped; their normal supervisor continues incremental
+reconciliation. The operation is bounded and resumable by the catalog ledger.
+
+Options:
+  --execute           Required acknowledgement for the historical write.
+  --wall-ms VALUE     Per-workspace wall allowance (100..1740000).
+  -h, --help          Show this help.
+
+This command never checks out a branch, pulls source code, or pulls an image.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --execute)
+      EXECUTE=1
+      ;;
+    --wall-ms)
+      [[ $# -ge 2 ]] || { printf '%s\n' "--wall-ms requires a value" >&2; exit 64; }
+      WALL_MS="$2"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n\n' "$1" >&2
+      usage >&2
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [[ "$EXECUTE" -ne 1 ]]; then
+  printf '%s\n\n' "Refusing historical writes without --execute." >&2
+  usage >&2
+  exit 64
+fi
+case "$WALL_MS" in
+  ''|*[!0-9]*)
+    printf '%s\n' "--wall-ms must be an integer" >&2
+    exit 64
+    ;;
+esac
+if (( WALL_MS < 100 || WALL_MS > 1740000 )); then
+  printf '%s\n' "--wall-ms must be in [100, 1740000]" >&2
+  exit 64
+fi
+
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+else
+  printf '%s\n' "Docker Compose is required." >&2
+  exit 69
+fi
+
+cd "$ROOT"
+
+required_services=(
+  postgres
+  clickhouse
+  property-catalog-kafka
+  fi-collector
+  fi-property-catalog-sequencer
+  fi-property-catalog-consumer
+)
+for service in "${required_services[@]}"; do
+  container_id="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null | head -n 1)"
+  if [[ -z "$container_id" ]]; then
+    printf '%s\n' "Required service is not created: $service" >&2
+    printf '%s\n' "Start the deployed stack before running the backfill." >&2
+    exit 69
+  fi
+  status="$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)"
+  if [[ "$status" != "running" ]]; then
+    printf '%s\n' "Required service is not running: $service (status=${status:-unknown})" >&2
+    exit 69
+  fi
+done
+
+printf '%s\n' "Starting explicit unified property-catalog backfill."
+printf '%s\n' "Per-workspace wall allowance: ${WALL_MS} ms"
+printf '%s\n' "Already-active workspaces will be skipped."
+
+exec "${COMPOSE[@]}" run --rm --no-deps -T \
+  --entrypoint python \
+  property-catalog-supervisor \
+  manage.py ch25_property_catalog_oss_supervisor \
+  --once \
+  --initial-backfill \
+  --initial-backfill-wall-ms "$WALL_MS"

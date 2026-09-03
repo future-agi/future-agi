@@ -8,8 +8,8 @@ import {
   Typography,
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
@@ -18,7 +18,11 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalTaskListPage } from "./task_list_read";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -224,37 +228,30 @@ EvalChips.propTypes = {
 
 // ── Filter Chips ──
 
+// Date range and project are intrinsic to every task (project has its own
+// column), so the Filters column shows only the user-applied filters.
 const buildFilterChips = (filtersApplied) => {
   if (!filtersApplied) return [];
   const chips = [];
 
-  if (filtersApplied.dateRange?.length === 2) {
-    const [start, end] = filtersApplied.dateRange;
-    const fmt = (d) => {
-      try {
-        return new Date(d).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "2-digit",
-        });
-      } catch {
-        return d;
-      }
-    };
-    chips.push(`Date: ${fmt(start)} → ${fmt(end)}`);
+  const observationTypes =
+    filtersApplied.observation_type || filtersApplied.observationType;
+  if (observationTypes?.length) {
+    observationTypes.forEach((t) => chips.push(`Type: ${t}`));
   }
-  if (filtersApplied.observationType?.length) {
-    filtersApplied.observationType.forEach((t) => chips.push(`Type: ${t}`));
-  }
-  if (filtersApplied.spanAttributesFilters?.length) {
-    filtersApplied.spanAttributesFilters.forEach((f) => {
+  const spanAttributeFilters =
+    filtersApplied.filters ||
+    filtersApplied.span_attributes_filters ||
+    filtersApplied.spanAttributesFilters;
+  if (spanAttributeFilters?.length) {
+    spanAttributeFilters.forEach((f) => {
       const key = f.columnId || f.column_id;
       if (!key) return;
       const op =
         f.filterConfig?.filterOp || f.filter_config?.filter_op || "equals";
       const rawVal =
         f.filterConfig?.filterValue ?? f.filter_config?.filter_value;
-      const val = Array.isArray(rawVal) ? rawVal.join(", ") : (rawVal ?? "");
+      const val = Array.isArray(rawVal) ? rawVal.join(", ") : rawVal ?? "";
       const isValuelessOp = op === "is_null" || op === "is_not_null";
       chips.push(
         isValuelessOp
@@ -263,9 +260,17 @@ const buildFilterChips = (filtersApplied) => {
       );
     });
   }
-  if (filtersApplied.project_id) {
-    chips.push(`Project: ${filtersApplied.project_id.slice(0, 8)}…`);
-  }
+  [
+    ["trace_id", "Trace"],
+    ["span_id", "Span"],
+    ["session_id", "Session"],
+  ].forEach(([key, label]) => {
+    const values = filtersApplied[key];
+    const arr = Array.isArray(values) ? values : values ? [values] : [];
+    arr.forEach((value) => {
+      chips.push(`${label}: ${String(value).slice(0, 8)}…`);
+    });
+  });
   return chips;
 };
 
@@ -293,6 +298,7 @@ const TaskListView = ({
   _onEditTask,
   refreshKey,
 }) => {
+  const { role } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -300,31 +306,34 @@ const TaskListView = ({
   const [rowSelection, setRowSelection] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const pageScopeRef = useRef(observeId);
+  const queryPage = pageScopeRef.current === observeId ? page : 0;
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
+  const queryClient = useQueryClient();
 
   // Fetch task list
   const apiEndpoint = observeId
     ? endpoints.project.getEvalTaskList
     : endpoints.project.getEvalTasksWithProjectName;
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: [
       "eval-tasks",
       observeId,
-      page,
+      queryPage,
       pageSize,
       debouncedSearch,
       sorting,
       refreshKey,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const params = {
-        page: page + 1,
+        page_number: queryPage,
         page_size: pageSize,
       };
       if (observeId) params.project_id = observeId;
-      if (debouncedSearch) params.search = debouncedSearch;
+      if (debouncedSearch) params.name = debouncedSearch;
 
       // Map tanstack column IDs (camelCase) → backend column IDs (snake_case).
       // Backend expects snake_case sort keys; the DataTable column IDs are camelCase
@@ -340,13 +349,28 @@ const TaskListView = ({
       const rawSortId = sorting[0]?.id || "created_at";
       const sortField = SORT_FIELD_MAP[rawSortId] || rawSortId;
       const sortDir = sorting[0]?.desc ? "desc" : "asc";
-      params.sort_by = sortField;
-      params.sort_order = sortDir;
+      params.sort_params = JSON.stringify([
+        { column_id: sortField, direction: sortDir },
+      ]);
 
-      const { data: resp } = await axios.get(apiEndpoint(), { params });
-      return resp?.result;
+      return readEvalTaskListPage(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(apiEndpoint(), {
+            params,
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      );
     },
-    keepPreviousData: true,
+    // Keep a prior page visible only while paginating inside the same
+    // project/workspace scope. A scope switch must never expose rows or totals
+    // from the previous project while the new request is in flight.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey?.[0] === "eval-tasks" &&
+      previousQuery.queryKey[1] === observeId
+        ? previousData
+        : undefined,
     structuralSharing: false,
     refetchInterval: (query) =>
       (query?.state?.data?.table || []).some(shouldPollRow)
@@ -365,28 +389,74 @@ const TaskListView = ({
     [data],
   );
   const total =
-    data?.metadata?.total_count ||
-    data?.total ||
-    data?.total_count ||
+    data?.metadata?.total_rows ??
+    data?.metadata?.total_count ??
+    data?.total_rows ??
+    data?.total ??
+    data?.total_count ??
     items.length;
 
-  // Pause/Resume mutations
+  useEffect(() => {
+    pageScopeRef.current = observeId;
+    setPage(0);
+  }, [observeId]);
+
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  useEffect(() => {
+    if (page > lastPage) setPage(lastPage);
+  }, [lastPage, page]);
+
+  const handleSortingChange = useCallback((nextSorting) => {
+    setSorting(nextSorting);
+    setPage(0);
+  }, []);
+
+  // Optimistically flip the row's status across every cached eval-tasks page
+  // (the exact key carries page/sort/search) so the badge reacts on click.
+  const optimisticRowStatus = async (taskId, status) => {
+    await queryClient.cancelQueries({ queryKey: ["eval-tasks"] });
+    const prev = queryClient.getQueriesData({ queryKey: ["eval-tasks"] });
+    queryClient.setQueriesData({ queryKey: ["eval-tasks"] }, (old) =>
+      old?.table
+        ? {
+            ...old,
+            table: old.table.map((t) =>
+              t.id === taskId ? { ...t, status } : t,
+            ),
+          }
+        : old,
+    );
+    return { prev };
+  };
+  const rollbackRows = (ctx) =>
+    ctx?.prev?.forEach(([key, data]) => queryClient.setQueryData(key, data));
+
   const { mutate: pauseTask } = useMutation({
-    mutationFn: (taskId) => axios.post(endpoints.project.pauseEvalTask(taskId)),
-    onSuccess: () => refetch(),
+    // {} body required — the request-contract interceptor drops a bodyless POST.
+    mutationFn: (taskId) =>
+      axios.post(endpoints.project.pauseEvalTask(taskId), {}),
+    meta: { errorHandled: true },
+    onMutate: (taskId) => optimisticRowStatus(taskId, "paused"),
+    onError: (_e, _v, ctx) => {
+      rollbackRows(ctx);
+      enqueueSnackbar("Failed to pause task", { variant: "error" });
+    },
+    onSettled: () => refetch(),
   });
 
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
-      axios.post(endpoints.project.resumeEvalTask(taskId)),
+      axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
-    onSuccess: () => refetch(),
-    onError: () => {
-      refetch();
+    // pending (not running): resume re-queues, so the badge moves forward only.
+    onMutate: (taskId) => optimisticRowStatus(taskId, "pending"),
+    onError: (_e, _v, ctx) => {
+      rollbackRows(ctx);
       enqueueSnackbar("Failed to resume task. It may have already finished.", {
         variant: "error",
       });
     },
+    onSettled: () => refetch(),
   });
 
   // Delete mutation
@@ -618,6 +688,11 @@ const TaskListView = ({
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
                 onClick={() => setDeleteTarget(selectedItems)}
+                disabled={
+                  !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                    role
+                  ]
+                }
                 sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
@@ -638,6 +713,11 @@ const TaskListView = ({
               color="primary"
               startIcon={<Iconify icon="mingcute:add-line" width={18} />}
               onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
               sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create Task
@@ -647,24 +727,43 @@ const TaskListView = ({
       </Box>
 
       {/* Table */}
+      {isError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {QUERY_FAILED_RETRY_MESSAGE}
+          <Button size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </Box>
+      )}
       <DataTable
         columns={columns}
         data={items}
         isLoading={isLoading}
         rowCount={total}
         sorting={sorting}
-        onSortingChange={setSorting}
+        onSortingChange={handleSortingChange}
         rowSelection={rowSelection}
         onRowSelectionChange={setRowSelection}
         onRowClick={(row) => onRowClick?.(row)}
         getRowId={(row) => row.id}
         enableSelection
-        emptyMessage="No tasks found"
+        emptyMessage={isError ? QUERY_FAILED_RETRY_MESSAGE : "No tasks found"}
       />
 
       {/* Pagination */}
       <DataTablePagination
-        page={page}
+        page={queryPage}
         pageSize={pageSize}
         total={total}
         onPageChange={setPage}

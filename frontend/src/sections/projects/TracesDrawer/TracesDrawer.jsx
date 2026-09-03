@@ -34,7 +34,7 @@ function a11yProps(index) {
   };
 }
 
-const TracesDrawer = ({ open, onClose, rowData }) => {
+const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
   const theme = useTheme();
   const { projectId, observeId } = useParams();
   const projectIdToUse = projectId || observeId;
@@ -53,10 +53,14 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ["traceSession", activeSessionId],
+    queryKey: ["traceSession", activeSessionId, userIdForUserMode],
     queryFn: ({ pageParam }) => {
       return axios.get(`${endpoints.project.traceSession}${activeSessionId}/`, {
-        params: { page_number: pageParam, page_size: 10 },
+        params: {
+          page_number: pageParam,
+          page_size: 10,
+          ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+        },
       });
     },
     getNextPageParam: (page, _, pageParams) => {
@@ -325,6 +329,39 @@ const TracesDrawer = ({ open, onClose, rowData }) => {
                     },
                   }}
                 />
+                {sessionMetadata?.user_id && (
+                  <Chip
+                    label={
+                      <Typography
+                        variant="s2"
+                        sx={{ color: "text.primary" }}
+                        fontWeight={"fontWeightRegular"}
+                      >
+                        User ID: {sessionMetadata.user_id}
+                      </Typography>
+                    }
+                    icon={<Iconify icon="mdi:account-outline" width={14} />}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      backgroundColor: "background.default",
+                      color: "text.secondary",
+                      height: "25px",
+                      paddingX: 0.5,
+                      borderRadius: "8px",
+                      "& .MuiChip-icon": {
+                        color:
+                          theme.palette.mode === "light"
+                            ? "text.primary"
+                            : "text.secondary",
+                      },
+                      "&:hover": {
+                        backgroundColor: "background.paper",
+                        borderColor: "divider",
+                      },
+                    }}
+                  />
+                )}
               </>
             )}
           </Box>
@@ -419,6 +456,7 @@ TracesDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   rowData: PropTypes.object,
+  userIdForUserMode: PropTypes.string,
 };
 
 export default TracesDrawer;

@@ -10,6 +10,7 @@ import KeysDrawer from "./KeysDrawer";
 import { ShowComponent } from "../show";
 import ModelButtonField from "./ModelButtonField";
 import AddCustomModal from "src/pages/dashboard/settings/AddCustomModal";
+import { normalizeModelOption } from "./common";
 
 const CustomModelDropdown = ({
   isModalContainer = false,
@@ -103,7 +104,10 @@ const CustomModelDropdown = ({
   const options = useMemo(() => {
     const filtered =
       modelList?.pages.reduce(
-        (acc, curr) => [...acc, ...curr.data.results],
+        (acc, curr) => [
+          ...acc,
+          ...(curr.data.results || []).map(normalizeModelOption),
+        ],
         [],
       ) || [];
     return filtered.length > 0

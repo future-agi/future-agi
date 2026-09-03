@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildAutoCtx,
   buildCompositeCtx,
-  buildFlatValueMap,
   executeEvalForRow,
   normalizeRowType,
   resolveMappingFromRow,
@@ -124,54 +123,45 @@ describe("buildCompositeCtx", () => {
   });
 });
 
-describe("buildFlatValueMap", () => {
-  it("returns empty for null/undefined", () => {
-    expect(buildFlatValueMap(null)).toEqual({});
-    expect(buildFlatValueMap(undefined)).toEqual({});
-  });
-
-  it("soft-flattens span_attributes prefixes — top-level wins", () => {
-    const detail = {
-      input: { value: "top" },
-      span_attributes: { input: { value: "nested" } },
-    };
-    const flat = buildFlatValueMap(detail);
-    // Top-level `input.value` wins because the stripped form already
-    // exists from the unstripped walk; nested wouldn't overwrite.
-    expect(flat["input.value"]).toBe("top");
-  });
-
-  it("exposes nested span_attributes paths under their stripped names", () => {
-    const detail = {
-      span_attributes: { gen_ai: { response: { id: "abc" } } },
-    };
-    const flat = buildFlatValueMap(detail);
-    expect(flat["gen_ai.response.id"]).toBe("abc");
-  });
-});
-
 describe("resolveMappingFromRow", () => {
-  it("returns variable->string for present fields, stringifies objects", () => {
-    const flat = { "input.value": "hello", payload: { x: 1 } };
-    expect(
-      resolveMappingFromRow(
-        { question: "input.value", body: "payload" },
-        flat,
-      ),
-    ).toEqual({ question: "hello", body: '{"x":1}' });
+  const spanDetail = {
+    span_attributes: { input: { value: "hello" }, cost: 2 },
+    name: "root-span",
+  };
+
+  it("resolves mapped variables via per-path walk (soft-flattened)", () => {
+    const out = resolveMappingFromRow(
+      { query: "input.value", label: "name" },
+      spanDetail,
+    );
+    expect(out).toEqual({ query: "hello", label: "root-span" });
   });
 
-  it("falls back to rowFields when the flat lookup misses", () => {
-    const rowFields = [{ key: "annotation_label", raw: "good" }];
-    expect(
-      resolveMappingFromRow({ q: "annotation_label" }, {}, rowFields),
-    ).toEqual({ q: "good" });
+  it("stringifies object values and skips unresolved/missing fields", () => {
+    const out = resolveMappingFromRow(
+      { blob: "input", gone: "does.not.exist", empty: "" },
+      spanDetail,
+    );
+    expect(out).toEqual({ blob: JSON.stringify({ value: "hello" }) });
   });
 
-  it("skips variables whose field is empty or whose value is undefined", () => {
-    expect(
-      resolveMappingFromRow({ a: "", b: "missing" }, { other: "x" }),
-    ).toEqual({});
+  it("falls back to rowFields for non-detail columns", () => {
+    const out = resolveMappingFromRow({ note: "annot_col" }, spanDetail, [
+      { key: "annot_col", raw: "from-row" },
+    ]);
+    expect(out).toEqual({ note: "from-row" });
+  });
+
+  it("omits a non-string mapping value instead of throwing on it", () => {
+    // Called out as a behaviour change: this used to throw out of the walker
+    // and unmount the page. The variable is now simply absent, and the panel
+    // labels it invalid so the owner can see which one to re-map.
+    const out = resolveMappingFromRow(
+      { bad: { value: "input.value" }, good: "input.value" },
+      spanDetail,
+    );
+    expect(out).toEqual({ good: "hello" });
+    expect("bad" in out).toBe(false);
   });
 });
 
@@ -180,14 +170,12 @@ describe("executeEvalForRow — single eval", () => {
     POST.mockResolvedValueOnce({
       data: { status: true, result: { score: 1, log_id: "log-1" } },
     });
-    const flatValueMap = { "input.value": "hi" };
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1", model: "turing_large" },
       rowType: "Span",
       currentRow: { span_id: "s1", trace_id: "t1" },
-      spanDetail: {},
+      spanDetail: { input: { value: "hi" } },
       mapping: { question: "input.value" },
-      flatValueMap,
     });
     expect(POST).toHaveBeenCalledWith("/model-hub/eval-playground/", {
       template_id: "tpl-1",
@@ -228,9 +216,13 @@ describe("executeEvalForRow — single eval", () => {
     });
   });
 
-  it("returns ok:false with errorMessage on non-status response", async () => {
+  it("does not trust an error payload carried by a successful response", async () => {
     POST.mockResolvedValueOnce({
-      data: { status: false, result: "boom" },
+      data: {
+        status: false,
+        result:
+          "Code: 159. DB::Exception: Timeout exceeded; SELECT secret FROM spans",
+      },
     });
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
@@ -239,10 +231,14 @@ describe("executeEvalForRow — single eval", () => {
       spanDetail: {},
       mapping: {},
     });
-    expect(result).toMatchObject({ ok: false, errorMessage: "boom" });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Evaluation failed. Please retry.",
+    });
+    expect(result.errorMessage).not.toContain("DB::Exception");
   });
 
-  it("catches axios throw and returns ok:false", async () => {
+  it("does not expose an untrusted thrown error message", async () => {
     POST.mockRejectedValueOnce({ message: "network down" });
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
@@ -251,7 +247,30 @@ describe("executeEvalForRow — single eval", () => {
       spanDetail: {},
       mapping: {},
     });
-    expect(result).toMatchObject({ ok: false, errorMessage: "network down" });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Failed to run evaluation. Please retry.",
+    });
+  });
+
+  it("preserves a concise validation error from a safe response status", async () => {
+    POST.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { detail: "Map every required input before testing." },
+      },
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Span",
+      currentRow: { span_id: "s1" },
+      spanDetail: {},
+      mapping: {},
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Map every required input before testing.",
+    });
   });
 });
 
@@ -278,7 +297,6 @@ describe("executeEvalForRow — composite", () => {
       currentRow: { span_id: "s1" },
       spanDetail,
       mapping: {},
-      flatValueMap: {},
     });
     expect(POST).toHaveBeenCalledWith(
       "/model-hub/eval-templates/tpl-c/composite/execute/",
@@ -322,7 +340,6 @@ describe("executeEvalForRow — composite", () => {
       currentRow: { trace_id: "t1" },
       spanDetail: {},
       mapping: {},
-      flatValueMap: {},
       compositeAdhocConfig,
     });
     expect(POST).toHaveBeenCalledWith(
@@ -354,7 +371,6 @@ describe("executeEvalForRow — composite", () => {
       currentRow: { span_id: "s1" },
       spanDetail: {},
       mapping: {},
-      flatValueMap: {},
     });
     expect(result.output).toBeNull();
   });

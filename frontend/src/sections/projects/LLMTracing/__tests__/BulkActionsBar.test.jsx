@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { fireEvent, render, screen } from "src/utils/test-utils";
 import BulkActionsBar from "../BulkActionsBar";
 
 describe("BulkActionsBar", () => {
@@ -28,6 +28,34 @@ describe("BulkActionsBar", () => {
     );
     expect(screen.getByText("All 700 matching filter")).toBeInTheDocument();
     expect(screen.queryByText("700 selected")).not.toBeInTheDocument();
+  });
+
+  it("labels lower-bound filter selections without claiming an exact total", () => {
+    render(
+      <BulkActionsBar
+        {...defaultProps}
+        selectedCount={26}
+        selectedCountIsLowerBound
+        allMatching
+      />,
+    );
+    expect(screen.getByText("All matching filter (≥26)")).toBeInTheDocument();
+    expect(
+      screen.queryByText("All 26 matching filter"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not expose single-row actions for a lower-bound count of one", async () => {
+    render(
+      <BulkActionsBar
+        {...defaultProps}
+        selectedCount={1}
+        selectedCountIsLowerBound
+      />,
+    );
+    fireEvent.click(screen.getByText("Actions"));
+    await screen.findByText("Move to dataset");
+    expect(screen.queryByText("Annotate")).not.toBeInTheDocument();
   });
 
   it("renders Actions button", () => {
@@ -82,5 +110,33 @@ describe("BulkActionsBar", () => {
     const menuItem = await screen.findByText("Move to dataset");
     menuItem.click();
     expect(onAction).toHaveBeenCalledWith("dataset", expect.any(Object));
+  });
+
+  it("keeps disabled actions visible without firing them", async () => {
+    const onAction = vi.fn();
+    render(
+      <BulkActionsBar
+        {...defaultProps}
+        onAction={onAction}
+        actions={[
+          {
+            id: "annotation-queue",
+            label: "Add to annotation queue",
+            icon: "mdi:clipboard-list-outline",
+            disabled: true,
+            disabledReason: "Selected calls are still in progress.",
+          },
+        ]}
+      />,
+    );
+
+    screen.getByText("Actions").click();
+    const menuItem = await screen.findByRole("menuitem", {
+      name: "Add to annotation queue",
+    });
+
+    expect(menuItem).toHaveAttribute("aria-disabled", "true");
+    menuItem.click();
+    expect(onAction).not.toHaveBeenCalled();
   });
 });

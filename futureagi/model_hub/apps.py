@@ -1,7 +1,178 @@
+import os
+
 import structlog
 from django.apps import AppConfig
+from django.db.models.signals import post_migrate
 
 logger = structlog.get_logger(__name__)
+
+STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
+    {
+        # Retired zero-I/O tombstones remain runnable so stale jobs receive
+        # their explicit unified-command replacement error.
+        "ch25_activate_attribute_catalog",
+        "ch25_backfill_attribute_catalog",
+        # Long-running OSS control plane. AppConfig initialization remains
+        # mutation-free; the command itself has an exact development-only
+        # acknowledgement and uses read-only source identities plus an
+        # isolated catalog writer.
+        "ch25_property_catalog_oss_supervisor",
+        "check",
+        "collectstatic",
+        "generate_swagger",
+        "grpcrunaioserver",
+        "runserver",
+        "start_temporal_worker",
+    }
+)
+
+HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
+HOSTED_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
+
+# Application processes are never schema/bootstrap runners. A one-shot operator
+# job may run one of these explicit management commands, but it does not enable
+# mutation hooks during AppConfig initialization.
+OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
+    {
+        "ch25_apply_schema",
+        "ch25_property_catalog_dev_rollout",
+        "ch25_remove_pg",
+        "backfill_score_tracer_project",
+        "createcachetable",
+        "drop_legacy_observation_span",
+        "migrate",
+        "register_temporal_schedules",
+        "seed_system_evals",
+    }
+)
+OPERATOR_STARTUP_MUTATION_MODE = "operator"
+OPERATOR_STARTUP_SERVICE_TYPE = "bootstrap"
+
+
+def startup_db_mutations_disabled() -> bool:
+    """Return whether implicit AppConfig database mutations are disabled.
+
+    Every Django initialization is mutation-free, including local development
+    and processes whose deployment environment is absent or incomplete.
+    Database bootstrap is an explicit one-shot management-command workflow,
+    never a side effect of importing Django in a web, worker, shell, or
+    diagnostic process.
+
+    ``NO_STARTUP_DB_MUTATIONS`` remains a validated compatibility input, but a
+    value of ``false`` can no longer re-enable the retired ``AppConfig.ready``
+    mutation hooks. Explicit operator commands are authorized independently.
+    """
+
+    value = os.getenv("NO_STARTUP_DB_MUTATIONS")
+    if value is not None and value not in {"true", "false"}:
+        raise RuntimeError("NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'")
+    return True
+
+
+def hosted_startup_environment() -> bool:
+    """Return whether this process belongs to a hosted deployment."""
+
+    return (
+        os.getenv("ENV_TYPE", "").strip().lower() in HOSTED_ENV_TYPES
+        or os.getenv("CLOUD_DEPLOYMENT", "").strip().upper() in HOSTED_DEPLOYMENTS
+    )
+
+
+def _management_command(argv: list[str]) -> str | None:
+    """Extract a Django management command from a process argv."""
+
+    if not argv:
+        return None
+
+    executable_path = os.path.normpath(argv[0]).replace("\\", "/")
+    executable = os.path.basename(executable_path)
+    path_parts = tuple(part for part in executable_path.split("/") if part)
+    is_django_module_main = path_parts[-2:] == ("django", "__main__.py")
+    if executable == "manage.py" and len(argv) >= 2:
+        return argv[1]
+    if executable in {"django-admin", "django-admin.py"} and len(argv) >= 2:
+        return argv[1]
+    if is_django_module_main and len(argv) >= 2:
+        # CPython rewrites ``python -m django`` to django/__main__.py before
+        # Django initializes the application registry.
+        return argv[1]
+    if (
+        executable.startswith("python")
+        and len(argv) >= 4
+        and argv[1:3] == ["-m", "django"]
+    ):
+        return argv[3]
+    return None
+
+
+def operator_startup_mutation_authorized(argv: list[str]) -> bool:
+    """Authorize one allowlisted command in a dedicated operator job.
+
+    The two explicit environment values keep ordinary backend/worker pods and
+    ad-hoc ``manage.py shell`` sessions out of the mutation path. The entrypoint
+    also enforces this contract before executing any bootstrap command.
+    """
+
+    mode = os.getenv("STARTUP_DB_MUTATION_MODE", "disabled")
+    if mode not in {"disabled", OPERATOR_STARTUP_MUTATION_MODE}:
+        raise RuntimeError(
+            "STARTUP_DB_MUTATION_MODE must be exactly 'disabled' or 'operator'"
+        )
+    return (
+        mode == OPERATOR_STARTUP_MUTATION_MODE
+        and os.getenv("SERVICE_TYPE") == OPERATOR_STARTUP_SERVICE_TYPE
+        and _management_command(argv) in OPERATOR_STARTUP_MUTATION_COMMANDS
+    )
+
+
+def explicit_management_mutation_authorized(argv: list[str]) -> bool:
+    """Authorize one allowlisted explicit command, never an AppConfig hook.
+
+    Hosted deployments require the dedicated operator/bootstrap pair. Local
+    and self-hosted entrypoints preserve their documented migration workflow
+    only when they explicitly export ``NO_STARTUP_DB_MUTATIONS=false``.
+    """
+
+    command = _management_command(argv)
+    if command not in OPERATOR_STARTUP_MUTATION_COMMANDS:
+        return False
+    if operator_startup_mutation_authorized(argv):
+        return True
+    return (
+        os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"
+        and not hosted_startup_environment()
+    )
+
+
+def guarded_management_command(argv: list[str]) -> str | None:
+    """Return a Django command forbidden during mutation-free startup."""
+
+    command = _management_command(argv)
+    if command is None or command in STARTUP_SAFE_MANAGEMENT_COMMANDS:
+        return None
+    return command
+
+
+def _seed_prompt_labels_after_migrate(sender, **kwargs):
+    """Auto-seed the global Production/Staging/Development prompt labels
+    after every migrate (TH-7261).
+
+    Nothing else ever creates these rows — the only other caller is an API
+    action the frontend never hits — so a fresh database shows "No labels
+    found" in the Add Tags modal. Mirrors the node-template seeding in
+    agent_playground.apps. Idempotent via get_or_create.
+    """
+    try:
+        from model_hub.models.prompt_label import PromptLabel
+
+        created = PromptLabel.create_default_system_labels()
+        if created:
+            logger.info(
+                "default_prompt_labels_seeded",
+                created=[label.name for label in created],
+            )
+    except Exception:
+        logger.exception("default_prompt_label_seed_failed")
 
 
 class ModelHubConfig(AppConfig):
@@ -9,255 +180,29 @@ class ModelHubConfig(AppConfig):
     name = "model_hub"
 
     def ready(self):
-        # Import signals to register handlers
-        # Avoid ClickHouse connections during migrations
+        # Import signal handlers, then enforce the mutation-free startup
+        # contract before any application process can serve work.
+        # Never mutate a database while the application registry initializes.
         import sys
 
         import model_hub.signals  # noqa: F401
 
-        if "migrate" in sys.argv or "makemigrations" in sys.argv:
-            return
-
-        # Seed system eval templates from YAML (idempotent)
-        try:
-            from model_hub.management.commands.seed_system_evals import seed_evals
-
-            seed_evals(verbose=False)
-        except Exception as e:
-            logger.warning(f"System eval seeding skipped: {e}")
-
-        # Existing initialization code - fail gracefully if ClickHouse unavailable
-        try:
-            self.check_and_create_clickhouse_tables()
-        except Exception as e:
-            # During tests or development, ClickHouse may not be available
-            logger.warning(f"ClickHouse initialization skipped: {e}")
-
-        # Ensure ClickHouse analytics schema (tables, MVs, dicts) exists
-        try:
-            self._ensure_analytics_schema()
-        except Exception as e:
-            logger.warning(f"ClickHouse analytics schema init skipped: {e}")
-
-    def _ensure_analytics_schema(self):
-        """Ensure all ClickHouse analytics tables, MVs, and dicts exist.
-        Idempotent — uses CREATE IF NOT EXISTS for everything."""
-        from tracer.services.clickhouse.client import get_clickhouse_client
-        from tracer.services.clickhouse.schema import (
-            POST_DDL_ALTERS,
-            get_all_schema_ddl,
-        )
-
-        ch = get_clickhouse_client()
-        for name, ddl in get_all_schema_ddl():
-            try:
-                ch.execute(ddl)
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    logger.warning(f"CH schema {name}: {e}")
-
-        # Ensure materialized columns on CDC tables that PeerDB may recreate
-        for alter in POST_DDL_ALTERS:
-            try:
-                ch.execute(alter)
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    logger.warning(f"CH post-DDL alter: {e}")
-
-        logger.info("ClickHouse analytics schema ensured")
-
-        # Warm CH page cache in background (prod only — skip in local dev)
-        try:
-            from ee.usage.deployment import DeploymentMode
-        except ImportError:
-            DeploymentMode = None
-
-        if DeploymentMode.is_cloud():
-            import threading
-
-            threading.Thread(
-                target=self._warm_ch_cache, args=(ch,), daemon=True
-            ).start()
-
-    @staticmethod
-    def _warm_ch_cache(ch):
-        """Pre-warm ClickHouse page cache by touching recent data.
-
-        Runs lightweight queries that load index + light columns into the
-        OS page cache.  Subsequent user queries hit warm cache (~300ms)
-        instead of cold disk (~5s).
-        """
-        warmup_queries = [
-            # Warm spans index + light columns for recent data
-            (
-                "SELECT project_id, count() FROM spans "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND start_time >= now() - INTERVAL 7 DAY "
-                "GROUP BY project_id",
-                "spans (7d)",
-            ),
-            # Warm tracer_trace for recent data
-            (
-                "SELECT project_id, count() FROM tracer_trace "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND created_at >= now() - INTERVAL 7 DAY "
-                "GROUP BY project_id",
-                "tracer_trace (7d)",
-            ),
-            # Warm usage_apicalllog for eval metrics
-            (
-                "SELECT organization_id, count() FROM usage_apicalllog "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND created_at >= now() - INTERVAL 7 DAY "
-                "GROUP BY organization_id",
-                "usage_apicalllog (7d)",
-            ),
-            # Warm span_metrics_hourly for dashboard
-            (
-                "SELECT count() FROM span_metrics_hourly "
-                "WHERE hour >= now() - INTERVAL 7 DAY",
-                "span_metrics_hourly (7d)",
-            ),
-        ]
-        for query, label in warmup_queries:
-            try:
-                ch.execute_read(query, timeout_ms=30000)
-                logger.info(f"CH cache warmed: {label}")
-            except Exception as e:
-                logger.warning(f"CH cache warm failed for {label}: {e}")
-
-    def check_and_create_clickhouse_tables(self):
-        from agentic_eval.core.embeddings.embedding_manager import FEEDBACK_TABLE_NAME
-
-        # vector dbs
-        vector_dbs = [FEEDBACK_TABLE_NAME]
-
-        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
-
-        db_client = ClickHouseVectorDB()
-
-        for vector_db in vector_dbs:
-            db_client.create_table(vector_db)
-
-        from tfc.utils.clickhouse import ClickHouseClientSingleton
-
-        ch_instance = ClickHouseClientSingleton()
-
-        # Example: Check if table exists
-        result = ch_instance.execute("SHOW TABLES FROM default")
-        tables = [row[0] for row in result]
-
-        if "events" in tables:
-            # Check if original_uuid column exists
-            columns = ch_instance.execute("DESCRIBE TABLE events")
-            column_names = [col[0] for col in columns]
-
-            if "original_uuid" not in column_names:
-                # Add the original_uuid column
-                ch_instance.execute(
-                    """
-                    ALTER TABLE events
-                    ADD COLUMN IF NOT EXISTS original_uuid UUID DEFAULT UUID
-                    """
+        startup_db_mutations_disabled()
+        if command := guarded_management_command(sys.argv):
+            if not explicit_management_mutation_authorized(sys.argv):
+                raise RuntimeError(
+                    f"{command} is disabled during mutation-free startup; "
+                    "use the explicit local migration mode or a one-shot "
+                    "SERVICE_TYPE=bootstrap process with "
+                    "STARTUP_DB_MUTATION_MODE=operator"
                 )
-
-        if "events" not in tables:
-            # Create the table with original_uuid included
-            ch_instance.execute(
-                """
-                CREATE TABLE IF NOT EXISTS events (
-                    UUID UUID,
-                    original_uuid UUID DEFAULT UUID,
-                    EventDate Date,
-                    EventDateTime DateTime,
-                    EventName String,
-                    EventType String,
-                    AIModel String DEFAULT '',
-                    OrgID String,
-                    PredictionID String DEFAULT '',
-                    ModelVersion String DEFAULT '',
-                    BatchID String DEFAULT '',
-                    Environment UInt8 DEFAULT 0,
-                    Properties Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    Features Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    ActualLabel Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    PredictionLabel Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    EvalResults Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    ShapValues Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    Tags Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    Embedding Array(Float32) DEFAULT [],
-                    deleted UInt8 DEFAULT 0
-
-                ) ENGINE = MergeTree()
-                PARTITION BY toYYYYMM(EventDate)
-                ORDER BY (EventDate, EventName, OrgID, UUID);
-            """
-            )
-
-        if "llm_logs" not in tables:
-            ch_instance.execute(
-                """
-            CREATE TABLE IF NOT EXISTS llm_logs
-            (
-                `EventDateTime` DateTime64(9) CODEC(Delta(8), ZSTD(1)),
-                `EventDate` Date,
-                `TraceId` String CODEC(ZSTD(1)),
-                `SpanId` String CODEC(ZSTD(1)),
-                `SeverityText` LowCardinality(String) CODEC(ZSTD(1)),
-                `SeverityNumber` Int32 CODEC(ZSTD(1)),
-                `ServiceName` LowCardinality(String) CODEC(ZSTD(1)),
-                `LLMModelName` LowCardinality(String) CODEC(ZSTD(1)), -- Name of the LLM model used
-                `UserId` String CODEC(ZSTD(1)), -- User identifier
-                `SessionId` String CODEC(ZSTD(1)), -- Session identifier
-                `RequestBody` String CODEC(ZSTD(1)), -- Request sent to the LLM
-                `ResponseBody` String CODEC(ZSTD(1)), -- Response received from the LLM
-                `RequestTokens` Int32 CODEC(ZSTD(1)), -- Number of tokens in the request
-                `ResponseTokens` Int32 CODEC(ZSTD(1)), -- Number of tokens in the response
-                `ResponseTime` Float32 CODEC(ZSTD(1)), -- Time taken to get the response
-                `LogAttributes` Map(LowCardinality(String), String) CODEC(ZSTD(1)), -- Additional log attributes
-                `ResourceAttributes` Map(LowCardinality(String), String) CODEC(ZSTD(1)),
-                INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_llm_model_name LLMModelName TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_user_id UserId TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_session_id SessionId TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_request_body RequestBody TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1,
-                INDEX idx_response_body ResponseBody TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1
-            )
-            ENGINE = MergeTree
-            PARTITION BY EventDate
-            ORDER BY (LLMModelName, EventDateTime)
-            SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
-
-            """
-            )
+            if command == "migrate":
+                post_migrate.connect(
+                    _seed_prompt_labels_after_migrate,
+                    sender=self,
+                    dispatch_uid="model_hub_seed_default_prompt_labels",
+                )
+        logger.info("Mutation-free startup; no implicit seed or schema setup")
 
 
 ##################################################

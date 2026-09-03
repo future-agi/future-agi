@@ -1,5 +1,12 @@
 import { Box, Drawer, Grid, Skeleton, Stack, Typography } from "@mui/material";
-import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTestDetailSideDrawerStoreShallow } from "../states";
 import { ShowComponent } from "../../../components/show";
 import PropTypes from "prop-types";
@@ -13,8 +20,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { transformMetricDetails } from "src/sections/agents/CallLogs/utils";
 import { enqueueSnackbar } from "notistack";
-import { deepEqual, objectCamelToSnake } from "src/utils/utils";
+import { deepEqual } from "src/utils/utils";
 import { useUrlState } from "src/routes/hooks/use-url-state";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import SkeltonForTestDeatilDrawer from "../Skeletons/SkeltonForTestDeatilDrawer";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { HeaderSkeleton } from "./BasLineCompare/Skeletons";
@@ -28,7 +36,16 @@ import {
   useVoiceCallDetail,
 } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import ChatDetailDrawerV2 from "src/components/ChatDetailDrawerV2";
 import { buildVoiceCallAnnotationSources } from "src/components/voiceAnnotationSources";
+import {
+  canNavigateToNextVoiceCallDetail,
+  createVoiceCallDetailCursorNavigator,
+  createVoiceCallDetailRequestGuard,
+  getVoiceCallRowIdentity,
+  getLegacyVoiceCallNavigationTotal,
+} from "./voiceCallDetailCursorNavigation";
+import { LIST_CURSOR_CONTINUATION_NOTICE } from "src/sections/projects/LLMTracing/listCursorPagination";
 
 const BaselineVsReplayHeader = lazy(() => import("./BasLineCompare/Header"));
 
@@ -51,6 +68,18 @@ const TestDetailSideDrawerChild = ({
   const [isFetching, setIsFetching] = useState(null);
   const [annotationSidebarOpen, setAnnotationSidebarOpen] = useState(false);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
+  const projectVoiceNavigatorRef = useRef(null);
+  const projectVoiceNavigatorSignatureRef = useRef(null);
+  const navigationRequestGuardRef = useRef(null);
+  const navigationContextSignatureRef = useRef(null);
+  if (!navigationRequestGuardRef.current) {
+    navigationRequestGuardRef.current = createVoiceCallDetailRequestGuard();
+  }
+  useEffect(() => {
+    const requestGuard = navigationRequestGuardRef.current;
+    requestGuard.activate();
+    return () => requestGuard.dispose();
+  }, []);
   const queryClient = useQueryClient();
   const {
     testId: urlTestId,
@@ -151,6 +180,7 @@ const TestDetailSideDrawerChild = ({
 
   const {
     totalCount,
+    totalCountIsLowerBound,
     pageMap,
     currentPage: _currentPage,
     standardPageLimit,
@@ -158,7 +188,12 @@ const TestDetailSideDrawerChild = ({
     const queryCache = queryClient.getQueryCache();
     const allQueries = queryCache.getAll();
 
-    const compareLength = drawerQueryKey?.length;
+    // Project call-list query keys end in `[visiblePage, transportRevision]`.
+    // The drawer receives the revision-less key, so compare only the stable
+    // query-shaping prefix and recover all already-cached visible pages.
+    const queryPrefix =
+      urlModule === "project" ? drawerQueryKey?.slice(0, 5) : drawerQueryKey;
+    const compareLength = queryPrefix?.length;
 
     const matchingQueries = allQueries.filter((query) => {
       if (
@@ -168,23 +203,48 @@ const TestDetailSideDrawerChild = ({
         return false;
 
       for (let i = 0; i < compareLength; i++) {
-        if (!deepEqual(query.queryKey[i], drawerQueryKey[i])) {
+        if (!deepEqual(query.queryKey[i], queryPrefix[i])) {
           return false;
         }
       }
 
       return true;
     });
-    const lastqueryLength = matchingQueries?.length - 1;
-    const totalCount =
-      matchingQueries?.[lastqueryLength]?.state?.data?.data?.count;
+    const latestQuery = matchingQueries.reduce(
+      (latest, query) =>
+        !latest ||
+        (query.state?.dataUpdatedAt || 0) > (latest.state?.dataUpdatedAt || 0)
+          ? query
+          : latest,
+      null,
+    );
+    const latestPayload =
+      latestQuery?.state?.data?.data?.result ||
+      latestQuery?.state?.data?.data ||
+      latestQuery?.state?.data?.result ||
+      latestQuery?.state?.data;
+    const totalCount = latestPayload?.count;
+    const totalCountIsLowerBound = latestPayload?.count_is_lower_bound === true;
 
     const pageMap = new Map();
+    const pageUpdatedAt = new Map();
     matchingQueries.forEach((query) => {
-      const pageNum = query.queryKey[query.queryKey.length - 1];
-      const results = query.state.data?.data?.results || [];
+      const pageNum =
+        urlModule === "project"
+          ? query.queryKey[5]
+          : query.queryKey[query.queryKey.length - 1];
+      const payload =
+        query.state.data?.data?.result ||
+        query.state.data?.data ||
+        query.state.data?.result ||
+        query.state.data;
+      const results = payload?.results || [];
       if (results.length > 0) {
-        pageMap.set(pageNum, results);
+        const updatedAt = query.state.dataUpdatedAt || 0;
+        if ((pageUpdatedAt.get(pageNum) || -1) <= updatedAt) {
+          pageMap.set(pageNum, results);
+          pageUpdatedAt.set(pageNum, updatedAt);
+        }
       }
     });
 
@@ -200,8 +260,40 @@ const TestDetailSideDrawerChild = ({
       updatedRowIndex !== undefined
         ? Math.floor(updatedRowIndex / standardPageLimit) + 1
         : drawerQueryKey[drawerQueryKey.length - 1] || 1;
-    return { totalCount, pageMap, currentPage, standardPageLimit };
+    return {
+      totalCount,
+      totalCountIsLowerBound,
+      pageMap,
+      currentPage,
+      standardPageLimit,
+    };
   }, [queryClient, drawerQueryKey, updatedRowIndex, urlModule, urlOrigin]);
+
+  const navigationContextSignature = JSON.stringify({
+    drawerQueryKey,
+    rowIdentity: getVoiceCallRowIdentity(data),
+    rowIndex: updatedRowIndex,
+    urlModule,
+    urlOrigin,
+  });
+  if (navigationContextSignatureRef.current !== navigationContextSignature) {
+    navigationContextSignatureRef.current = navigationContextSignature;
+    navigationRequestGuardRef.current.invalidate();
+  }
+  useEffect(() => {
+    setIsFetching(null);
+  }, [navigationContextSignature]);
+
+  const projectVoiceNavigatorParams = drawerQueryKey[4] || {};
+  const projectVoiceNavigatorSignature = JSON.stringify({
+    pageSize: standardPageLimit,
+    params: projectVoiceNavigatorParams,
+  });
+
+  const closeDetailDrawer = () => {
+    navigationRequestGuardRef.current.invalidate();
+    onClose();
+  };
 
   const getPageNumberForIndex = (index) => {
     const pageSize = standardPageLimit;
@@ -218,21 +310,25 @@ const TestDetailSideDrawerChild = ({
 
   const fetchPage = async (pageNum) => {
     const id = drawerQueryKey[1];
-    const paramsforProject = drawerQueryKey[4];
+
+    // Project tracing reads are cursor-only and go through
+    // `fetchRowAtIndex`. Keep this numbered transport isolated to the legacy
+    // simulation/agent-definition APIs so a future call site cannot
+    // accidentally reintroduce a deep-page list_voice_calls request.
+    if (urlModule === "project") {
+      throw new Error("Project call navigation requires an exact cursor");
+    }
 
     const simulateFilters =
       urlModule === "simulate"
         ? JSON.stringify(
-            Array.isArray(drawerQueryKey[3])
-              ? drawerQueryKey[3].map(objectCamelToSnake)
-              : [],
+            stripUiFilterKeys(
+              Array.isArray(drawerQueryKey[3]) ? drawerQueryKey[3] : [],
+            ),
           )
         : JSON.stringify([]);
 
-    let endpoint =
-      urlModule === "simulate"
-        ? endpoints.testExecutions.list(id)
-        : endpoints.project.getCallLogs;
+    let endpoint = endpoints.testExecutions.list(id);
 
     const agentVersion = drawerQueryKey[3] ?? "";
     const agentId = drawerQueryKey[2] ?? "";
@@ -253,14 +349,11 @@ const TestDetailSideDrawerChild = ({
             ...(urlModule === "simulate" && urlOrigin !== "agent-definition"
               ? { limit: standardPageLimit || 30 }
               : { page_size: standardPageLimit || 30 }),
-            ...((urlModule === "project" || urlOrigin === "agent-definition") &&
-              {}),
             ...(urlModule === "simulate" &&
               urlOrigin !== "agent-definition" && {
                 filters: simulateFilters,
                 search: simulateSearch,
               }),
-            ...(urlModule === "project" && { ...paramsforProject }),
           },
         }),
       staleTime: Infinity,
@@ -269,6 +362,43 @@ const TestDetailSideDrawerChild = ({
     };
 
     return await queryClient.fetchQuery(query);
+  };
+
+  const getProjectVoiceNavigator = () => {
+    if (
+      projectVoiceNavigatorSignatureRef.current !==
+      projectVoiceNavigatorSignature
+    ) {
+      projectVoiceNavigatorSignatureRef.current =
+        projectVoiceNavigatorSignature;
+      projectVoiceNavigatorRef.current = createVoiceCallDetailCursorNavigator({
+        baseParams: projectVoiceNavigatorParams,
+        pageSize: standardPageLimit,
+        request: (requestParams, requestOptions) =>
+          axios
+            .get(endpoints.project.getCallLogs, {
+              params: requestParams,
+              ...(requestOptions || {}),
+            })
+            .then((response) => response.data),
+      });
+    }
+    return projectVoiceNavigatorRef.current;
+  };
+
+  const fetchRowAtIndex = async (index) => {
+    if (urlModule === "project") {
+      return getProjectVoiceNavigator().loadRow(index);
+    }
+
+    const pageNum = getPageNumberForIndex(index);
+    const response = await fetchPage(pageNum);
+    const results = response?.data?.results ?? [];
+    return {
+      row: results[index % standardPageLimit] ?? null,
+      pending: false,
+      terminal: results.length < standardPageLimit,
+    };
   };
 
   useEffect(() => {
@@ -297,37 +427,47 @@ const TestDetailSideDrawerChild = ({
       }
     } else {
       const fetchInitialData = async () => {
+        const requestGeneration = navigationRequestGuardRef.current.begin();
         try {
           setIsFetching("initial");
-          const response = await fetchPage(pageNum);
-          const results = response?.data?.results ?? [];
-
-          if (results.length > 0) {
-            const updatedPageMap = new Map(pageMap);
-            updatedPageMap.set(pageNum, results);
-
-            const rowData = getRowFromPageMap(parsedRowIndex, updatedPageMap);
-
-            if (rowData) {
-              let transformedData = rowData;
-              if (urlOrigin === "agent-definition") {
-                const { metricDetails, evalMetrics } =
-                  transformMetricDetails(rowData);
-                transformedData = { ...metricDetails, evalMetrics };
-              }
-
-              setIsFetching(null);
-              setTestDetailDrawerOpen({
-                ...transformedData,
-              });
-              return;
+          const exactResult = await fetchRowAtIndex(parsedRowIndex);
+          if (!navigationRequestGuardRef.current.isCurrent(requestGeneration)) {
+            return;
+          }
+          if (exactResult.pending) {
+            enqueueSnackbar(LIST_CURSOR_CONTINUATION_NOTICE, {
+              variant: "info",
+            });
+            return;
+          }
+          const rowData = exactResult.row;
+          if (rowData) {
+            let transformedData = rowData;
+            if (urlOrigin === "agent-definition") {
+              const { metricDetails, evalMetrics } =
+                transformMetricDetails(rowData);
+              transformedData = { ...metricDetails, evalMetrics };
             }
+
+            setIsFetching(null);
+            setTestDetailDrawerOpen({
+              ...transformedData,
+            });
+            return;
           }
         } catch (error) {
-          enqueueSnackbar("Failed to load resource", { variant: "error" });
-          onClose();
+          if (navigationRequestGuardRef.current.isCurrent(requestGeneration)) {
+            enqueueSnackbar(
+              "Call details are temporarily unavailable. Retry.",
+              {
+                variant: "info",
+              },
+            );
+          }
         } finally {
-          setIsFetching(null);
+          if (navigationRequestGuardRef.current.isCurrent(requestGeneration)) {
+            setIsFetching(null);
+          }
         }
       };
 
@@ -336,6 +476,7 @@ const TestDetailSideDrawerChild = ({
   }, []);
 
   const navigateRecord = async (direction) => {
+    let requestGeneration = null;
     try {
       const currentIndex = updatedRowIndex ?? 0;
       const newIndex =
@@ -349,24 +490,43 @@ const TestDetailSideDrawerChild = ({
         return;
       }
 
-      if (totalCount && newIndex >= totalCount) {
+      if (
+        isNext &&
+        !canNavigateToNextVoiceCallDetail({
+          rowIndex: currentIndex,
+          totalCount: navigationTotalCount,
+          totalCountIsLowerBound: navigationTotalCountIsLowerBound,
+        })
+      ) {
         enqueueSnackbar("You're already viewing the last record", {
           variant: "info",
         });
         return;
       }
 
+      requestGeneration = navigationRequestGuardRef.current.begin();
+
       // 1. Try cache first (instant)
       let rowData = getRowFromPageMap(newIndex, pageMap);
 
       // 2. If cache miss, fetch the page containing the target row
       if (!rowData) {
-        const targetPage = getPageNumberForIndex(newIndex);
         setIsFetching(direction);
-        const response = await fetchPage(targetPage);
-        const results = response?.data?.results ?? [];
-        const indexInPage = newIndex % standardPageLimit;
-        rowData = results[indexInPage];
+        const exactResult = await fetchRowAtIndex(newIndex);
+        if (!navigationRequestGuardRef.current.isCurrent(requestGeneration)) {
+          return;
+        }
+        if (exactResult.pending) {
+          enqueueSnackbar(LIST_CURSOR_CONTINUATION_NOTICE, {
+            variant: "info",
+          });
+          return;
+        }
+        rowData = exactResult.row;
+      }
+
+      if (!navigationRequestGuardRef.current.isCurrent(requestGeneration)) {
+        return;
       }
 
       if (!rowData) {
@@ -389,12 +549,22 @@ const TestDetailSideDrawerChild = ({
       setTestDetailDrawerOpen({
         ...rowData,
       });
-    } catch (err) {
-      enqueueSnackbar(err?.message || "Failed to navigate", {
-        variant: "error",
-      });
+    } catch (_error) {
+      if (
+        requestGeneration !== null &&
+        navigationRequestGuardRef.current.isCurrent(requestGeneration)
+      ) {
+        enqueueSnackbar("Call details are temporarily unavailable. Retry.", {
+          variant: "info",
+        });
+      }
     } finally {
-      setIsFetching(null);
+      if (
+        requestGeneration !== null &&
+        navigationRequestGuardRef.current.isCurrent(requestGeneration)
+      ) {
+        setIsFetching(null);
+      }
     }
   };
 
@@ -442,6 +612,27 @@ const TestDetailSideDrawerChild = ({
       }),
     [traceId, rootObsSpanId, urlModule, data?.id],
   );
+  const hasCurrentTerminalNavigator =
+    urlModule === "project" &&
+    projectVoiceNavigatorSignatureRef.current ===
+      projectVoiceNavigatorSignature &&
+    projectVoiceNavigatorRef.current?.isTerminal() === true;
+  const cursorTerminalTotal = hasCurrentTerminalNavigator
+    ? projectVoiceNavigatorRef.current.loadedRowCount()
+    : null;
+  const navigationTotalCount = cursorTerminalTotal ?? totalCount;
+  const navigationTotalCountIsLowerBound =
+    cursorTerminalTotal === null && totalCountIsLowerBound === true;
+  const hasNextRecord = canNavigateToNextVoiceCallDetail({
+    rowIndex: updatedRowIndex,
+    totalCount: navigationTotalCount,
+    totalCountIsLowerBound: navigationTotalCountIsLowerBound,
+  });
+  const legacyNavigationTotalCount = getLegacyVoiceCallNavigationTotal({
+    rowIndex: updatedRowIndex,
+    totalCount: navigationTotalCount,
+    totalCountIsLowerBound: navigationTotalCountIsLowerBound,
+  });
 
   if (!data || isFetching === "initial") {
     return null;
@@ -458,11 +649,11 @@ const TestDetailSideDrawerChild = ({
       >
         <VoiceDetailDrawerV2
           data={mergedData}
-          onClose={onClose}
+          onClose={closeDetailDrawer}
           onPrev={() => navigateRecord("prev")}
           onNext={() => navigateRecord("next")}
           hasPrev={(updatedRowIndex ?? 0) > 0}
-          hasNext={totalCount ? (updatedRowIndex ?? 0) < totalCount - 1 : true}
+          hasNext={hasNextRecord}
           isFetching={isFetching}
           onAnnotate={() => setAnnotationSidebarOpen(true)}
           onCompareBaseline={
@@ -473,8 +664,41 @@ const TestDetailSideDrawerChild = ({
         />
       </ShowComponent>
 
+      {/* Chat simulate rows render in the revamped ChatDetailDrawerV2 —
+          including the Compare with baseline flow, which lives inside the
+          drawer (body swaps; chrome stays). The drawer reads `compareReplay`
+          and toggles its content between the two-panel chat layout and the
+          ChatCompareView, with `onExitCompare` for the back-arrow affordance.
+          The legacy fallback branch's condition still excludes chat sims so
+          we don't render two drawers. */}
       <ShowComponent
-        condition={isFetching !== "initial" && !(isVoiceCall && !compareReplay)}
+        condition={
+          isFetching !== "initial" && urlModule === "simulate" && isChatSim
+        }
+      >
+        <ChatDetailDrawerV2
+          data={mergedData}
+          onClose={closeDetailDrawer}
+          onPrev={() => navigateRecord("prev")}
+          onNext={() => navigateRecord("next")}
+          hasPrev={(updatedRowIndex ?? 0) > 0}
+          hasNext={hasNextRecord}
+          isFetching={isFetching}
+          onAnnotate={() => setAnnotationSidebarOpen(true)}
+          onCompareBaseline={setCompareReplay}
+          compareReplay={compareReplay}
+          onExitCompare={() => setCompareReplay(false)}
+          scenarioId={scenarioId}
+          isLoading={isVoiceDetailLoading}
+        />
+      </ShowComponent>
+
+      <ShowComponent
+        condition={
+          isFetching !== "initial" &&
+          !(isVoiceCall && !compareReplay) &&
+          !(urlModule === "simulate" && isChatSim)
+        }
       >
         <Box
           sx={{
@@ -497,14 +721,14 @@ const TestDetailSideDrawerChild = ({
             <CustomCallLogHeader
               type={data?.call_type}
               module={urlModule}
-              onClose={onClose}
+              onClose={closeDetailDrawer}
               timestamp={data?.timestamp}
               duration={data?.duration_seconds}
               status={data?.status}
               phoneNumber={data?.phone_number}
               endedReason={data?.ended_reason}
               overAllScore={data?.overall_score}
-              totalCount={totalCount}
+              totalCount={legacyNavigationTotalCount}
               rowIndex={updatedRowIndex}
               isFetching={isFetching}
               onPrevClick={() => navigateRecord("prev")}
@@ -518,7 +742,7 @@ const TestDetailSideDrawerChild = ({
               rowIndex={updatedRowIndex}
               isFetching={isFetching}
               type={data?.call_type}
-              onClose={onClose}
+              onClose={closeDetailDrawer}
               timestamp={data?.timestamp}
               duration={data?.duration}
               status={data?.status}
@@ -538,7 +762,7 @@ const TestDetailSideDrawerChild = ({
           <ShowComponent condition={urlModule === "simulate" && compareReplay}>
             <Suspense fallback={<HeaderSkeleton />}>
               <BaselineVsReplayHeader
-                onClose={onClose}
+                onClose={closeDetailDrawer}
                 setCompareReplay={setCompareReplay}
                 simulationCallType={data?.simulation_call_type}
               />

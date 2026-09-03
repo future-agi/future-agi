@@ -15,22 +15,177 @@ Three modes:
   - select_fields: returns just the relevant field ids for the query.
     Used as step 1 of frontend-orchestrated multi-step flows.
   - smart: agentic. Caller passes schema + project_id + source. Backend
-    runs a Haiku tool-use loop where the LLM autonomously calls
+    runs a Gemini tool-use loop where the LLM autonomously calls
     `get_field_values(field_id)` for the fields it needs to ground its
     answer, then submits the final filter via `submit_filter`. One HTTP
     round trip — LLM does the orchestration. Used by the trace filter.
 """
 
 import json
-import traceback
+from contextlib import ExitStack, contextmanager
 
 import structlog
+from django.conf import settings
+from django.db import connection, transaction
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
+from model_hub.serializers.ai_filter import (
+    AIFilterRequestSerializer,
+    AIFilterResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiTextErrorResponseSerializer,
+    422: ApiTextErrorResponseSerializer,
+    503: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
+}
+
+SMART_FILTER_REQUEST_WALL_MS = settings.SMART_FILTER_REQUEST_WALL_MS
+SMART_FILTER_VALUE_READ_WALL_MS = settings.SMART_FILTER_VALUE_READ_WALL_MS
+SMART_FILTER_VALUE_LIMIT = settings.SMART_FILTER_VALUE_LIMIT
+SMART_FILTER_SEARCH_MAX_BYTES = settings.SMART_FILTER_SEARCH_MAX_BYTES
+SMART_FILTER_PROJECT_SCOPE_LIMIT = settings.SMART_FILTER_PROJECT_SCOPE_LIMIT
+
+
+class SmartFilterGroundingError(Exception):
+    """Sanitized exact-grounding refusal returned at the HTTP boundary."""
+
+    def __init__(self, *, status_code: int, code: str, public_message: str):
+        super().__init__(public_message)
+        self.status_code = status_code
+        self.code = code
+        self.public_message = public_message
+
+
+class AIFilterUnavailableError(Exception):
+    """Sanitized request-wall or external-completion failure."""
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "ai_filter_unavailable"
+    public_message = (
+        "AI filtering is temporarily unavailable. Retry or add the filter manually."
+    )
+
+
+def _ai_filter_unavailable() -> AIFilterUnavailableError:
+    return AIFilterUnavailableError(AIFilterUnavailableError.public_message)
+
+
+def _remaining_request_ms(deadline) -> int:
+    """Return the one request-owned wall remaining, or fail typed/closed."""
+
+    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+    try:
+        return deadline.remaining_ms(SMART_FILTER_REQUEST_WALL_MS)
+    except ReadDeadlineExceeded as exc:
+        raise _ai_filter_unavailable() from exc
+
+
+def _execute_ai_filter_query_with_deadline(
+    deadline, execute, sql, params, many, context
+):
+    """Shrink every PostgreSQL statement to the shared HTTP request wall."""
+
+    remaining_ms = _remaining_request_ms(deadline)
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(remaining_ms),),
+    )
+    result = execute(sql, params, many, context)
+    _remaining_request_ms(deadline)
+    return result
+
+
+@contextmanager
+def _bounded_ai_filter_postgres(deadline):
+    """Bound smart-mode authorization reads without spanning the LLM call."""
+
+    if connection.vendor != "postgresql":
+        yield
+        _remaining_request_ms(deadline)
+        return
+
+    transaction_started = False
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        nonlocal transaction_started
+        if not connection.in_atomic_block and not transaction_started:
+            stack.enter_context(transaction.atomic())
+            transaction_started = True
+        return _execute_ai_filter_query_with_deadline(
+            deadline, execute, sql, params, many, context
+        )
+
+    # Keep connection acquisition lazy: mocked and validation-only paths do not
+    # open PostgreSQL, while the first real ORM statement starts the SET LOCAL
+    # transaction before the application query executes.
+    with ExitStack() as stack:
+        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
+        yield
+        _remaining_request_ms(deadline)
+
+
+def _bounded_completion_content(llm, messages, *, deadline) -> str:
+    """Run gateway/litellm completion inside the caller's single wall.
+
+    The existing bounded tool-completion transport owns gateway retries and
+    litellm fallback under ``timeout_ms``.  Supplying no tools gives the
+    build/select modes the same deadline behavior without entering the legacy
+    unbounded completion/final-fallback path.
+    """
+
+    try:
+        response = llm._get_completion_with_tools(
+            messages,
+            [],
+            timeout_ms=_remaining_request_ms(deadline),
+        )
+        _remaining_request_ms(deadline)
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            raise ValueError("empty completion")
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            raise ValueError("completion content is unavailable")
+        return content.strip()
+    except AIFilterUnavailableError:
+        raise
+    except Exception as exc:
+        raise _ai_filter_unavailable() from exc
+
+
+def _grounding_too_broad() -> SmartFilterGroundingError:
+    return SmartFilterGroundingError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code="ai_filter_grounding_too_broad",
+        public_message=(
+            "AI value grounding needs a more specific value. Refine the query "
+            "and retry."
+        ),
+    )
+
+
+def _grounding_unavailable() -> SmartFilterGroundingError:
+    return SmartFilterGroundingError(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="ai_filter_grounding_unavailable",
+        public_message=(
+            "AI value grounding is temporarily unavailable. Retry or add the "
+            "filter manually."
+        ),
+    )
+
 
 SYSTEM_PROMPT = """You are a filter assistant. Given a user's natural language query and a schema of available filter fields, return a JSON array of filter conditions.
 
@@ -106,10 +261,10 @@ SMART_AGENT_PROMPT = """You are a filter-building assistant for an LLM observabi
 
 You will be given a user's natural language query and a list of filter fields available for the current project. Your job is to translate the query into a structured filter that the application can apply.
 
-Each field in the schema may already have its real values inlined as a `v` array — in that case, pick straight from that list, do NOT call any tool. Only when a field is marked `v_searchable: true` (high-cardinality) do you need to fetch values, and you must pass a `search_query` to fuzzy-rank the values.
+Each field in the schema may already have its complete configured values inlined as a `v` array — in that case, pick straight from that list and do NOT call any tool. A string field marked `v_searchable: true` requires exact server grounding before you may use it. Call the value tool with a specific `search_query`; never invent a value or fall back to the user's literal text for such a field.
 
 You have two tools:
-1. get_field_values(field_id, search_query?) — fetches real values for a field. SKIP this entirely for fields whose `v` is already inlined. For fields with `v_searchable: true`, you MUST pass a search_query — the backend will rank values by exact > prefix > substring > token overlap > fuzzy n-gram and return the top 20 matches. Example: get_field_values("model", search_query="gpt-4") on a project with 200 model strings will return only the gpt-4 family.
+1. get_field_values(field_id, search_query) — performs an exact bounded search of real values for a field. SKIP this entirely for fields whose `v` is already inlined. For fields with `v_searchable: true`, you MUST pass a specific search_query. The request fails rather than returning sampled or incomplete values. The backend ranks the complete matching result by exact > prefix > substring > token overlap > fuzzy n-gram and returns the top matches. Example: get_field_values("model", search_query="gpt-4") returns exact stored values from the gpt-4 family.
 2. submit_filter(filters) — your final answer. `filters` is a JSON array of filter conditions. Each condition has `field`, `operator`, and `value`. The operator must come from the type-appropriate operator list (see the legend above the field schema). For string fields, you may use any of: is, is_not, contains, not_contains.
 
 VALUE-GROUNDING RULES (most important):
@@ -132,7 +287,7 @@ d. **Substring fallback.** If no exact value matches but the user clearly named 
 
 e. **Partial-result rule.** If you can ground SOME but not ALL fields the user mentioned, STILL return the filters for the fields you grounded successfully. Never throw away the whole answer because one field couldn't be matched. An incomplete filter is better than no filter.
 
-f. **Empty-field fallback.** If a field is marked `v_empty: true`, use the user's literal value with operator `is` (or `contains` for partial matches). The user's intent is more important than whether the result set will be empty.
+f. **No literal fallback for searchable fields.** If exact grounding returns no values, omit that condition. Never substitute the user's literal phrase for a `v_searchable` field. A broad, incomplete, or unavailable grounding read is rejected by the server instead of being shown to you as an empty or sampled result.
 
 For numeric/date fields:
 - Don't call get_field_values — those are continuous values.
@@ -151,103 +306,124 @@ When to give up:
 # Smart agent helpers
 # ---------------------------------------------------------------------------
 
-# CH column expressions for the system metric → spans table mapping.
-# Mirrors tracer.views.dashboard.DashboardViewSet.filter_values to keep
-# the smart agent self-contained without coupling to that viewset.
-_TRACE_SYSTEM_COL_MAP = {
-    "project": "toString(project_id)",
-    "model": "model",
-    "status": "status",
-    "provider": "provider",
-    "observation_type": "observation_type",
-    "span_kind": "observation_type",
-    "service_name": "name",
-    "session": "trace_session_id",
-    "user": "toString(end_user_id)",
-    "tag": "arrayJoin(trace_tags)",
-    "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
-    "prompt_version": "dictGet('prompt_dict', 'template_version', prompt_version_id)",
-    "prompt_label": "dictGet('prompt_label_dict', 'name', prompt_label_id)",
-}
+
+def _normalize_grounding_search(search_query):
+    value = str(search_query or "").strip()
+    if not value or len(value.encode("utf-8")) > SMART_FILTER_SEARCH_MAX_BYTES:
+        raise _grounding_too_broad()
+    return value
 
 
-def _fetch_trace_field_values(project_ids, metric_name, metric_type):
-    """Distinct values for a field in the spans table.
+def _fetch_trace_field_values(
+    project_ids,
+    metric_name,
+    metric_type,
+    *,
+    search_query,
+    deadline=None,
+):
+    """Return an exact query-scoped value vocabulary from direct-write CH25.
 
-    Returns a list of strings. Empty on miss (unknown field, query failure,
-    or no rows). Capped at 100 to keep the LLM context small.
+    A finite result is usable only when the underlying selector proves the
+    entire searched 12-month window complete. A cap, timeout, or replay gap is
+    a typed refusal; it is never converted to an empty list that lets the LLM
+    invent a literal value.
     """
-    from tracer.services.clickhouse.client import is_clickhouse_enabled
-    from tracer.services.clickhouse.query_service import (
-        AnalyticsQueryService,
+    from tracer.services.clickhouse.attribute_reads import AttributeReadSelector
+    from tracer.services.clickhouse.filter_value_reads import (
+        SYSTEM_FILTER_VALUE_METRICS,
+        read_span_system_filter_values,
     )
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
-    if not is_clickhouse_enabled() or not project_ids:
+    if not project_ids:
         return []
+    search = _normalize_grounding_search(search_query)
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_VALUE_READ_WALL_MS)
 
-    analytics = AnalyticsQueryService()
     try:
         if metric_type == "system_metric":
-            col_expr = _TRACE_SYSTEM_COL_MAP.get(metric_name)
-            if not col_expr:
-                return []
-            sql = (
-                f"SELECT DISTINCT {col_expr} AS val "
-                f"FROM spans "
-                f"WHERE project_id IN %(project_ids)s "
-                f"AND _peerdb_is_deleted = 0 "
-                f"AND {col_expr} != '' "
-                f"ORDER BY val "
-                f"LIMIT 100"
+            if metric_name not in SYSTEM_FILTER_VALUE_METRICS:
+                raise _grounding_too_broad()
+            read = read_span_system_filter_values(
+                V2AnalyticsQueryService(),
+                project_ids=[str(project_id) for project_id in project_ids],
+                metric_name=metric_name,
+                search=search,
+                limit=SMART_FILTER_VALUE_LIMIT,
+                lookback_days=365,
+                deadline=deadline,
             )
-            result = analytics.execute_ch_query(
-                sql, {"project_ids": project_ids}, timeout_ms=5000
-            )
+            if not read.query_complete:
+                logger.warning(
+                    "smart_filter_values_incomplete",
+                    metric_name=metric_name,
+                    metric_type=metric_type,
+                    error_code=read.query_error_code,
+                )
+                if read.query_error_code == "sample_limit":
+                    raise _grounding_too_broad()
+                raise _grounding_unavailable()
+            return list(read.values)
         elif metric_type == "custom_attribute":
-            sql = (
-                "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
-                "FROM spans "
-                "WHERE project_id IN %(project_ids)s "
-                "AND _peerdb_is_deleted = 0 "
-                "AND span_attr_str[%(attr_key)s] != '' "
-                "ORDER BY val "
-                "LIMIT 100"
+            read = AttributeReadSelector(
+                typed_only=True,
+                json_attribute_mode="arrays",
+                wall_timeout_ms=deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS),
+            ).read_values(
+                project_ids,
+                metric_name,
+                search=search,
+                max_values=SMART_FILTER_VALUE_LIMIT,
+                horizon_days=365,
             )
-            result = analytics.execute_ch_query(
-                sql,
-                {"project_ids": project_ids, "attr_key": metric_name},
-                timeout_ms=5000,
-            )
+            if not read.metadata.query_complete:
+                logger.warning(
+                    "smart_filter_values_incomplete",
+                    metric_name=metric_name,
+                    metric_type=metric_type,
+                    error_code=read.metadata.query_error_code,
+                )
+                if read.metadata.query_error_code == "sample_limit":
+                    raise _grounding_too_broad()
+                raise _grounding_unavailable()
+
+            values = []
+            seen = set()
+            for row in read.rows:
+                raw_values = row.value if isinstance(row.value, tuple) else (row.value,)
+                for raw_value in raw_values:
+                    value = (
+                        "true"
+                        if raw_value is True
+                        else "false"
+                        if raw_value is False
+                        else str(raw_value)
+                    )
+                    if value and value not in seen:
+                        seen.add(value)
+                        values.append(value)
+            if len(values) > SMART_FILTER_VALUE_LIMIT:
+                raise _grounding_too_broad()
+            return values
         else:
-            return []
-        return [row["val"] for row in result.data if row.get("val")]
-    except Exception as e:
+            raise _grounding_too_broad()
+    except SmartFilterGroundingError:
+        raise
+    except Exception as exc:
         logger.warning(
             "smart_filter_values_failed",
             metric_name=metric_name,
             metric_type=metric_type,
-            error=str(e)[:200],
+            error_type=type(exc).__name__,
         )
-        return []
+        raise _grounding_unavailable() from exc
 
 
-# Fields where the value list can grow into the thousands (user ids,
-# free-form tags, model strings, span/service names). We never inline
-# their values in the initial prompt — too many tokens. Instead the LLM
-# can call `get_field_values` with a `search_query` to fuzzy-match.
-_HIGH_CARDINALITY_FIELDS = {
-    "user",
-    "session",
-    "tag",
-    "model",
-    "service_name",
-    "prompt_name",
-    "prompt_version",
-    "prompt_label",
-}
-
-# Cap on values we inline per field. Larger lists get withheld and the
-# LLM must use the search tool to retrieve relevant slices.
+# Configured choice lists are exact metadata, so small ones may be inlined.
+# Dynamic trace/dataset values are never pre-fetched or sampled; the model must
+# issue one query-scoped exact tool call for the field it actually selected.
 _INLINE_VALUE_CAP = 30
 
 
@@ -379,7 +555,7 @@ def _query_token_phrases(query):
     return phrases
 
 
-def _smart_search_values(values, query, limit=20):
+def _smart_search_values(values, query, limit=None):
     """Rank a list of distinct values by how well each matches a query.
 
     Used for high-cardinality string fields where dumping every value
@@ -394,6 +570,9 @@ def _smart_search_values(values, query, limit=20):
 
     Returns at most `limit` values in descending relevance.
     """
+    limit = settings.SMART_FILTER_GROUNDED_VALUE_LIMIT if limit is None else int(limit)
+    if limit < 1:
+        raise ValueError("limit must be positive")
     if not query:
         return values[:limit]
     q = str(query).strip().lower()
@@ -456,13 +635,18 @@ def _char_ngrams(s, n):
     return {s[i : i + n] for i in range(len(s) - n + 1)}
 
 
-def _fetch_dataset_column_values(dataset_id, column_id):
-    """Distinct cell values for a (dataset, column) pair from ClickHouse.
+def _fetch_dataset_column_values(
+    dataset_id,
+    column_id,
+    *,
+    search_query,
+    deadline=None,
+):
+    """Exact searched cell values for a (dataset, column) pair.
 
-    Mirrors `_fetch_trace_field_values` but reads `model_hub_cell`. For
-    array / json columns the raw cell blob is parsed and its elements
-    are emitted so the LLM can ground against e.g. "English" instead of
-    '["English","French"]'. Returns up to 100 strings.
+    The LIMIT includes a sentinel. Filling it is a typed ``too broad`` refusal,
+    never a sampled vocabulary. Array/JSON blobs are flattened only after the
+    complete searched raw-value set has been proven finite.
 
     NOTE: ownership is validated by the caller (which resolves the
     dataset against the workspace before calling this).
@@ -473,20 +657,28 @@ def _fetch_dataset_column_values(dataset_id, column_id):
     from tracer.services.clickhouse.query_service import (
         AnalyticsQueryService,
     )
+    from tracer.services.clickhouse.read_budget import ReadDeadline
 
-    if not is_clickhouse_enabled() or not dataset_id or not column_id:
-        return []
+    if not dataset_id or not column_id:
+        raise _grounding_too_broad()
+    if not is_clickhouse_enabled():
+        raise _grounding_unavailable()
+    search = _normalize_grounding_search(search_query)
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_VALUE_READ_WALL_MS)
 
-    # Look up the column's data_type so we know whether to flatten.
+    # Look up the column's data_type so we know whether to flatten. This point
+    # read occurs from inside the model's tool loop, so it must inherit the
+    # original request wall instead of using PostgreSQL's process-wide default.
     try:
         from model_hub.models.develop_dataset import Column
 
-        column = Column.objects.only("data_type").get(
-            id=column_id, dataset_id=dataset_id, deleted=False
-        )
+        with _bounded_ai_filter_postgres(deadline):
+            column = Column.objects.only("data_type").get(
+                id=column_id, dataset_id=dataset_id, deleted=False
+            )
         data_type = column.data_type
-    except Exception:
-        data_type = "text"
+    except Column.DoesNotExist as exc:
+        raise _grounding_too_broad() from exc
 
     analytics = AnalyticsQueryService()
     try:
@@ -497,26 +689,41 @@ def _fetch_dataset_column_values(dataset_id, column_id):
             "AND dataset_id = toUUID(%(dataset_id)s) "
             "AND column_id = toUUID(%(column_id)s) "
             "AND value != '' "
+            "AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 "
             "ORDER BY val "
-            "LIMIT 200"
+            "LIMIT %(result_limit)s"
         )
         result = analytics.execute_ch_query(
             sql,
-            {"dataset_id": str(dataset_id), "column_id": str(column_id)},
-            timeout_ms=5000,
+            {
+                "dataset_id": str(dataset_id),
+                "column_id": str(column_id),
+                "search": search,
+                "result_limit": SMART_FILTER_VALUE_LIMIT + 1,
+            },
+            timeout_ms=deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS),
+            settings={
+                "max_result_rows": SMART_FILTER_VALUE_LIMIT + 1,
+                "result_overflow_mode": "throw",
+                "timeout_overflow_mode": "throw",
+            },
         )
         raw = [row["val"] for row in result.data if row.get("val")]
-    except Exception as e:
+        if len(raw) > SMART_FILTER_VALUE_LIMIT:
+            raise _grounding_too_broad()
+    except SmartFilterGroundingError:
+        raise
+    except Exception as exc:
         logger.warning(
             "dataset_column_values_query_failed",
             dataset_id=str(dataset_id),
             column_id=str(column_id),
-            error=str(e)[:200],
+            error_type=type(exc).__name__,
         )
-        return []
+        raise _grounding_unavailable() from exc
 
     if data_type not in ("array", "json"):
-        return raw[:100]
+        return raw
 
     # Flatten list / dict blobs into their elements for better LLM grounding.
     seen = set()
@@ -529,28 +736,287 @@ def _fetch_dataset_column_values(dataset_id, column_id):
         candidates = []
         if isinstance(parsed, list):
             for elem in parsed:
-                if isinstance(elem, (str, int, float, bool)):
+                if isinstance(elem, str | int | float | bool):
                     candidates.append(str(elem))
                 elif isinstance(elem, dict):
                     for v in elem.values():
-                        if isinstance(v, (str, int, float)):
+                        if isinstance(v, str | int | float):
                             candidates.append(str(v))
         elif isinstance(parsed, dict):
             for v in parsed.values():
-                if isinstance(v, (str, int, float)):
+                if isinstance(v, str | int | float):
                     candidates.append(str(v))
         else:
             candidates.append(blob)
         for c in candidates:
             s = c.strip()
-            if s and s not in seen:
+            if search.casefold() in s.casefold() and s and s not in seen:
                 seen.add(s)
                 out.append(s)
-            if len(out) >= 100:
-                break
-        if len(out) >= 100:
-            break
+                if len(out) > SMART_FILTER_VALUE_LIMIT:
+                    raise _grounding_too_broad()
     return out
+
+
+_SIMULATION_STRING_VALUE_EXPRESSIONS = {
+    "simulation": "rt.name",
+    "run_test": "rt.name",
+    "test_execution": "toString(te.id)",
+    "scenario": "s.name",
+    "agent_definition": "ad.agent_name",
+    "agent_version": ("concat(ad.agent_name, ' v', toString(av.version_number))"),
+    "persona": (
+        "if(JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'name') != '', "
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'name'), "
+        "JSONExtractString(c.call_metadata, 'row_data', 'persona'))"
+    ),
+    "call_type": "c.simulation_call_type",
+    "status": "c.status",
+    "ended_reason": "c.ended_reason",
+    "scenario_type": "s.scenario_type",
+    "persona_gender": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'gender')"
+    ),
+    "persona_age_group": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'age_group')"
+    ),
+    "persona_location": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'location')"
+    ),
+    "persona_profession": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'profession')"
+    ),
+    "persona_personality": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'personality')"
+    ),
+    "persona_communication_style": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'communication_style')"
+    ),
+    "persona_accent": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'accent')"
+    ),
+    "persona_language": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'language')"
+    ),
+    "persona_conversation_speed": (
+        "JSONExtractString(replaceAll(JSONExtractString(c.call_metadata, "
+        "'row_data', 'persona'), char(39), char(34)), 'conversation_speed')"
+    ),
+}
+
+
+def _resolve_simulation_scope(
+    workspace,
+    *,
+    agent_definition_id=None,
+    run_test_id=None,
+    test_execution_id=None,
+):
+    """Authorize and normalize one explicit simulation grounding scope.
+
+    Smart grounding must never reinterpret an observability ``project_id`` as
+    a simulation entity. At least one native simulation scope is required and
+    every supplied id must resolve through the same organization/workspace.
+    """
+
+    if not any((agent_definition_id, run_test_id, test_execution_id)):
+        raise _grounding_too_broad()
+
+    from simulate.models import AgentDefinition, RunTest, TestExecution
+
+    organization = workspace.organization
+    scope = {
+        "organization_id": str(organization.id),
+        "workspace_id": str(workspace.id),
+    }
+    if agent_definition_id:
+        if not AgentDefinition.objects.filter(
+            id=agent_definition_id,
+            organization=organization,
+            workspace=workspace,
+            deleted=False,
+        ).exists():
+            raise _grounding_too_broad()
+        scope["agent_definition_id"] = str(agent_definition_id)
+
+    run_test = None
+    if run_test_id:
+        run_tests = RunTest.objects.filter(
+            id=run_test_id,
+            organization=organization,
+            workspace=workspace,
+            deleted=False,
+        )
+        if agent_definition_id:
+            run_tests = run_tests.filter(agent_definition_id=agent_definition_id)
+        run_test = run_tests.only("id", "agent_definition_id").first()
+        if not run_test:
+            raise _grounding_too_broad()
+        scope["run_test_id"] = str(run_test.id)
+        if run_test.agent_definition_id:
+            scope.setdefault("agent_definition_id", str(run_test.agent_definition_id))
+
+    if test_execution_id:
+        executions = TestExecution.objects.filter(
+            id=test_execution_id,
+            run_test__organization=organization,
+            run_test__workspace=workspace,
+            run_test__deleted=False,
+            deleted=False,
+        )
+        if run_test_id:
+            executions = executions.filter(run_test_id=run_test_id)
+        if agent_definition_id:
+            executions = executions.filter(
+                run_test__agent_definition_id=agent_definition_id
+            )
+        execution = executions.select_related("run_test").first()
+        if not execution:
+            raise _grounding_too_broad()
+        scope["test_execution_id"] = str(execution.id)
+        scope.setdefault("run_test_id", str(execution.run_test_id))
+        if execution.run_test.agent_definition_id:
+            scope.setdefault(
+                "agent_definition_id",
+                str(execution.run_test.agent_definition_id),
+            )
+    return scope
+
+
+def _fetch_simulation_field_values(
+    scope,
+    metric_name,
+    metric_type,
+    *,
+    search_query,
+    eval_key=None,
+    deadline=None,
+):
+    """Read an exact, tenant-scoped simulation value vocabulary from CH.
+
+    The query joins the CDC dimension tables rather than borrowing any trace
+    reader or relying on eventually-refreshed dictionaries for authorization.
+    A sentinel row proves whether the result is finite under the request wall.
+    """
+
+    from tracer.services.clickhouse.client import is_clickhouse_enabled
+    from tracer.services.clickhouse.query_builders.simulation_dashboard import (
+        _sanitize_key,
+    )
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    if not scope or not scope.get("organization_id") or not scope.get("workspace_id"):
+        raise _grounding_too_broad()
+    if not is_clickhouse_enabled():
+        raise _grounding_unavailable()
+    search = _normalize_grounding_search(search_query)
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_VALUE_READ_WALL_MS)
+
+    if metric_type == "system_metric":
+        value_expr = _SIMULATION_STRING_VALUE_EXPRESSIONS.get(metric_name)
+        if not value_expr:
+            raise _grounding_too_broad()
+    elif metric_type == "eval_metric":
+        try:
+            safe_eval_key = _sanitize_key(str(eval_key or ""))
+        except ValueError as exc:
+            raise _grounding_too_broad() from exc
+        result_expr = (
+            f"nullIf(JSONExtractString(c.eval_outputs, '{safe_eval_key}', "
+            "'result'), '')"
+        )
+        output_expr = (
+            f"nullIf(JSONExtractString(c.eval_outputs, '{safe_eval_key}', "
+            "'output'), '')"
+        )
+        value_expr = f"coalesce({result_expr}, {output_expr})"
+    else:
+        raise _grounding_too_broad()
+
+    clauses = [
+        "c._peerdb_is_deleted = 0",
+        "c.deleted = 0",
+        "te._peerdb_is_deleted = 0",
+        "te.deleted = 0",
+        "rt._peerdb_is_deleted = 0",
+        "rt.deleted = 0",
+        "rt.organization_id = toUUID(%(organization_id)s)",
+        "rt.workspace_id = toUUID(%(workspace_id)s)",
+        "c.created_at >= now() - INTERVAL 365 DAY",
+        f"{value_expr} IS NOT NULL",
+        f"toString({value_expr}) != ''",
+        f"positionCaseInsensitiveUTF8(toString({value_expr}), %(search)s) > 0",
+    ]
+    params = {
+        "organization_id": scope["organization_id"],
+        "workspace_id": scope["workspace_id"],
+        "search": search,
+        "result_limit": SMART_FILTER_VALUE_LIMIT + 1,
+    }
+    if scope.get("agent_definition_id"):
+        clauses.append("rt.agent_definition_id = toUUID(%(agent_definition_id)s)")
+        params["agent_definition_id"] = scope["agent_definition_id"]
+    if scope.get("run_test_id"):
+        clauses.append("rt.id = toUUID(%(run_test_id)s)")
+        params["run_test_id"] = scope["run_test_id"]
+    if scope.get("test_execution_id"):
+        clauses.append("te.id = toUUID(%(test_execution_id)s)")
+        params["test_execution_id"] = scope["test_execution_id"]
+    if metric_type == "eval_metric":
+        clauses.append(f"JSONHas(c.eval_outputs, '{safe_eval_key}') = 1")
+
+    query = (
+        f"SELECT DISTINCT toString({value_expr}) AS value\n"
+        "FROM simulate_call_execution AS c FINAL\n"
+        "INNER JOIN simulate_test_execution AS te FINAL ON te.id = c.test_execution_id\n"
+        "INNER JOIN simulate_run_test AS rt FINAL ON rt.id = te.run_test_id\n"
+        "LEFT JOIN simulate_scenarios AS s FINAL ON s.id = c.scenario_id "
+        "AND s._peerdb_is_deleted = 0 AND s.deleted = 0\n"
+        "LEFT JOIN simulate_agent_version AS av FINAL ON av.id = c.agent_version_id "
+        "AND av._peerdb_is_deleted = 0 AND av.deleted = 0\n"
+        "LEFT JOIN simulate_agent_definition AS ad FINAL "
+        "ON ad.id = rt.agent_definition_id "
+        "AND ad._peerdb_is_deleted = 0 AND ad.deleted = 0\n"
+        f"WHERE {' AND '.join(clauses)}\n"
+        "ORDER BY value\n"
+        "LIMIT %(result_limit)s"
+    )
+    try:
+        result = AnalyticsQueryService().execute_ch_query(
+            query,
+            params,
+            timeout_ms=deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS),
+            settings={
+                "max_result_rows": SMART_FILTER_VALUE_LIMIT + 1,
+                "result_overflow_mode": "throw",
+                "timeout_overflow_mode": "throw",
+            },
+        )
+        values = [row["value"] for row in result.data if row.get("value")]
+        if len(values) > SMART_FILTER_VALUE_LIMIT:
+            raise _grounding_too_broad()
+        return values
+    except SmartFilterGroundingError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "simulation_filter_values_query_failed",
+            metric_name=metric_name,
+            metric_type=metric_type,
+            error_type=type(exc).__name__,
+        )
+        raise _grounding_unavailable() from exc
 
 
 def _resolve_project_ids(workspace, raw_project_id):
@@ -561,17 +1027,21 @@ def _resolve_project_ids(workspace, raw_project_id):
     """
     from tracer.models.project import Project
 
-    workspace_ids = {
-        str(pid)
-        for pid in Project.objects.filter(workspace=workspace).values_list(
-            "id", flat=True
-        )
-    }
-    if raw_project_id and str(raw_project_id) in workspace_ids:
-        return [str(raw_project_id)]
     if raw_project_id:
-        return []  # caller asked for a project they don't own
-    return list(workspace_ids)
+        owned = Project.objects.filter(
+            workspace=workspace,
+            id=raw_project_id,
+        ).exists()
+        return [str(raw_project_id)] if owned else []
+
+    workspace_ids = list(
+        Project.objects.filter(workspace=workspace).values_list("id", flat=True)[
+            : SMART_FILTER_PROJECT_SCOPE_LIMIT + 1
+        ]
+    )
+    if len(workspace_ids) > SMART_FILTER_PROJECT_SCOPE_LIMIT:
+        raise _grounding_too_broad()
+    return [str(project_id) for project_id in workspace_ids]
 
 
 def _resolve_dataset_id(workspace, raw_dataset_id):
@@ -591,7 +1061,7 @@ def _resolve_dataset_id(workspace, raw_dataset_id):
             id=raw_dataset_id, workspace=workspace, deleted=False
         )
         return str(raw_dataset_id)
-    except Exception:
+    except Dataset.DoesNotExist:
         return None
 
 
@@ -607,56 +1077,105 @@ _NUMBER_OPS_ALWAYS_ALLOWED = {
     "not_between",
 }
 
+_NUMERIC_FIELD_TYPES = {"number", "integer", "float"}
 
-def _validate_smart_filters(parsed_filters, schema):
+
+def _ai_schema_identity(field_schema):
+    """Return the logical property identity used inside the AI tool loop.
+
+    ``field`` remains the native adapter column. New callers supply a stable
+    ``property_id``; legacy non-smart schemas without one retain their old
+    field identity until their owning surface is migrated.
+    """
+
+    if not isinstance(field_schema, dict):
+        return ""
+    return str(field_schema.get("property_id") or field_schema.get("field") or "")
+
+
+def _validate_smart_filters(parsed_filters, schema, grounded_values_by_field):
     """Apply field/operator/choice validation for smart-mode output.
 
     The smart-mode prompt drops per-field operator lists from the LLM
     payload (the operator legend is in the system prompt by type), so
     validation here checks against the type-default operator set rather
-    than each field's declared list. Field choices, when supplied, still
-    constrain the value with case-insensitive matching.
+    than each field's declared list. Every non-numeric value must also be
+    witnessed by configured choices or an exact tool result from this request.
     """
     if not isinstance(parsed_filters, list):
         return []
-    field_map = {s["field"]: s for s in schema if isinstance(s, dict)}
+    field_map = {
+        _ai_schema_identity(s): s
+        for s in schema
+        if isinstance(s, dict) and _ai_schema_identity(s)
+    }
+    native_field_map = {}
+    for field_schema in field_map.values():
+        native_field_map.setdefault(str(field_schema.get("field") or ""), []).append(
+            field_schema
+        )
     out = []
     for f in parsed_filters:
         if not isinstance(f, dict):
             continue
-        field = f.get("field")
+        submitted_identity = str(f.get("property_id") or f.get("field") or "")
         operator = f.get("operator") or "is"
         value = f.get("value")
-        if field not in field_map:
-            continue
-        field_schema = field_map[field]
+        field_schema = field_map.get(submitted_identity)
+        if field_schema is None:
+            # Legacy model responses may still echo the native field. Only
+            # accept that form when it resolves to exactly one definition;
+            # same-name definitions must never be guessed.
+            native_matches = native_field_map.get(str(f.get("field") or ""), [])
+            if len(native_matches) != 1:
+                continue
+            field_schema = native_matches[0]
+        identity = _ai_schema_identity(field_schema)
+        native_field = str(field_schema.get("field") or "")
         ftype = field_schema.get("type") or "string"
-        if ftype == "number":
+        if ftype in _NUMERIC_FIELD_TYPES:
             if operator not in _NUMBER_OPS_ALWAYS_ALLOWED:
                 continue
         else:
             if operator not in _STRING_OPS_ALWAYS_ALLOWED:
                 continue
-        choices = field_schema.get("choices") or []
-        if choices and value not in choices:
-            match = next(
-                (c for c in choices if str(c).lower() == str(value).lower()),
+        if ftype not in _NUMERIC_FIELD_TYPES:
+            grounded_values = tuple(grounded_values_by_field.get(identity, ()))
+            normalized_value = str(value or "").casefold()
+            if not grounded_values or not normalized_value:
+                raise _grounding_too_broad()
+            exact_match = next(
+                (
+                    candidate
+                    for candidate in grounded_values
+                    if str(candidate).casefold() == normalized_value
+                ),
                 None,
             )
-            if match is not None:
-                value = match
-            # Note: for smart mode we do NOT drop the filter when the
-            # value is missing from choices — the LLM may have been told
-            # by `get_field_values` what the real values look like, and
-            # is using `contains` or a substring on purpose.
-        out.append({"field": field, "operator": operator, "value": value})
+            if operator in {"is", "is_not"}:
+                if exact_match is None:
+                    raise _grounding_too_broad()
+                value = exact_match
+            elif not any(
+                normalized_value in str(candidate).casefold()
+                for candidate in grounded_values
+            ):
+                raise _grounding_too_broad()
+        condition = {
+            "field": native_field,
+            "operator": operator,
+            "value": value,
+        }
+        if field_schema.get("property_id"):
+            condition["property_id"] = field_schema["property_id"]
+        out.append(condition)
     return out
 
 
-def _run_smart_agent(query, schema, fetch_values):
+def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
     """Run the Haiku tool-use loop. Returns a list of validated filters.
 
-    `fetch_values(field_id) -> list[str]` is the source-specific value
+    `fetch_values(field_id, search_query=...) -> list[str]` is the source-specific value
     lookup. Traces pass a closure over `_fetch_trace_field_values`;
     datasets pass one over `_fetch_dataset_column_values`. The agent
     loop itself is shared and source-agnostic.
@@ -667,11 +1186,23 @@ def _run_smart_agent(query, schema, fetch_values):
     """
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
+    from tracer.services.clickhouse.read_budget import (
+        ReadDeadline,
+        ReadDeadlineExceeded,
+    )
 
-    haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_REQUEST_WALL_MS)
+
+    def remaining_request_ms():
+        try:
+            return deadline.remaining_ms(SMART_FILTER_REQUEST_WALL_MS)
+        except ReadDeadlineExceeded as exc:
+            raise _grounding_unavailable() from exc
+
+    cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
     llm = LLM(
-        provider=haiku_cfg.provider,
-        model_name=haiku_cfg.model_name,
+        provider=cfg.provider,
+        model_name=cfg.model_name,
         temperature=0.0,
         max_tokens=800,
     )
@@ -686,10 +1217,13 @@ def _run_smart_agent(query, schema, fetch_values):
         if not isinstance(s, dict) or not s.get("field"):
             continue
         fid = s["field"]
+        property_id = _ai_schema_identity(s)
         label = s.get("label")
         cat = s.get("category") or "system"
         ftype = s.get("type") or "string"
-        entry = {"f": fid, "t": ftype}
+        entry = {"f": property_id, "t": ftype}
+        if property_id != fid:
+            entry["n"] = fid
         if label and label != fid:
             entry["l"] = label
         if cat != "system":
@@ -697,44 +1231,34 @@ def _run_smart_agent(query, schema, fetch_values):
         compact_fields.append(entry)
 
     schema_by_id = {
-        s["field"]: s for s in schema if isinstance(s, dict) and s.get("field")
+        _ai_schema_identity(s): s
+        for s in schema
+        if isinstance(s, dict) and s.get("field") and _ai_schema_identity(s)
     }
 
-    # ------------------------------------------------------------------
-    # Pre-fetch values for low-cardinality string fields and inline them
-    # in the field schema. The LLM sees real values upfront and usually
-    # doesn't need to call get_field_values at all.
-    #
-    # We skip:
-    #   - non-string fields (numerics don't have enumerable values)
-    #   - high-cardinality string fields (free-form id/tag/model namespaces
-    #     where the value list can grow unboundedly)
-    # ------------------------------------------------------------------
-    inlined_value_count = 0
+    # Configured choices are exact metadata and can be inlined. Dynamic values
+    # are never pre-fetched: only a field the model actually selects may issue
+    # one query-scoped exact search. This avoids serially sampling every string
+    # dimension before the first model turn.
+    grounded_values_by_field = {}
+    static_choices_by_field = {}
     for entry in compact_fields:
         fid = entry["f"]
-        if entry["t"] != "string":
+        configured = schema_by_id[fid].get("choices") or []
+        if configured:
+            values = []
+            for configured_value in configured:
+                if configured_value not in values:
+                    values.append(configured_value)
+            static_choices_by_field[fid] = values
+            grounded_values_by_field[fid] = tuple(values)
+            if len(values) <= _INLINE_VALUE_CAP:
+                entry["v"] = values
+            else:
+                entry["v_count"] = len(values)
+                entry["v_searchable"] = True
             continue
-        if fid in _HIGH_CARDINALITY_FIELDS:
-            continue
-        try:
-            vals = fetch_values(fid)
-        except Exception:
-            vals = []
-        if not vals:
-            # The field exists in the schema but has no rows in CH yet.
-            # Tell the LLM explicitly so it can still emit a literal-value
-            # filter (the user's intent matters even when the result set
-            # would be empty — e.g. "show voicemails" on a fresh project).
-            entry["v_empty"] = True
-            continue
-        if len(vals) <= _INLINE_VALUE_CAP:
-            entry["v"] = vals
-            inlined_value_count += len(vals)
-        else:
-            # Too many to inline — flag it so the LLM knows to use the
-            # search tool for this field instead of guessing.
-            entry["v_count"] = len(vals)
+        if entry["t"] not in _NUMERIC_FIELD_TYPES:
             entry["v_searchable"] = True
 
     tools = [
@@ -743,15 +1267,11 @@ def _run_smart_agent(query, schema, fetch_values):
             "function": {
                 "name": "get_field_values",
                 "description": (
-                    "Return the distinct real values for a field in the project. "
-                    "USE THIS when you need to ground a value against real data "
-                    "and the field schema doesn't already inline its values "
-                    "(check the `v` array on each field — if present, the field's "
-                    "real values are already there and you don't need to call "
-                    "this tool). For high-cardinality fields (those with "
-                    "v_searchable: true), pass a search_query so the backend can "
-                    "fuzzy-rank the values for you and return only the relevant "
-                    "ones — never request the full list, it can be thousands."
+                    "Return the complete bounded set of stored values matching "
+                    "one specific search for a field. Use this when the field "
+                    "schema has `v_searchable: true`; fields with an inline `v` "
+                    "array are already grounded. The request refuses broad or "
+                    "incomplete results instead of returning a sample."
                 ),
                 "parameters": {
                     "type": "object",
@@ -763,15 +1283,16 @@ def _run_smart_agent(query, schema, fetch_values):
                         "search_query": {
                             "type": "string",
                             "description": (
-                                "Optional substring/keyword to rank values by. "
-                                "Required for high-cardinality fields. The "
+                                "Specific substring/keyword used by the exact "
+                                "bounded value query. Required for every "
+                                "searchable field. The "
                                 "backend ranks by exact > prefix > substring > "
                                 "token overlap > char n-gram fuzzy. Returns at "
                                 "most 20 ranked results."
                             ),
                         },
                     },
-                    "required": ["field_id"],
+                    "required": ["field_id", "search_query"],
                 },
             },
         },
@@ -816,18 +1337,17 @@ def _run_smart_agent(query, schema, fetch_values):
         "greater_than_or_equal, less_than, less_than_or_equal, "
         "between, not_between\n"
         "Field schema entries: "
-        "f=field id, "
+        "f=stable property id (use this exact value in tools and submit_filter), "
+        "n=native adapter field (display context only; omitted when equal to f), "
         "t=type, "
         "l=human label (omitted when same as id), "
         "c=category (omitted when 'system'), "
         "v=array of all real distinct values for this field "
         "(already pre-fetched — pick straight from this list, no tool call needed), "
-        "v_count=total distinct value count for high-cardinality fields, "
-        "v_searchable=true means the value list is too big to inline, "
-        "call get_field_values(field_id, search_query) to fuzzy-search it, "
-        "v_empty=true means no rows exist yet for this field — you may "
-        "still emit a literal-value filter from the user's wording (the "
-        "result will be empty but the intent is preserved)."
+        "v_count=exact configured choice count, "
+        "v_searchable=true means you must call "
+        "get_field_values(field_id, search_query) before using the field. "
+        "Never invent or substitute a literal value for a searchable field."
     )
     user_payload = (
         f"{operator_legend}\n\n"
@@ -845,7 +1365,15 @@ def _run_smart_agent(query, schema, fetch_values):
         # _get_completion_with_tools handles gateway routing, retries, and
         # litellm fallback internally. It uses the temperature/max_tokens
         # configured on the LLM instance.
-        response = llm._get_completion_with_tools(messages, tools)
+        try:
+            response = llm._get_completion_with_tools(
+                messages,
+                tools,
+                timeout_ms=remaining_request_ms(),
+            )
+        except TimeoutError as exc:
+            raise _grounding_unavailable() from exc
+        remaining_request_ms()
         msg = response.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None) or []
 
@@ -883,29 +1411,22 @@ def _run_smart_agent(query, schema, fetch_values):
                 fid = args.get("field_id")
                 search_query = args.get("search_query")
                 if fid in schema_by_id:
-                    try:
-                        vals = fetch_values(fid)
-                    except Exception:
-                        vals = []
+                    search_query = _normalize_grounding_search(search_query)
+                    if fid in static_choices_by_field:
+                        vals = static_choices_by_field[fid]
+                    else:
+                        vals = fetch_values(fid, search_query=search_query)
                 else:
-                    vals = []
-                if search_query and vals:
-                    ranked = _smart_search_values(vals, search_query, limit=20)
-                    tool_result = {
-                        "field_id": fid,
-                        "search_query": search_query,
-                        "total_distinct": len(vals),
-                        "values": ranked,
-                    }
-                else:
-                    # No search query: return up to 50 values to keep the
-                    # tool result small. Anything bigger should have been
-                    # inlined upfront or queried with a search_query.
-                    tool_result = {
-                        "field_id": fid,
-                        "total_distinct": len(vals),
-                        "values": vals[:50],
-                    }
+                    raise _grounding_too_broad()
+                ranked = _smart_search_values(vals, search_query)
+                grounded_values_by_field[fid] = tuple(vals)
+                tool_result = {
+                    "field_id": fid,
+                    "search_query": search_query,
+                    "query_complete": True,
+                    "total_distinct": len(vals),
+                    "values": ranked,
+                }
                 messages.append(
                     {
                         "role": "tool",
@@ -938,7 +1459,203 @@ def _run_smart_agent(query, schema, fetch_values):
 
     if submitted is None:
         return []
-    return _validate_smart_filters(submitted, schema)
+    return _validate_smart_filters(submitted, schema, grounded_values_by_field)
+
+
+def _authorize_smart_property_schema(
+    schema,
+    *,
+    source,
+    workspace,
+    project_ids=(),
+    dataset_id=None,
+    simulation_scope=None,
+):
+    """Bind every smart-filter schema row to one authorized definition.
+
+    The browser supplies labels and native adapter fields for display, but it
+    may not invent a logical property definition or reuse one definition for a
+    same-name property from another source. Dynamic value reads remain scoped
+    by the already-authorized project/dataset ids.
+    """
+
+    from tracer.utils.property_registry import (
+        parse_property_registry_id,
+        validate_property_filter_binding,
+    )
+
+    category_by_kind = {
+        "system_attribute": "system",
+        "custom_attribute": "attribute",
+        "eval": "eval",  # explicit rolling legacy only
+        "eval_config": "eval",
+        "eval_template": "eval",
+        "annotation": "annotation",
+        "dataset_column": "dataset_column",
+    }
+    trace_kinds = {
+        "system_attribute",
+        "custom_attribute",
+        "eval_config",
+        "annotation",
+    }
+    filter_column_type_by_category = {
+        "system": "SYSTEM_METRIC",
+        "attribute": "SPAN_ATTRIBUTE",
+        "eval": "EVAL_METRIC",
+        "annotation": "ANNOTATION",
+        "dataset_column": "CUSTOM_COLUMN",
+    }
+    normalized = []
+    for raw in schema:
+        field_schema = dict(raw)
+        property_id = str(field_schema.get("property_id") or "")
+        if not property_id:
+            raise _grounding_too_broad()
+        try:
+            decoded = parse_property_registry_id(property_id)
+        except ValueError as exc:
+            raise _grounding_too_broad() from exc
+        kind = decoded["property_kind"]
+        native_field = str(field_schema.get("field") or "")
+        declared_category = str(field_schema.get("category") or "system")
+        expected_category = category_by_kind.get(kind)
+        if expected_category is None or (
+            declared_category != expected_category
+            and not (source == "dataset" and kind == "dataset_column")
+        ):
+            raise _grounding_too_broad()
+        try:
+            validate_property_filter_binding(
+                property_id,
+                column_id=native_field,
+                column_type=filter_column_type_by_category[declared_category],
+                source=source,
+            )
+        except (KeyError, ValueError) as exc:
+            raise _grounding_too_broad() from exc
+
+        if source == "dataset":
+            if kind != "dataset_column" or not dataset_id:
+                raise _grounding_too_broad()
+            # The exact value reader performs the authoritative
+            # (dataset_id, column_id, deleted=false) lookup before CH.
+            normalized.append(field_schema)
+            continue
+
+        if source == "simulation":
+            if not simulation_scope or kind not in {
+                "system_attribute",
+                "eval_config",
+            }:
+                raise _grounding_too_broad()
+            if (
+                kind == "system_attribute"
+                and decoded.get("definition_source") != "simulation"
+            ):
+                raise _grounding_too_broad()
+            if kind == "eval_config":
+                from simulate.models import SimulateEvalConfig
+
+                configs = SimulateEvalConfig.objects.filter(
+                    id=decoded["metric_name"],
+                    run_test__organization=workspace.organization,
+                    run_test__workspace=workspace,
+                    run_test__deleted=False,
+                    deleted=False,
+                )
+                if simulation_scope.get("agent_definition_id"):
+                    configs = configs.filter(
+                        run_test__agent_definition_id=simulation_scope[
+                            "agent_definition_id"
+                        ]
+                    )
+                if simulation_scope.get("run_test_id"):
+                    configs = configs.filter(
+                        run_test_id=simulation_scope["run_test_id"]
+                    )
+                if simulation_scope.get("test_execution_id"):
+                    configs = configs.filter(
+                        run_test__executions__id=simulation_scope["test_execution_id"],
+                        run_test__executions__deleted=False,
+                    )
+                config = configs.select_related("eval_template").first()
+                if (
+                    not config
+                    or not config.eval_template
+                    or config.eval_template.deleted
+                ):
+                    raise _grounding_too_broad()
+                output_type = str(
+                    (config.eval_template.config or {}).get("output") or ""
+                )
+                normalized_output_type = output_type.casefold().replace("/", "_")
+                if normalized_output_type == "pass_fail":
+                    field_schema["choices"] = ["Passed", "Failed"]
+                elif normalized_output_type in {"choice", "choices"}:
+                    field_schema["choices"] = list(config.eval_template.choices or [])
+                mapping = config.mapping if isinstance(config.mapping, dict) else {}
+                field_schema["_simulation_eval_key"] = str(
+                    mapping.get("key") or config.id
+                )
+                field_schema["_simulation_eval_output_type"] = output_type
+            normalized.append(field_schema)
+            continue
+
+        if source not in {"traces", "sessions"} or kind not in trace_kinds:
+            raise _grounding_too_broad()
+        if kind == "system_attribute" and decoded.get("definition_source") in {
+            "datasets",
+            "dataset_column",
+        }:
+            raise _grounding_too_broad()
+        if kind == "eval_config":
+            from tracer.models.custom_eval_config import CustomEvalConfig
+
+            config = (
+                CustomEvalConfig.objects.filter(
+                    id=native_field,
+                    project_id__in=project_ids,
+                    deleted=False,
+                )
+                .select_related("eval_template")
+                .first()
+            )
+            if not config or not config.eval_template or config.eval_template.deleted:
+                raise _grounding_too_broad()
+            output_type = str((config.eval_template.config or {}).get("output") or "")
+            if output_type.casefold().replace("/", "_") == "pass_fail":
+                field_schema["choices"] = ["Passed", "Failed"]
+            elif output_type.casefold() in {"choice", "choices"}:
+                field_schema["choices"] = list(config.eval_template.choices or [])
+        elif kind == "annotation" and native_field != "annotator":
+            from django.db.models import Q
+
+            from model_hub.models.develop_annotations import AnnotationsLabels
+
+            label = (
+                AnnotationsLabels.objects.filter(
+                    Q(project_id__in=project_ids)
+                    | Q(project__isnull=True, workspace=workspace),
+                    id=native_field,
+                    organization=workspace.organization,
+                    deleted=False,
+                )
+                .order_by("id")
+                .first()
+            )
+            if not label:
+                raise _grounding_too_broad()
+            options = (label.settings or {}).get("options") or []
+            authoritative_choices = [
+                option.get("label")
+                for option in options
+                if isinstance(option, dict) and option.get("label") is not None
+            ]
+            if authoritative_choices:
+                field_schema["choices"] = authoritative_choices
+        normalized.append(field_schema)
+    return normalized
 
 
 class AIFilterView(APIView):
@@ -975,12 +1692,44 @@ class AIFilterView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    def dispatch(self, request, *args, **kwargs):
+        """Own one wall from APIView dispatch through the finalized response."""
+
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+
+        self._request_deadline = ReadDeadline.start(SMART_FILTER_REQUEST_WALL_MS)
+        response = super().dispatch(request, *args, **kwargs)
+        try:
+            _remaining_request_ms(self._request_deadline)
+        except AIFilterUnavailableError as exc:
+            logger.warning(
+                "ai_filter_dispatch_deadline_exceeded",
+                status_code=exc.status_code,
+            )
+            replacement = self._gm.custom_error_response(
+                exc.status_code,
+                exc.public_message,
+                code=exc.code,
+            )
+            # ``super().dispatch`` already finalized the DRF response. Replace
+            # its body/status in place so the error keeps renderer context.
+            response.status_code = replacement.status_code
+            response.data = replacement.data
+        return response
+
+    @validated_request(
+        request_serializer=AIFilterRequestSerializer,
+        responses={200: AIFilterResponseSerializer, **ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         mode = "build_filters"  # default — referenced by except blocks below
+        request_deadline = self._request_deadline
         try:
-            mode = request.data.get("mode", "build_filters")
-            query = request.data.get("query", "").strip()
-            schema = request.data.get("schema", [])
+            payload = request.validated_data
+            mode = payload.get("mode", "build_filters")
+            query = payload.get("query", "").strip()
+            schema = payload.get("schema", [])
 
             if not query:
                 return self._gm.bad_request("Query is required")
@@ -993,58 +1742,124 @@ class AIFilterView(APIView):
             # Smart mode — agentic tool-use loop
             # ------------------------------------------------------------
             if mode == "smart":
-                source = request.data.get("source", "traces")
-                if source == "traces":
-                    project_id = request.data.get("project_id")
-                    project_ids = _resolve_project_ids(
-                        request.workspace, project_id
-                    )
-                    if project_id and not project_ids:
-                        return self._gm.bad_request(
-                            "project not found in workspace"
+                grounding_deadline = request_deadline
+                source = payload.get("source", "traces")
+                if source in {"traces", "sessions"}:
+                    project_id = payload.get("project_id")
+                    with _bounded_ai_filter_postgres(grounding_deadline):
+                        project_ids = _resolve_project_ids(
+                            request.workspace, project_id
                         )
+                        if project_id and not project_ids:
+                            return self._gm.bad_request(
+                                "project not found in workspace"
+                            )
+                        schema = _authorize_smart_property_schema(
+                            schema,
+                            source=source,
+                            workspace=request.workspace,
+                            project_ids=project_ids,
+                        )
+                    schema_by_identity = {_ai_schema_identity(s): s for s in schema}
                     metric_type_by_id = {
-                        s.get("field"): {
+                        identity: {
                             "system": "system_metric",
                             "eval": "eval_metric",
                             "annotation": "annotation_metric",
                             "attribute": "custom_attribute",
-                        }.get(s.get("category") or "system", "system_metric")
-                        for s in schema
-                        if isinstance(s, dict) and s.get("field")
+                        }.get(field_schema.get("category") or "system", "system_metric")
+                        for identity, field_schema in schema_by_identity.items()
                     }
 
-                    def fetch_values(field_id):
+                    def fetch_values(property_id, *, search_query):
+                        field_schema = schema_by_identity.get(property_id)
+                        if not field_schema:
+                            raise _grounding_too_broad()
                         return _fetch_trace_field_values(
                             project_ids,
-                            field_id,
-                            metric_type_by_id.get(field_id, "system_metric"),
+                            field_schema["field"],
+                            metric_type_by_id.get(property_id, "system_metric"),
+                            search_query=search_query,
+                            deadline=grounding_deadline,
+                        )
+
+                elif source == "simulation":
+                    with _bounded_ai_filter_postgres(grounding_deadline):
+                        simulation_scope = _resolve_simulation_scope(
+                            request.workspace,
+                            agent_definition_id=payload.get("agent_definition_id"),
+                            run_test_id=payload.get("run_test_id"),
+                            test_execution_id=payload.get("test_execution_id"),
+                        )
+                        schema = _authorize_smart_property_schema(
+                            schema,
+                            source=source,
+                            workspace=request.workspace,
+                            simulation_scope=simulation_scope,
+                        )
+                    schema_by_identity = {_ai_schema_identity(s): s for s in schema}
+
+                    def fetch_values(property_id, *, search_query):
+                        field_schema = schema_by_identity.get(property_id)
+                        if not field_schema:
+                            raise _grounding_too_broad()
+                        category = field_schema.get("category") or "system"
+                        return _fetch_simulation_field_values(
+                            simulation_scope,
+                            field_schema["field"],
+                            ("eval_metric" if category == "eval" else "system_metric"),
+                            eval_key=field_schema.get("_simulation_eval_key"),
+                            search_query=search_query,
+                            deadline=grounding_deadline,
                         )
 
                 elif source == "dataset":
                     # Smart mode for dataset rows: scope to one dataset and
                     # look up per-column distinct cell values so the LLM can
                     # fuzzy-match the user's wording against real data.
-                    raw_dataset_id = request.data.get(
-                        "dataset_id"
-                    ) or request.data.get("project_id")
-                    dataset_id = _resolve_dataset_id(
-                        request.workspace, raw_dataset_id
+                    raw_dataset_id = payload.get("dataset_id") or payload.get(
+                        "project_id"
                     )
-                    if not dataset_id:
-                        return self._gm.bad_request(
-                            "dataset_id not found in workspace"
+                    with _bounded_ai_filter_postgres(grounding_deadline):
+                        dataset_id = _resolve_dataset_id(
+                            request.workspace, raw_dataset_id
                         )
+                        if not dataset_id:
+                            return self._gm.bad_request(
+                                "dataset_id not found in workspace"
+                            )
+                        schema = _authorize_smart_property_schema(
+                            schema,
+                            source=source,
+                            workspace=request.workspace,
+                            dataset_id=dataset_id,
+                        )
+                    schema_by_identity = {_ai_schema_identity(s): s for s in schema}
 
-                    def fetch_values(field_id):
-                        return _fetch_dataset_column_values(dataset_id, field_id)
+                    def fetch_values(property_id, *, search_query):
+                        field_schema = schema_by_identity.get(property_id)
+                        if not field_schema:
+                            raise _grounding_too_broad()
+                        return _fetch_dataset_column_values(
+                            dataset_id,
+                            field_schema["field"],
+                            search_query=search_query,
+                            deadline=grounding_deadline,
+                        )
 
                 else:
                     return self._gm.bad_request(
-                        "smart mode supports source='traces' or 'dataset'"
+                        "smart mode supports source='traces', 'sessions', "
+                        "'simulation', or 'dataset'"
                     )
 
-                filters = _run_smart_agent(query, schema, fetch_values)
+                filters = _run_smart_agent(
+                    query,
+                    schema,
+                    fetch_values,
+                    deadline=grounding_deadline,
+                )
+                _remaining_request_ms(request_deadline)
                 return self._gm.success_response({"filters": filters})
 
             # Build the user message with schema context. Compact large
@@ -1079,33 +1894,58 @@ class AIFilterView(APIView):
             )
 
             # Route through the in-house LLM wrapper (Agentcc gateway with
-            # litellm fallback) so we don't talk to Bedrock directly.
+            # litellm fallback).
             from agentic_eval.core.llm.llm import LLM
             from agentic_eval.core.utils.model_config import ModelConfigs
 
-            haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
+            cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
             llm = LLM(
-                provider=haiku_cfg.provider,
-                model_name=haiku_cfg.model_name,
+                provider=cfg.provider,
+                model_name=cfg.model_name,
                 temperature=0.0,
                 max_tokens=500,
             )
-            raw_text = llm._get_completion_content(
-                messages=[
+            raw_text = _bounded_completion_content(
+                llm,
+                [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-            ).strip()
+                deadline=request_deadline,
+            )
 
-            # Parse the JSON response
-            # Handle cases where the model wraps in ```json ... ```
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1]
-                if raw_text.startswith("json"):
-                    raw_text = raw_text[4:]
-                raw_text = raw_text.strip()
+            # Unwrap any ```json ... ``` fence the model added, then parse.
+            try:
+                parsed = json.loads(strip_code_fence(raw_text))
+            except json.JSONDecodeError:
+                logger.warning("ai_filter_json_parse_error", mode=mode)
+                _remaining_request_ms(request_deadline)
+                if mode == "select_fields":
+                    return self._gm.success_response({"fields": []})
 
-            parsed = json.loads(raw_text)
+                # Preserve the query-direct recovery only while the shared
+                # request wall is live. An expired request must fail closed.
+                fallback = []
+                tokens = _query_token_phrases(query)
+                for f_schema in schema:
+                    if not isinstance(f_schema, dict):
+                        continue
+                    choices = f_schema.get("choices") or []
+                    if not choices:
+                        continue
+                    f_labels = f_schema.get("choice_labels") or {}
+                    for tok in tokens:
+                        match = _resolve_choice(tok, choices, f_labels)
+                        if match is not None:
+                            fallback.append(
+                                {
+                                    "field": f_schema.get("field"),
+                                    "operator": "is",
+                                    "value": match,
+                                }
+                            )
+                _remaining_request_ms(request_deadline)
+                return self._gm.success_response({"filters": fallback})
 
             if mode == "select_fields":
                 fields_out = []
@@ -1115,26 +1955,55 @@ class AIFilterView(APIView):
                     raw_fields = parsed
                 else:
                     raw_fields = []
-                schema_ids = {s.get("field") for s in schema if isinstance(s, dict)}
+                schema_by_identity = {
+                    _ai_schema_identity(s): s
+                    for s in schema
+                    if isinstance(s, dict) and _ai_schema_identity(s)
+                }
+                identities_by_native = {}
+                for identity, field_schema in schema_by_identity.items():
+                    identities_by_native.setdefault(
+                        field_schema.get("field"), []
+                    ).append(identity)
                 for f in raw_fields:
-                    if isinstance(f, str) and f in schema_ids and f not in fields_out:
-                        fields_out.append(f)
+                    if not isinstance(f, str):
+                        continue
+                    identity = f if f in schema_by_identity else None
+                    if identity is None:
+                        native_matches = identities_by_native.get(f, [])
+                        identity = (
+                            native_matches[0] if len(native_matches) == 1 else None
+                        )
+                    if identity and identity not in fields_out:
+                        fields_out.append(identity)
+                _remaining_request_ms(request_deadline)
                 return self._gm.success_response({"fields": fields_out})
 
             filters = parsed if isinstance(parsed, list) else []
 
             # Validate each filter against the schema
-            field_map = {s["field"]: s for s in schema}
+            field_map = {
+                _ai_schema_identity(s): s
+                for s in schema
+                if isinstance(s, dict) and _ai_schema_identity(s)
+            }
+            identities_by_native = {}
+            for identity, field_schema in field_map.items():
+                identities_by_native.setdefault(field_schema.get("field"), []).append(
+                    identity
+                )
             validated = []
             for f in filters:
-                field = f.get("field")
+                submitted_identity = str(f.get("property_id") or f.get("field") or "")
                 operator = f.get("operator")
                 value = f.get("value")
 
-                if field not in field_map:
-                    continue
-
-                field_schema = field_map[field]
+                field_schema = field_map.get(submitted_identity)
+                if field_schema is None:
+                    native_matches = identities_by_native.get(f.get("field"), [])
+                    if len(native_matches) != 1:
+                        continue
+                    field_schema = field_map[native_matches[0]]
                 allowed_ops = field_schema.get("operators", [])
                 if allowed_ops and operator not in allowed_ops:
                     # Soft-allow `is_not` and `contains` on string fields even
@@ -1167,19 +2036,21 @@ class AIFilterView(APIView):
                         else:
                             continue
 
-                validated.append(
-                    {
-                        "field": field,
-                        "operator": operator,
-                        "value": value,
-                    }
-                )
+                condition = {
+                    "field": field_schema["field"],
+                    "operator": operator,
+                    "value": value,
+                }
+                if field_schema.get("property_id"):
+                    condition["property_id"] = field_schema["property_id"]
+                validated.append(condition)
 
             # Last-resort fallback: if the LLM returned nothing AND the
             # schema has at least one long-choices field, try to resolve
             # the user's query directly against each enum's choices using
             # the same fuzzy matcher. This catches cases where the LLM
             # was paralyzed by a long choices list and refused to emit.
+            _remaining_request_ms(request_deadline)
             if not validated:
                 tokens = _query_token_phrases(query)
                 for f_schema in schema:
@@ -1192,46 +2063,51 @@ class AIFilterView(APIView):
                     for tok in tokens:
                         match = _resolve_choice(tok, choices, f_labels)
                         if match is not None:
-                            validated.append(
-                                {
-                                    "field": f_schema.get("field"),
-                                    "operator": "is",
-                                    "value": match,
-                                }
-                            )
+                            condition = {
+                                "field": f_schema.get("field"),
+                                "operator": "is",
+                                "value": match,
+                            }
+                            if f_schema.get("property_id"):
+                                condition["property_id"] = f_schema["property_id"]
+                            validated.append(condition)
 
+            _remaining_request_ms(request_deadline)
             return self._gm.success_response({"filters": validated})
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"AI filter JSON parse error: {e}")
-            if mode == "select_fields":
-                return self._gm.success_response({"fields": []})
-            # Run the same query-direct fallback as the empty-validated path
-            # so the user still gets *some* answer when the LLM returned
-            # malformed JSON for a long choices list.
-            try:
-                fallback = []
-                tokens = _query_token_phrases(query)
-                for f_schema in schema:
-                    if not isinstance(f_schema, dict):
-                        continue
-                    choices = f_schema.get("choices") or []
-                    if not choices:
-                        continue
-                    f_labels = f_schema.get("choice_labels") or {}
-                    for tok in tokens:
-                        match = _resolve_choice(tok, choices, f_labels)
-                        if match is not None:
-                            fallback.append(
-                                {
-                                    "field": f_schema.get("field"),
-                                    "operator": "is",
-                                    "value": match,
-                                }
-                            )
-                return self._gm.success_response({"filters": fallback})
-            except Exception:
-                return self._gm.success_response({"filters": []})
-        except Exception as e:
-            logger.error(f"Error in AIFilterView: {str(e)}\n{traceback.format_exc()}")
-            return self._gm.bad_request(f"AI filter error: {str(e)}")
+        except AIFilterUnavailableError as exc:
+            logger.warning(
+                "ai_filter_unavailable",
+                mode=mode,
+                code=exc.code,
+                status_code=exc.status_code,
+            )
+            return self._gm.custom_error_response(
+                exc.status_code,
+                exc.public_message,
+                code=exc.code,
+            )
+        except SmartFilterGroundingError as exc:
+            logger.warning(
+                "ai_filter_grounding_refused",
+                mode=mode,
+                code=exc.code,
+                status_code=exc.status_code,
+            )
+            return self._gm.custom_error_response(
+                exc.status_code,
+                exc.public_message,
+                code=exc.code,
+            )
+        except Exception as exc:
+            logger.error(
+                "ai_filter_request_failed",
+                mode=mode,
+                error_type=type(exc).__name__,
+            )
+            unavailable = _ai_filter_unavailable()
+            return self._gm.custom_error_response(
+                unavailable.status_code,
+                unavailable.public_message,
+                code=unavailable.code,
+            )

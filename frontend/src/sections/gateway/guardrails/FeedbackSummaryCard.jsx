@@ -21,6 +21,18 @@ function formatPct(val) {
   return `${(Number(val) * 100).toFixed(1)}%`;
 }
 
+function normalizeSummaryItem(item) {
+  return {
+    checkName: item.checkName ?? item.check_name ?? "",
+    total: item.total ?? item.total_feedback ?? 0,
+    correctCount: item.correctCount ?? item.correct_count ?? 0,
+    falsePositiveCount:
+      item.falsePositiveCount ?? item.false_positive_count ?? 0,
+    falseNegativeCount:
+      item.falseNegativeCount ?? item.false_negative_count ?? 0,
+  };
+}
+
 const FeedbackSummaryCard = () => {
   const { data: summary, isLoading } = useGuardrailFeedbackSummary();
 
@@ -79,9 +91,10 @@ const FeedbackSummaryCard = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {summary.map((item) => {
+              {summary.map((rawItem) => {
+                const item = normalizeSummaryItem(rawItem);
                 const accuracy =
-                  item.total > 0 ? (item.correctCount || 0) / item.total : 0;
+                  item.total > 0 ? item.correctCount / item.total : 0;
                 return (
                   <TableRow key={item.checkName} hover>
                     <TableCell>

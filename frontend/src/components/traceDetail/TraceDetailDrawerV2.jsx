@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -13,6 +14,10 @@ import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { modelCatalogQuery } from "src/api/model/model";
+import { useCreatePromptDraft } from "src/api/develop/prompt";
+import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
+import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
@@ -22,7 +27,11 @@ import {
   useUpdateSavedView,
   useDeleteSavedView,
   useReorderSavedViews,
+  getOwnViewNames,
+  DEFAULT_VIEW_NAME,
+  findOwnDefaultView,
 } from "src/api/project/saved-views";
+import { useAuthContext } from "src/auth/hooks";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
 import LeftPanelSplit from "./TraceLeftPanel";
@@ -39,8 +48,10 @@ import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-
 import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
 import AnnotationSidebarContent from "src/components/traceDetailDrawer/AnnotationSidebarContent";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
+import { buildTraceAnnotationSources } from "src/components/voiceAnnotationSources";
 import AddTagsPopover from "./AddTagsPopover";
 import SaveViewPopover from "./SaveViewDialog";
+import { buildPromptConfigFromSpan } from "./promptFromSpan";
 import { useNavigate } from "react-router";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import ImagineTab from "src/components/imagine/ImagineTab";
@@ -49,9 +60,45 @@ import useImagineStore from "src/components/imagine/useImagineStore";
 
 const PANEL_WIDTH = "60vw";
 
+const CREATE_PROMPT_ERROR = "Failed to create prompt. Please try again.";
+
 const SPAN_FILTER_DEFAULT = {
   columnId: "",
   filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+};
+
+export function TraceDetailSpanFilterPanel({
+  anchorEl,
+  open,
+  onClose,
+  currentFilters,
+  onApply,
+  projectId,
+}) {
+  return (
+    <TraceFilterPanel
+      anchorEl={anchorEl}
+      open={open}
+      onClose={onClose}
+      currentFilters={currentFilters}
+      onApply={onApply}
+      projectId={projectId}
+      source="traces"
+      tab="spans"
+      propertyNamespace="traces"
+      attributeSource="spans"
+      isSpansView
+    />
+  );
+}
+
+TraceDetailSpanFilterPanel.propTypes = {
+  anchorEl: PropTypes.any,
+  open: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  currentFilters: PropTypes.array.isRequired,
+  onApply: PropTypes.func.isRequired,
+  projectId: PropTypes.string.isRequired,
 };
 
 const ACTION_ITEMS = [
@@ -72,150 +119,6 @@ const ACTION_ITEMS = [
   { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
 ];
 
-/**
- * Parse template variables from span attributes.
- * SDK stores them as JSON string in:
- *   - gen_ai.prompt.template.variables
- *   - llm.prompt_template.variables
- * Returns { varName: value } or null.
- */
-function parseTemplateVariables(attrs) {
-  const raw =
-    attrs?.["gen_ai.prompt.template.variables"] ||
-    attrs?.["llm.prompt_template.variables"];
-  if (!raw) return null;
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-      return parsed;
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-/**
- * Replace resolved variable values in text with {{varName}} placeholders.
- * Sorts by value length descending so longer values get replaced first
- * (avoids partial matches when one value is a substring of another).
- */
-function templatizeText(text, variables) {
-  if (!text || !variables) return text;
-  let result = text;
-  const entries = Object.entries(variables)
-    .filter(([, val]) => val != null && String(val).length > 0)
-    .sort((a, b) => String(b[1]).length - String(a[1]).length);
-  for (const [name, value] of entries) {
-    const strVal = String(value);
-    // Replace all occurrences of the value with {{name}}
-    let idx = result.indexOf(strVal);
-    while (idx !== -1) {
-      result =
-        result.slice(0, idx) +
-        `{{${name}}}` +
-        result.slice(idx + strVal.length);
-      idx = result.indexOf(strVal, idx + `{{${name}}}`.length);
-    }
-  }
-  return result;
-}
-
-/**
- * Extract LLM input messages from span attributes and convert to
- * the workbench prompt_config format.
- * If template variables are found, replaces resolved values with
- * {{variable}} placeholders and returns variable_names for the draft.
- */
-function buildPromptConfigFromSpan(span) {
-  const attrs = span?.span_attributes || span?.eval_attributes || {};
-  const templateVars = parseTemplateVariables(attrs);
-
-  // Parse input messages from flattened attributes
-  const tempMessages = {};
-  const messagePrefixes = [
-    "llm.inputMessages",
-    "llm.input_messages",
-    "gen_ai.input.messages",
-  ];
-
-  Object.keys(attrs).forEach((key) => {
-    const matchingPrefix = messagePrefixes.find((prefix) =>
-      key.startsWith(prefix),
-    );
-    if (!matchingPrefix) return;
-    const parts = key.replace(`${matchingPrefix}.`, "").split(".");
-    const index = parts[0];
-    const property = parts.slice(1).join(".");
-    if (!tempMessages[index]) tempMessages[index] = {};
-    if (property === "message.role" || property === "role") {
-      tempMessages[index].role = attrs[key];
-    }
-    if (
-      property.startsWith("message.content") ||
-      property.startsWith("content")
-    ) {
-      let content = attrs[key];
-      if (typeof content === "object" && content !== null)
-        content = JSON.stringify(content, null, 2);
-      if (!tempMessages[index].content) tempMessages[index].content = content;
-      else if (typeof tempMessages[index].content === "string") {
-        tempMessages[index].content += content;
-      }
-    }
-  });
-
-  const parsedMessages = Object.keys(tempMessages)
-    .sort((a, b) => parseInt(a) - parseInt(b))
-    .filter((key) => tempMessages[key].role)
-    .map((key) => {
-      let text =
-        typeof tempMessages[key].content === "string"
-          ? tempMessages[key].content
-          : JSON.stringify(tempMessages[key].content ?? "", null, 2);
-      // Replace resolved values with {{variable}} placeholders
-      if (templateVars) {
-        text = templatizeText(text, templateVars);
-      }
-      return {
-        role: tempMessages[key].role,
-        content: [{ type: "text", text }],
-      };
-    });
-
-  // Fallback: if no messages parsed from attributes, use span.input
-  if (parsedMessages.length === 0 && span?.input) {
-    let inputContent =
-      typeof span.input === "string"
-        ? span.input
-        : JSON.stringify(span.input, null, 2);
-    if (templateVars) {
-      inputContent = templatizeText(inputContent, templateVars);
-    }
-    parsedMessages.push(
-      { role: "system", content: [{ type: "text", text: "" }] },
-      { role: "user", content: [{ type: "text", text: inputContent }] },
-    );
-  }
-
-  // Ensure system message exists
-  if (parsedMessages.length > 0 && parsedMessages[0].role !== "system") {
-    parsedMessages.unshift({
-      role: "system",
-      content: [{ type: "text", text: "" }],
-    });
-  }
-
-  // Build variable_names dict: { varName: [sampleValue] }
-  const variableNames = {};
-  if (templateVars) {
-    for (const [name, value] of Object.entries(templateVars)) {
-      variableNames[name] = value != null ? [String(value)] : [];
-    }
-  }
-
-  return { messages: parsedMessages, variableNames };
-}
-
 function getSpan(entry) {
   return entry?.observation_span || {};
 }
@@ -235,10 +138,8 @@ const TraceDetailDrawerV2 = ({
 }) => {
   const navigate = useNavigate();
 
-  const { mutate: createPromptDraft, isPending: isCreatingDraft } = useMutation(
-    {
-      mutationFn: (body) =>
-        axios.post(endpoints.develop.runPrompt.createPromptDraft, body),
+  const { mutate: createPromptDraft, isPending: isCreatingDraft } =
+    useCreatePromptDraft({
       onSuccess: (res) => {
         const newId =
           res?.data?.result?.rootTemplate ||
@@ -249,12 +150,11 @@ const TraceDetailDrawerV2 = ({
         }
       },
       onError: () => {
-        enqueueSnackbar("Failed to create prompt. Please try again.", {
+        enqueueSnackbar(CREATE_PROMPT_ERROR, {
           variant: "error",
         });
       },
-    },
-  );
+    });
 
   const { mutate: createGraphFromTrace, isPending: isCreatingGraph } =
     useMutation({
@@ -342,8 +242,15 @@ const TraceDetailDrawerV2 = ({
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
 
-  const customViews =
-    savedViewsData?.customViews || savedViewsData?.custom_views || [];
+  // The list endpoint returns `custom_views`; memoized so it's a stable dep for
+  // the callbacks below (a fresh `|| []` array each render would defeat them).
+  const customViews = useMemo(
+    () => savedViewsData?.custom_views ?? [],
+    [savedViewsData],
+  );
+  const { user } = useAuthContext();
+  // Inline duplicate-guard input: the current user's own view names.
+  const ownViewNames = getOwnViewNames(customViews, user?.id);
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("trace");
   const [deleteTabId, setDeleteTabId] = useState(null);
@@ -466,39 +373,56 @@ const TraceDetailDrawerV2 = ({
 
   // "Set default for everyone" — make current view project-visible
   const handleSetDefaultView = useCallback(() => {
+    const onDone = {
+      onSuccess: () =>
+        enqueueSnackbar("View set as default for everyone", {
+          variant: "success",
+        }),
+      onError: (err) =>
+        enqueueSnackbar(
+          getRequestErrorMessage(err, "Failed to set view as default"),
+          { variant: "error" },
+        ),
+    };
+
     if (activeDrawerTab !== "trace") {
-      // Update existing custom view to project visibility
-      updateSavedView(
-        { id: activeDrawerTab, visibility: "project" },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
-      );
-    } else {
-      // Create a new project-level view from current config
-      const config = {
-        display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-        filters: spanFilters,
-      };
-      createSavedView(
-        {
-          project_id: projectId,
-          name: "Default View",
-          tab_type: "traces",
-          visibility: "project",
-          config,
-        },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
-      );
+      // Flip visibility only. This branch handles non-"trace" (imagine) tabs,
+      // whose config is a different shape — resending the trace-shaped config
+      // below would corrupt it (the same reason auto-save skips imagine tabs).
+      updateSavedView({ id: activeDrawerTab, visibility: "project" }, onDone);
+      return;
     }
+
+    const config = {
+      display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
+      filters: spanFilters,
+    };
+
+    // Adopt the user's own default for this drawer's tab_type ("traces").
+    // Scoped to the current user so we never overwrite a teammate's shared
+    // default (a blind create would 400 on the name).
+    const existingDefault = findOwnDefaultView(customViews, {
+      tabType: "traces",
+      userId: user?.id,
+    });
+    if (existingDefault) {
+      updateSavedView(
+        { id: existingDefault.id, visibility: "project", config },
+        onDone,
+      );
+      return;
+    }
+
+    createSavedView(
+      {
+        project_id: projectId,
+        name: DEFAULT_VIEW_NAME,
+        tab_type: "traces",
+        visibility: "project",
+        config,
+      },
+      onDone,
+    );
   }, [
     activeDrawerTab,
     viewMode,
@@ -507,6 +431,8 @@ const TraceDetailDrawerV2 = ({
     showAgentGraph,
     spanFilters,
     projectId,
+    customViews,
+    user,
     updateSavedView,
     createSavedView,
   ]);
@@ -542,8 +468,10 @@ const TraceDetailDrawerV2 = ({
             setSaveViewAnchor(null);
             setIsSavingView(false);
           },
-          onError: () => {
-            enqueueSnackbar("Failed to create view", { variant: "error" });
+          onError: (err) => {
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
+              variant: "error",
+            });
             setIsSavingView(false);
           },
         },
@@ -750,16 +678,88 @@ const TraceDetailDrawerV2 = ({
             navigate(
               `/dashboard/workbench/create/${promptTemplateId}?tab=Playground`,
             );
-          } else {
-            const { messages, variableNames } = buildPromptConfigFromSpan(span);
-            createPromptDraft({
-              name: "",
-              prompt_config: [{ messages }],
-              ...(Object.keys(variableNames).length > 0 && {
-                variable_names: variableNames,
-              }),
-            });
+            break;
           }
+          const {
+            messages,
+            variableNames,
+            model,
+            provider,
+            parameters,
+            responseFormat,
+          } = buildPromptConfigFromSpan(span);
+          (async () => {
+            try {
+              // Resolve the trace model to one catalog entry; set it only when sure
+              // (exact or unique provider-scoped match), else leave it unset so the
+              // "Select a model" flow handles it instead of a half-recognized model.
+              let resolved = null;
+              if (model) {
+                try {
+                  const data =
+                    (await queryClient.fetchQuery(modelCatalogQuery(model))) ||
+                    {};
+                  const results = data.results || [];
+                  const nameOf = (m) => m.model_name ?? "";
+                  const provOf = (m) => (m.providers ?? "").toLowerCase();
+                  // Catalog ids are LiteLLM-prefixed (vertex_ai/…, bedrock/<region>/…);
+                  // the trace emits the provider-native id.
+                  const baseName = (n) => n.slice(n.lastIndexOf("/") + 1);
+                  const wantProv = provider?.toLowerCase();
+
+                  // Exact model_name, preferring the trace's provider.
+                  let match =
+                    (wantProv &&
+                      results.find(
+                        (m) => nameOf(m) === model && provOf(m) === wantProv,
+                      )) ||
+                    results.find((m) => nameOf(m) === model);
+
+                  // Else a unique prefix-stripped match within the provider;
+                  // ambiguous (e.g. multi-region Bedrock) stays unresolved.
+                  if (!match && !data.next) {
+                    let cands = results.filter(
+                      (m) => baseName(nameOf(m)) === model,
+                    );
+                    if (wantProv) {
+                      const byProv = cands.filter(
+                        (m) => provOf(m) === wantProv,
+                      );
+                      if (byProv.length) cands = byProv;
+                    }
+                    if (cands.length === 1) [match] = cands;
+                  }
+
+                  if (match) {
+                    resolved = {
+                      model_name: nameOf(match),
+                      providers: match.providers ?? provider ?? "",
+                      logoUrl: match.logo_url ?? "",
+                      type: match.type ?? "",
+                      isAvailable: match.is_available ?? false,
+                    };
+                  }
+                } catch (err) {
+                  logger.warn("workbench model catalog lookup failed", err);
+                }
+              }
+              const configuration = {
+                ...parameters,
+                output_format: getOutputFormatFromCatalogType(resolved?.type),
+                // Set explicitly — the selector defaults to JSON when unset.
+                response_format: responseFormat,
+                ...(resolved && {
+                  model: resolved.model_name,
+                  model_detail: resolved,
+                }),
+              };
+              createPromptDraft({ configuration, messages, variableNames });
+            } catch {
+              enqueueSnackbar(CREATE_PROMPT_ERROR, {
+                variant: "error",
+              });
+            }
+          })();
           break;
         }
         case "playground":
@@ -782,6 +782,7 @@ const TraceDetailDrawerV2 = ({
       createGraphFromTrace,
       traceId,
       actionsAnchorEl,
+      queryClient,
     ],
   );
 
@@ -974,7 +975,7 @@ const TraceDetailDrawerV2 = ({
 
       {/* Span filter popover — hidden on Imagine tab */}
       {!isImagineActive && (
-        <TraceFilterPanel
+        <TraceDetailSpanFilterPanel
           anchorEl={filterAnchorEl}
           open={Boolean(filterAnchorEl)}
           onClose={() => setFilterAnchorEl(null)}
@@ -1211,6 +1212,7 @@ const TraceDetailDrawerV2 = ({
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
                   onSelectSpan={handleSelectSpan}
+                  drawerOpen={open}
                 />
               </Box>
             )}
@@ -1293,6 +1295,7 @@ const TraceDetailDrawerV2 = ({
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
                   onSelectSpan={handleSelectSpan}
+                  drawerOpen={open}
                 />
               ) : (
                 /* Summary when no span selected */
@@ -1431,12 +1434,11 @@ const TraceDetailDrawerV2 = ({
         }}
       >
         <AnnotationSidebarContent
-          sources={[
-            {
-              sourceType: "observation_span",
-              sourceId: annotateDrawerOpen?.spanId || rootSpanId,
-            },
-          ]}
+          sources={buildTraceAnnotationSources({
+            traceId,
+            spanId: annotateDrawerOpen?.spanId || rootSpanId,
+            sessionId: data?.trace?.session,
+          })}
           onClose={() => setAnnotateDrawerOpen(null)}
           onAddLabel={() => setAddLabelDrawerOpen(true)}
           onScoresChanged={() => {
@@ -1498,6 +1500,7 @@ const TraceDetailDrawerV2 = ({
         onClose={() => setSaveViewAnchor(null)}
         onSave={handleSaveViewConfirm}
         isLoading={isSavingView}
+        existingNames={ownViewNames}
       />
 
       {/* Delete tab confirmation dialog */}

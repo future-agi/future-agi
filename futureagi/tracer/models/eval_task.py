@@ -63,6 +63,12 @@ class EvalTask(BaseModel):
     )
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)
+    # Forward watermark for continuous tasks: every in-scope row created at/before
+    # this point has been materialized. The reconciler reads it as the lower
+    # ``created_at`` bound (so a continuous task never backfills history that
+    # pre-dates it) and advances it each pass; persisting it means a task paused
+    # for longer than the late-arrival overlap still resumes without a gap.
+    continuous_cursor = models.DateTimeField(blank=True, null=True)
     evals_details = models.JSONField(default=list, blank=True, null=True)
     evals = models.ManyToManyField(
         CustomEvalConfig, related_name="eval_tasks", blank=True, null=True
@@ -102,6 +108,8 @@ class EvalTaskLogger(BaseModel):
     status = models.CharField(
         max_length=255, choices=EvalTaskStatus.choices, blank=True, null=True
     )
+    # Materialized-up-to mark for continuous tasks; null for historical.
+    continuous_cursor = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
         return f"Eval Task Logger {self.id}"

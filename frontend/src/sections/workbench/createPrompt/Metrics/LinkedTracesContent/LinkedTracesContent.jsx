@@ -1,7 +1,7 @@
 // LinkedTracesContent.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "src/styles/clean-data-table.css";
-import { Box, Skeleton } from "@mui/material";
+import { Box, Button, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
 import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -20,6 +20,9 @@ import {
 } from "src/sections/projects/LLMTracing/common";
 import { getRandomId } from "src/utils/utils";
 import MetricEmptyState from "../MetricEmptyState";
+import { getZeroBasedGridPage } from "src/utils/agGridPagination";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readPromptMetricsGridPage } from "../prompt_metrics_grid_read";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -43,9 +46,10 @@ const LinkedTracesContent = () => {
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
   const [showEmptyState, setShowEmptyState] = useState(false);
+  const [readError, setReadError] = useState(null);
 
   const hasActiveFiltersOrSearch = useMemo(() => {
-    const hasFilters = filters?.some((f) => f.columnId !== "");
+    const hasFilters = filters?.some((f) => f.column_id);
     const hasSearch = debouncedSearchQuery?.length > 0;
     return hasFilters || hasSearch;
   }, [filters, debouncedSearchQuery]);
@@ -113,39 +117,47 @@ const LinkedTracesContent = () => {
     const bottomRowObj = {};
 
     for (const eachCol of columns) {
-      if (eachCol?.groupBy) {
-        if (!grouping[eachCol?.groupBy]) {
-          grouping[eachCol?.groupBy] = [eachCol];
+      if (eachCol?.group_by) {
+        if (!grouping[eachCol?.group_by]) {
+          grouping[eachCol?.group_by] = [eachCol];
         } else {
-          grouping[eachCol?.groupBy].push(eachCol);
+          grouping[eachCol?.group_by].push(eachCol);
         }
       } else {
         grouping[getRandomId()] = [eachCol];
       }
     }
 
-    const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-      if (!AllowedGroups.includes(group) && cols.length === 1) {
-        const c = cols[0];
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getMetricsListColumnDefs(c);
-      } else {
-        return {
-          headerName: group,
-          children: cols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
-            const colDef = getMetricsListColumnDefs(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-          headerGroupComponent: CustomTraceGroupHeaderRenderer,
-        };
-      }
-    });
+    const columnDefsResult = Object.entries(grouping).flatMap(
+      ([group, cols]) => {
+        if (group === "Annotation Metrics") {
+          return cols.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getMetricsListColumnDefs(c);
+          });
+        }
+        if (!AllowedGroups.includes(group) && cols.length === 1) {
+          const c = cols[0];
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          return getMetricsListColumnDefs(c);
+        } else {
+          return {
+            headerName: group,
+            children: cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+              const colDef = getMetricsListColumnDefs(c);
+              return {
+                ...colDef,
+                minWidth: 200,
+                flex: 1,
+                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+              };
+            }),
+            headerGroupComponent: CustomTraceGroupHeaderRenderer,
+          };
+        }
+      },
+    );
 
     return {
       columnDefs: columnDefsResult,
@@ -162,62 +174,61 @@ const LinkedTracesContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
+          const { pageNumber, pageSize } = getZeroBasedGridPage(
+            params.request,
+            10,
+          );
 
-          // If filter is name, change it to spanName
+          // The span-name column's id is "name" but the backend filter map keys it "span_name".
           const validFilters = filters?.reduce((acc, f) => {
-            if (f.columnId === "") return acc;
+            if (!f.column_id) return acc;
             acc.push(
-              f.columnId === "name" ? { ...f, columnId: "spanName" } : f,
+              f.column_id === "name" ? { ...f, column_id: "span_name" } : f,
             );
             return acc;
           }, []);
 
           // --- API Request ---
-          const response = await axios.get(
-            endpoints.develop.runPrompt.getPromptSpanMetrics(),
-            {
+          const page = await readPromptMetricsGridPage(({ signal, timeout }) =>
+            axios.get(endpoints.develop.runPrompt.getPromptSpanMetrics(), {
+              signal,
+              timeout,
               params: {
                 prompt_template_id: id,
                 search_term: debouncedSearchQuery,
+                page_number: pageNumber,
+                page_size: pageSize,
                 ...(validFilters?.length
                   ? { filters: JSON.stringify(normalizeFilters(validFilters)) }
                   : {}),
               },
-            },
+            }),
           );
-
-          // --- Response Handling ---
-          const res = response?.data?.result || {};
-          const cols = res?.config?.map((o) => ({
+          const cols = page.columns.map((o) => ({
             ...o,
           }));
           setColumns(cols);
-          // Return data to AG Grid
-          const rowData = res?.table || [];
-          const totalRows = res?.metadata?.total_rows || 0;
+          const { rowData, totalRows } = page;
 
           // Update hasData based on response
           setHasData(totalRows > 0);
           setHasInitialLoad(true);
+          setReadError(null);
           // Return data to AG Grid
           params.success({
             rowData,
             rowCount: totalRows,
           });
-        } catch (error) {
-          setHasData(false);
-          setHasInitialLoad(true);
-          params.success({
-            rowData: [],
-            rowCount: 0,
-          });
+        } catch {
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
+          params.fail();
         } finally {
           setIsLoading(false);
         }
       },
 
       // --- Row Identification ---
-      getRowId: ({ data }) => data.spanId,
+      getRowId: ({ data }) => data.span_id,
     }),
     [id, filters, debouncedSearchQuery, setColumns],
   );
@@ -240,6 +251,34 @@ const LinkedTracesContent = () => {
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <MetricsHeaderSection />
+      {readError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            fontSize: 12,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            borderBottom: "1px solid",
+            borderColor: "warning.light",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError}
+          <Button
+            size="small"
+            onClick={() => {
+              setReadError(null);
+              gridApiRef.current?.api?.refreshServerSide({ purge: false });
+            }}
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <AgGridReact
           className="clean-data-table"
@@ -276,7 +315,6 @@ const LinkedTracesContent = () => {
         filterData={openQuickFilter}
         onClose={() => setOpenQuickFilter(null)}
         setFilters={setFilters}
-        setFilterOpen={setIsFilterDrawerOpen}
       />
     </Box>
   );

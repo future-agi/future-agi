@@ -14,11 +14,22 @@ for sessions as it does for traces — same metric IDs, same response
 shape — but the numbers reflect session-level aggregation.
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.query_builders.filters import (
+    ClickHouseFilterBuilder,
+    build_numeric_filter_predicate,
+)
+from tracer.services.clickhouse.query_builders.session_filters import (
+    SESSION_ID_FILTER_COLS,
+    build_session_id_filter_clause,
+)
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 
 
 class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -33,31 +44,65 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
+    SESSION_FILTER_MAP: dict[str, str] = {
+        "duration": "session_duration",
+        "total_cost": "session_total_cost",
+        "total_tokens": "session_total_tokens",
+        "traces_count": "session_traces",
+        "total_traces_count": "session_traces",
+    }
+    SESSION_ID_FILTER_COLS = SESSION_ID_FILTER_COLS
 
     def __init__(
         self,
         project_id: str,
-        filters: Optional[List[Dict]] = None,
+        filters: list[dict] | None = None,
         interval: str = "day",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
         self.interval = interval
-        self.start_date: Optional[datetime] = None
-        self.end_date: Optional[datetime] = None
+        self.start_date: datetime | None = None
+        self.end_date: datetime | None = None
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        filter_builder = ClickHouseFilterBuilder(table=self.TABLE)
-        extra_where, extra_params = filter_builder.translate(self.filters)
+        filter_builder = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        span_filters = self._extract_span_filters()
+        extra_where, extra_params = filter_builder.translate(span_filters)
         self.params.update(extra_params)
+        having_clauses = self._build_having_clauses()
 
         where_clause = extra_where if extra_where else "1 = 1"
+        having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
         bucket_fn = self.time_bucket_expr(self.interval)
+
+        # P3b step1.5 (DESIGN §3 / id_remap_sql): this builder GROUPs the spans
+        # into sessions by `trace_session_id`, then re-buckets sessions by time.
+        # A cross-cutover straddler (old-id spans + new deterministic-id spans for
+        # ONE session) would split into TWO inner session rows — double-counting
+        # `session_count`/`avg_*` and halving each session's metrics. Resolve each
+        # span's `trace_session_id` new→old through `trace_session_id_remap` and
+        # GROUP the inner per-session aggregate on the RESOLVED id, so old + new
+        # spans form ONE session. The time/project/null predicates + the span
+        # `{where_clause}` stay on the bare inner scan; the grouping key and
+        # session-ID filters bind the resolved column. `resolved_id_expr` is the
+        # zero-uuid-guarded map (NOT a COALESCE). Pre-flip NO span matches a
+        # `new_id` → resolved id == own id → byte-identical no-op (gate B).
+        ts_join = remap_left_join(
+            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
+        session_id_clause = self._build_session_id_clause(resolved_ts)
+        session_id_fragment = f"WHERE {session_id_clause}" if session_id_clause else ""
 
         # Two-level aggregation:
         # Inner: per-session aggregates from ALL spans in the session
@@ -81,36 +126,98 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(session_total_cost) AS total_cost_sum
         FROM (
             SELECT
-                trace_session_id AS session_id,
-                min(start_time) AS session_start,
-                dateDiff('second', min(start_time), max(end_time))
+                {resolved_ts} AS session_id,
+                min(rs.start_time) AS session_start,
+                dateDiff('second', min(rs.start_time), max(rs.end_time))
                     AS session_duration,
-                avg(latency_ms) AS session_avg_latency,
-                sum(cost) AS session_total_cost,
-                sum(total_tokens) AS session_total_tokens,
-                sum(prompt_tokens) AS session_prompt_tokens,
-                sum(completion_tokens) AS session_completion_tokens,
-                uniqExact(trace_id) AS session_traces,
-                max(if(status = 'ERROR', 1, 0)) AS session_has_error
-            FROM {self.TABLE}
-            {self.project_where()}
-              AND start_time >= %(start_date)s
-              AND start_time < %(end_date)s
-              AND trace_session_id IS NOT NULL
-              AND trace_session_id != toUUID('{NIL_UUID}')
-              AND {where_clause}
-            GROUP BY trace_session_id
+                avg(rs.latency_ms) AS session_avg_latency,
+                sum(rs.cost) AS session_total_cost,
+                sum(rs.total_tokens) AS session_total_tokens,
+                sum(rs.prompt_tokens) AS session_prompt_tokens,
+                sum(rs.completion_tokens) AS session_completion_tokens,
+                uniqExact(rs.trace_id) AS session_traces,
+                max(if(rs.status = 'ERROR', 1, 0)) AS session_has_error
+            FROM (
+                SELECT
+                    trace_session_id, start_time, end_time, latency_ms, cost,
+                    total_tokens, prompt_tokens, completion_tokens, trace_id, status
+                FROM {self.TABLE}
+                {self.project_where()}
+                  AND start_time >= %(start_date)s
+                  AND start_time < %(end_date)s
+                  AND trace_session_id IS NOT NULL
+                  AND trace_session_id != toUUID('{NIL_UUID}')
+                  AND {where_clause}
+            ) AS rs
+            {ts_join}
+            {session_id_fragment}
+            GROUP BY session_id
+            {having_fragment}
         )
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
 
+    def _extract_span_filters(self) -> list[dict]:
+        """Return filters that apply before the session GROUP BY."""
+        span_filters: list[dict] = []
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if (
+                col_id not in self.SESSION_FILTER_MAP
+                and col_id not in self.SESSION_ID_FILTER_COLS
+            ):
+                span_filters.append(f)
+        return span_filters
+
+    def _build_session_id_clause(self, resolved_session_id: str) -> str:
+        """Filter the remap-resolved session ID before session aggregation.
+
+        Applied inline (pre-GROUP BY), so it binds against the full
+        ``resolved_id_expr(...)`` rather than a projected column alias.
+        """
+        return build_session_id_filter_clause(
+            self.filters,
+            self.params,
+            session_col=resolved_session_id,
+            param_prefix="session_id_",
+        )
+
+    def _build_having_clauses(self) -> str:
+        """Build predicates for session aggregate filters."""
+        conditions: list[str] = []
+        param_counter = 900
+
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id not in self.SESSION_FILTER_MAP:
+                continue
+
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            filter_op = config.get("filter_op") or config.get("filterOp")
+            filter_value = config.get("filter_value", config.get("filterValue"))
+            ch_col = self.SESSION_FILTER_MAP[col_id]
+
+            param_counter += 1
+            param_name = f"having_{param_counter}"
+            conditions.append(
+                build_numeric_filter_predicate(
+                    ch_col,
+                    filter_op,
+                    filter_value,
+                    param_prefix=param_name,
+                    params=self.params,
+                )
+            )
+
+        return " AND ".join(conditions)
+
     def format_result(
         self,
-        rows: List[Tuple],
-        columns: List[str],
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        rows: list[tuple],
+        columns: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
         """Post-process ClickHouse rows into the standard response dict.
 
         Returns the same keys as TimeSeriesQueryBuilder (latency, tokens,
@@ -173,3 +280,99 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
             "avg_traces_per_session": avg_traces_data,
             "total_cost": total_cost_sum_data,
         }
+
+
+class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
+    """Build an interactive date-only graph from retained session states.
+
+    This deliberately does not resolve ``trace_session_id_remap``. A global
+    remap join defeats the purpose of the row-reduced fast path on projects
+    with billions of spans. The response is consequently labelled as a
+    materialized-rollup estimate by the dispatcher rather than exact data.
+    """
+
+    ROLLUP_TABLE = "spans_per_session"
+
+    def build(self) -> tuple[str, dict[str, Any]]:
+        if any(
+            (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+            or self.is_datetime_complement_filter(item)
+            for item in self.filters
+        ):
+            raise ValueError(
+                "session rollup graphs accept only positive datetime filters"
+            )
+        self.start_date, self.end_date = self.parse_time_range(
+            self.filters,
+            strict=True,
+        )
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+        rollup_scan_start = self.start_date.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        rollup_scan_end = self.end_date.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        if rollup_scan_end < self.end_date:
+            rollup_scan_end += timedelta(hours=1)
+        self.params["rollup_scan_start"] = rollup_scan_start
+        self.params["rollup_scan_end"] = rollup_scan_end
+        bucket_fn = self.time_bucket_expr(self.interval)
+        query = self._rollup_query(bucket_fn=bucket_fn)
+        return query, self.params
+
+    def _rollup_query(
+        self,
+        *,
+        bucket_fn: str,
+    ) -> str:
+        source = self._rollup_session_source()
+        return f"""
+        SELECT
+            {bucket_fn}(session_start) AS time_bucket,
+            avg(session_latency) AS avg_latency,
+            sum(session_total_tokens) AS total_tokens,
+            avg(session_total_cost) AS avg_cost,
+            count() AS traffic_count,
+            sum(session_prompt_tokens) AS prompt_tokens,
+            sum(session_completion_tokens) AS completion_tokens,
+            countIf(session_error_count > 0) * 100.0
+                / greatest(count(), 1) AS error_rate,
+            count() AS session_count,
+            avg(dateDiff('second', session_start,
+                coalesce(session_end, session_start))) AS avg_duration,
+            CAST(NULL, 'Nullable(Float64)') AS avg_traces_per_session,
+            sum(session_total_cost) AS total_cost_sum
+        FROM ({source}) AS sessions
+        WHERE session_start >= %(start_date)s
+          AND session_start < %(end_date)s
+        GROUP BY time_bucket
+        ORDER BY time_bucket
+        """
+
+    def _rollup_session_source(self) -> str:
+        return f"""
+            SELECT
+                sps.trace_session_id AS session_id,
+                minMerge(sps.first_seen) AS session_start,
+                maxMerge(sps.last_seen) AS session_end,
+                sumMerge(sps.total_tokens_sum) AS session_total_tokens,
+                sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens,
+                sumMerge(sps.completion_tokens_sum)
+                    AS session_completion_tokens,
+                sumMerge(sps.cost_sum) AS session_total_cost,
+                (quantilesTDigestMerge(0.5, 0.95, 0.99)(sps.latency_q))[1]
+                    AS session_latency,
+                countIfMerge(sps.error_count) AS session_error_count
+            FROM {self.ROLLUP_TABLE} AS sps
+            PREWHERE sps.project_id = toUUID(%(project_id)s)
+              AND sps.hour_first_seen >= %(rollup_scan_start)s
+              AND sps.hour_first_seen < %(rollup_scan_end)s
+            GROUP BY session_id
+        """

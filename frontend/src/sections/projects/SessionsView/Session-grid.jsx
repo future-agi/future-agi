@@ -15,14 +15,52 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import TracesDrawer from "../TracesDrawer/TracesDrawer";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { getSessionListColumnDef } from "./common";
+import {
+  getSessionListColumnDef,
+  initialVisibility,
+  mergeNonCustomColumns,
+} from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
-import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
+import {
+  normalizeConfigKeys,
+  toBackendFilters,
+} from "src/sections/projects/LLMTracing/common";
+import {
+  useSessionsGridStore,
+  useSessionsGridStoreShallow,
+} from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
+import {
+  getListReadMessage,
+  getListTotalState,
+} from "src/sections/projects/LLMTracing/listTotalMetadata";
+import {
+  createListCursorPagination,
+  isListCursorContinuationLimitError,
+  loadExactListPage,
+  retryServerSideCursorLoad,
+  resumePendingListPage,
+  shareInFlightListPage,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
+import {
+  boundObserveListRow,
+  compactObserveListResponse,
+} from "src/sections/projects/LLMTracing/observeListPayload";
+import ListCursorContinuationNotice from "src/sections/projects/LLMTracing/ListCursorContinuationNotice";
+import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
+import useCursorGridPagination from "src/sections/projects/LLMTracing/useCursorGridPagination";
+import {
+  dispatchObservePageChanged,
+  OBSERVE_LIST_REFRESH_EVENT,
+} from "../observeEvents";
+import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
+import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
+  OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
+} from "src/config/runtime_limits";
 
 const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -38,17 +76,10 @@ const getSessionGridThemeParams = (theme) => ({
   rowHoverColor: "rgba(120,87,252,0.04)",
 });
 
-const DATASET_ROWS_LIMIT = 30;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
+const sessionRowIdentity = (row) => {
+  const id = row?.session_id || row?.id;
+  return id ? `${row?.project_id || ""}:${id}` : null;
+};
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -70,13 +101,54 @@ const SessionGrid = React.forwardRef(
       canonicalOrderRef,
       isOnSavedView = false,
       onUserReorder,
+      userIdForUserMode,
     },
     gridApiRef,
   ) => {
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
+    const [continuationNotice, setContinuationNotice] = useState(null);
+    const activeListReadsRef = useRef(0);
+    const gridElementRef = useRef(null);
+    const {
+      beginPageLoad,
+      page,
+      pageCount,
+      pageSize,
+      changePageSize,
+      finishPageLoad,
+      goToPage,
+      isPageLoading,
+      publishPage,
+      resetPagination,
+    } = useCursorGridPagination(gridApiRef, gridElementRef);
+    const continueCursorSearch = useCallback(() => {
+      if (!continuationNotice) return;
+      if (retryServerSideCursorLoad(gridApiRef?.current?.api)) {
+        setContinuationNotice(null);
+      }
+    }, [continuationNotice, gridApiRef]);
+    useEffect(() => {
+      const refreshRows = () => {
+        if (page > 1) {
+          dispatchObservePageChanged(page);
+          return;
+        }
+        if (activeListReadsRef.current > 0) return;
+        withLiveGridApi(gridApiRef?.current?.api, (api) =>
+          api.refreshServerSide?.({ purge: false }),
+        );
+      };
+      window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
+      return () =>
+        window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
+    }, [gridApiRef, page]);
     const theme = useTheme();
-    const agTheme = useAgThemeWith(getSessionGridThemeParams(theme));
+    const gridThemeParams = useMemo(
+      () => getSessionGridThemeParams(theme),
+      [theme],
+    );
+    const agTheme = useAgThemeWith(gridThemeParams);
     const handleDrawerClose = () => {
       setOpen(false);
     };
@@ -171,6 +243,12 @@ const SessionGrid = React.forwardRef(
 
       const columnDefsResult = Object.entries(grouping).flatMap(
         ([group, cols]) => {
+          if (group === "Annotation Metrics") {
+            return cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+              return getSessionListColumnDef(c);
+            });
+          }
           if (cols.length === 1) {
             const c = cols[0];
             bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
@@ -205,48 +283,115 @@ const SessionGrid = React.forwardRef(
 
     const [filteredColumnDefs, setFilteredColumnDefs] = useState([]);
 
-    // Prefetch cache: stores next page data so scroll feels instant
-    const prefetchCache = useRef(new Map());
+    const inFlightPageLoads = useRef(new Map());
+    const cursorPagination = useRef(createListCursorPagination());
+    const cursorQueryKeyRef = useRef(null);
+    const paginationRequestKey = useMemo(
+      () =>
+        JSON.stringify({
+          projectId: projectId || null,
+          filters: toBackendFilters(filters),
+          dateInterval: dateInterval || null,
+          pageSize,
+        }),
+      [dateInterval, filters, pageSize, projectId],
+    );
+    const previousPaginationRequestKeyRef = useRef(paginationRequestKey);
+    useEffect(() => {
+      if (previousPaginationRequestKeyRef.current !== paginationRequestKey) {
+        resetPagination();
+      }
+      previousPaginationRequestKeyRef.current = paginationRequestKey;
+    }, [paginationRequestKey, resetPagination]);
 
     const dataSource = useMemo(
       () => {
-        prefetchCache.current.clear();
+        inFlightPageLoads.current.clear();
+        cursorPagination.current.reset();
+        cursorQueryKeyRef.current = null;
         return {
           getRows: async (params) => {
+            let pageNumber = 0;
+            let pageLoadRequestId = null;
+            let pageLoadSucceeded = false;
+            let pageLoadRowCount = 0;
+            let requestGeneration = null;
             try {
+              if (!isGridApiLive(params.api)) return;
+              activeListReadsRef.current += 1;
               const { request } = params;
 
-              const pageNumber = Math.floor(
-                request.startRow / DATASET_ROWS_LIMIT,
+              const requestPageSize = request.endRow - request.startRow;
+              pageNumber = Math.floor(request.startRow / requestPageSize);
+              pageLoadRequestId = beginPageLoad(pageNumber);
+              const sortParams = (request?.sortModel || []).map(
+                ({ colId, sort }) => ({
+                  column_id: colId,
+                  direction: sort,
+                }),
               );
-
-              const buildParams = (page) => ({
-                // Omit project_id when null — backend treats absent
-                // project_id as org-scoped (used by the cross-project
-                // user detail page).
-                ...(projectId ? { project_id: projectId } : {}),
-                page_number: page,
-                page_size: DATASET_ROWS_LIMIT,
-                sort_params: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    direction: sort,
-                  })),
-                ),
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-                ),
-                ...(dateInterval && { interval: dateInterval }),
+              const backendFilters = toBackendFilters(filters);
+              const queryKey = JSON.stringify({
+                projectId: projectId || null,
+                filters: backendFilters,
+                dateInterval: dateInterval || null,
+                sort: sortParams,
+                pageSize: requestPageSize,
               });
+              if (cursorQueryKeyRef.current !== queryKey) {
+                inFlightPageLoads.current.clear();
+                cursorPagination.current.reset();
+                cursorQueryKeyRef.current = queryKey;
+              }
+              requestGeneration = cursorPagination.current.generation();
 
-              // Use prefetched data if available, otherwise fetch
-              const cached = prefetchCache.current.get(pageNumber);
-              prefetchCache.current.delete(pageNumber);
-              const results =
-                cached ||
-                (await axios.get(endpoints.project.projectSessionList(), {
-                  params: buildParams(pageNumber),
-                }));
+              const buildParams = (page) =>
+                cursorPagination.current.requestParams(page, {
+                  // Omit project_id when null — backend treats absent
+                  // project_id as org-scoped (used by the cross-project
+                  // user detail page).
+                  ...(projectId ? { project_id: projectId } : {}),
+                  page_size: requestPageSize,
+                  sort_params: JSON.stringify(sortParams),
+                  filters: JSON.stringify(backendFilters),
+                  ...(dateInterval && { interval: dateInterval }),
+                });
+
+              const exactPage = await shareInFlightListPage({
+                inFlight: inFlightPageLoads.current,
+                key: `${requestGeneration}:${pageNumber}`,
+                load: () =>
+                  loadExactListPage({
+                    pagination: cursorPagination.current,
+                    pageNumber,
+                    targetRowCount: requestPageSize,
+                    loadResponse: (signal) =>
+                      axios.get(endpoints.project.projectSessionList(), {
+                        params: buildParams(pageNumber),
+                        signal,
+                      }),
+                    rowsFromResponse: (response) =>
+                      (response?.data?.result?.table || []).map(
+                        boundObserveListRow,
+                      ),
+                    metadataFromResponse: (response) =>
+                      response?.data?.result?.metadata || {},
+                    compactResponse: compactObserveListResponse,
+                    rowIdentity: sessionRowIdentity,
+                    isCurrent: () =>
+                      cursorPagination.current.isCurrent(requestGeneration),
+                    nextResponse: (_cursor, signal) =>
+                      axios.get(endpoints.project.projectSessionList(), {
+                        params: buildParams(pageNumber),
+                        signal,
+                      }),
+                  }),
+              });
+              if (!isGridApiLive(params.api)) return;
+              if (!cursorPagination.current.isCurrent(requestGeneration)) {
+                return;
+              }
+              const results = exactPage.response;
               const res = results?.data?.result;
               const newCols = normalizeConfigKeys(res?.config);
 
@@ -279,21 +424,13 @@ const SessionGrid = React.forwardRef(
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  let finalNonCustom;
-                  if (idSetChanged) {
-                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
-                    const seen = new Set();
-                    const kept = currentNonCustom
-                      .filter((cc) => newById.has(cc.id))
-                      .map((cc) => {
-                        seen.add(cc.id);
-                        return newById.get(cc.id);
-                      });
-                    const added = newCols.filter((nc) => !seen.has(nc.id));
-                    finalNonCustom = [...kept, ...added];
-                  } else {
-                    finalNonCustom = currentNonCustom;
-                  }
+                  const finalNonCustom = idSetChanged
+                    ? mergeNonCustomColumns(
+                        currentNonCustom,
+                        newCols,
+                        updateObjRef.current,
+                      )
+                    : currentNonCustom;
                   setColumns(
                     allCustom.length > 0
                       ? [...finalNonCustom, ...allCustom]
@@ -321,43 +458,140 @@ const SessionGrid = React.forwardRef(
                   return updateObjRef.current?.[column.field] ?? true;
                 }
 
-                const columnConfig = (res?.config || []).find(
+                const columnConfig = (newCols || []).find(
                   (config) => config.id === column.field,
                 );
-                return columnConfig ? columnConfig.isVisible : true;
+                const backendVisible = columnConfig
+                  ? columnConfig.isVisible
+                  : true;
+
+                const isDefaultColumn = Object.hasOwn(
+                  initialVisibility,
+                  column.field,
+                );
+                if (
+                  !isDefaultColumn &&
+                  !backendVisible &&
+                  updateObjRef.current?.[column.field] === true
+                ) {
+                  return true;
+                }
+                return backendVisible;
               });
 
               setFilteredColumnDefs(filteredColumns);
-              const rows = res?.table || [];
-              const totalRows = res?.metadata?.total_rows;
-              params.api.totalRowCount = totalRows;
+              const rows = exactPage.rows;
+              const metadata = exactPage.metadata;
+              if (
+                resumePendingListPage({
+                  page: exactPage,
+                  resume: () => {
+                    if (
+                      cursorPagination.current.isCurrent(requestGeneration) &&
+                      isGridApiLive(params.api)
+                    ) {
+                      params.fail();
+                      if (params.api?.retryServerSideLoads) {
+                        params.api.retryServerSideLoads();
+                      } else {
+                        params.api?.refreshServerSide?.({ purge: false });
+                      }
+                    }
+                  },
+                })
+              ) {
+                return;
+              }
+              const listReadMessage = getListReadMessage({
+                result: { table: rows, metadata },
+              });
+              if (listReadMessage) throw new Error(listReadMessage);
 
-              const isLastPage = rows.length < DATASET_ROWS_LIMIT;
-              const lastRow = isLastPage ? request.startRow + rows.length : -1;
+              const isLastPage = exactPage.isLastPage;
+              // A terminal cursor is an exact exhaustion proof. Normalize an
+              // older/stale lower-bound marker so the status bar and AG Grid
+              // agree with `has_more: false` instead of showing a phantom ≥N.
+              const totalMetadata =
+                isLastPage && metadata?.has_more === false
+                  ? {
+                      ...metadata,
+                      total_rows: request.startRow + rows.length,
+                      total_rows_is_lower_bound: false,
+                    }
+                  : metadata;
+              const totalState = getListTotalState(totalMetadata);
+              params.api.totalRowCount = totalState.totalRowCount;
+              params.api.totalRowCountLowerBound =
+                totalState.totalRowCountLowerBound;
+              params.api.totalRowCountIsLowerBound =
+                totalState.totalRowCountIsLowerBound;
+              useSessionsGridStore.setState(totalState);
+
+              const discoveredRowCount = publishPage({
+                request,
+                rows,
+                isLastPage,
+              });
 
               params.success({
                 rowData: rows,
-                rowCount: lastRow,
+                rowCount: discoveredRowCount,
               });
-
-              // Prefetch next page so scroll feels instant
-              if (!isLastPage) {
-                axios
-                  .get(endpoints.project.projectSessionList(), {
-                    params: buildParams(pageNumber + 1),
-                  })
-                  .then((res) => {
-                    prefetchCache.current.set(pageNumber + 1, res);
-                  })
-                  .catch(() => {});
-              }
+              pageLoadSucceeded = true;
+              pageLoadRowCount = rows.length;
+              setContinuationNotice(null);
             } catch (error) {
-              const message =
-                (typeof error?.result === "string" && error?.result) ||
-                error?.message ||
-                "Failed to load sessions. Please check your filters.";
-              enqueueSnackbar(message, { variant: "error" });
-              params.success({ rowData: [], rowCount: 0 });
+              if (isExpectedRequestCancellation(error)) {
+                return;
+              }
+              if (!isGridApiLive(params.api)) return;
+              if (
+                requestGeneration !== null &&
+                !cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                return;
+              }
+              if (isListCursorContinuationLimitError(error)) {
+                // Preserve the exact continuation checkpoint and any rows
+                // already rendered. This bounded pause is neutral and only a
+                // deliberate refresh/retry resumes the next exact segment.
+                setContinuationNotice(true);
+                params.fail();
+                return;
+              }
+              if (
+                cursorPagination.current.canRecoverFromContinuationError(
+                  pageNumber,
+                  error,
+                )
+              ) {
+                inFlightPageLoads.current.clear();
+                cursorPagination.current.disableCursor();
+                params.fail();
+                params.api?.refreshServerSide?.({ purge: true });
+                return;
+              }
+              setContinuationNotice(null);
+              enqueueSnackbar(
+                "Session data could not be loaded. Please retry.",
+                {
+                  variant: "error",
+                },
+              );
+              // Preserve any previously rendered rows on a failed read. The
+              // default AG Grid no-rows overlay would incorrectly present a
+              // degraded/error response as an exact empty result; the retry
+              // snackbar above is the explicit failure state instead.
+              params.fail();
+            } finally {
+              activeListReadsRef.current = Math.max(
+                0,
+                activeListReadsRef.current - 1,
+              );
+              finishPageLoad(pageLoadRequestId, {
+                succeeded: pageLoadSucceeded,
+                rowCount: pageLoadRowCount,
+              });
             }
           },
           getRowId: ({ data }) => {
@@ -365,8 +599,10 @@ const SessionGrid = React.forwardRef(
           },
         };
       },
+      // Semantic inputs are serialized above so referential-only parent
+      // renders do not reset the cursor chain or the visible page.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      [filters, projectId, dateInterval],
+      [beginPageLoad, finishPageLoad, paginationRequestKey, publishPage],
     );
 
     const [finalColumnDefs, setFinalColumnDefs] = useState([]);
@@ -404,6 +640,7 @@ const SessionGrid = React.forwardRef(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        if (!isGridApiLive(params.api)) return;
         // User drags only; programmatic moves would loop with the order re-apply.
         if (params.source !== "uiColumnMoved") return;
 
@@ -452,65 +689,91 @@ const SessionGrid = React.forwardRef(
               paddingX: theme.spacing(2),
               paddingBottom: theme.spacing(1),
               flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
             }}
           >
+            <ListCursorContinuationNotice
+              pending={Boolean(continuationNotice)}
+              onContinue={continueCursorSearch}
+            />
             <Box
+              ref={gridElementRef}
               className={`ag-theme-quartz ${className} ${cellHeight && cellHeight !== "Short" ? "cell-wrap" : ""}`}
-              style={{ height: "100%" }}
+              style={{ flex: 1, minHeight: 0 }}
             >
               <AgGridReact
+                key={`session-grid-${pageSize}`}
                 ref={gridApiRef}
                 columnDefs={finalColumnDefs}
-                getRowHeight={(params) => {
-                  if (params?.node?.rowPinned === "bottom") return 30;
-                  return (
-                    userTraceRowHeightMapping[cellHeight]?.height ??
-                    userTraceRowHeightMapping.Short.height
-                  );
-                }}
                 rowHeight={
                   userTraceRowHeightMapping[cellHeight]?.height ??
                   userTraceRowHeightMapping.Short.height
                 }
                 statusBar={statusBar}
-                rowSelection={{ mode: "multiRow" }}
-                className="clean-data-table"
+                rowSelection={{ mode: "multiRow", enableClickSelection: false }}
+                className={`clean-data-table${continuationNotice ? " ag-grid-cursor-paused" : ""}`}
                 theme={agTheme}
                 rowModelType="serverSide"
                 serverSideDatasource={dataSource}
-                pagination={false}
-                cacheBlockSize={DATASET_ROWS_LIMIT}
-                maxBlocksInCache={5}
-                rowBuffer={10}
+                pagination={true}
+                paginationPageSize={pageSize}
+                paginationPageSizeSelector={false}
+                suppressPaginationPanel={true}
+                cacheBlockSize={pageSize}
+                maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
+                maxConcurrentDatasourceRequests={
+                  OBSERVE_GRID_MAX_CONCURRENT_REQUESTS
+                }
+                rowBuffer={5}
+                // CursorGridPagination owns explicit navigation feedback.
+                // Blocking AG Grid here prevents the target rows from painting
+                // and creates a circular page-transition dependency.
+                loading={false}
                 suppressServerSideFullWidthLoadingRow={true}
-                serverSideInitialRowCount={DATASET_ROWS_LIMIT}
+                noRowsOverlayComponent={
+                  continuationNotice ? () => null : undefined
+                }
+                serverSideInitialRowCount={pageSize}
                 defaultColDef={defaultColDef}
-                suppressRowClickSelection={true}
                 rowStyle={{ cursor: "pointer" }}
                 onRowClicked={onRowClicked}
                 onColumnMoved={onColumnMoved}
                 onSelectionChanged={onSelectionChanged}
                 getRowId={({ data }) => data.session_id}
                 onFirstDataRendered={({ api }) => {
-                  api.setServerSideSelectionState({
-                    selectAll: selectAll,
-                    toggledNodes: toggledNodes,
+                  withLiveGridApi(api, (liveApi) => {
+                    liveApi.setServerSideSelectionState({
+                      selectAll: selectAll,
+                      toggledNodes: toggledNodes,
+                    });
                   });
                 }}
                 onModelUpdated={({ api }) => {
                   if (!selectAll && !toggledNodes?.length) {
-                    api.deselectAll();
+                    withLiveGridApi(api, (liveApi) => liveApi.deselectAll());
                     return;
                   }
                 }}
                 onGridReady={onGridReady}
               />
             </Box>
+            <CursorGridPagination
+              disabled={isPageLoading || Boolean(continuationNotice)}
+              loading={isPageLoading}
+              page={page}
+              pageCount={pageCount}
+              pageSize={pageSize}
+              onPageChange={goToPage}
+              onPageSizeChange={changePageSize}
+            />
             {currentRowData ? (
               <TracesDrawer
                 open={open}
                 onClose={handleDrawerClose}
                 rowData={currentRowData}
+                userIdForUserMode={userIdForUserMode}
               />
             ) : null}
           </Box>
@@ -536,6 +799,7 @@ SessionGrid.propTypes = {
   pendingCustomColumnsRef: PropTypes.object,
   canonicalOrderRef: PropTypes.object,
   isOnSavedView: PropTypes.bool,
+  userIdForUserMode: PropTypes.string,
 };
 
 export default SessionGrid;

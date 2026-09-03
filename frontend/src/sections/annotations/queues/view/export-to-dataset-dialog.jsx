@@ -31,9 +31,12 @@ import {
   useGetDatasetColumns,
 } from "src/api/develop/develop-detail";
 
+// "all" (not "") is the sentinel for every status — an empty-string MenuItem
+// value makes MUI Select render blank (isFilled("") is false). The backend
+// normalizes "all" to "no status filter", same as an empty value.
 const STATUS_OPTIONS = [
   { value: "completed", label: "Completed only" },
-  { value: "", label: "All items" },
+  { value: "all", label: "All items" },
   { value: "pending", label: "Pending only" },
   { value: "in_progress", label: "In Progress only" },
 ];

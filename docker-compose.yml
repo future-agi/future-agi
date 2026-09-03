@@ -1,44 +1,3 @@
-# ============================================================================
-# Future AGI — self-hosted OSS stack
-#
-# Project name is pinned to `futureagi` so volumes / containers are stable
-# regardless of the directory you cloned into and don't collide with other
-# `future-agi` worktrees on the same host.
-#
-# Two modes, gated by COMPOSE_PROFILES (set in .env):
-#
-#   • light (default, COMPOSE_PROFILES unset)
-#       Everything you need to run the app: frontend, backend, worker,
-#       agentcc-gateway, serving, code-executor, postgres, clickhouse, redis,
-#       minio, temporal. ~12 containers. Analytics views (Observe / Trace
-#       drilldowns) will show empty data — they're fed by PeerDB, which is
-#       only on in `full` mode.
-#
-#   • full (COMPOSE_PROFILES=full)
-#       Adds the PeerDB CDC stack (10 containers) so transactional Postgres
-#       data streams into ClickHouse and analytics views populate. ~22
-#       containers. Use this for a real self-host.
-#
-# Quick start:
-#   cp .env.example .env       # optional — empty .env works fine
-#   docker compose up                                    # light
-#   COMPOSE_PROFILES=full docker compose up              # full
-#
-# Open http://localhost:3000 once the frontend logs "ready".
-# First boot pulls images from Docker Hub (~30s). No source builds.
-#
-# Each image is independently versioned. Defaults to `:latest`. Pin per
-# service in .env for production: FUTURE_AGI_VERSION (backend + worker),
-# FRONTEND_VERSION, AGENTCC_GATEWAY_VERSION, SERVING_VERSION,
-# CODE_EXECUTOR_VERSION.
-#
-# For hot-reload development (build from source, volume mounts, per-queue
-# workers, exposed DB ports, Temporal UI), layer the dev overlay:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-#
-# For production deployments, see ./deploy/README.md.
-# ============================================================================
-
 name: futureagi
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
@@ -64,14 +23,42 @@ x-backend-env: &backend-env
   # Local-only defaults. deploy/docker-compose.production.yml re-binds these
   # with ${VAR:?error} guards so prod refuses to boot on the dev values.
   SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
-  ENV_TYPE: ${ENV_TYPE:-development}
+  # 'local' (not 'development') so settings.py's _IS_LOCAL fallbacks (DEBUG,
+  # throwaway INTEGRATION_ENCRYPTION_KEY) activate for docker-compose installs.
+  ENV_TYPE: ${ENV_TYPE:-local}
+  EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
+  # Exact analytics are isolated from shared tasks_xl so one cold graph cannot
+  # multiply ClickHouse pressure or starve unrelated XL work.
+  EXACT_AGGREGATION_TASK_QUEUE: ${EXACT_AGGREGATION_TASK_QUEUE:-exact_aggregation}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  # The OSS stack builds the unified catalog by default through the isolated
+  # Kafka pipeline below. User-facing reads remain on the compatibility path
+  # until a workspace has an active catalog revision and an operator opts into
+  # the read gate; this prevents a fresh/empty workspace from returning 503s.
+  PROPERTY_CATALOG_READ_MODE: ${PROPERTY_CATALOG_READ_MODE:-off}
+  PROPERTY_CATALOG_DEV_RECONCILE_ENABLED: ${PROPERTY_CATALOG_DEV_RECONCILE_ENABLED:-false}
+  # Empty -> settings.py auto-generates a throwaway dev key. Set in .env for
+  # persistence across restarts (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+  FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
+  FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
+  FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
+  FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
+  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/tmp/futureagi-deployment-telemetry}
+  # The next three are forwarded so staging/test installs can redirect the
+  # sender at an alternate receiver and tune cadence/timeout without rebuilding
+  # the image. Defaults match the sender so leaving them unset is identical to
+  # the documented production behaviour.
+  FUTURE_AGI_TELEMETRY_URL: ${FUTURE_AGI_TELEMETRY_URL:-https://api.futureagi.com}
+  FUTURE_AGI_TELEMETRY_INTERVAL_HOURS: ${FUTURE_AGI_TELEMETRY_INTERVAL_HOURS:-6}
+  FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
+  ALK_RUNNER_API_URL: ${ALK_RUNNER_API_URL:-http://backend}
 
   # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
+  AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
@@ -99,9 +86,28 @@ x-backend-env: &backend-env
   CH_PORT: 9000
   CH_HTTP_PORT: 8123
   CH_USER: default
+
+  CH_USERNAME: ${CH_USERNAME:-default}
   CH_PASSWORD: ""
-  CH_DATABASE: default
+
+  CH_ENABLED: ${CH_ENABLED:-true}
+
+  CH_DATABASE: ${CH_DATABASE:-default}
+  # CH25 schema/read path. Keep this aligned with FI_CH_DATABASE so the
+  # backend and fi-collector read/write the same ClickHouse database.
+  CH25_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
   CH_USE_REPLICATED_ENGINES: ${CH_USE_REPLICATED_ENGINES:-false}
+
+  # CH25 cutover (dev/local default). When True the boot-time schema
+  # apply skips the legacy CDC chain (tracer_observation_span, spans_mv,
+  # span_metrics_hourly, span_metrics_hourly_mv) and drops them if they
+  # exist — fi-collector becomes the sole writer for `spans`. Prod keeps
+  # this False until the cutover playbook in docs/CH25_MIGRATION.md is
+  # complete.
+  CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
+  CH25_EVAL_LOGGER_TABLE: ${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
+
+  CH25_QUERY_TYPES_V2_ONLY: ${CH25_QUERY_TYPES_V2_ONLY:-span_list,trace_list,session_list,voice_call_list,dashboard,monitor_metrics,eval_metrics,filter_builder,trace_detail,annotation_labels}
 
   # Redis
   REDIS_HOST: redis
@@ -143,7 +149,15 @@ x-backend-env: &backend-env
   # Future AGI Cloud API (optional)
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
-
+  TEMPORAL_TEST_EXECUTION_ENABLED: ${TEMPORAL_TEST_EXECUTION_ENABLED:-true}
+x-fi-collector-image: &fi-collector-image
+  # OSS installs build this image from the checked-out source. Keeping a
+  # dedicated local tag prevents an old registry `latest` image from masking
+  # a missing property-catalog consumer binary.
+  image: futureagi/fi-collector:${FI_COLLECTOR_VERSION:-local}
+  build:
+    context: ./fi-collector
+    dockerfile: Dockerfile
 
 services:
   # ==========================================================================
@@ -159,6 +173,9 @@ services:
       # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
       # deployment (e.g. https://api.example.com for split-domain).
       VITE_HOST_API: ${VITE_HOST_API:-}
+      # Empty -> the sidebar "Help" entry points at the community Discord.
+      # Set it to send users to your own support channel instead.
+      VITE_HELP_LINK: ${VITE_HELP_LINK:-}
     depends_on:
       - backend
     restart: unless-stopped
@@ -190,6 +207,10 @@ services:
         condition: service_healthy
       agentcc-gateway:
         condition: service_started
+      # OTLP ingest path. service_started (not _healthy) — fi-collector
+      # starts fast and we don't want a slow boot to block backend.
+      fi-collector:
+        condition: service_started
     restart: unless-stopped
 
   worker:
@@ -201,6 +222,7 @@ services:
       <<: *backend-env
       SERVICE_TYPE: temporal-worker
       TEMPORAL_ALL_QUEUES: ${TEMPORAL_ALL_QUEUES:-true}
+      TEMPORAL_EXCLUDED_QUEUES: ${TEMPORAL_EXCLUDED_QUEUES:-simulation_runner}
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_MAX_CONCURRENT_ACTIVITIES:-50}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS:-50}
     depends_on:
@@ -213,6 +235,133 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
+
+  worker-default:
+    <<: &queue-worker
+      image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+      profiles: ["workers", "full"]
+      env_file:
+        - path: .env
+          required: false
+      depends_on:
+        temporal:
+          condition: service_healthy
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+        rabbitmq:
+          condition: service_healthy
+      restart: unless-stopped
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: default
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_DEFAULT_MAX_ACTIVITIES:-100}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_DEFAULT_MAX_WORKFLOWS:-100}
+
+  worker-tasks-s:
+    <<: *queue-worker
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: tasks_s
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_S_MAX_ACTIVITIES:-200}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_S_MAX_WORKFLOWS:-200}
+
+  worker-tasks-l:
+    <<: *queue-worker
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: tasks_l
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_L_MAX_ACTIVITIES:-50}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_L_MAX_WORKFLOWS:-50}
+
+  worker-tasks-xl:
+    <<: *queue-worker
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: tasks_xl
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_XL_MAX_ACTIVITIES:-10}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_XL_MAX_WORKFLOWS:-20}
+
+  worker-exact-aggregation:
+    <<: *queue-worker
+    # Unlike the other per-queue workers this admission boundary is always on;
+    # the generic worker deliberately excludes exact_aggregation.
+    profiles: []
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: exact_aggregation
+      # This always-on worker must never become an additional schema/migration
+      # runner. Keep literal fail-closed values here instead of inheriting the
+      # local-stack defaults from backend-env.
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+      # This worker is the cluster admission boundary for expensive exact reads.
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: 1
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: 1
+
+  worker-trace-ingestion:
+    <<: *queue-worker
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: trace_ingestion
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TRACE_MAX_ACTIVITIES:-100}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TRACE_MAX_WORKFLOWS:-100}
+
+  worker-agent-compass:
+    <<: *queue-worker
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: agent_compass
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_COMPASS_MAX_ACTIVITIES:-50}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_COMPASS_MAX_WORKFLOWS:-50}
+
+  # Hosted simulation runner (plan §9). Polls only the simulation_runner queue
+  # and spawns the released SDK as a child process (ALK_RUNNER_PYTHON). Uses the
+  # dedicated runner image which bundles the SDK — the backend image does not.
+  worker-simulation-runner:
+    <<: *queue-worker
+    # compose is local/dev only (prod runs on k8s/helm), so default the tag
+    # instead of requiring the var — avoids breaking every compose command when
+    # SIMULATION_RUNNER_VERSION is unset.
+    image: futureagi/future-agi-simulation-runner:${SIMULATION_RUNNER_VERSION:-latest}
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: simulation_runner
+      TEMPORAL_ALL_QUEUES: "false"
+      ALK_RUNNER_PYTHON: ${ALK_RUNNER_PYTHON:-/opt/alk-venv/bin/python}
+      ALK_RUNNER_MAX_CONCURRENCY: ${ALK_RUNNER_MAX_CONCURRENCY:-4}
+      SIMULATOR_CONVERSATION_DIRECTION: ${SIMULATOR_CONVERSATION_DIRECTION:-simulator_first}
+      HOSTED_RUNNER_ENABLED: ${HOSTED_RUNNER_ENABLED:-true}
+      HOSTED_RUNNER_VOICE_ENABLED: ${HOSTED_RUNNER_VOICE_ENABLED:-false}
+      # DID-pool lease script (livekit-infra); unset ⇒ SDK self-provisions the
+      # per-run dispatch rule for sip_inbound. Only voice_sip leases.
+      ALK_SIM_SLOT_LEASE_SCRIPT: ${ALK_SIM_SLOT_LEASE_SCRIPT:-}
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${ALK_RUNNER_MAX_CONCURRENCY:-4}
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_SIMRUNNER_MAX_WORKFLOWS:-8}
+      # Absolute so the SDK child (runs from a mkdtemp cwd) resolves the key.
+      GOOGLE_APPLICATION_CREDENTIALS: /app/backend/Vertex_AI_Creds.json
+      # gemini-3.1 is 404 in regional endpoints; only served on `global`.
+      GOOGLE_CLOUD_LOCATION: global
+      SIMULATOR_LLM_PROVIDER: vertex
+      SIMULATOR_LLM_MODEL: gemini-3.1-flash-lite
+      # TTS is chosen per persona language by the hosted runner
+      # (_voice_simulator_config): English -> Deepgram aura-2-andromeda-en,
+      # other/unknown -> streaming Gemini (multilingual). Set
+      # SIMULATOR_TTS_PROVIDER / SIMULATOR_TTS_MODEL here to force one engine.
+    volumes:
+      # Runner image lacks the key (only the backend image has it); mount it.
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/backend/Vertex_AI_Creds.json:ro
 
   # LLM gateway. Provider creds live in agentcc-gateway/config.yaml (override
   # the shipped example via AGENTCC_CONFIG_PATH).
@@ -231,8 +380,10 @@ services:
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/Vertex_AI_Creds.json
     volumes:
       - ./${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro
     restart: unless-stopped
 
   serving:
@@ -284,28 +435,454 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-futureagi} -d ${PG_DB:-futureagi}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${PG_USER:-futureagi} -d ${PG_DB:-futureagi}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
+    # CH 25.3 is the floor for the v2 spans schema (typed-JSON columns
+    # in 002_spans_v2.sql require it). The boot hook in
+    # model_hub/apps.py auto-migrates a v1 `spans` table (from an older
+    # CH 24.x volume) to v2 the first time it boots — so an existing
+    # volume does not strictly require `docker compose down -v`.
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      # The 25.3-alpine image ships a default-user.xml that restricts
+      # the `default` user to 127.0.0.1 / ::1 only. Backend connects
+      # from the docker bridge network and gets AUTHENTICATION_FAILED.
+      # SKIP_USER_SETUP keeps the upstream default-user config (no IP
+      # allowlist) — what every other service expects from local-dev CH.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: ${CH_DATABASE:-default}
     ports:
       - "127.0.0.1:${CH_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CH_PORT:-9000}:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      # `tiered` storage policy required by the v2 spans schema
+      # (002_spans_v2.sql). Same XML used by the CI test rig at
+      # futureagi/.ci/. Without it apply_schema fails with
+      # `Unknown storage policy 'tiered'`.
+      - ./futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/storage-policy.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      # IPv4 literal — `localhost` resolves IPv6 first, and CH on
+      # IPv6-less hosts (Colima) only binds IPv4. Same trap as
+      # https://github.com/ClickHouse/ClickHouse/issues/55232.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------------
+  # Unified property catalog (OSS default)
+  # ------------------------------------------------------------------------
+  # These one-shot jobs are additive and idempotent. They create one isolated
+  # catalog database plus dedicated least-privilege identities; they never
+  # alter or write an application/source table.
+  property-catalog-clickhouse-bootstrap:
+    image: clickhouse/clickhouse-server:25.3-alpine
+    restart: "no"
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap_clickhouse.sh"]
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "9000"
+      PROPERTY_CATALOG_SOURCE_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
+      PROPERTY_CATALOG_TARGET_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
+      PROPERTY_CATALOG_SOURCE_PASSWORD: ${PROPERTY_CATALOG_SOURCE_PASSWORD:-oss-catalog-source-local-only}
+      PROPERTY_CATALOG_CONTROL_PASSWORD: ${PROPERTY_CATALOG_CONTROL_PASSWORD:-oss-catalog-control-local-only}
+      PROPERTY_CATALOG_CONSUMER_PASSWORD: ${PROPERTY_CATALOG_CONSUMER_PASSWORD:-oss-catalog-consumer-local-only}
+      PROPERTY_CATALOG_LEDGER_PASSWORD: ${PROPERTY_CATALOG_LEDGER_PASSWORD:-oss-catalog-ledger-local-only}
+      PROPERTY_CATALOG_API_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:-oss-catalog-api-local-only}
+    volumes:
+      - ./futureagi/scripts/property_catalog_oss:/bootstrap:ro
+      - ./futureagi/tracer/services/clickhouse/v2/schema:/property-catalog-schema:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  property-catalog-postgres-bootstrap:
+    image: postgres:16-alpine
+    restart: "no"
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap_postgres.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${PG_DB:-futureagi}
+      PGUSER: ${PG_USER:-futureagi}
+      PGPASSWORD: ${PG_PASSWORD:-futureagi}
+      PROPERTY_CATALOG_PG_READER_PASSWORD: ${PROPERTY_CATALOG_PG_READER_PASSWORD:-oss-catalog-postgres-reader-local-only}
+    volumes:
+      - ./futureagi/scripts/property_catalog_oss:/bootstrap:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  property-catalog-kafka-volume-init:
+    image: apache/kafka-native:4.1.0
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - chown -R 1000:1000 /var/lib/kafka/data && chmod 700 /var/lib/kafka/data
+    volumes:
+      - property-catalog-kafka-data:/var/lib/kafka/data
+
+  property-catalog-runtime-volume-init:
+    image: alpine:3.21
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /runtime/property-catalog /sequencer
+        chown -R 65532:65532 /runtime /sequencer
+        chmod 700 /runtime/property-catalog /sequencer
+    volumes:
+      - fi-collector-data:/runtime
+      - property-catalog-sequencer-data:/sequencer
+
+  property-catalog-kafka:
+    image: apache/kafka-native:4.1.0
+    hostname: property-catalog-kafka
+    restart: unless-stopped
+    cpus: "${PROPERTY_CATALOG_KAFKA_CPUS:-1.0}"
+    mem_limit: "${PROPERTY_CATALOG_KAFKA_MEMORY:-1G}"
+    depends_on:
+      property-catalog-kafka-volume-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${PROPERTY_CATALOG_KAFKA_PORT:-29092}:29092"
+    environment:
+      CLUSTER_ID: futureagiOssPropertyCatalogV1
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://property-catalog-kafka:9092,EXTERNAL://127.0.0.1:${PROPERTY_CATALOG_KAFKA_PORT:-29092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@property-catalog-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "${PROPERTY_CATALOG_KAFKA_HEAP_OPTS:--Xms256m -Xmx512m}"
+      KAFKA_MESSAGE_MAX_BYTES: "1048576"
+      KAFKA_REPLICA_FETCH_MAX_BYTES: "1048576"
+      KAFKA_LOG_RETENTION_HOURS: ${PROPERTY_CATALOG_KAFKA_RETENTION_HOURS:-72}
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - property-catalog-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROPERTY_CATALOG_KAFKA_CPUS:-1.0}"
+          memory: "${PROPERTY_CATALOG_KAFKA_MEMORY:-1G}"
+
+  property-catalog-topic-init:
+    image: apache/kafka:4.1.0
+    restart: "no"
+    depends_on:
+      property-catalog-kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    environment:
+      PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC:-futureagi.oss.property-catalog.candidates.v1}
+      PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC: ${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC:-${PROPERTY_CATALOG_KAFKA_TOPIC:-futureagi.oss.property-catalog.ordered.v1}}
+      PROPERTY_CATALOG_KAFKA_PARTITIONS: ${PROPERTY_CATALOG_KAFKA_PARTITIONS:-6}
+      PROPERTY_CATALOG_KAFKA_RETENTION_MS: ${PROPERTY_CATALOG_KAFKA_RETENTION_MS:-259200000}
+    command:
+      - |
+        candidate="$${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC}"
+        ordered="$${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC}"
+        for topic in "$${candidate}" "$${ordered}"; do
+          case "$${topic}" in
+            ''|*[!A-Za-z0-9._-]*) echo >&2 "invalid unified property catalog topic"; exit 64 ;;
+          esac
+        done
+        if [ "$${candidate}" = "$${ordered}" ]; then
+          echo >&2 "candidate and ordered property catalog topics must be distinct"
+          exit 64
+        fi
+        case "$${PROPERTY_CATALOG_KAFKA_PARTITIONS}" in
+          ''|*[!0-9]*) echo >&2 "invalid property catalog partition count"; exit 64 ;;
+        esac
+        for topic in "$${candidate}" "$${ordered}"; do
+          /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server property-catalog-kafka:9092 \
+            --create \
+            --if-not-exists \
+            --topic "$${topic}" \
+            --partitions "$${PROPERTY_CATALOG_KAFKA_PARTITIONS}" \
+            --replication-factor 1 \
+            --config retention.ms="$${PROPERTY_CATALOG_KAFKA_RETENTION_MS}" \
+            --config max.message.bytes=1048576
+        done
+
+  # ==========================================================================
+  # fi-collector — OTLP gRPC receiver that writes spans directly to CH 25.3
+  # via the typed-JSON v2 schema. Replaces the PG → PeerDB CDC ingest path
+  # for spans. Default-enabled for docker compose + local dev; in prod
+  # you can deploy it as its own cluster for scale without changing the
+  # backend. See docs/CH25_MIGRATION.md.
+  # ==========================================================================
+  fi-collector:
+    <<: *fi-collector-image
+    cpus: "${FI_COLLECTOR_CPUS:-1.0}"
+    mem_limit: "${FI_COLLECTOR_MEMORY:-1G}"
+    ports:
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_PORT:-4317}:4317"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}:4318"
+      - "127.0.0.1:${FI_COLLECTOR_ADMIN_PORT:-9464}:9464"
+    environment:
+      # The legacy and unified catalog writers are mutually exclusive. OSS
+      # defaults to the unified Kafka path; the legacy span-only writer remains
+      # disabled. Collectors emit only deterministic workspace-keyed candidates;
+      # the singleton sequencer below owns revision admission and ordering.
+      FI_CATALOG_MODE: ${FI_CATALOG_MODE:-disabled}
+      FI_PROPERTY_CATALOG_MODE: ${FI_PROPERTY_CATALOG_MODE:-kafka}
+      FI_PROPERTY_CATALOG_ENVIRONMENT: development
+      FI_PROPERTY_CATALOG_DEV_ACK: PROPERTY_CATALOG_V1_DEV_ONLY
+      FI_PROPERTY_CATALOG_EPOCH: ${PROPERTY_CATALOG_EPOCH:-1}
+      FI_PROPERTY_CATALOG_PROJECTION_VERSION: ${PROPERTY_CATALOG_PROJECTION_VERSION:-1}
+      FI_PROPERTY_CATALOG_WORKSPACE_SCOPE_MODE: revision_fence
+      FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
+      FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
+      FI_PROPERTY_CATALOG_KAFKA_TOPIC: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC:-futureagi.oss.property-catalog.candidates.v1}
+      # Point at the same ClickHouse the backend uses (HTTP port 8123).
+      FI_CH_URL: http://clickhouse:8123
+      FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}
+      # Auth: collector validates API keys against Django's Postgres. Without
+      # these it falls back to the baked-in default (postgres://user:password@db:5432/tfc),
+      # whose host `db` doesn't exist here -> every trace 503s. Point at the
+      # same `postgres` service Django uses (PG_USER/PG_PASSWORD/PG_DB).
+      FI_PG_WRITE: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
+      FI_PG_READ: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
+      FI_AUTH_REDIS_ADDR: redis:6379
+      FI_GRPC_ADDR: ":4317"
+      # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
+      # `FI_HTTP_ADDR=disable` turns the listener off if you front the
+      # collector with an external HTTP gateway that strips OTLP at the edge.
+      FI_HTTP_ADDR: ":4318"
+      FI_ADMIN_ADDR: ":9464"
+      FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
+    volumes:
+      - fi-collector-data:/var/lib/fi-collector
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      property-catalog-topic-init:
+        condition: service_completed_successfully
+      property-catalog-runtime-volume-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "${FI_COLLECTOR_CPUS:-1.0}"
+          memory: "${FI_COLLECTOR_MEMORY:-1G}"
+    restart: unless-stopped
+
+  fi-property-catalog-sequencer:
+    <<: *fi-collector-image
+    cpus: "${PROPERTY_CATALOG_SEQUENCER_CPUS:-0.5}"
+    mem_limit: "${PROPERTY_CATALOG_SEQUENCER_MEMORY:-768M}"
+    entrypoint: ["/usr/local/bin/fi-property-catalog-sequencer"]
+    environment:
+      FI_PROPERTY_CATALOG_MODE: sequencer
+      FI_PROPERTY_CATALOG_ENVIRONMENT: development
+      FI_PROPERTY_CATALOG_DEV_ACK: PROPERTY_CATALOG_V1_DEV_ONLY
+      FI_PROPERTY_CATALOG_EPOCH: ${PROPERTY_CATALOG_EPOCH:-1}
+      FI_PROPERTY_CATALOG_PROJECTION_VERSION: ${PROPERTY_CATALOG_PROJECTION_VERSION:-1}
+      FI_PROPERTY_CATALOG_PRODUCER_STREAM_ID: ${PROPERTY_CATALOG_PRODUCER_STREAM_ID:-9e43cac3-65f0-50b1-991d-4e582aa2cc84}
+      FI_PROPERTY_CATALOG_WORKSPACE_SCOPE_MODE: revision_fence
+      FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/property-catalog-control/property-catalog/revision-fence-v2.json
+      FI_PROPERTY_CATALOG_SPOOL_DIR: /var/lib/property-catalog-sequencer
+      FI_PROPERTY_CATALOG_REPLAY_INTERVAL: ${PROPERTY_CATALOG_REPLAY_INTERVAL:-1s}
+      FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
+      FI_PROPERTY_CATALOG_KAFKA_TOPIC: ${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC:-${PROPERTY_CATALOG_KAFKA_TOPIC:-futureagi.oss.property-catalog.ordered.v1}}
+      FI_PROPERTY_CATALOG_SEQUENCER_TRANSACTIONAL_ID: ${PROPERTY_CATALOG_SEQUENCER_TRANSACTIONAL_ID:-futureagi-oss-property-catalog-sequencer-v1}
+      FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_BROKERS: property-catalog-kafka:9092
+      FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC:-futureagi.oss.property-catalog.candidates.v1}
+      FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_CONSUMER_GROUP: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_CONSUMER_GROUP:-futureagi-oss-property-catalog-sequencer-v1}
+      FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_INSTANCE_ID: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_INSTANCE_ID:-futureagi-oss-property-catalog-sequencer-v1}
+    volumes:
+      - fi-collector-data:/var/lib/property-catalog-control:ro
+      - property-catalog-sequencer-data:/var/lib/property-catalog-sequencer
+    depends_on:
+      property-catalog-topic-init:
+        condition: service_completed_successfully
+      property-catalog-runtime-volume-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROPERTY_CATALOG_SEQUENCER_CPUS:-0.5}"
+          memory: "${PROPERTY_CATALOG_SEQUENCER_MEMORY:-768M}"
+    restart: unless-stopped
+
+  fi-property-catalog-consumer:
+    <<: *fi-collector-image
+    cpus: "${PROPERTY_CATALOG_CONSUMER_CPUS:-0.5}"
+    mem_limit: "${PROPERTY_CATALOG_CONSUMER_MEMORY:-512M}"
+    entrypoint: ["/usr/local/bin/fi-property-catalog-consumer"]
+    command: ["--seed-from-delivery-ledger"]
+    environment:
+      FI_PROPERTY_CATALOG_CONSUMER_MODE: kafka
+      FI_PROPERTY_CATALOG_ENVIRONMENT: development
+      FI_PROPERTY_CATALOG_DEV_ACK: PROPERTY_CATALOG_V1_DEV_ONLY
+      FI_PROPERTY_CATALOG_CH_URL: http://clickhouse:8123
+      FI_PROPERTY_CATALOG_CH_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
+      FI_PROPERTY_CATALOG_CH_USERNAME: property_catalog_oss_consumer
+      FI_PROPERTY_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_CONSUMER_PASSWORD:-oss-catalog-consumer-local-only}
+      FI_PROPERTY_CATALOG_LEDGER_CH_URL: http://clickhouse:8123
+      FI_PROPERTY_CATALOG_LEDGER_CH_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
+      FI_PROPERTY_CATALOG_LEDGER_CH_USERNAME: property_catalog_oss_ledger
+      FI_PROPERTY_CATALOG_LEDGER_CH_PASSWORD: ${PROPERTY_CATALOG_LEDGER_PASSWORD:-oss-catalog-ledger-local-only}
+      FI_PROPERTY_CATALOG_CHECKPOINT_MAX_STREAMS: ${PROPERTY_CATALOG_CHECKPOINT_MAX_STREAMS:-16384}
+      FI_PROPERTY_CATALOG_CHECKPOINT_MAX_INVENTORY_BYTES: ${PROPERTY_CATALOG_CHECKPOINT_MAX_INVENTORY_BYTES:-67108864}
+      FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
+      FI_PROPERTY_CATALOG_KAFKA_TOPIC: ${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC:-${PROPERTY_CATALOG_KAFKA_TOPIC:-futureagi.oss.property-catalog.ordered.v1}}
+      FI_PROPERTY_CATALOG_KAFKA_CONSUMER_GROUP: ${PROPERTY_CATALOG_KAFKA_CONSUMER_GROUP:-futureagi.oss.property-catalog.consumer.v1}
+    depends_on:
+      property-catalog-clickhouse-bootstrap:
+        condition: service_completed_successfully
+      property-catalog-topic-init:
+        condition: service_completed_successfully
+      fi-property-catalog-sequencer:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROPERTY_CATALOG_CONSUMER_CPUS:-0.5}"
+          memory: "${PROPERTY_CATALOG_CONSUMER_MEMORY:-512M}"
+    restart: unless-stopped
+
+  property-catalog-supervisor:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    cpus: "${PROPERTY_CATALOG_SUPERVISOR_CPUS:-0.5}"
+    mem_limit: "${PROPERTY_CATALOG_SUPERVISOR_MEMORY:-768M}"
+    working_dir: /app/backend
+    # Run one bounded reconcile-only cycle at a time so a failed cycle exits
+    # non-zero and the container restart policy exposes the failure. This
+    # service never starts a historical backfill; operators initialize inactive
+    # catalogs explicitly with bin/property-catalog-backfill.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        ready_file=/tmp/property-catalog-supervisor.ready
+        rm -f "$${ready_file}"
+        while true; do
+          python manage.py ch25_property_catalog_oss_supervisor --once
+          : > "$${ready_file}"
+          sleep "$${PROPERTY_CATALOG_OSS_SUPERVISOR_POLL_SECONDS}"
+        done
+    environment:
+      <<: *backend-env
+      ENV_TYPE: development
+      CLOUD_DEPLOYMENT: ""
+      SERVICE_TYPE: bootstrap
+      STARTUP_DB_MUTATION_MODE: disabled
+      NO_STARTUP_DB_MUTATIONS: "true"
+      FAST_STARTUP: "true"
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      OTEL_ENABLED: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+      PG_USER: property_catalog_oss_reader
+      PG_PASSWORD: ${PROPERTY_CATALOG_PG_READER_PASSWORD:-oss-catalog-postgres-reader-local-only}
+      PGOPTIONS: -c default_transaction_read_only=on -c statement_timeout=100000
+      CH_ENABLED: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+      CH25_HOST: clickhouse
+      CH25_HTTP_PORT: "8123"
+      CH25_TCP_PORT: "9000"
+      CH25_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
+      CH25_USER: property_catalog_oss_source
+      CH25_PASSWORD: ${PROPERTY_CATALOG_SOURCE_PASSWORD:-oss-catalog-source-local-only}
+      CH25_SERVER_ENFORCED_READONLY: "true"
+      SPAN_ATTRIBUTE_CATALOG_READ_MODE: "off"
+      SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED: "false"
+      PROPERTY_CATALOG_READ_MODE: "off"
+      PROPERTY_CATALOG_DEV_RECONCILE_ENABLED: "false"
+      # The OSS supervisor deliberately reuses the reviewed DEV lifecycle
+      # contract. Keep these names aligned with Django settings and with the
+      # collector's shared revision-fence path; unknown OSS-only aliases would
+      # make the fail-closed supervisor restart forever.
+      PROPERTY_CATALOG_OSS_SUPERVISOR_ACK: PROPERTY_CATALOG_OSS_SUPERVISOR_V1
+      PROPERTY_CATALOG_OSS_SUPERVISOR_POLL_SECONDS: ${PROPERTY_CATALOG_POLL_SECONDS:-60}
+      PROPERTY_CATALOG_OSS_SUPERVISOR_WORKSPACE_BATCH_SIZE: ${PROPERTY_CATALOG_SUPERVISOR_WORKSPACE_BATCH_SIZE:-512}
+      PROPERTY_CATALOG_OSS_SUPERVISOR_PROJECT_BATCH_SIZE: ${PROPERTY_CATALOG_SUPERVISOR_PROJECT_BATCH_SIZE:-512}
+      PROPERTY_CATALOG_DEV_SOURCE_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
+      PROPERTY_CATALOG_DEV_TARGET_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
+      PROPERTY_CATALOG_DEV_WRITE_CH_HOST: clickhouse
+      PROPERTY_CATALOG_DEV_WRITE_CH_PORT: "9000"
+      PROPERTY_CATALOG_DEV_WRITE_CH_USER: property_catalog_oss_control
+      PROPERTY_CATALOG_DEV_WRITE_CH_PASSWORD: ${PROPERTY_CATALOG_CONTROL_PASSWORD:-oss-catalog-control-local-only}
+      PROPERTY_CATALOG_DEV_WRITE_CH_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
+      PROPERTY_CATALOG_DEV_CATALOG_EPOCH: ${PROPERTY_CATALOG_EPOCH:-1}
+      PROPERTY_CATALOG_DEV_PROJECTION_VERSION: ${PROPERTY_CATALOG_PROJECTION_VERSION:-1}
+      PROPERTY_CATALOG_DEV_HOT_PRODUCER_STREAM_ID: ${PROPERTY_CATALOG_PRODUCER_STREAM_ID:-9e43cac3-65f0-50b1-991d-4e582aa2cc84}
+      PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
+      PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE: /var/lib/fi-collector/property-catalog/producer-drain-proof-v2.json
+      PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE: /var/lib/fi-collector/property-catalog/producer-state-retirements-v1.json
+      PROPERTY_CATALOG_DEV_MUTATION_LOCK_DIRECTORY: /var/lib/fi-collector/property-catalog
+      PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_WALL_MS: ${PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_WALL_MS:-1200000}
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1770,uid=65532,gid=65532
+      - /app/backend/logs:rw,noexec,nosuid,nodev,size=64m,mode=0770,uid=65532,gid=65532
+      - /app/backend/tfc/logs:rw,noexec,nosuid,nodev,size=64m,mode=0770,uid=65532,gid=65532
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/property-catalog-supervisor.ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 120
+      start_period: 10s
+    volumes:
+      - fi-collector-data:/var/lib/fi-collector
+    depends_on:
+      property-catalog-clickhouse-bootstrap:
+        condition: service_completed_successfully
+      property-catalog-postgres-bootstrap:
+        condition: service_completed_successfully
+      fi-property-catalog-consumer:
+        condition: service_started
+      property-catalog-runtime-volume-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "${PROPERTY_CATALOG_SUPERVISOR_CPUS:-0.5}"
+          memory: "${PROPERTY_CATALOG_SUPERVISOR_MEMORY:-768M}"
     restart: unless-stopped
 
   redis:
@@ -385,6 +962,30 @@ services:
       start_period: 90s
     restart: unless-stopped
 
+  temporal-ui:
+    image: temporalio/ui:2.43.3
+    profiles: ["observability", "full"]
+    ports:
+      - "${TEMPORAL_UI_PORT:-8085}:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000,http://localhost:8000
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  temporal-admin-tools:
+    image: temporalio/admin-tools
+    profiles: ["observability", "full"]
+    environment:
+      TEMPORAL_CLI_ADDRESS: temporal:7233
+    stdin_open: true
+    tty: true
+    depends_on:
+      temporal:
+        condition: service_healthy
+
   # ==========================================================================
   # PeerDB — Postgres → ClickHouse change-data-capture. Syncs transactional
   # data to the analytics store so Observe/Trace views work.
@@ -396,7 +997,7 @@ services:
 
   peerdb-catalog:
     image: postgres:16-alpine
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -412,7 +1013,7 @@ services:
 
   peerdb-temporal:
     image: temporalio/auto-setup:1.29
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -435,7 +1036,7 @@ services:
 
   peerdb-minio:
     image: minio/minio:latest
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
@@ -453,7 +1054,7 @@ services:
 
   peerdb-flow-api:
     image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
       PEERDB_ALLOWED_TARGETS:
@@ -464,7 +1065,7 @@ services:
 
   peerdb-flow-worker:
     image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -474,7 +1075,7 @@ services:
 
   peerdb-flow-snapshot-worker:
     image: ghcr.io/peerdb-io/flow-snapshot-worker:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -484,7 +1085,7 @@ services:
 
   peerdb-server:
     image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     stop_signal: SIGINT
     environment:
       <<: *peerdb-catalog
@@ -500,7 +1101,7 @@ services:
 
   peerdb-ui:
     image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     environment:
       <<: *peerdb-catalog
       PEERDB_FLOW_SERVER_HTTP: http://peerdb-flow-api:8113
@@ -516,7 +1117,7 @@ services:
 
   peerdb-temporal-init:
     image: temporalio/admin-tools
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     restart: "no"
     environment:
       TEMPORAL_CLI_ADDRESS: peerdb-temporal:7233
@@ -535,7 +1136,7 @@ services:
 
   peerdb-init:
     image: postgres:16-alpine
-    profiles: ["full"]
+    profiles: ["peerdb", "full"]
     restart: "no"
     environment:
       SRC_PG_HOST: postgres
@@ -565,7 +1166,6 @@ services:
       clickhouse:
         condition: service_healthy
 
-
 volumes:
   postgres-data:
   clickhouse-data:
@@ -574,8 +1174,14 @@ volumes:
   minio-data:
   peerdb-catalog-data:
   peerdb-minio-data:
-
-
+  property-catalog-kafka-data:
+  # Exclusive durable owner state for the singleton property-catalog sequencer.
+  # Never mount this volume into collectors or consumers.
+  property-catalog-sequencer-data:
+  # fi-collector dead-letter queue: spans the collector couldn't write
+  # to CH (typically transient CH unavailability). Persist across
+  # restarts so they can be replayed when CH comes back.
+  fi-collector-data:
 # Compose auto-names the default network ${PROJECT_NAME}_default
 # (i.e. `futureagi_default`). Don't pin a custom name — it collides
 # with networks left over from older project-name configurations.

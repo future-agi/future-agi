@@ -14,6 +14,7 @@ import { BOOLEAN_VALUE_OPTIONS } from "../../utils/constants";
 import CustomAudioDialog from "src/sections/develop-detail/CustomAudioDialog";
 import CustomTooltip from "../tooltip";
 import SvgColor from "../svg-color";
+import { buildResponseFormatMenu } from "src/utils/responseFormat";
 
 const defaultMenus = [
   { value: "text", label: "Text" },
@@ -127,28 +128,15 @@ const ModelOptionsItems = ({
   const menuItems = useMemo(() => {
     // If responseFormat exists, use it + responseSchema
     if (responseFormat?.length || module === "workbench") {
-      const merged = [
-        ...(responseSchema?.map((item) => ({
-          label: item.name,
-          value: item.id,
-        })) ?? []),
-        ...(responseFormat?.map((item) => ({
-          label: item.value,
-          value: item.value,
-        })) ?? []),
-      ];
-
-      // Ensure uniqueness by value
-      const uniqueMenus = Array.from(
-        new Map(merged.map((item) => [item.value, item])).values(),
-      );
-
-      return uniqueMenus;
+      return buildResponseFormatMenu({
+        responseSchema,
+        modelResponseFormat: responseFormat,
+      });
     }
 
     // Otherwise, fallback to defaultMenus
     return [...defaultMenus];
-  }, [responseSchema, responseFormat]);
+  }, [responseSchema, responseFormat, module]);
 
   return (
     <Box

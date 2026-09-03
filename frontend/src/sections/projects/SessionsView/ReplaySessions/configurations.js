@@ -1,6 +1,5 @@
 import { REPLAY_ITEMS } from "./constants";
 import axios, { endpoints } from "src/utils/axios";
-import qs from "qs";
 
 export const REPLAY_MODULES = {
   SESSIONS: "session",
@@ -30,16 +29,6 @@ export const defaultReplayConfig = {
         endpoints.project.generateReplayScenarios(replaySessionId),
         rest,
       );
-    },
-    getAgentDefinition: async ({ query }) => {
-      return await axios.get(endpoints.project.prefetchAgentData, {
-        params: {
-          ...query,
-          replay_type: REPLAY_MODULES.SESSIONS,
-        },
-        paramsSerializer: (params) =>
-          qs.stringify(params, { arrayFormat: "repeat" }),
-      });
     },
     runSimulation: (data) => {
       return axios.post(endpoints.runTests.create, data);
@@ -103,39 +92,6 @@ export const tracesReplayConfig = {
         endpoints.project.generateReplayScenarios(replaySessionId),
         rest,
       );
-    },
-    getAgentDefinition: async ({ query }) => {
-      const res = await axios.get(endpoints.project.getAgentDefinition, {
-        params: {
-          project_id: query.project_id,
-        },
-      });
-      const response = res.data.result;
-      if (response?.exists) {
-        const sameResponse = {
-          data: {
-            result: {
-              agentDefinitionDescription:
-                response?.agentDefinition?.description,
-              agentDefinitionName: response?.agentDefinition?.agentName,
-              agentType: response?.agentDefinition?.agentType,
-              exists: response?.exists,
-            },
-          },
-        };
-        return {
-          ...sameResponse,
-        };
-      } else {
-        return await axios.get(endpoints.project.prefetchAgentData, {
-          params: {
-            ...query,
-            replay_type: REPLAY_MODULES.TRACES,
-          },
-          paramsSerializer: (params) =>
-            qs.stringify(params, { arrayFormat: "repeat" }),
-        });
-      }
     },
     // runSimulation: (data) => {
     //   return axios.post("https://jsonplaceholder.typicode.com/posts", data);

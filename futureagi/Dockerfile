@@ -1,6 +1,12 @@
-FROM futureagi/future-agi:v1.8.19_base
+FROM futureagi/future-agi-base:v1.0.2
+
+ENV NLTK_DATA=/usr/local/share/nltk_data
 
 COPY . .
+
+# The gRPC import path loads the EE trace scanner, which requires these corpora.
+# Pin both the nltk_data revision and archive checksums for reproducible images.
+RUN python bin/install_nltk_data.py
 
 # Install Node.js for sandboxed JavaScript eval execution
 RUN apt-get update -qq && \

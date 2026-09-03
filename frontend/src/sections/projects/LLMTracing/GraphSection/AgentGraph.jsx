@@ -31,7 +31,45 @@ import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { error as errorPalette, success } from "src/theme/palette";
 import FullscreenGraphDialog from "./FullscreenGraphDialog";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  GRAPH_LOADING_MESSAGE,
+} from "src/utils/queryReadState";
+
+// ---------------------------------------------------------------------------
+// Diff-overlay status (set by buildGraphDiff for the error-feed split view)
+// ---------------------------------------------------------------------------
+const DIFF_STATUS = {
+  FAIL_ONLY: "fail-only",
+  PASS_ONLY: "pass-only",
+  PASS_ONLY_GHOST: "pass-only-ghost",
+  MATCHED_REGRESSED: "matched-regressed",
+  MATCHED: "matched",
+};
+
+// Amber regression accent — not a 1:1 palette token yet, kept local.
+const DIFF_REGRESSED_COLOR = "#F5A623";
+
+// `_isFailurePoint` is the headline and takes priority over diff status.
+const getDiffOverlay = (diffStatus, isFailurePoint) => {
+  if (isFailurePoint) {
+    return { ringColor: errorPalette.main, badge: "✕", label: "Failed" };
+  }
+  switch (diffStatus) {
+    case DIFF_STATUS.FAIL_ONLY:
+      return { ringColor: errorPalette.main, badge: "+", label: null };
+    case DIFF_STATUS.PASS_ONLY:
+      return { ringColor: success.main, badge: "+", label: null };
+    case DIFF_STATUS.PASS_ONLY_GHOST:
+      return { ringColor: success.main, badge: "−", label: "Missing" };
+    case DIFF_STATUS.MATCHED_REGRESSED:
+      return { ringColor: DIFF_REGRESSED_COLOR, badge: "Δ", label: null };
+    default:
+      return { ringColor: null, badge: null, label: null };
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Node type → color + icon
@@ -48,6 +86,11 @@ const TYPE_COLORS = {
     text: "#dc2626",
     icon: "mdi:shield-check-outline",
     label: "Guardrail",
+  },
+  aggregate: {
+    text: "#71717a",
+    icon: "mdi:dots-horizontal-circle-outline",
+    label: "Aggregate",
   },
   unknown: {
     text: "#6b7280",
@@ -93,6 +136,28 @@ const AgentNode = ({ data }) => {
       : null;
   // Dim nodes that don't match the active filter
   const isDimmed = data._hasMatch === false;
+
+  // ── Optional diff overlay (used by the error-feed Split-with-working view).
+  // The Observe Tracing view never sets `_diffStatus` / `_isFailurePoint` so
+  // this is fully inert there.
+  //   "fail-only"          → extra step in failing trace          (red, "+")
+  //   "pass-only"          → step missing from failing            (green, "+")
+  //   "pass-only-ghost"    → missing step ghosted INTO failing    (green dash, "−")
+  //   "matched-regressed"  → same step both sides, but failing has
+  //                          errors / much slower                 (amber, "Δ")
+  //   "matched" / unset    → no overlay
+  //
+  // `_isFailurePoint` is the actual failure marker — it takes visual priority
+  // over diff status (a failed node is the headline, not a diff cue).
+  const diffStatus = data._diffStatus;
+  const isFailurePoint = !!data._isFailurePoint;
+  const isGhost = diffStatus === DIFF_STATUS.PASS_ONLY_GHOST;
+
+  const {
+    ringColor: diffRingColor,
+    badge: diffBadge,
+    label: diffBadgeLabel,
+  } = getDiffOverlay(diffStatus, isFailurePoint);
 
   // Tooltip: name, duration/tokens side-by-side, cost, eval bars, annotations
   const evals = data.evals || [];
@@ -370,33 +435,96 @@ const AgentNode = ({ data }) => {
       >
         <Box
           sx={{
+            position: "relative",
             display: "flex",
             alignItems: "center",
             gap: 0.75,
             px: isSentinel ? 1 : 1.25,
             py: isSentinel ? 0.25 : 0.5,
             borderRadius: isSentinel ? "20px" : "8px",
-            border: isSentinel ? "1.5px solid" : "2px solid",
-            borderColor: color.border,
-            bgcolor: isSentinel ? "transparent" : "background.paper",
-            boxShadow: isSentinel
-              ? "none"
-              : (theme) =>
-                  `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`,
+            // Ghosts get a dashed border so they read as "what could have been"
+            // at a glance, even before the user notices the badge.
+            border: isSentinel
+              ? "1.5px solid"
+              : isGhost
+                ? "2px dashed"
+                : "2px solid",
+            borderColor: diffRingColor ?? color.border,
+            // Failure point gets a soft red wash so the failed node is the
+            // most visible thing in the graph.
+            bgcolor: isSentinel
+              ? "transparent"
+              : isFailurePoint
+                ? (theme) =>
+                    alpha(
+                      "#DB2F2D",
+                      theme.palette.mode === "dark" ? 0.12 : 0.06,
+                    )
+                : "background.paper",
+            boxShadow: (theme) => {
+              const base = isSentinel
+                ? "none"
+                : `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`;
+              if (!diffRingColor) return base;
+              // Outer halo so the diff status reads at a glance even when
+              // the graph is zoomed out. Failure points get a stronger halo.
+              const haloAlpha = isFailurePoint ? 0.35 : 0.22;
+              const haloRadius = isFailurePoint ? 4 : 3;
+              const halo = `0 0 0 ${haloRadius}px ${alpha(diffRingColor, haloAlpha)}`;
+              return base === "none" ? halo : `${halo}, ${base}`;
+            },
             minWidth: isSentinel ? 44 : 80,
             justifyContent: isSentinel ? "center" : "flex-start",
             cursor: isSentinel ? "default" : "pointer",
-            opacity: isDimmed ? 0.3 : 1,
+            // Ghosts read as semi-transparent without losing the badge.
+            opacity: isGhost ? 0.6 : isDimmed ? 0.3 : 1,
             transition: "all 0.15s ease",
             "&:hover": isSentinel
               ? {}
               : {
                   boxShadow: (theme) =>
-                    `0 0 0 2px ${color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
+                    `0 0 0 2px ${diffRingColor ?? color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
                   transform: "scale(1.03)",
+                  opacity: 1,
                 },
           }}
         >
+          {/* Diff badge (top-right) — only rendered when this node was tagged
+              by the error-feed diff helper. Pure decoration; doesn't affect
+              the node's layout dimensions. Failure points and ghosts get a
+              text label alongside the symbol so the meaning is unambiguous. */}
+          {diffBadge && (
+            <Box
+              sx={{
+                position: "absolute",
+                top: -8,
+                right: -6,
+                minWidth: 16,
+                height: 16,
+                px: diffBadgeLabel ? 0.65 : 0.5,
+                gap: diffBadgeLabel ? 0.3 : 0,
+                borderRadius: "9px",
+                bgcolor: diffRingColor,
+                color: (theme) => theme.palette.common.white,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 9.5,
+                fontWeight: 700,
+                lineHeight: 1,
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                letterSpacing: "0.02em",
+                textTransform: "uppercase",
+                boxShadow: (theme) =>
+                  `0 1px 4px ${alpha(theme.palette.common.black, 0.25)}`,
+                pointerEvents: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>{diffBadge}</span>
+              {diffBadgeLabel && <span>{diffBadgeLabel}</span>}
+            </Box>
+          )}
           <Iconify
             icon={color.icon}
             width={isSentinel ? 12 : 14}
@@ -467,15 +595,111 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
 // ---------------------------------------------------------------------------
 // Build React Flow nodes + edges from API data
 // ---------------------------------------------------------------------------
-const buildFlowData = (graphData, direction = "LR", theme = null) => {
-  if (!graphData?.nodes?.length) return { nodes: [], edges: [] };
+const NODE_METRICS = [
+  "span_count",
+  "avg_latency_ms",
+  "total_tokens",
+  "total_cost",
+  "error_count",
+];
+const EDGE_METRICS = [
+  "transition_count",
+  "avg_latency_ms",
+  "total_tokens",
+  "total_cost",
+  "error_count",
+];
+
+const assertFiniteMetric = (record, key, label) => {
+  if (!Number.isFinite(record?.[key]) || record[key] < 0) {
+    throw new Error(`${label} is missing canonical ${key}`);
+  }
+};
+
+const assertTraceCount = (record, label) => {
+  if (
+    record?.trace_count_exact !== undefined &&
+    typeof record.trace_count_exact !== "boolean"
+  ) {
+    throw new Error(`${label} has malformed trace_count_exact`);
+  }
+  if (record?.trace_count === null) {
+    if (record.trace_count_exact !== false) {
+      throw new Error(`${label} has an inexact trace_count without disclosure`);
+    }
+    return;
+  }
+  assertFiniteMetric(record, "trace_count", label);
+};
+
+const assertCanonicalGraph = (graphData) => {
+  if (!graphData || typeof graphData !== "object") {
+    throw new Error("Agent Graph data is missing");
+  }
+  if (!Array.isArray(graphData.nodes) || !Array.isArray(graphData.edges)) {
+    throw new Error("Agent Graph data is missing nodes or edges");
+  }
+
+  graphData.nodes.forEach((node, index) => {
+    const label = `Agent Graph node #${index}`;
+    if (
+      typeof node?.id !== "string" ||
+      !node.id ||
+      typeof node.name !== "string" ||
+      !node.name ||
+      typeof node.type !== "string" ||
+      !node.type
+    ) {
+      throw new Error(`${label} is malformed`);
+    }
+    NODE_METRICS.forEach((key) => assertFiniteMetric(node, key, label));
+    assertTraceCount(node, label);
+  });
+
+  graphData.edges.forEach((edge, index) => {
+    const label = `Agent Graph edge #${index}`;
+    if (
+      typeof edge?.source !== "string" ||
+      !edge.source ||
+      typeof edge.target !== "string" ||
+      !edge.target ||
+      typeof edge.is_self_loop !== "boolean"
+    ) {
+      throw new Error(`${label} is malformed`);
+    }
+    EDGE_METRICS.forEach((key) => assertFiniteMetric(edge, key, label));
+    assertTraceCount(edge, label);
+  });
+};
+
+export const buildFlowData = (graphData, direction = "LR", theme = null) => {
+  assertCanonicalGraph(graphData);
+  if (!graphData.nodes.length) return { nodes: [], edges: [] };
 
   const nodeIdSet = new Set(graphData.nodes.map((n) => n.id));
+  if (nodeIdSet.size !== graphData.nodes.length) {
+    throw new Error("Agent Graph contains duplicate node ids");
+  }
+
+  // Agent Graph renders the producer's canonical aggregate projection.
+  // Agent Path consumes the separately recorded `path_edges` projection.
+  // Substituting one for the other changes the meaning of both views.
+  const graphEdges = graphData.edges;
+  graphEdges.forEach((edge) => {
+    if (!nodeIdSet.has(edge.source) || !nodeIdSet.has(edge.target)) {
+      throw new Error(
+        `Agent Graph edge references an unknown node: ${edge.source}->${edge.target}`,
+      );
+    }
+  });
 
   const flowNodes = graphData.nodes.map((node) => ({
     id: node.id,
     type: "agentNode",
-    data: { ...node, _direction: direction },
+    data: {
+      ...node,
+      _direction: direction,
+    },
     position: { x: 0, y: 0 },
     connectable: false,
   }));
@@ -483,45 +707,79 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
   // Find max transition count for scaling edge thickness
   const maxTransitions = Math.max(
     1,
-    ...graphData.edges.map((e) => e.transition_count || 1),
+    ...graphEdges.map((edge) => edge.transition_count),
   );
 
-  const flowEdges = graphData.edges
-    .filter((edge) => nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target))
-    .map((edge, idx) => {
-      const count = edge.transition_count || 1;
-      // Scale thickness: 0.75px min, 2px max — subtle, not overpowering
-      const thickness = 0.75 + (count / maxTransitions) * 1.25;
+  const flowEdges = graphEdges.map((edge, idx) => {
+    const count = edge.transition_count;
+    // Scale thickness: 0.75px min, 2px max — subtle, not overpowering
+    const thickness = 0.75 + (count / maxTransitions) * 1.25;
 
-      const edgeColor = theme ? theme.palette.text.disabled : "#94a3b8";
-      const strokeColor = theme ? theme.palette.divider : "#cbd5e1";
-      const labelBgColor = theme ? theme.palette.background.paper : "#ffffff";
+    const edgeColor = theme ? theme.palette.text.disabled : "#94a3b8";
+    const strokeColor = theme ? theme.palette.divider : "#cbd5e1";
+    const labelBgColor = theme ? theme.palette.background.paper : "#ffffff";
 
+    // Synthetic "skipped path" edges from the error-feed diff helper
+    // override the regular styling: dashed red stroke + a SKIPPED PATH
+    // pill so the divergence is unmistakable. Inert in the Observe view.
+    if (edge._skipped) {
+      const skippedColor = errorPalette.main;
       return {
-        id: `e-${idx}`,
+        id: `e-skipped-${idx}`,
         source: edge.source,
         target: edge.target,
         type: "default",
-        animated: edge.is_self_loop || false,
+        animated: false,
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: edgeColor,
-          width: 8,
-          height: 8,
+          color: skippedColor,
+          width: 10,
+          height: 10,
         },
         style: {
-          stroke: strokeColor,
-          strokeWidth: Math.round(thickness * 10) / 10,
+          stroke: skippedColor,
+          strokeWidth: 1.6,
+          strokeDasharray: "6 4",
         },
-        // Show transition count on edges with > 1 transition
-        ...(count > 1 && {
-          label: `×${count}`,
-          labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 500 },
-          labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
-          labelBgPadding: [3, 2],
-        }),
+        label: "SKIPPED PATH",
+        labelStyle: {
+          fontSize: 9,
+          fill: "#fff",
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+        },
+        labelBgStyle: { fill: skippedColor, fillOpacity: 0.95 },
+        labelBgPadding: [5, 3],
+        labelBgBorderRadius: 4,
+        zIndex: 5,
       };
-    });
+    }
+
+    return {
+      id: `e-${idx}`,
+      source: edge.source,
+      target: edge.target,
+      type: "default",
+      animated: edge.is_self_loop,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: edgeColor,
+        width: 8,
+        height: 8,
+      },
+      style: {
+        stroke: strokeColor,
+        strokeWidth: Math.round(thickness * 10) / 10,
+      },
+      // Show transition count on edges with > 1 transition
+      ...(count > 1 && {
+        label: `×${count}`,
+        labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 500 },
+        labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
+        labelBgPadding: [3, 2],
+      }),
+    };
+  });
 
   const layoutNodes = layoutGraph(flowNodes, flowEdges, direction);
   return { nodes: layoutNodes, edges: flowEdges };
@@ -605,6 +863,7 @@ const AgentGraphInner = ({
   data,
   isLoading,
   isError,
+  pollingPaused,
   direction = "LR",
   onNodeClick,
   isFullscreen = false,
@@ -613,8 +872,11 @@ const AgentGraphInner = ({
   const theme = useTheme();
   const [isHovering, setIsHovering] = useState(false);
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
-    () => buildFlowData(data, direction, theme),
-    [data, direction, theme],
+    () =>
+      isLoading || isError || !data
+        ? { nodes: [], edges: [] }
+        : buildFlowData(data, direction, theme),
+    [data, direction, isError, isLoading, theme],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
@@ -632,10 +894,19 @@ const AgentGraphInner = ({
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
+          flexDirection: "column",
+          gap: 1,
           height: 80,
         }}
       >
         <CircularProgress size={20} />
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ fontSize: 13 }}
+        >
+          {GRAPH_LOADING_MESSAGE}
+        </Typography>
       </Box>
     );
   }
@@ -652,7 +923,25 @@ const AgentGraphInner = ({
         }}
       >
         <Typography variant="body2" sx={{ fontSize: 13 }}>
-          Failed to load agent graph
+          We couldn&apos;t load the agent graph. Please retry in a moment.
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (pollingPaused && !data) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: 80,
+          color: "text.disabled",
+        }}
+      >
+        <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+          {AGGREGATION_POLLING_PAUSED_MESSAGE}
         </Typography>
       </Box>
     );
@@ -688,6 +977,26 @@ const AgentGraphInner = ({
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
     >
+      {pollingPaused && (
+        <Typography
+          role="status"
+          variant="caption"
+          color="text.secondary"
+          sx={{
+            position: "absolute",
+            zIndex: 2,
+            top: 4,
+            left: "50%",
+            transform: "translateX(-50%)",
+            bgcolor: "background.paper",
+            px: 1,
+            borderRadius: 0.5,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {AGGREGATION_POLLING_PAUSED_MESSAGE}
+        </Typography>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -727,6 +1036,7 @@ AgentGraphInner.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
   isFullscreen: PropTypes.bool,
@@ -753,6 +1063,7 @@ AgentGraph.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
 };

@@ -10,7 +10,14 @@
  * Metric dropdown shows ALL metrics from the dashboard metrics API:
  * system metrics, evals, annotations — same as what the dashboard module uses.
  */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import {
   Badge,
@@ -25,10 +32,16 @@ import {
   useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import BoundedCursorPaginationControl from "src/components/BoundedCursorPaginationControl";
 import ReactApexChart from "react-apexcharts";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  isPropertyCatalogNotReadyError,
+  PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import {
   format,
   startOfToday,
@@ -40,9 +53,26 @@ import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-import { FILTER_FOR_HAS_EVAL } from "../common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { toBackendFilters } from "../common";
+import { combineGraphFilters } from "./graphFilterUtils";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  AGGREGATION_REQUEST_TIMEOUT_MS,
+  GRAPH_LOADING_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+  createAggregationPollController,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+  getQueryCompletedAt,
+  getRenderableGraphData,
+  awaitAggregationRequestWithDeadline,
+} from "src/utils/queryReadState";
+import { parseTraceGraphResponse } from "src/api/project/observe-contracts";
+import {
+  PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -62,6 +92,12 @@ const CATEGORY_LABELS = {
   eval_metric: "Evals",
   annotation_metric: "Annotations",
 };
+
+const GRAPH_METRIC_CATEGORIES = Object.freeze([
+  "system_metric",
+  "eval_metric",
+  "annotation_metric",
+]);
 
 // Unit hints for known system metrics
 const METRIC_UNITS = {
@@ -88,6 +124,9 @@ const EXCLUDED = new Set([
 
 const CHART_HEIGHT = 140;
 
+const graphMetricIdentity = (metric) =>
+  metric?.propertyId || metric?.property_id || metric?.id || "";
+
 const COMPARE_DATE_OPTIONS = [
   { key: "Today", label: "Today" },
   { key: "Yesterday", label: "Yesterday" },
@@ -100,58 +139,195 @@ const COMPARE_DATE_OPTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Hook: fetch all metrics from dashboard API (system + eval + annotation)
+// Hook: fetch metrics from dashboard API (system + eval + annotation)
 // ---------------------------------------------------------------------------
-function useGraphMetrics() {
-  return useQuery({
-    queryKey: ["graph-metrics-all"],
-    queryFn: async () => {
-      const { data } = await axios.get(endpoints.dashboard.metrics);
-      return data?.result?.metrics || [];
+function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
+  const query = useInfiniteQuery({
+    queryKey: ["graph-metrics", projectId],
+    queryFn: async ({ pageParam = 1, signal }) => {
+      const { data } = await axios.get(endpoints.dashboard.metrics, {
+        params: {
+          exclude_custom_attributes: true,
+          page: pageParam,
+          page_size: PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+          project_ids: projectId,
+          per_eval_config: true,
+        },
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+      });
+      return data?.result || { metrics: [], has_more: false, page: pageParam };
     },
-    select: (metrics) => {
-      // Group by category, filter to graphable numeric types
-      const groups = {};
-
-      for (const m of metrics) {
-        const cat = m.category;
-        const apiType = CATEGORY_TO_TYPE[cat];
-        if (!apiType) continue; // skip custom_column, datasets, etc.
-        if (EXCLUDED.has(m.name)) continue;
-
-        // For system metrics, only include numeric ones (not string filters)
-        if (apiType === "SYSTEM_METRIC" && m.type === "string") continue;
-
-        const groupKey = cat
-          .replace(/([A-Z])/g, "_$1")
-          .toLowerCase()
-          .replace(/^_/, "");
-        // Normalize to snake_case key
-        const normalizedKey =
-          groupKey === "system_metric"
-            ? "system_metric"
-            : groupKey === "eval_metric"
-              ? "eval_metric"
-              : groupKey === "annotation_metric"
-                ? "annotation_metric"
-                : groupKey;
-
-        if (!groups[normalizedKey]) groups[normalizedKey] = [];
-
-        groups[normalizedKey].push({
-          id: m.name,
-          label: m.displayName || m.display_name || _.startCase(m.name),
-          unit: METRIC_UNITS[m.name] || "",
-          apiType,
-          outputType: m.outputType || m.output_type || "",
-          dataType: m.type || "number",
-        });
-      }
-
-      return groups;
+    getNextPageParam: (lastPage, _pages, lastPageParam) => {
+      if (!lastPage?.has_more) return undefined;
+      const currentPage = Number(lastPage.page ?? lastPageParam);
+      return Number.isSafeInteger(currentPage) && currentPage >= 1
+        ? currentPage + 1
+        : undefined;
     },
-    staleTime: 60_000,
+    initialPageParam: 1,
+    enabled: enabled && Boolean(projectId),
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    meta: { errorHandled: true },
   });
+
+  const metrics =
+    query.data?.pages.flatMap((page) => page?.metrics || []) || [];
+  const currentPage = Number(
+    query.data?.pages?.at(-1)?.page ??
+      query.data?.pageParams?.at(-1) ??
+      query.data?.pages?.length ??
+      1,
+  );
+  return {
+    ...query,
+    data: buildGraphMetricGroups(metrics, transportSource),
+    continuationKey:
+      query.hasNextPage && Number.isSafeInteger(currentPage) && currentPage >= 1
+        ? `legacy-page:${currentPage + 1}`
+        : null,
+  };
+}
+
+function buildGraphMetricGroups(metrics, transportSource) {
+  // Group by category, filter to graphable numeric types.
+  const groups = {};
+
+  for (const m of metrics) {
+    const cat = m.category;
+    const apiType = CATEGORY_TO_TYPE[cat];
+    if (!apiType) continue; // skip custom_column, datasets, etc.
+    if (EXCLUDED.has(m.name)) continue;
+
+    const metricSources = Array.isArray(m.sources) ? m.sources : [];
+    const compatibleSystemSources =
+      transportSource === "traces"
+        ? ["traces", "spans", "all", "both"]
+        : [transportSource, "traces", "spans", "all"];
+    const supportsGraphSource =
+      !m.source ||
+      compatibleSystemSources.includes(m.source) ||
+      metricSources.some((source) => compatibleSystemSources.includes(source));
+    if (apiType === "SYSTEM_METRIC" && !supportsGraphSource) continue;
+
+    // For system metrics, only include numeric ones (not string filters).
+    if (apiType === "SYSTEM_METRIC" && m.type === "string") continue;
+
+    const groupKey = cat
+      .replace(/([A-Z])/g, "_$1")
+      .toLowerCase()
+      .replace(/^_/, "");
+    const normalizedKey =
+      groupKey === "system_metric"
+        ? "system_metric"
+        : groupKey === "eval_metric"
+          ? "eval_metric"
+          : groupKey === "annotation_metric"
+            ? "annotation_metric"
+            : groupKey;
+
+    if (!groups[normalizedKey]) groups[normalizedKey] = [];
+    groups[normalizedKey].push({
+      id: m.name,
+      propertyId: m.propertyId || m.property_id,
+      source: m.source,
+      label: m.displayName || m.display_name || _.startCase(m.name),
+      unit: METRIC_UNITS[m.name] || "",
+      apiType,
+      outputType: m.outputType || m.output_type || "",
+      dataType: m.type || "number",
+    });
+  }
+
+  return groups;
+}
+
+function useGraphMetrics(projectId, transportSource, enabled = true) {
+  const fallbackScopeKey = JSON.stringify([
+    "graph-property-catalog",
+    projectId || "",
+  ]);
+  const systemCatalog = usePropertyCatalog({
+    category: GRAPH_METRIC_CATEGORIES[0],
+    projectIds: projectId ? [projectId] : [],
+    source: transportSource,
+    perEvalConfig: true,
+    role: "metric",
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: enabled && Boolean(projectId),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `${fallbackScopeKey}:system_metric`,
+  });
+  const evalCatalog = usePropertyCatalog({
+    category: GRAPH_METRIC_CATEGORIES[1],
+    projectIds: projectId ? [projectId] : [],
+    source: transportSource,
+    perEvalConfig: true,
+    role: "metric",
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: enabled && Boolean(projectId),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `${fallbackScopeKey}:eval_metric`,
+  });
+  const annotationCatalog = usePropertyCatalog({
+    category: GRAPH_METRIC_CATEGORIES[2],
+    projectIds: projectId ? [projectId] : [],
+    source: transportSource,
+    perEvalConfig: true,
+    role: "metric",
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: enabled && Boolean(projectId),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `${fallbackScopeKey}:annotation_metric`,
+  });
+  const catalogs = [systemCatalog, evalCatalog, annotationCatalog];
+  const legacyFallbackRequired = catalogs.some(
+    (catalog) => catalog.legacyFallbackRequired,
+  );
+  const legacy = useLegacyGraphMetrics(
+    projectId,
+    transportSource,
+    enabled && legacyFallbackRequired,
+  );
+
+  if (legacyFallbackRequired) return legacy;
+
+  const catalogNotReady = catalogs.some((catalog) =>
+    isPropertyCatalogNotReadyError(catalog.error),
+  );
+  const failedCatalog = catalogs.find(
+    (catalog) =>
+      catalog.isError && !isPropertyCatalogNotReadyError(catalog.error),
+  );
+  // Advance one category at a time. This keeps each user gesture bounded to
+  // one request and prevents an error in one category from advancing another
+  // category's cursor behind the user's back.
+  const nextCatalogIndex = catalogs.findIndex((catalog) => catalog.hasNextPage);
+  const nextCatalog = nextCatalogIndex >= 0 ? catalogs[nextCatalogIndex] : null;
+  const nextCategory =
+    nextCatalogIndex >= 0 ? GRAPH_METRIC_CATEGORIES[nextCatalogIndex] : null;
+  const cursorChainStopped = catalogs.some(
+    (catalog) => catalog.cursorChainStopped,
+  );
+  return {
+    data: buildGraphMetricGroups(
+      catalogs.flatMap((catalog) => catalog.metrics || []),
+      transportSource,
+    ),
+    fetchNextPage: nextCatalog?.fetchNextPage || (() => Promise.resolve()),
+    continuationKey:
+      nextCatalog && nextCategory && nextCatalog.continuationKey
+        ? `${nextCategory}:${nextCatalog.continuationKey}`
+        : null,
+    isLoading: catalogs.some((catalog) => catalog.isLoading) || catalogNotReady,
+    isError: Boolean(failedCatalog),
+    error: failedCatalog?.error || null,
+    hasNextPage: Boolean(nextCatalog) && !cursorChainStopped,
+    isFetchingNextPage: Boolean(nextCatalog?.isFetchingNextPage),
+    isFetchNextPageError: Boolean(
+      nextCatalog?.isFetchNextPageError || cursorChainStopped,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +335,8 @@ function useGraphMetrics() {
 // ---------------------------------------------------------------------------
 const PrimaryGraph = ({
   filters = [],
+  extraFilters,
+  metricFilters = [],
   dateFilter,
   setDateFilter,
   selectedInterval = "day",
@@ -181,7 +359,22 @@ const PrimaryGraph = ({
   trafficLabel = "traces",
 }) => {
   const { observeId } = useParams();
+  const effectiveObserveId = observeIdOverride || observeId;
+  // Keep the logical registry namespace (users/spans) distinct from the
+  // physical transport adapter (sessions/traces).
+  const graphPropertyNamespace = [
+    "traces",
+    "spans",
+    "sessions",
+    "users",
+  ].includes(trafficLabel)
+    ? trafficLabel
+    : "traces";
+  const graphTransportSource = ["sessions", "users"].includes(trafficLabel)
+    ? "sessions"
+    : "traces";
   const theme = useTheme();
+  const aggregationSourceId = useId();
   const [selectedMetric, setSelectedMetric] = useState(
     defaultMetric || "latency",
   );
@@ -190,6 +383,7 @@ const PrimaryGraph = ({
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
+  const metricPickerScrollRef = useRef(null);
 
   const handleDateOptionChange = useCallback(
     (option) => {
@@ -265,8 +459,20 @@ const PrimaryGraph = ({
     "&:hover": { bgcolor: "background.neutral", borderColor: "text.disabled" },
   };
 
-  // Fetch all available metrics (system + eval + annotation)
-  const { data: dynamicMetricGroups } = useGraphMetrics();
+  // Fetch a bounded catalog page at a time. The picker end sentinel advances
+  // each distinct continuation once while it remains visible.
+  const {
+    data: dynamicMetricGroups,
+    fetchNextPage: fetchNextMetricPage,
+    hasNextPage: hasNextMetricPage,
+    continuationKey: metricContinuationKey,
+    isFetchingNextPage: isFetchingNextMetricPage,
+    isFetchNextPageError: isNextMetricPageError,
+  } = useGraphMetrics(
+    effectiveObserveId,
+    graphTransportSource,
+    !staticMetrics && Boolean(pickerAnchor),
+  );
   // Use staticMetrics if provided (for sessions/users), otherwise dynamic
   const metricGroups = staticMetrics || dynamicMetricGroups;
 
@@ -279,15 +485,43 @@ const PrimaryGraph = ({
   // Current selected metric definition
   const metricDef = useMemo(
     () =>
-      allMetrics.find((m) => m.id === selectedMetric) ||
+      allMetrics.find(
+        (m) =>
+          graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
+      ) ||
       allMetrics[0] || {
         id: "latency",
+        propertyId: `system_attribute:${graphPropertyNamespace}:latency`,
+        source: graphTransportSource,
         label: "Latency",
         unit: "ms",
         apiType: "SYSTEM_METRIC",
       },
-    [allMetrics, selectedMetric],
+    [allMetrics, graphPropertyNamespace, graphTransportSource, selectedMetric],
   );
+
+  const graphPropertyId = useMemo(() => {
+    if ((metricDef.apiType || "SYSTEM_METRIC") === "SYSTEM_METRIC") {
+      return `system_attribute:${graphPropertyNamespace}:${metricDef.id}`;
+    }
+    return metricDef.propertyId || metricDef.property_id || "";
+  }, [graphPropertyNamespace, metricDef]);
+
+  // A metric selected in one project may not exist in the next one's catalog.
+  // Drop it once loaded so the trigger label and picker highlight agree. The
+  // catalog-backed picker stores canonical property ids, while legacy entries
+  // may still be selected by metric id, so both identities must be accepted.
+  useEffect(() => {
+    if (!metricGroups || !allMetrics.length) return;
+    if (
+      !allMetrics.some(
+        (m) =>
+          graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
+      )
+    ) {
+      setSelectedMetric(graphMetricIdentity(metricDef));
+    }
+  }, [metricGroups, allMetrics, selectedMetric, metricDef]);
 
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
@@ -305,84 +539,410 @@ const PrimaryGraph = ({
     return result;
   }, [metricGroups, pickerSearch]);
 
-  // Combine filters with date filter + eval filter
-  const combinedFilters = useMemo(() => {
-    const base = filters || [];
-    const hasDateFilter = base.some((f) => f?.columnId === "created_at");
-    const startDate = dateFilter?.dateFilter?.[0];
-    const endDate = dateFilter?.dateFilter?.[1];
-
-    const dateEntry =
-      !hasDateFilter && startDate && endDate
-        ? [
-            {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
-                  new Date(startDate).toISOString(),
-                  new Date(endDate).toISOString(),
-                ],
-              },
-            },
-          ]
-        : [];
-
-    return [
-      ...base,
-      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-      ...dateEntry,
-    ];
-  }, [filters, dateFilter, hasEvalFilter]);
+  const combinedFilters = useMemo(
+    () =>
+      combineGraphFilters({
+        filters,
+        extraFilters,
+        metricFilters,
+        dateFilter,
+        hasEvalFilter,
+      }),
+    [filters, extraFilters, metricFilters, dateFilter, hasEvalFilter],
+  );
 
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
-  const { data: graphData, isLoading } = useQuery({
+  const forceRefreshRef = useRef(false);
+  const pollingRef = useRef(false);
+  const pollingControllerRef = useRef(null);
+  if (pollingControllerRef.current === null) {
+    pollingControllerRef.current = createAggregationPollController();
+  }
+  const [aggregationTransportFailed, setAggregationTransportFailed] =
+    useState(false);
+  const [aggregationPollingPaused, setAggregationPollingPaused] =
+    useState(false);
+  const requestScopeRef = useRef(null);
+  const requestGenerationRef = useRef(0);
+  const resetAggregationBudget = useCallback(() => {
+    requestGenerationRef.current += 1;
+    requestScopeRef.current = null;
+    pollingControllerRef.current.reset();
+    pollingRef.current = false;
+    setAggregationTransportFailed(false);
+    setAggregationPollingPaused(false);
+  }, []);
+  const runAggregationRequest = useCallback(
+    async (scopeKey, signal, request) => {
+      if (requestScopeRef.current !== scopeKey) {
+        requestGenerationRef.current += 1;
+        requestScopeRef.current = scopeKey;
+        pollingControllerRef.current.reset();
+        pollingRef.current = false;
+        setAggregationTransportFailed(false);
+        setAggregationPollingPaused(false);
+      }
+
+      // The first HTTP read and any pending-response polls share one visible
+      // action wall. The user-facing Refresh path resets this controller.
+      pollingControllerRef.current.start();
+      pollingControllerRef.current.recordAttempt();
+      const generation = requestGenerationRef.current;
+      return awaitAggregationRequestWithDeadline(request, {
+        timeoutMs: pollingControllerRef.current.remainingMs(
+          AGGREGATION_REQUEST_TIMEOUT_MS,
+        ),
+        signal,
+        isCurrent: () => generation === requestGenerationRef.current,
+        onTimeout: () =>
+          pollingControllerRef.current.terminate("action_deadline"),
+      });
+    },
+    [],
+  );
+  const recordAggregationResponse = useCallback((response) => {
+    pollingControllerRef.current.recordSuccess();
+    setAggregationTransportFailed(false);
+    setAggregationPollingPaused(false);
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(response);
+    const readState = getExactAggregationReadState(response);
+    const shouldPoll =
+      isRefreshing &&
+      !refreshFailed &&
+      (readState === "complete" || readState === "pending");
+    if (!shouldPoll) {
+      pollingControllerRef.current.stop();
+      pollingRef.current = false;
+      return;
+    }
+    pollingControllerRef.current.start();
+    pollingRef.current = true;
+  }, []);
+  const recordAggregationFailure = useCallback(() => {
+    if (!pollingRef.current) return;
+    if (!pollingControllerRef.current.recordFailure()) {
+      pollingRef.current = false;
+      setAggregationTransportFailed(true);
+      setAggregationPollingPaused(false);
+    }
+  }, []);
+  const recordAggregationTerminalFailure = useCallback(() => {
+    pollingControllerRef.current.terminate();
+    pollingRef.current = false;
+    setAggregationTransportFailed(true);
+    setAggregationPollingPaused(false);
+  }, []);
+  const {
+    data: graphData,
+    isLoading,
+    isError: rawGraphError,
+    refetch,
+  } = useQuery({
     queryKey: [
       "primary-graph",
-      observeId,
+      effectiveObserveId,
       selectedMetric,
+      // metricDef resolves asynchronously: while the project's scoped catalog
+      // loads it is the hardcoded latency fallback, so keying on selectedMetric
+      // alone pinned that first response for the real metric — the chart then
+      // showed latency data under the eval's name and unit (TH-6787).
+      metricDef.id,
+      metricDef.apiType,
       selectedInterval,
       combinedFilters,
       apiEndpoint,
+      graphPropertyId,
+      graphTransportSource,
     ],
-    queryFn: () =>
-      axios.post(apiEndpoint, {
-        interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
-        property: "average",
-        req_data_config: {
-          id: metricDef.id,
-          type: metricDef.apiType || "SYSTEM_METRIC",
-          ...(metricDef.outputType && { output_type: metricDef.outputType }),
-        },
-        project_id: observeId,
-      }),
-    select: (d) => d.data?.result,
-    enabled: !!observeId && !!metricDef.id,
-    staleTime: 30_000,
+    queryFn: async ({ queryKey, signal }) => {
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      let response;
+      try {
+        response = await runAggregationRequest(
+          JSON.stringify(queryKey),
+          signal,
+          (requestSignal) =>
+            axios.post(
+              apiEndpoint,
+              {
+                interval: selectedInterval,
+                filters: toBackendFilters(combinedFilters),
+                property: "average",
+                req_data_config: {
+                  id: metricDef.id,
+                  type: metricDef.apiType || "SYSTEM_METRIC",
+                  ...(metricDef.outputType && {
+                    output_type: metricDef.outputType,
+                  }),
+                  ...(graphPropertyId && {
+                    property_id: graphPropertyId,
+                    source: graphTransportSource,
+                  }),
+                },
+                project_id: effectiveObserveId,
+              },
+              {
+                params: refresh ? { refresh: true } : undefined,
+                signal: requestSignal,
+              },
+            ),
+        );
+      } catch (error) {
+        if (!signal.aborted) recordAggregationFailure();
+        throw error;
+      }
+      let result;
+      try {
+        result = parseTraceGraphResponse(response.data);
+      } catch (error) {
+        recordAggregationTerminalFailure();
+        throw error;
+      }
+      recordAggregationResponse(result);
+      return result;
+    },
+    enabled: !!effectiveObserveId && !!metricDef.id,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: (query) => {
+      const { isRefreshing, refreshFailed } = getAggregationRefreshState(
+        query.state.data,
+      );
+      const readState = getExactAggregationReadState(query.state.data);
+      if (
+        !isRefreshing ||
+        refreshFailed ||
+        (readState !== "complete" && readState !== "pending")
+      ) {
+        pollingControllerRef.current.stop();
+        pollingRef.current = false;
+        return false;
+      }
+      // React Query recalculates intervals when a poll starts. Do not spend the
+      // next delay budget until the in-flight response records its outcome.
+      if (query.state.fetchStatus === "fetching") return false;
+      pollingControllerRef.current.start();
+      const delay = pollingControllerRef.current.nextDelay();
+      if (delay === false) {
+        pollingRef.current = false;
+        if (
+          pollingControllerRef.current.getTerminationReason() === "poll_budget"
+        ) {
+          setAggregationPollingPaused(true);
+        }
+      }
+      return delay;
+    },
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorHandled: true },
   });
+  const graphError =
+    aggregationTransportFailed || (rawGraphError && !pollingRef.current);
+  const graphReadState = graphError
+    ? "error"
+    : graphData?.queryReadState || getExactAggregationReadState(graphData);
+  const snapshotKey = useMemo(
+    () =>
+      JSON.stringify([
+        effectiveObserveId,
+        selectedMetric,
+        selectedInterval,
+        combinedFilters,
+        apiEndpoint,
+      ]),
+    [
+      apiEndpoint,
+      combinedFilters,
+      effectiveObserveId,
+      selectedInterval,
+      selectedMetric,
+    ],
+  );
+  const [lastExactSnapshot, setLastExactSnapshot] = useState(null);
+  const [refreshUnavailable, setRefreshUnavailable] = useState(false);
+  const notifyAggregationRefresh = useCallback(
+    (refreshing) => {
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-refresh-state", {
+          detail: {
+            observeId: effectiveObserveId,
+            sourceId: aggregationSourceId,
+            refreshing,
+          },
+        }),
+      );
+    },
+    [aggregationSourceId, effectiveObserveId],
+  );
+
+  useEffect(() => {
+    const handleRefresh = (event) => {
+      if (
+        event?.detail?.observeId &&
+        String(event.detail.observeId) !== String(effectiveObserveId)
+      ) {
+        return;
+      }
+      forceRefreshRef.current = true;
+      resetAggregationBudget();
+      setRefreshUnavailable(false);
+      notifyAggregationRefresh(true);
+      refetch({ cancelRefetch: true });
+    };
+    window.addEventListener("observe-refresh", handleRefresh);
+    return () => window.removeEventListener("observe-refresh", handleRefresh);
+  }, [
+    effectiveObserveId,
+    notifyAggregationRefresh,
+    refetch,
+    resetAggregationBudget,
+  ]);
+
+  useEffect(() => {
+    return () => notifyAggregationRefresh(false);
+  }, [notifyAggregationRefresh, snapshotKey]);
+
+  useEffect(
+    () => () => {
+      requestGenerationRef.current += 1;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    // Client-side retry exhaustion is terminal for this request scope even if
+    // the retained server snapshot still says query_refreshing=true. Publish
+    // false so ObserveHeader releases Reload for an explicit retry.
+    if (graphError) {
+      setRefreshUnavailable(true);
+      notifyAggregationRefresh(false);
+      return;
+    }
+    if (aggregationPollingPaused) {
+      setRefreshUnavailable(true);
+      notifyAggregationRefresh(false);
+      return;
+    }
+    if (!graphData) return;
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(graphData);
+    const refreshReadState = getExactAggregationReadState(graphData);
+    const completedAt = getQueryCompletedAt(graphData);
+    if (graphReadState === "complete") {
+      setLastExactSnapshot({
+        key: snapshotKey,
+        data: graphData,
+        updatedAt: completedAt,
+      });
+    }
+    if (
+      isRefreshing &&
+      !refreshFailed &&
+      (refreshReadState === "complete" || refreshReadState === "pending")
+    ) {
+      setRefreshUnavailable(graphReadState !== "complete");
+      notifyAggregationRefresh(true);
+      return;
+    }
+    notifyAggregationRefresh(false);
+    if (refreshFailed) {
+      setRefreshUnavailable(graphReadState !== "complete");
+      return;
+    }
+    if (graphReadState !== "complete") {
+      setRefreshUnavailable(true);
+      return;
+    }
+    setRefreshUnavailable(false);
+    if (completedAt) {
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-completed", {
+          detail: {
+            observeId: effectiveObserveId,
+            queryCompletedAt: completedAt.toISOString(),
+          },
+        }),
+      );
+    }
+  }, [
+    effectiveObserveId,
+    graphData,
+    graphError,
+    graphReadState,
+    aggregationPollingPaused,
+    notifyAggregationRefresh,
+    snapshotKey,
+  ]);
+
+  // A completed response is already safe to render in this render pass. Do
+  // not wait for the persistence effect below: that one-frame gap used to
+  // advertise "No data" even when the exact response contained points.
+  const currentExactSnapshot =
+    graphData && graphReadState === "complete"
+      ? {
+          key: snapshotKey,
+          data: graphData,
+          updatedAt: getQueryCompletedAt(graphData),
+        }
+      : null;
+  const retainedExactSnapshot =
+    currentExactSnapshot ||
+    (lastExactSnapshot?.key === snapshotKey ? lastExactSnapshot : null);
+  const displaySnapshot = retainedExactSnapshot;
+  const displayGraphData = displaySnapshot?.data;
+  const graphRefreshState = getAggregationRefreshState(graphData);
+  const graphReadFailed =
+    graphError ||
+    graphRefreshState.refreshFailed ||
+    (Boolean(graphData) &&
+      graphReadState !== "complete" &&
+      graphReadState !== "pending");
+  const graphStatusMessage = graphReadFailed
+    ? QUERY_FAILED_RETRY_MESSAGE
+    : aggregationPollingPaused
+      ? AGGREGATION_POLLING_PAUSED_MESSAGE
+      : !displaySnapshot &&
+          (isLoading ||
+            refreshUnavailable ||
+            graphReadState === "pending" ||
+            !graphData)
+        ? GRAPH_LOADING_MESSAGE
+        : null;
+  // A cold exact aggregation can move from the transport request into a
+  // server-side pending state. Keep the same skeleton throughout that phase
+  // so the loader does not visibly change mid-request. Retained snapshots are
+  // never covered while refreshing, and terminal/paused states render copy.
+  const isColdGraphLoading =
+    !displaySnapshot && graphStatusMessage === GRAPH_LOADING_MESSAGE;
 
   // Parse API data → [{timestamp, value, primary_traffic}, ...]
   const { metricData, trafficData } = useMemo(() => {
-    if (!graphData) return { metricData: [], trafficData: [] };
+    if (!displayGraphData) return { metricData: [], trafficData: [] };
 
-    const items = Array.isArray(graphData.data) ? graphData.data : [];
+    const items = getRenderableGraphData(displayGraphData);
     const mData = [];
     const tData = [];
 
     for (const item of items) {
       if (item.timestamp == null) continue;
       const ts = item.timestamp.replace(/\+00:00$/, "");
-      mData.push({ x: new Date(ts).getTime(), y: item.value ?? 0 });
-      tData.push({ x: new Date(ts).getTime(), y: item.primary_traffic ?? 0 });
+      mData.push({
+        x: new Date(ts).getTime(),
+        y: item.value == null ? null : Number(item.value),
+      });
+      tData.push({
+        x: new Date(ts).getTime(),
+        y: item.primary_traffic == null ? null : Number(item.primary_traffic),
+      });
     }
 
     return { metricData: mData, trafficData: tData };
-  }, [graphData]);
+  }, [displayGraphData]);
 
   // Colors — soft blue line over light blue bars (overridable via props)
   const lineColor =
@@ -396,17 +956,23 @@ const PrimaryGraph = ({
       ? "rgba(147, 130, 220, 0.30)"
       : "rgba(147, 160, 230, 0.25)");
 
-  const lineSeriesName = metricDef.unit
+  const metricSeriesName = metricDef.unit
     ? `${metricDef.label} (${metricDef.unit})`
     : metricDef.label;
+  const lineSeriesName = metricSeriesName;
+  const trafficSeriesName = "Traffic";
 
   // Series: metric line FIRST (left axis), traffic bars SECOND (right axis)
   const series = useMemo(
     () => [
       { name: lineSeriesName, type: "line", data: metricData },
-      { name: "Traffic", type: "column", data: trafficData },
+      {
+        name: trafficSeriesName,
+        type: "column",
+        data: trafficData,
+      },
     ],
-    [lineSeriesName, metricData, trafficData],
+    [lineSeriesName, metricData, trafficData, trafficSeriesName],
   );
 
   // Drag-to-zoom → apply as date filter
@@ -504,7 +1070,7 @@ const PrimaryGraph = ({
           tickAmount: 4,
         },
         {
-          seriesName: "Traffic",
+          seriesName: trafficSeriesName,
           opposite: true,
           title: { text: undefined },
           labels: {
@@ -552,12 +1118,17 @@ const PrimaryGraph = ({
       theme,
       handleZoomed,
       trafficLabel,
+      trafficSeriesName,
     ],
   );
 
-  if (isLoading) {
+  if (isColdGraphLoading) {
     return (
-      <Box sx={{ px: 2, py: 1, height: CHART_HEIGHT + 40 }}>
+      <Box
+        role="status"
+        aria-label={GRAPH_LOADING_MESSAGE}
+        sx={{ px: 2, py: 1, height: CHART_HEIGHT + 40 }}
+      >
         <GraphSkeleton />
       </Box>
     );
@@ -588,6 +1159,7 @@ const PrimaryGraph = ({
 
           {/* Metric picker trigger */}
           <ButtonBase
+            data-testid="graph-metric-picker-trigger"
             onClick={(e) => setPickerAnchor(e.currentTarget)}
             sx={{
               height: 26,
@@ -663,7 +1235,7 @@ const PrimaryGraph = ({
             </Box>
 
             {/* Scrollable grouped list */}
-            <Box sx={{ overflow: "auto", flex: 1 }}>
+            <Box ref={metricPickerScrollRef} sx={{ overflow: "auto", flex: 1 }}>
               {groupOrder.map((groupKey) => {
                 const items = filteredGroups[groupKey];
                 if (!items?.length) return null;
@@ -685,9 +1257,9 @@ const PrimaryGraph = ({
                     </Typography>
                     {items.map((m) => (
                       <ButtonBase
-                        key={m.id}
+                        key={graphMetricIdentity(m)}
                         onClick={() => {
-                          setSelectedMetric(m.id);
+                          setSelectedMetric(graphMetricIdentity(m));
                           setPickerAnchor(null);
                           setPickerSearch("");
                         }}
@@ -700,6 +1272,7 @@ const PrimaryGraph = ({
                           py: 0.5,
                           gap: 0.5,
                           bgcolor:
+                            graphMetricIdentity(m) === selectedMetric ||
                             m.id === selectedMetric
                               ? "action.selected"
                               : "transparent",
@@ -739,6 +1312,34 @@ const PrimaryGraph = ({
                 >
                   No metrics found
                 </Typography>
+              )}
+              {!staticMetrics && (
+                <BoundedCursorPaginationControl
+                  resetKey={JSON.stringify([
+                    "primary-graph-metrics",
+                    effectiveObserveId || "",
+                    graphPropertyNamespace,
+                    graphTransportSource,
+                  ])}
+                  channels={[
+                    {
+                      channelKey: "primary-graph-metrics",
+                      hasNextPage: Boolean(hasNextMetricPage),
+                      continuationKey: metricContinuationKey,
+                      isFetching: isFetchingNextMetricPage,
+                      error: isNextMetricPageError,
+                      loadNextPage: fetchNextMetricPage,
+                    },
+                  ]}
+                  rootRef={metricPickerScrollRef}
+                  requireUserAdvanceGesture
+                  loadingLabel="Loading more metrics…"
+                  retryLabel="Retry loading more metrics"
+                  errorMessage={
+                    "The next metric page failed. Loaded metrics remain available."
+                  }
+                  testId="primary-graph-metric-pagination-sentinel"
+                />
               )}
             </Box>
           </Popover>
@@ -849,6 +1450,14 @@ const PrimaryGraph = ({
       </Box>
 
       {/* Chart */}
+      {graphStatusMessage && displaySnapshot ? (
+        <Typography
+          role="status"
+          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+        >
+          {graphStatusMessage}
+        </Typography>
+      ) : null}
       {hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
@@ -868,7 +1477,7 @@ const PrimaryGraph = ({
           }}
         >
           <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
-            No data available for this time range
+            {graphStatusMessage || "No data available for this time range"}
           </Typography>
         </Box>
       )}
@@ -878,6 +1487,8 @@ const PrimaryGraph = ({
 
 PrimaryGraph.propTypes = {
   filters: PropTypes.array,
+  extraFilters: PropTypes.array,
+  metricFilters: PropTypes.array,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   selectedInterval: PropTypes.string,

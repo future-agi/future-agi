@@ -47,7 +47,11 @@ class ImagineAnalysisWorkflow:
         try:
             content = await workflow.execute_activity(
                 "run_llm_analysis",
-                RunAnalysisInput(prompt=input.prompt, trace_context=trace_ctx),
+                RunAnalysisInput(
+                    prompt=input.prompt,
+                    trace_context=trace_ctx,
+                    org_id=input.org_id,
+                ),
                 start_to_close_timeout=timedelta(seconds=90),
                 retry_policy=LLM_RETRY_POLICY,
             )

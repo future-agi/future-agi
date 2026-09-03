@@ -1,0 +1,291 @@
+"""
+Sweep test: every v2 query builder produces SQL with NO legacy column refs.
+
+Whenever a v1 builder grows a new method that touches `span_attr_*`,
+`span_attributes_raw`, `metadata_map`, or `_peerdb_*`, this test fails
+unless the corresponding v2 builder either overrides the new method OR
+the new method goes through one of the already-overridden ones.
+
+Cheap to run: pure-Python (no DB), exercises each v2 builder's public
+build* methods with minimal valid input.
+"""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+
+# v2 builders under test
+from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
+    MonitorMetricsQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.session_list import (
+    SessionListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.span_list import (
+    SpanListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    TraceListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+    VoiceCallListQueryBuilderV2,
+)
+
+PROJECT_ID = "11111111-1111-1111-1111-111111111111"
+
+LEGACY_TOKENS = (
+    "_peerdb_is_deleted",
+    "_peerdb_version",
+    "span_attr_str",
+    "span_attr_num",
+    "span_attr_bool",
+    "span_attributes_raw",
+    "resource_attributes_raw",
+    "metadata_map",
+)
+# Pattern matches a legacy token AS A COLUMN REFERENCE — not as an `AS` alias
+# name. The rewriter wraps legacy bare JSON columns as
+# `toJSONString(v2_col) AS legacy_col` to preserve the result-row key shape
+# for downstream Python callers; the legacy name in alias position is
+# intentional and SHOULD NOT fail the sweep.
+LEGACY_REF_RE = re.compile(
+    r"(?<!\bAS\s)"  # not preceded by `AS ` (alias position)
+    r"(?<!\b[Aa][Ss]\s)"  # case-insensitive AS
+    r"\b(" + "|".join(LEGACY_TOKENS) + r")\b"
+    r"(?![A-Za-z0-9_])"
+)
+
+
+def _assert_no_legacy(
+    sql: str,
+    label: str,
+    *,
+    allow_legacy_eval_cdc: bool = False,
+) -> None:
+    """Fail when migrated-span SQL still references a legacy column.
+
+    Evaluation metric queries intentionally join the not-yet-migrated
+    ``model_hub_eval_logger`` source.  Its qualified PeerDB CDC columns remain
+    valid; the exception is deliberately limited to known eval-table aliases.
+    """
+    for match in LEGACY_REF_RE.finditer(sql):
+        # The regex's lookbehind only checks the IMMEDIATELY preceding 3 chars;
+        # also reject any token preceded by `AS <whitespace>+` (any indent).
+        tail = sql[max(0, match.start() - 8) : match.start()]
+        if tail.rstrip().lower().endswith(" as"):
+            continue  # alias position, ignore
+        qualified_tail = sql[max(0, match.start() - 32) : match.start()]
+        if allow_legacy_eval_cdc and qualified_tail.endswith(
+            ("eval_scan.", "latest_eval.", "raw_eval_logger.")
+        ):
+            continue
+        start = max(0, match.start() - 50)
+        end = min(len(sql), match.end() + 50)
+        raise AssertionError(
+            f"{label}: legacy column '{match.group(0)}' referenced in v2 SQL\n"
+            f"  context: …{sql[start:end]}…"
+        )
+
+
+# ─── SpanList ────────────────────────────────────────────────────────────────
+def _span_list_builder():
+    return SpanListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
+    )
+
+
+def test_span_list_v2_build_no_legacy():
+    sql, _ = _span_list_builder().build()
+    _assert_no_legacy(sql, "SpanList.build")
+
+
+def test_span_list_v2_count_no_legacy():
+    sql, _ = _span_list_builder().build_count_query()
+    _assert_no_legacy(sql, "SpanList.build_count_query")
+
+
+def test_span_list_v2_content_no_legacy():
+    sql, _ = _span_list_builder().build_content_query(span_ids=["sp1"])
+    _assert_no_legacy(sql, "SpanList.build_content_query")
+
+
+# ─── TraceList ───────────────────────────────────────────────────────────────
+def _trace_list_builder():
+    return TraceListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
+    )
+
+
+def test_trace_list_v2_build_no_legacy():
+    sql, _ = _trace_list_builder().build()
+    _assert_no_legacy(sql, "TraceList.build")
+
+
+def test_trace_list_v2_count_no_legacy():
+    sql, _ = _trace_list_builder().build_count_query()
+    _assert_no_legacy(sql, "TraceList.build_count_query")
+
+
+def test_trace_list_v2_content_no_legacy():
+    sql, _ = _trace_list_builder().build_content_query(trace_ids=["t1"])
+    _assert_no_legacy(sql, "TraceList.build_content_query")
+
+
+def test_trace_list_v2_span_attributes_no_legacy():
+    sql, _ = _trace_list_builder().build_span_attributes_query(
+        trace_ids=["t1"], attribute_keys=["final_status"]
+    )
+    _assert_no_legacy(sql, "TraceList.build_span_attributes_query")
+
+
+def test_trace_list_v2_span_count_no_legacy():
+    sql, _ = _trace_list_builder().build_span_count_query(trace_ids=["t1"])
+    _assert_no_legacy(sql, "TraceList.build_span_count_query")
+
+
+# ─── SessionList ─────────────────────────────────────────────────────────────
+def _session_list_builder():
+    return SessionListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
+    )
+
+
+def test_session_list_v2_build_no_legacy():
+    sql, _ = _session_list_builder().build()
+    _assert_no_legacy(sql, "SessionList.build")
+
+
+def test_session_list_v2_count_no_legacy():
+    sql, _ = _session_list_builder().build_count_query()
+    _assert_no_legacy(sql, "SessionList.build_count_query")
+
+
+# ─── VoiceCallList ───────────────────────────────────────────────────────────
+def _voice_call_builder():
+    return VoiceCallListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
+    )
+
+
+def test_voice_call_list_v2_build_no_legacy():
+    sql, _ = _voice_call_builder().build()
+    _assert_no_legacy(sql, "VoiceCallList.build")
+
+
+def test_voice_call_list_v2_count_no_legacy():
+    sql, _ = _voice_call_builder().build_count_query()
+    _assert_no_legacy(sql, "VoiceCallList.build_count_query")
+
+
+def test_voice_call_list_v2_content_no_legacy():
+    sql, _ = _voice_call_builder().build_content_query(span_ids=["sp1"])
+    _assert_no_legacy(sql, "VoiceCallList.build_content_query")
+
+
+# ─── MonitorMetrics ──────────────────────────────────────────────────────────
+_MONITOR_ATTR_FILTER = {
+    "span_attributes_filters": [
+        {
+            "column_id": "my.attr",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "x",
+            },
+        }
+    ]
+}
+_MONITOR_METRIC_TYPES = [
+    "count_of_errors",
+    "error_rates_for_function_calling",
+    "error_free_session_rates",
+    "service_provider_error_rates",
+    "llm_api_failure_rates",
+    "span_response_time",
+    "llm_response_time",
+    "token_usage",
+    "daily_tokens_spent",
+    "monthly_tokens_spent",
+    "evaluation_metrics",
+]
+
+
+def _monitor_builder():
+    return MonitorMetricsQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=_MONITOR_ATTR_FILTER,
+        eval_config_id="22222222-2222-2222-2222-222222222222",
+        eval_output_type="SCORE",
+    )
+
+
+@pytest.mark.parametrize("metric_type", _MONITOR_METRIC_TYPES)
+def test_monitor_metrics_v2_value_no_legacy(metric_type):
+    from datetime import datetime
+
+    sql, _ = _monitor_builder().build_metric_value_query(
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8)
+    )
+    _assert_no_legacy(
+        sql,
+        f"MonitorMetrics.value[{metric_type}]",
+        allow_legacy_eval_cdc=metric_type == "evaluation_metrics",
+    )
+    assert "SETTINGS" in sql, f"v2 settings missing on value[{metric_type}]"
+
+
+@pytest.mark.parametrize("metric_type", _MONITOR_METRIC_TYPES)
+def test_monitor_metrics_v2_historical_no_legacy(metric_type):
+    from datetime import datetime
+
+    sql, _ = _monitor_builder().build_historical_stats_query(
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8), interval_kind="hour"
+    )
+    _assert_no_legacy(
+        sql,
+        f"MonitorMetrics.historical[{metric_type}]",
+        allow_legacy_eval_cdc=metric_type == "evaluation_metrics",
+    )
+    assert "SETTINGS" in sql, f"v2 settings missing on historical[{metric_type}]"
+
+
+@pytest.mark.parametrize("metric_type", _MONITOR_METRIC_TYPES)
+def test_monitor_metrics_v2_time_series_no_legacy(metric_type):
+    from datetime import datetime
+
+    sql, _ = _monitor_builder().build_time_series_query(
+        metric_type, datetime(2026, 8, 1), datetime(2026, 8, 8), 3600
+    )
+    _assert_no_legacy(
+        sql,
+        f"MonitorMetrics.time_series[{metric_type}]",
+        allow_legacy_eval_cdc=metric_type == "evaluation_metrics",
+    )
+    assert "SETTINGS" in sql, f"v2 settings missing on time_series[{metric_type}]"

@@ -171,41 +171,31 @@ class AgentVersion(BaseModel):
             str(agent.knowledge_base_id) if agent.knowledge_base_id else None
         )
 
-        # Read credentials from ProviderCredentials (decrypted),
-        # fall back to AgentDefinition fields for backward compat.
-        api_key = agent.api_key or getattr(self.agent_definition, "api_key", "")
-        assistant_id = agent.assistant_id or ""
+        # Read non-secret LiveKit fields from version's own ProviderCredentials.
         livekit_url = ""
-        livekit_api_key = ""
-        livekit_api_secret = ""
         livekit_agent_name = ""
         livekit_config_json = None
         livekit_max_concurrency = settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
-
         try:
-            creds = self.agent_definition.credentials
+            creds = self.credentials
             if creds:
-                decrypted_key = creds.get_api_key()
-                if decrypted_key:
-                    api_key = decrypted_key
-                if creds.assistant_id:
-                    assistant_id = creds.assistant_id
+                # Concurrency applies to every provider (livekit / vapi /
+                # retell), so the snapshot mirrors the live credential column
+                # regardless of provider — the runner reads it generically.
+                livekit_max_concurrency = (
+                    creds.max_concurrency
+                    or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
+                )
                 if creds.provider_type == "livekit":
                     livekit_url = creds.server_url or ""
-                    livekit_api_key = decrypted_key or ""
-                    livekit_api_secret = creds.get_api_secret() or ""
                     livekit_agent_name = creds.agent_name or ""
                     livekit_config_json = creds.config_json
-                    livekit_max_concurrency = (
-                        creds.max_concurrency
-                        or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
-                    )
-        except self.agent_definition.__class__.credentials.RelatedObjectDoesNotExist:
+        except AgentVersion.credentials.RelatedObjectDoesNotExist:
             pass
 
         schema = AgentConfigurationSnapshot(
-            api_key=agent.api_key or "",
             inbound=agent.inbound,
+            target_speaks_first=agent.target_speaks_first,
             language=agent.language,
             languages=agent.languages or [],
             provider=agent.provider,
@@ -223,8 +213,6 @@ class AgentVersion(BaseModel):
             model=agent.model,
             model_details=agent.model_details,
             livekit_url=livekit_url,
-            livekit_api_key=livekit_api_key,
-            livekit_api_secret=livekit_api_secret,
             livekit_agent_name=livekit_agent_name,
             livekit_config_json=livekit_config_json or None,
             livekit_max_concurrency=livekit_max_concurrency,

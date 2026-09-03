@@ -12,7 +12,7 @@ import AddSDKModal from "./AddSDKModal";
 import SyntheticDataDrawer from "../AddRowDrawer/CreateSyntheticData";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import ExistingDatasetModal from "../AddRowDrawer/ExistingDatasetModal";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 
 const options = [
   {
@@ -89,8 +89,11 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
   const [syntheticDataDrawerOpen, setSyntheticDataDrawerOpen] = useState(false);
 
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
-  const filteredOptions = isOSS
+  // Hide the Synthetic Data tile while capabilities load or when denied
+  // (fail closed) so it never flashes for a deployment/plan without it. The
+  // route is separately guarded by CapabilityGate for deep-links.
+  const { locked: syntheticLocked } = useFeatureLocked(CAPABILITY.SYNTHETIC_DATA);
+  const filteredOptions = syntheticLocked
     ? options.filter((o) => o.id !== "synthetic-data")
     : options;
 

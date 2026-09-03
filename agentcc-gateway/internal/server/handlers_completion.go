@@ -73,18 +73,8 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 
 	setAuthMetadataFromRequest(rc, r)
 
-	// Extract Agentcc metadata from headers (with security key blocklist).
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
-	}
+	// Caller dimensions, from the x-agentcc-metadata header.
+	applyCallerMetadata(rc, r, nil)
 	if sid := r.Header.Get("x-agentcc-session-id"); sid != "" {
 		if len(sid) > maxSessionIDLen {
 			models.WriteError(w, models.ErrBadRequest("session_id_too_long",
@@ -363,14 +353,17 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 	// Track last usage from stream chunks for post-plugin cost/credits tracking.
 	var lastUsage *models.Usage
+	capture := newStreamCapture(h.captureStreamContent)
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging). Must be called before every return.
 	finalizeStream := func(detach bool) {
 		rc.Response = &models.ChatCompletionResponse{
-			Model: rc.ResolvedModel,
-			Usage: lastUsage,
+			Object: "chat.completion",
+			Model:  rc.ResolvedModel,
+			Usage:  lastUsage,
 		}
+		capture.applyTo(rc.Response)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -392,6 +385,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
 			}
+			capture.observe(chunk)
 
 			// Convert chat chunk to legacy completion chunk.
 			completionChunk := models.CompletionStreamChunkFromChat(chunk)
