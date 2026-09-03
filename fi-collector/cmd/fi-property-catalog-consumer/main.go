@@ -28,6 +28,7 @@ const (
 	envDevAck       = "FI_PROPERTY_CATALOG_DEV_ACK"
 	envProdAck      = "FI_PROPERTY_CATALOG_PROD_ACK"
 
+	envProductionDatabase = "FI_PROPERTY_CATALOG_PRODUCTION_DATABASE"
 	envClickHouseURL      = "FI_PROPERTY_CATALOG_CH_URL"
 	envClickHouseDatabase = "FI_PROPERTY_CATALOG_CH_DATABASE"
 	envClickHouseUsername = "FI_PROPERTY_CATALOG_CH_USERNAME"
@@ -214,6 +215,10 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 	if err != nil {
 		return commandConfig{}, err
 	}
+	productionDatabase, err := optionalProductionDatabase(lookup)
+	if err != nil {
+		return commandConfig{}, err
+	}
 
 	write, err := clickHouseConfig(
 		lookup,
@@ -222,6 +227,7 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 		envClickHouseUsername,
 		envClickHousePassword,
 		environment,
+		productionDatabase,
 		deliveryTimeout,
 	)
 	if err != nil {
@@ -258,6 +264,7 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 		envLedgerUsername,
 		envLedgerPassword,
 		environment,
+		productionDatabase,
 		deliveryTimeout,
 	)
 	if err != nil {
@@ -303,7 +310,7 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 func clickHouseConfig(
 	lookup lookupEnvFunc,
 	urlName, databaseName, usernameName, passwordName string,
-	environment string,
+	environment, productionDatabase string,
 	requestTimeout time.Duration,
 ) (propertycatalog.ClickHouseSinkConfig, error) {
 	urlValue, err := requireEnv(lookup, urlName, false)
@@ -324,7 +331,7 @@ func clickHouseConfig(
 	}
 	cfg := propertycatalog.ClickHouseSinkConfig{
 		URL: urlValue, Database: database, Username: username, Password: password,
-		Environment: environment, RequestTimeout: requestTimeout,
+		Environment: environment, ProductionDatabase: productionDatabase, RequestTimeout: requestTimeout,
 	}
 	// Constructor validation is local-only and binds the isolated database
 	// prefix to the exact environment before a ledger read or Kafka client.
@@ -332,6 +339,17 @@ func clickHouseConfig(
 		return propertycatalog.ClickHouseSinkConfig{}, fmt.Errorf("%s: %w", databaseName, err)
 	}
 	return cfg, nil
+}
+
+// optionalProductionDatabase mirrors the backend's
+// PROPERTY_CATALOG_PRODUCTION_DATABASE contract: unset keeps the default
+// production catalog name, while a present value must be the exact isolated
+// database the deployment binds every reader and writer to.
+func optionalProductionDatabase(lookup lookupEnvFunc) (string, error) {
+	if _, present := lookup(envProductionDatabase); !present {
+		return "", nil
+	}
+	return requireEnv(lookup, envProductionDatabase, false)
 }
 
 func validatedEnvironment(lookup lookupEnvFunc) (string, error) {

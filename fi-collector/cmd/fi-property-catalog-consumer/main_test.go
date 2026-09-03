@@ -151,6 +151,51 @@ func TestProductionConsumerRequiresExactGateMatchingDatabaseAndLedgerSeed(t *tes
 	}
 }
 
+func TestProductionConsumerBindsToConfiguredProductionDatabase(t *testing.T) {
+	const isolated = "th7247_catalog_prod_20260823a"
+	isolatedEnvironment := func() map[string]string {
+		values := productionEnvironment()
+		values[envProductionDatabase] = isolated
+		values[envClickHouseDatabase] = isolated
+		values[envLedgerDatabase] = isolated
+		return values
+	}
+	cfg, err := loadConfig([]string{"--seed-from-delivery-ledger"}, mapLookup(isolatedEnvironment()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.write.Database != isolated || cfg.write.ProductionDatabase != isolated ||
+		cfg.ledger.Database != isolated || cfg.ledger.ProductionDatabase != isolated {
+		t.Fatalf("production config=%+v", cfg)
+	}
+
+	for name, mutate := range map[string]func(map[string]string){
+		"default name once an isolated catalog is configured": func(values map[string]string) {
+			values[envClickHouseDatabase] = "property_catalog"
+			values[envLedgerDatabase] = "property_catalog"
+		},
+		"isolated name without configuring it": func(values map[string]string) {
+			delete(values, envProductionDatabase)
+		},
+		"surrounding whitespace": func(values map[string]string) {
+			values[envProductionDatabase] = " " + isolated
+		},
+		"empty": func(values map[string]string) {
+			values[envProductionDatabase] = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := isolatedEnvironment()
+			mutate(values)
+			if _, err := loadConfig(
+				[]string{"--seed-from-delivery-ledger"}, mapLookup(values),
+			); err == nil {
+				t.Fatal("unsafe production configuration was accepted")
+			}
+		})
+	}
+}
+
 func TestDeliveryTimeoutSupportsOnlyBoundedEnvironmentOverrides(t *testing.T) {
 	values := validEnvironment()
 	values[envDeliveryWall] = "3s"
