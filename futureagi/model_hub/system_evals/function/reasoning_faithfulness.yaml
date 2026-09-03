@@ -1,6 +1,6 @@
 eval_id: 202
 name: reasoning_faithfulness
-description: FaithfulRAG — Reasoning Faithfulness. Deterministic stepwise NLI that checks each CoT step is entailed by context. Auditable alternative to LLM-as-judge groundedness; catches post-hoc rationalization without API cost.
+description: "FaithfulRAG: Reasoning Faithfulness. Deterministic stepwise NLI that checks each CoT step is entailed by context. Auditable alternative to LLM-as-judge groundedness; catches post-hoc rationalization without API cost."
 criteria: Measures entailed steps / total steps via lexical + embedding NLI proxy (substring, token-subset, Jaccard, optional embedding cosine). Replaces black-box hallucination scoring.
 eval_tags:
 - RAG
@@ -25,7 +25,7 @@ config:
       default: 0.6
   config_params_desc:
     output: Chain-of-thought / reasoning trace (numbered, bullets, or sentences)
-    context: Grounding document(s) — string or JSON array of chunks
+    context: Grounding document(s), string or JSON array of chunks
     threshold: Entailment threshold 0..1 (default 0.6)
   code: |
     def evaluate(input, output, expected, context, **kwargs):
@@ -71,7 +71,7 @@ config:
         out=str(kwargs.get("output", output or "")).strip()
         ctx=_parse_ctx(kwargs.get("context", context if context is not None else expected))
         if not out: return {"score": 0.0, "reason": "Empty reasoning trace"}
-        if not ctx.strip(): return {"score": 0.0, "reason": "Empty context — provide grounding document"}
+        if not ctx.strip(): return {"score": 0.0, "reason": "Empty context: provide grounding document"}
         thr=float(kwargs.get("threshold", 0.6) or 0.6)
         steps=_split_steps(out)
         ent=0; dets=[]

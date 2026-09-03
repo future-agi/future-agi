@@ -1,6 +1,6 @@
 eval_id: 203
 name: citation_precision
-description: FaithfulRAG — Citation Precision. Deterministic check of what fraction of citations [1], [2,3] actually support the claim via embedding/Jaccard vs cited chunk. Replaces token-set NonLlmContextPrecision.
+description: "FaithfulRAG: Citation Precision. Deterministic check of what fraction of citations [1], [2,3] actually support the claim via embedding/Jaccard vs cited chunk. Replaces token-set NonLlmContextPrecision."
 criteria: For each citation index, verifies the citing sentence is semantically supported by the cited chunk. Precision = supported / total citations.
 eval_tags:
 - RAG
@@ -25,7 +25,7 @@ config:
       default: 0.6
   config_params_desc:
     output: Answer text with citations like [1], [2,3]
-    context: Grounding chunks — JSON array or newline-separated (1-indexed)
+    context: Grounding chunks, JSON array or newline-separated (1-indexed)
     similarity_threshold: Support threshold 0..1 (default 0.6)
   code: |
     def evaluate(input, output, expected, context, **kwargs):
@@ -62,7 +62,7 @@ config:
                 p=p.strip()
                 if p.isdigit(): cits.append(int(p))
         if not cits: return {"score": 0.0, "reason": "No citations found (expected [1], [2,3])"}
-        if not ctx: return {"score": 0.0, "reason": f"Empty context — cannot verify {len(cits)} citations"}
+        if not ctx: return {"score": 0.0, "reason": f"Empty context: cannot verify {len(cits)} citations"}
         thr=float(kwargs.get("similarity_threshold", 0.6) or 0.6)
         sents=re.split(r"(?<=[.!?])\s+", out)
         def _sent_for(idx):

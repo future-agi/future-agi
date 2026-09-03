@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Demo: FaithfulRAG vs legacy LLM judge — run without API keys.
+Demo: FaithfulRAG vs legacy LLM judge, run without API keys.
 
 Shows 3 evaluators catching hallucinations that NonLlmContextPrecision and LLM groundedness miss.
 """
@@ -34,21 +34,21 @@ spec=importlib.util.spec_from_file_location("functions", os.path.join(os.path.di
 mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
 def demo():
-    print("=== FaithfulRAG Demo — Deterministic Hallucination & Citation ===")
+    print("=== FaithfulRAG Demo: Deterministic Hallucination and Citation ===")
     print("System: Kali 2-core, no GPU, no API key, $0 cost\n")
 
     # 1. Reasoning Faithfulness
-    print("1) Reasoning Faithfulness — stepwise NLI")
+    print("1) Reasoning Faithfulness: stepwise NLI")
     ctx="Paris is the capital of France. France is in Europe. The Eiffel Tower is in Paris, built 1889."
     faithful="1. Paris is the capital of France\n2. France is in Europe\n3. The Eiffel Tower is in Paris"
     hallu="1. Paris is the capital of France\n2. France is in Italy\n3. The Eiffel Tower is in Berlin"
     for label, cot in [("faithful CoT", faithful), ("hallucinated CoT", hallu)]:
         res=mod.calculate_reasoning_faithfulness(output=cot, context=ctx)
-        print(f"  {label}: {res['result']:.2f} — {res['reason'][:150]}")
-    print("  → Legacy groundedness (LLM judge) scores both ~0.8 (misses step-level). FaithfulRAG catches step 2/3.\n")
+        print(f"  {label}: {res['result']:.2f}: {res['reason'][:150]}")
+    print("  Legacy groundedness (LLM judge) scores both ~0.8 (misses step level). FaithfulRAG catches step 2/3.\n")
 
     # 2. Citation Precision
-    print("2) Citation Precision — supported citations?")
+    print("2) Citation Precision: supported citations?")
     chunks=["Paris is capital of France", "Berlin is capital of Germany", "Rome is capital of Italy"]
     tests=[
         ("Paris is capital of France [1].", "supported"),
@@ -59,17 +59,17 @@ def demo():
     for out, note in tests:
         res=mod.calculate_citation_precision(output=out, context=chunks)
         print(f"  '{out}' ({note}) => {res['result']:.2f} {res['reason'][:100]}")
-    print("  → Legacy NonLlmContextPrecision: exact string set, can't verify [n] spans.\n")
+    print("  Legacy NonLlmContextPrecision: exact string set, cannot verify [n] spans.\n")
 
     # 3. Citation Recall
-    print("3) Citation Recall — missing citations?")
+    print("3) Citation Recall: missing citations?")
     out="Paris is capital of France [1]."
     res=mod.calculate_citation_recall(output=out, context=chunks, expected=[1,2,3])
     print(f"  output='{out}' vs relevant [1,2,3] => recall {res['result']:.2f} {res['reason'][:120]}")
     out2="Paris is capital of France [1]. Berlin is capital of Germany [2]. Rome is capital of Italy [3]."
     res2=mod.calculate_citation_recall(output=out2, context=chunks, expected=[1,2,3])
     print(f"  output='{out2[:40]}...' => recall {res2['result']:.2f}")
-    print("  → Missing citations detected; recall 0.33 vs 1.00.\n")
+    print("  Missing citations detected; recall 0.33 vs 1.00.\n")
 
     # 4. Cost
     import time

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Synthetic adversarial verification for FaithfulRAG suite.
-Standalone — no Django, no API, no GPU. Mirrors functions.py logic.
+Standalone with no Django, no API, and no GPU. Mirrors functions.py logic.
 Usage: python scripts/verify_faithfulrag.py --verbose
 """
 import json, re, sys, os, time

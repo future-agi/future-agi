@@ -1,6 +1,6 @@
 eval_id: 204
 name: citation_recall
-description: FaithfulRAG — Citation Recall. What fraction of relevant context chunks were cited and supported? If relevant indices not given, relevant = chunks semantically similar to output.
+description: "FaithfulRAG: Citation Recall. What fraction of relevant context chunks were cited and supported? If relevant indices not given, relevant means chunks semantically similar to output."
 criteria: Recall = supported relevant citations / total relevant chunks. Catches missing citations.
 eval_tags:
 - RAG
