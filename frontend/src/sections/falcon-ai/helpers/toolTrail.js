@@ -1,6 +1,9 @@
 // An error the loop recovered from is a retry, not a failure.
 export const RETRIED = "retried";
 
+// How a call read against the declared flow.
+export const STEP = { PLAN: "plan", REVISIT: "revisit", EXTRA: "extra" };
+
 const TOOL_NOT_FOUND = /^Tool '[^']*' not found/;
 
 export function classifySteps(toolCalls = []) {
@@ -151,16 +154,16 @@ export function alignToPlan(toolCalls = [], plan = []) {
     const ahead = plan.indexOf(name, cursor);
     if (ahead !== -1) {
       cursor = ahead + 1;
-      aligned = { ...call, planIndex: ahead, planKind: "plan" };
+      aligned = { ...call, planIndex: ahead, planKind: STEP.PLAN };
     } else {
       const known = lastSeen.has(name)
         ? lastSeen.get(name)
         : plan.indexOf(name);
       if (known >= 0) {
-        aligned = { ...call, planIndex: known, planKind: "revisit" };
+        aligned = { ...call, planIndex: known, planKind: STEP.REVISIT };
       } else {
         extra += 1;
-        aligned = { ...call, planIndex: null, planKind: "extra" };
+        aligned = { ...call, planIndex: null, planKind: STEP.EXTRA };
       }
     }
     if (aligned.planIndex !== null) {

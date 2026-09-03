@@ -11,6 +11,7 @@ import {
   formatElapsed,
   humanize,
   RETRIED,
+  STEP,
   trailSummary,
 } from "../helpers/toolTrail";
 import ToolCallCard from "./ToolCallCard";
@@ -54,7 +55,7 @@ export default function ThinkingTrail({
     if (!at) return activity;
     if (at.planIndex === null) return `${activity} · extra step`;
     const where = `step ${at.planIndex + 1} of ${flow.planned}`;
-    return at.planKind === "revisit"
+    return at.planKind === STEP.REVISIT
       ? `${activity} · ${where}, again`
       : `${activity} · ${where}`;
   };
@@ -173,7 +174,7 @@ export default function ThinkingTrail({
                       color: "text.disabled",
                     }}
                   >
-                    {at && at.planIndex !== null ? at.planIndex + 1 : "extra"}
+                    {at && at.planIndex !== null ? at.planIndex + 1 : STEP.EXTRA}
                   </Typography>
                 )}
                 {flow ? <Box sx={{ flex: 1, minWidth: 0 }}>{card}</Box> : card}
@@ -181,7 +182,7 @@ export default function ThinkingTrail({
             );
           })}
 
-          {flow?.pending.length > 0 && (
+          {flow?.pending?.length > 0 && (
             <Box sx={{ pb: 1 }}>
               <Typography
                 variant="caption"
