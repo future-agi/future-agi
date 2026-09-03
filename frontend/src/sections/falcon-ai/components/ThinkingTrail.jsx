@@ -10,24 +10,12 @@ import {
   classifySteps,
   formatElapsed,
   humanize,
+  RETRIED,
   trailSummary,
 } from "../helpers/toolTrail";
 import ToolCallCard from "./ToolCallCard";
 
-/**
- * One line for a whole run of tool calls.
- *
- * While the turn is live it shows what the agent is doing right now, one line,
- * so a seventy step run does not push the answer off the screen. When the turn
- * finishes the line collapses to what it cost, and the steps are still there
- * on click.
- *
- * When the turn ran a skill, the skill already declared the flow it meant to
- * follow, so the same line also says where in that flow the run is: "Reading
- * trace span, step 5 of 11" rather than a renamed tool on its own. Without a
- * declared flow, or when the run matched none of it, the line is exactly what
- * it was before.
- */
+// One line for a whole run: what it is doing now, then what it cost, steps on click.
 export default function ThinkingTrail({
   toolCalls,
   isStreaming,
@@ -155,8 +143,8 @@ export default function ThinkingTrail({
             const card = (
               <ToolCallCard
                 toolCall={
-                  step.outcome === "retried"
-                    ? { ...step, status: "retried" }
+                  step.outcome === RETRIED
+                    ? { ...step, status: RETRIED }
                     : step
                 }
               />
@@ -165,7 +153,7 @@ export default function ThinkingTrail({
               <Box
                 key={step.call_id}
                 sx={{
-                  opacity: step.outcome === "retried" ? 0.5 : 1,
+                  opacity: step.outcome === RETRIED ? 0.5 : 1,
                   ...(flow && {
                     display: "flex",
                     alignItems: "flex-start",
