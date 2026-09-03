@@ -959,8 +959,6 @@ import type {
   SAMLUrlResponseApi,
   SDKCICDEvaluationRunAcceptedResponseApi,
   SDKCICDEvaluationRunsResponseApi,
-  SDKConfigureEvaluationsRequestApi,
-  SDKConfigureEvaluationsResponseApi,
   SDKErrorResponseApi,
   SDKEvalTemplateResponseApi,
   SDKGetEvalsResponseApi,
@@ -54630,61 +54628,6 @@ export const saml2AuthMicrosoftRead = async (
     {
       ...options,
       method: "GET",
-    },
-  );
-};
-
-export type sdkApiV1ConfigureEvaluationsCreateResponse200 = {
-  data: SDKConfigureEvaluationsResponseApi;
-  status: 200;
-};
-
-export type sdkApiV1ConfigureEvaluationsCreateResponse400 = {
-  data: SDKErrorResponseApi;
-  status: 400;
-};
-
-export type sdkApiV1ConfigureEvaluationsCreateResponse500 = {
-  data: SDKErrorResponseApi;
-  status: 500;
-};
-
-export type sdkApiV1ConfigureEvaluationsCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
-};
-
-export type sdkApiV1ConfigureEvaluationsCreateResponseSuccess =
-  sdkApiV1ConfigureEvaluationsCreateResponse200 & {
-    headers: Headers;
-  };
-export type sdkApiV1ConfigureEvaluationsCreateResponseError = (
-  | sdkApiV1ConfigureEvaluationsCreateResponse400
-  | sdkApiV1ConfigureEvaluationsCreateResponse500
-  | sdkApiV1ConfigureEvaluationsCreateResponseDefault
-) & {
-  headers: Headers;
-};
-
-export type sdkApiV1ConfigureEvaluationsCreateResponse =
-  | sdkApiV1ConfigureEvaluationsCreateResponseSuccess
-  | sdkApiV1ConfigureEvaluationsCreateResponseError;
-
-export const getSdkApiV1ConfigureEvaluationsCreateUrl = () => {
-  return `/sdk/api/v1/configure-evaluations/`;
-};
-
-export const sdkApiV1ConfigureEvaluationsCreate = async (
-  sDKConfigureEvaluationsRequestApi: SDKConfigureEvaluationsRequestApi,
-  options?: RequestInit,
-): Promise<sdkApiV1ConfigureEvaluationsCreateResponse> => {
-  return apiMutator<sdkApiV1ConfigureEvaluationsCreateResponse>(
-    getSdkApiV1ConfigureEvaluationsCreateUrl(),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(sDKConfigureEvaluationsRequestApi),
     },
   );
 };

@@ -30737,27 +30737,6 @@ export const Saml2AuthMicrosoftReadQueryParams = zod.object({
   code: zod.string().optional(),
 });
 
-export const sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault = {};
-
-export const SdkApiV1ConfigureEvaluationsCreateBody = zod.object({
-  eval_config: zod.object({
-    eval_templates: zod.string().min(1),
-    inputs: zod.record(zod.string(), zod.string()),
-    model_name: zod.string().optional(),
-    config: zod
-      .record(zod.string(), zod.string())
-      .default(sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault),
-  }),
-  platform: zod.string().min(1),
-  custom_eval_name: zod.string().optional(),
-});
-
-export const SdkApiV1ConfigureEvaluationsCreateResponse = zod.object({
-  status: zod.boolean(),
-  result: zod.object({
-    message: zod.string().min(1),
-  }),
-});
 
 export const sdkApiV1EvalCreateBodyProtectFlashDefault = false;
 

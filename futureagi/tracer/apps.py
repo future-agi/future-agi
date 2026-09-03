@@ -12,7 +12,6 @@ class SdkConfig(AppConfig):
         from tracer.models import dashboard  # noqa: F401
         from tracer.models import eval_ci_cd  # noqa: F401
         from tracer.models import eval_task  # noqa: F401
-        from tracer.models import external_eval_config  # noqa: F401
         from tracer.models import imagine_analysis  # noqa: F401
         from tracer.models import monitor  # noqa: F401
         from tracer.models import observability_provider  # noqa: F401

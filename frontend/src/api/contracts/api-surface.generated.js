@@ -769,7 +769,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/saml2_auth/microsoft/callback{format}": ["get"],
     },
     sdk: {
-      "/sdk/api/v1/configure-evaluations/": ["post"],
       "/sdk/api/v1/eval/": ["post"],
       "/sdk/api/v1/eval/{eval_id}/": ["get"],
       "/sdk/api/v1/evaluate-pipeline/": ["get", "post"],
@@ -1928,7 +1927,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/saml2_auth/login{format}": ["get"],
   "/saml2_auth/microsoft/callback/": ["get"],
   "/saml2_auth/microsoft/callback{format}": ["get"],
-  "/sdk/api/v1/configure-evaluations/": ["post"],
   "/sdk/api/v1/eval/": ["post"],
   "/sdk/api/v1/eval/{eval_id}/": ["get"],
   "/sdk/api/v1/evaluate-pipeline/": ["get", "post"],

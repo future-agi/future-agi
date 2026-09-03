@@ -26053,31 +26053,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/sdk/api/v1/configure-evaluations/": {
-      post: {
-        operationId: "sdk_api_v1_configure-evaluations_create",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
-        requestBody: {
-          $ref: "#/definitions/SDKConfigureEvaluationsRequest",
-        },
-        queryParameters: {},
-        responses: {
-          200: {
-            $ref: "#/definitions/SDKConfigureEvaluationsResponse",
-          },
-          400: {
-            $ref: "#/definitions/SDKErrorResponse",
-          },
-          500: {
-            $ref: "#/definitions/SDKErrorResponse",
-          },
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
     "/sdk/api/v1/eval/": {
       post: {
         operationId: "sdk_api_v1_eval_create",
@@ -67887,44 +67862,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    SDKConfigureEvaluationsRequest: {
-      required: ["eval_config", "platform"],
-      type: "object",
-      properties: {
-        eval_config: {
-          $ref: "#/definitions/ConfigureEvaluations",
-        },
-        platform: {
-          title: "Platform",
-          type: "string",
-          minLength: 1,
-        },
-        custom_eval_name: {
-          title: "Custom eval name",
-          type: "string",
-          "x-nullable": true,
-        },
-      },
-      additionalProperties: {
-        description:
-          "Provider-specific credential fields accepted at top level.",
-        type: "object",
-      },
-    },
-    SDKConfigureEvaluationsResponse: {
-      required: ["status", "result"],
-      type: "object",
-      properties: {
-        status: {
-          title: "Status",
-          type: "boolean",
-        },
-        result: {
-          $ref: "#/definitions/SDKMessageResult",
-        },
-      },
-    },
-    SDKErrorResponse: {
+        SDKErrorResponse: {
       required: ["status"],
       type: "object",
       properties: {
@@ -88826,40 +88764,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    ConfigureEvaluations: {
-      required: ["eval_templates", "inputs"],
-      type: "object",
-      properties: {
-        eval_templates: {
-          title: "Eval templates",
-          type: "string",
-          minLength: 1,
-        },
-        inputs: {
-          title: "Inputs",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-        },
-        model_name: {
-          title: "Model name",
-          type: "string",
-          "x-nullable": true,
-        },
-        config: {
-          title: "Config",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-          default: {},
-        },
-      },
-    },
-    SDKMessageResult: {
+      SDKMessageResult: {
       required: ["message"],
       type: "object",
       properties: {

@@ -58,9 +58,6 @@ def test_sdk_contract_debt_is_fully_burned_down():
 
 def test_sdk_mutations_have_body_contracts():
     expected = {
-        ("POST", "/sdk/api/v1/configure-evaluations/"): (
-            "SDKConfigureEvaluationsRequest"
-        ),
         ("POST", "/sdk/api/v1/eval/"): "SDKStandaloneEvalRequest",
         ("POST", "/sdk/api/v1/evaluate-pipeline/"): "CICDJob",
         ("POST", "/sdk/api/v1/new-eval/"): "SDKStandaloneEvalV2Request",
@@ -72,9 +69,6 @@ def test_sdk_mutations_have_body_contracts():
 
 def test_sdk_endpoints_have_response_contracts():
     expected = {
-        ("POST", "/sdk/api/v1/configure-evaluations/"): (
-            "SDKConfigureEvaluationsResponse"
-        ),
         ("POST", "/sdk/api/v1/eval/"): "SDKStandaloneEvalResponse",
         ("GET", "/sdk/api/v1/eval/{eval_id}/"): "SDKEvalTemplateResponse",
         ("GET", "/sdk/api/v1/evaluate-pipeline/"): ("SDKCICDEvaluationRunsResponse"),
@@ -97,7 +91,6 @@ def test_sdk_endpoints_have_response_contracts():
 
 def test_sdk_endpoints_have_typed_error_contracts():
     expected = {
-        ("POST", "/sdk/api/v1/configure-evaluations/", "400"): "SDKErrorResponse",
         ("GET", "/sdk/api/v1/eval/{eval_id}/", "500"): "SDKErrorResponse",
         ("GET", "/sdk/api/v1/simulation/metrics/", "404"): "SDKErrorResponse",
     }
