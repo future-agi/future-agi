@@ -186,7 +186,14 @@ export default function JwtRegisterView() {
           onboarding_gcp_token
             ? endpoints.auth.gcpSignUp
             : endpoints.auth.awsSignUp,
-          { ...payload, onboarding_token: marketplaceToken },
+          // Both marketplace endpoints reject unknown fields, so send only the
+          // three they declare. company_name, recaptcha and allow_email are
+          // meaningless here: the onboarding token is the proof of purchase.
+          {
+            onboarding_token: marketplaceToken,
+            email: payload.email,
+            full_name: payload.full_name,
+          },
         );
       } else {
         response = await register(payload);
@@ -361,7 +368,9 @@ export default function JwtRegisterView() {
   const handleServiceProvider = async (provider) => {
     persistReturnTo();
     try {
-      const response = await axios.get(endpoints.auth.service(provider));
+      const response = await axios.get(
+        endpoints.auth.service(provider, onboarding_gcp_token),
+      );
       logger.debug("Service provider response:", {
         provider,
         response: response.data,

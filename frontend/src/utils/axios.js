@@ -280,8 +280,11 @@ export const endpoints = {
         uidb64,
         token,
       }),
-    service: (provider) =>
-      withQuery(apiPath("/saml2_auth/login/"), { provider }),
+    service: (provider, onboardingToken) =>
+      withQuery(apiPath("/saml2_auth/login/"), {
+        provider,
+        onboarding_token: onboardingToken || undefined,
+      }),
     create_org: apiPath("/accounts/team/users/"),
     ssoLogin: (email) =>
       withQuery(apiPath("/saml2_auth/idp-login/"), { email }),
