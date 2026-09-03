@@ -1,19 +1,33 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import ModalWrapper from "../../../components/ModalWrapper/ModalWrapper";
 import { useAgentPlaygroundStoreShallow } from "../store";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { Stack } from "@mui/material";
+import { Box, CircularProgress, Stack, Tab, Tabs } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { useQueryClient } from "@tanstack/react-query";
-import { useSaveDraftVersion } from "src/api/agent-playground/agent-playground";
+import {
+  useSaveDraftVersion,
+  useGetGraphVersions,
+  useGetVersionDetail,
+} from "src/api/agent-playground/agent-playground";
 import { enqueueSnackbar } from "notistack";
 import { buildVersionPayload } from "../utils/versionPayloadUtils";
 import { VERSION_STATUS } from "../utils/constants";
 import { validateGraphForSave } from "../utils/workflowValidation";
 import useWorkflowExecution from "../hooks/useWorkflowExecution";
 import useCanEditAgent from "../hooks/useCanEditAgent";
+import SaveAgentChangelogTab from "./SaveAgentChangelogTab";
+import SaveAgentCodeTab from "./SaveAgentCodeTab";
+import {
+  buildAgentDefinitionFileName,
+  classifySaveChanges,
+  flattenGraphVersions,
+  pickBaselineVersion,
+  toGraphSnapshot,
+} from "../utils/saveAgentDiff";
 
 const formSchema = z.object({
   versionName: z.string().min(1, "Version name is required"),
@@ -48,6 +62,7 @@ export default function SaveAgentDialog() {
   }));
   const { runWorkflow } = useWorkflowExecution();
   const { canEditAgent } = useCanEditAgent();
+  const [activeTab, setActiveTab] = useState("changelog");
   const form = useForm({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -71,7 +86,61 @@ export default function SaveAgentDialog() {
     });
   }, [currentAgent, reset]);
 
+  useEffect(() => {
+    if (openSaveAgentDialog) {
+      setActiveTab("changelog");
+    }
+  }, [openSaveAgentDialog]);
+
   const queryClient = useQueryClient();
+
+  const { data: versionsData, isLoading: isVersionsLoading } =
+    useGetGraphVersions(currentAgent?.id, {
+      enabled: openSaveAgentDialog && !!currentAgent?.id,
+    });
+
+  const versions = useMemo(
+    () => flattenGraphVersions(versionsData),
+    [versionsData],
+  );
+
+  const baseline = useMemo(
+    () => pickBaselineVersion(versions, currentAgent),
+    [versions, currentAgent],
+  );
+
+  const { data: baselineDetail, isLoading: isBaselineLoading } =
+    useGetVersionDetail(currentAgent?.id, baseline?.id, {
+      enabled: openSaveAgentDialog && !!currentAgent?.id && !!baseline?.id,
+    });
+
+  const currentVersionMeta = useMemo(
+    () => versions.find((version) => version.id === currentAgent?.version_id),
+    [versions, currentAgent?.version_id],
+  );
+
+  const saveDiff = useMemo(() => {
+    const currentSnapshot = toGraphSnapshot(buildVersionPayload(nodes, edges));
+    const previousSnapshot = baselineDetail
+      ? toGraphSnapshot(baselineDetail)
+      : { nodes: [], connections: [] };
+    return classifySaveChanges({
+      previousSnapshot,
+      currentSnapshot,
+      occurredAt: {
+        previous: baseline?.updated_at || baseline?.created_at || null,
+        current:
+          currentVersionMeta?.updated_at ||
+          currentVersionMeta?.created_at ||
+          null,
+      },
+    });
+  }, [nodes, edges, baselineDetail, baseline, currentVersionMeta]);
+
+  const fileName = buildAgentDefinitionFileName(currentAgent?.name);
+  const isDiffLoading =
+    openSaveAgentDialog &&
+    (isVersionsLoading || (!!baseline?.id && isBaselineLoading));
 
   const { mutate: saveAgent, isPending: isSavingAgent } = useSaveDraftVersion({
     onSuccess: (data) => {
@@ -168,6 +237,10 @@ export default function SaveAgentDialog() {
     });
   };
 
+  const agentTitle = currentAgent?.name
+    ? `Save ${currentAgent.name} agent`
+    : "Save Agent";
+
   return (
     <ModalWrapper
       open={openSaveAgentDialog}
@@ -175,9 +248,9 @@ export default function SaveAgentDialog() {
         setPendingRunAfterSave(false);
         setOpenSaveAgentDialog(false);
       }}
-      title="Save Agent"
-      subTitle="Save the agent with commit"
-      actionBtnTitle={pendingRunAfterSave ? "Save & Run" : "Save"}
+      title={agentTitle}
+      subTitle="Review the details below, and save the agent."
+      actionBtnTitle={pendingRunAfterSave ? "Save & Run" : "Save agent"}
       actionBtnProps={{
         size: "small",
         onClick: handleSaveAgent,
@@ -193,6 +266,7 @@ export default function SaveAgentDialog() {
       }}
       isValid={isValid}
       isLoading={isSavingAgent}
+      modalWidth="920px"
     >
       <form noValidate onSubmit={handleSubmit(handleSaveAgent)}>
         <Stack direction="column" gap={2}>
@@ -206,13 +280,60 @@ export default function SaveAgentDialog() {
             disabled
           />
           <FormTextFieldV2
-            label="Commit Message"
+            label="Commit message"
             fieldName="commitMessage"
             control={control}
             size="small"
             fullWidth
             disabled={isSavingAgent}
           />
+          <Tabs
+            value={activeTab}
+            onChange={(_event, value) => setActiveTab(value)}
+            textColor="primary"
+            data-testid="save-agent-diff-tabs"
+            sx={{ minHeight: 36, borderBottom: 1, borderColor: "divider" }}
+          >
+            <Tab
+              value="changelog"
+              label="Changelog"
+              icon={<Iconify icon="solar:document-text-bold" width={16} />}
+              iconPosition="start"
+              data-testid="save-agent-tab-changelog"
+              sx={{ minHeight: 36, textTransform: "none" }}
+            />
+            <Tab
+              value="code"
+              label="Code"
+              icon={<Iconify icon="solar:code-bold" width={16} />}
+              iconPosition="start"
+              data-testid="save-agent-tab-code"
+              sx={{ minHeight: 36, textTransform: "none" }}
+            />
+          </Tabs>
+          <Box sx={{ minHeight: 220 }}>
+            {isDiffLoading ? (
+              <Stack
+                alignItems="center"
+                justifyContent="center"
+                sx={{ py: 6 }}
+                data-testid="save-agent-diff-loading"
+              >
+                <CircularProgress size={24} />
+              </Stack>
+            ) : activeTab === "changelog" ? (
+              <SaveAgentChangelogTab entries={saveDiff.entries} />
+            ) : (
+              <SaveAgentCodeTab
+                fileName={fileName}
+                currentJson={saveDiff.currentJson}
+                aligned={saveDiff.aligned}
+                totals={saveDiff.totals}
+                perNode={saveDiff.perNode}
+                hasBaseline={saveDiff.hasBaseline}
+              />
+            )}
+          </Box>
         </Stack>
         {/* Hidden submit button to enable Enter key submission */}
         <button type="submit" style={{ display: "none" }} />
