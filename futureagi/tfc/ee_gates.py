@@ -7,6 +7,7 @@ through EE code paths)."""
 from __future__ import annotations
 
 from rest_framework.response import Response
+
 from tfc.utils.api_errors import build_error_envelope
 
 _TURING_MODELS = frozenset(
@@ -36,6 +37,11 @@ def voice_sim_oss_gate_response() -> Response | None:
     layer (capability service / cloud plan resolver), and voice_sim is open
     on self-hosted deployments regardless of license state, so deployment
     mode alone must never deny here."""
+    from tfc.utils.lazy_extras import extra_available
+
+    if not extra_available("livekit"):
+        return _voice_sim_code_unavailable_response()
+
     try:
         from tfc.capabilities import service as capability_service
         from tfc.licensing.types import DenialReason
@@ -56,6 +62,44 @@ def voice_sim_oss_gate_response() -> Response | None:
     if has_ee("ee.voice"):
         return None
     return _voice_sim_code_unavailable_response()
+
+
+def voice_sim_gate_response(user_organization) -> Response | None:
+    """Return the complete deployment and plan gate for voice simulation.
+
+    All HTTP and non-HTTP entry points use this helper so code availability
+    and the cloud ``has_voice_sim`` entitlement cannot drift apart.
+    """
+    oss_gate = voice_sim_oss_gate_response()
+    if oss_gate is not None:
+        return oss_gate
+
+    try:
+        from ee.usage.deployment import DeploymentMode
+        from ee.usage.services.entitlements import Entitlements
+    except ImportError:
+        # A partial EE installation cannot safely answer plan entitlements.
+        return _voice_sim_code_unavailable_response()
+
+    if not DeploymentMode.is_cloud():
+        return None
+
+    feature_check = Entitlements.check_feature(
+        str(user_organization.id), "has_voice_sim"
+    )
+    if feature_check.allowed:
+        return None
+
+    message = feature_check.reason or "This feature requires a higher plan"
+    return Response(
+        build_error_envelope(
+            message,
+            status_code=403,
+            code="permission_denied",
+            extra={"upgrade_required": True, "feature": "voice_sim"},
+        ),
+        status=403,
+    )
 
 
 def _voice_sim_code_unavailable_response() -> Response:

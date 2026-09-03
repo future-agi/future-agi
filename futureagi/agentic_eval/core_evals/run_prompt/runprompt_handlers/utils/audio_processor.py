@@ -15,8 +15,8 @@ import time
 import wave
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import av
 import structlog
+from tfc.utils.lazy_extras import av
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from tfc.utils.storage import (

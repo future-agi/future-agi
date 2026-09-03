@@ -34,7 +34,6 @@ TEMPORAL_ACTIVITY_MODULES = [
     "model_hub.tasks.user_evaluation",
     "model_hub.tasks.insights",
     "model_hub.tasks.agent",
-    "model_hub.tasks.model_log",
     "model_hub.tasks.dataset_embeddings",
     "model_hub.tasks.optimisation_runner",
     "model_hub.tasks.prompt_template_optimizer",
@@ -363,21 +362,16 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_agent_playground_workflows", error=str(e)
         )
 
-    # Register call execution workflows for tasks_l queue
+    # Register simulation orchestration workflows for tasks_l queue.
     # TestExecutionWorkflow: Parent orchestrator for test executions
-    # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
-    # CallDispatcherWorkflow: Singleton rate limiter for call slots
     # RerunCoordinatorWorkflow: Parent orchestrator for call execution reruns
+    # Registered separately from the ee.voice workflows below: their imports
+    # of CallExecutionWorkflow are function-scoped (inside _launch_batch), so
+    # this block has no IMPORT-TIME dependency on ee.voice and registration
+    # succeeds on builds without the `voice` extra. At runtime, launching a
+    # voice batch on such a build fails visibly with a non-retryable
+    # ApplicationError (see _launch_batch in both workflows).
     try:
-        from ee.voice.temporal.workflows.call_dispatcher_workflow import (
-            CallDispatcherWorkflow,
-        )
-        from ee.voice.temporal.workflows.call_execution_workflow import (
-            CallExecutionWorkflow,
-        )
-        from ee.voice.temporal.workflows.phone_number_dispatcher_workflow import (
-            PhoneNumberDispatcherWorkflow,
-        )
         from simulate.temporal.workflows.rerun_coordinator_workflow import (
             RerunCoordinatorWorkflow,
         )
@@ -389,10 +383,41 @@ def _ensure_workflows_registered() -> None:
             queues=["tasks_l"],
             workflows=[
                 TestExecutionWorkflow,
+                RerunCoordinatorWorkflow,
+            ],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_simulation_orchestration_workflows", error=str(e)
+        )
+
+    # Register voice call execution workflows for tasks_l queue.
+    # CallExecutionWorkflow: Individual call lifecycle (outbound/inbound)
+    # CallDispatcherWorkflow: Singleton rate limiter for call slots
+    # These live under ee/, so this block is skipped on builds where the ee
+    # code tree is stripped. Note: the workflow modules themselves import only
+    # temporalio + simulate types at module level, so on a deps-stripped build
+    # that still ships ee/ code they DO register — there, voice dispatch is
+    # blocked up front by the shared voice simulation gate at every entry point.
+    try:
+        from ee.voice.temporal.workflows.call_dispatcher_workflow import (
+            CallDispatcherWorkflow,
+        )
+        from ee.voice.temporal.workflows.call_execution_workflow import (
+            CallExecutionWorkflow,
+        )
+        from ee.voice.temporal.workflows.phone_number_dispatcher_workflow import (
+            PhoneNumberDispatcherWorkflow,
+        )
+
+        register_for_queues(
+            queues=["tasks_l"],
+            workflows=[
                 CallExecutionWorkflow,
                 CallDispatcherWorkflow,
                 PhoneNumberDispatcherWorkflow,
-                RerunCoordinatorWorkflow,
             ],
         )
     except ImportError as e:

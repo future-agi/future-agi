@@ -10,7 +10,6 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from retell.lib.webhook_auth import verify as verify_retell_webhook
 
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition
@@ -346,6 +345,14 @@ class WebhookHandlerView(APIView):
                     logger.warning(error_message)
 
                     continue
+
+                from tfc.utils.lazy_extras import load_extra
+
+                # Attribute lookup stays late-bound so tests can patch
+                # `retell.lib.webhook_auth.verify`.
+                verify_retell_webhook = load_extra(
+                    "retell.lib.webhook_auth", "voice"
+                ).verify
 
                 valid_signature = verify_retell_webhook(
                     json.dumps(post_data, separators=(",", ":"), ensure_ascii=False),

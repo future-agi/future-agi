@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 import requests
 import structlog
-import weaviate
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, close_old_connections, connection, transaction
 from django.db.models import (
@@ -49,10 +48,8 @@ from django.utils import timezone
 from docx import Document
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from pinecone import Pinecone
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from qdrant_client import QdrantClient
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -60,7 +57,6 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from weaviate import AuthApiKey
 
 from accounts.models.user import User
 from agentic_eval.core.embeddings.embedding_manager import (
@@ -11267,6 +11263,10 @@ class AddVectorDBColumnView(APIView):
         }
 
         """
+        from tfc.utils.lazy_extras import load_extra
+
+        Pinecone = load_extra("pinecone", "vectordb").Pinecone
+
         pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
         index = pc.Index(config["index_name"])
         query_object = {}
@@ -11349,6 +11349,10 @@ class AddVectorDBColumnView(APIView):
                 )
 
             # Initialize Qdrant client
+            from tfc.utils.lazy_extras import load_extra
+
+            QdrantClient = load_extra("qdrant_client", "vectordb").QdrantClient
+
             client = QdrantClient(
                 url=config["url"],
                 api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
@@ -11383,6 +11387,11 @@ class AddVectorDBColumnView(APIView):
             raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
 
     def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
+        from tfc.utils.lazy_extras import load_extra
+
+        weaviate = load_extra("weaviate", "vectordb")
+        AuthApiKey = weaviate.AuthApiKey
+
         embedding_config = config.get("embedding_config", {})
         embedding_type = embedding_config.get("type", "")
         key = None

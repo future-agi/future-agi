@@ -161,6 +161,37 @@ class TestIsContentKey:
 # scrub_pii_in_span_batch
 # ---------------------------------------------------------------------------
 class TestScrubPiiInSpanBatch:
+    def test_enabled_project_fails_closed_when_engines_unavailable(self):
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "Email: a@b.com"},
+            }
+        ]
+        with mock.patch(
+            "tracer.utils.pii_scrubber._ensure_engines", return_value=False
+        ):
+            with pytest.raises(RuntimeError, match="EXTRAS=pii"):
+                scrub_pii_in_span_batch(spans, {"proj": True})
+
+        assert spans[0]["attributes"]["fi.input.value"] == "Email: a@b.com"
+
+    def test_disabled_projects_do_not_require_engines(self):
+        from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
+
+        spans = [
+            {
+                "project_name": "proj",
+                "attributes": {"fi.input.value": "Email: a@b.com"},
+            }
+        ]
+        with mock.patch("tracer.utils.pii_scrubber._ensure_engines") as ensure_engines:
+            scrub_pii_in_span_batch(spans, {"proj": False})
+
+        ensure_engines.assert_not_called()
+
     def test_scrubs_enabled_project_only(self):
         from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 
