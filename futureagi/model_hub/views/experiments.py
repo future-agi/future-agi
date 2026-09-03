@@ -100,6 +100,7 @@ from model_hub.services.dataset_table_snapshot import (
 )
 from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.tasks.experiment_runner import process_experiments
+from model_hub.utils.eval_reasons import eval_name_from_reason_column_name
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
@@ -1238,11 +1239,7 @@ class DatasetExperimentsView(APIView):
                                     else str(column.id)
                                 )
                             ),
-                            "name": (
-                                column.name
-                                if "-reason" not in column.name
-                                else column.name.split("-reason")[0]
-                            ),
+                            "name": eval_name_from_reason_column_name(column.name),
                             "data_type": (
                                 column.data_type
                                 if "-reason" not in column.name
