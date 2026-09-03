@@ -111,3 +111,8 @@ export const MODEL_PARAMS_TOOLTIPS = {
   "Frequency Penalty":
     "How much to penalize new tokens based on their existing frequency in the text so far.",
 };
+
+export const DEFAULT_MAX_CONCURRENT_NODES = 10;
+export const MAX_CONCURRENT_NODES_ERROR =
+  "Step concurrency must be an integer greater than zero.";
+
