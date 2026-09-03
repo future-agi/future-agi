@@ -6,82 +6,89 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  Stack,
   Typography,
 } from "@mui/material";
-import React from "react";
+import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
-import _ from "lodash";
-import ConversationCard from "../../test-detail/TestDetailDrawer/ConversationCard";
-import { ShowComponent } from "../../../components/show";
+import TranscriptView from "src/components/VoiceDetailDrawerV2/TranscriptView";
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import { getContentMessage } from "./common";
+import {
+  countWords,
+  getChatTurnContent,
+  getChatTurnTimestampMs,
+} from "src/components/ChatDetailDrawerV2/chatTranscriptUtils";
+
+
+const TranscriptEmpty = () => (
+  <Stack
+    alignItems="center"
+    justifyContent="center"
+    spacing={1}
+    sx={{ flex: 1, py: 6, color: "text.secondary" }}
+  >
+    <Iconify icon="mdi:message-text-outline" width={28} />
+    <Typography typography="s2" color="text.secondary">
+      No transcript available
+    </Typography>
+  </Stack>
+);
 
 const ViewFullTranscript = ({
   open,
   onClose,
   transcript,
-  agentName,
-  simulatorName,
   simulationCallType,
 }) => {
+  const isChat = simulationCallType === AGENT_TYPES.CHAT;
+
+  const turns = useMemo(() => {
+    if (!Array.isArray(transcript)) return [];
+    if (!isChat) return transcript;
+
+    return transcript.map((item) => {
+      const content = getChatTurnContent(item);
+      const ts = getChatTurnTimestampMs(item);
+      const existingDuration =
+        typeof item.duration === "number" && Number.isFinite(item.duration)
+          ? item.duration
+          : null;
+      return {
+        ...item,
+        content,
+
+        rawMessages: Array.isArray(item.content) ? item.content : null,
+        ...(ts != null ? { startTimeSeconds: ts } : {}),
+        ...(existingDuration == null ? { duration: countWords(content) } : {}),
+      };
+    });
+  }, [transcript, isChat]);
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle sx={{ display: "flex", justifyContent: "space-between" }}>
         Call Transcript
         <IconButton onClick={onClose}>
           <Iconify icon="akar-icons:cross" width={16} height={16} />
         </IconButton>
       </DialogTitle>
-      <DialogContent sx={{ maxHeight: 300, overflowY: "auto" }}>
-        <Box
-          sx={{
-            borderRadius: 1,
 
-            gap: 1.5,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <ShowComponent condition={transcript?.length === 0}>
-            <Typography typography="s1" fontWeight="fontWeightSemiBold">
-              No transcript available
-            </Typography>
-          </ShowComponent>
-          {transcript?.map(
-            ({
-              id,
-              speaker_role: speakerRole,
-              content: rawContent,
-              messages,
-              createdAt,
-              endTimeSeconds,
-              startTimeSeconds,
-              role,
-            }) => {
-              const content = getContentMessage(
-                simulationCallType === AGENT_TYPES.CHAT
-                  ? { messages }
-                  : { rawContent },
-                simulationCallType,
-              );
-
-              return (
-                <ConversationCard
-                  key={id}
-                  role={speakerRole ?? role}
-                  content={content}
-                  align={speakerRole === "user" ? "flex-end" : "flex-start"}
-                  timeStamp={createdAt}
-                  duration={Math.floor(
-                    (endTimeSeconds - startTimeSeconds) / 1000,
-                  )}
-                  agentName={agentName}
-                  simulatorName={simulatorName}
-                  simulationCallType={simulationCallType}
-                />
-              );
-            },
+      <DialogContent sx={{ overflow: "hidden" }}>
+        <Box sx={{ display: "flex", height: "60vh", minHeight: 0 }}>
+          {turns.length === 0 ? (
+            <TranscriptEmpty />
+          ) : (
+            <TranscriptView
+              transcript={turns}
+              embedded
+              hideTimelineStrip={isChat}
+              hideTalkRatioLabel={isChat}
+              hideTalkRatioPercentages={isChat}
+              hideSilenceMarkers={isChat}
+              hideTurnDurations={isChat}
+              hideInterruptBadges={isChat}
+            />
           )}
         </Box>
       </DialogContent>
@@ -103,8 +110,6 @@ ViewFullTranscript.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   transcript: PropTypes.array,
-  agentName: PropTypes.string,
-  simulatorName: PropTypes.string,
   simulationCallType: PropTypes.string,
 };
 

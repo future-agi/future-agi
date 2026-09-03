@@ -37,7 +37,6 @@ const CallLogsCard = ({ log }) => {
       (item) => item.speaker_role !== "system",
     );
   }, [log]);
-
   const audioData = useMemo(() => ({ url: audioUrl }), [audioUrl]);
   const audioUrls = useMemo(
     () => normalizeRecordings(log?.recordings),
@@ -207,8 +206,6 @@ const CallLogsCard = ({ log }) => {
           open={open}
           onClose={() => setOpen(false)}
           transcript={filteredTranscript}
-          agentName={agentDefinitionUsedName}
-          simulatorName={simulatorAgentName}
           simulationCallType={simulationCallType}
         />
       </Suspense>

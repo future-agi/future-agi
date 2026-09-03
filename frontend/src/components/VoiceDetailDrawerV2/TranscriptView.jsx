@@ -22,6 +22,10 @@ import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
+import {
+  ToolCallCard,
+  ToolResultCard,
+} from "src/components/tool-call/ToolCallCard";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -280,10 +284,40 @@ SpeakerTimelineStrip.propTypes = {
 
 const TurnRow = React.forwardRef(
   (
-    { turn, colors, query, isPlaying, isFocused, onSeek, onCopy, onAnnotate },
+    {
+      turn,
+      colors,
+      query,
+      isPlaying,
+      isFocused,
+      onSeek,
+      onCopy,
+      onAnnotate,
+      hideTurnDurations = false,
+      hideInterruptBadges = false,
+    },
     ref,
   ) => {
     const color = colors[turn.role] || colors.unknown;
+    const toolCards = (turn.rawMessages || []).flatMap((message, index) => {
+      if (message.role === "tool") {
+        return [
+          <ToolResultCard key={`result-${index}`} content={message.content} />,
+        ];
+      }
+      if (message.tool_calls?.length > 0) {
+        return message.tool_calls.map((toolCall) => (
+          <ToolCallCard
+            key={toolCall.id}
+            toolCall={{
+              name: toolCall.function.name,
+              arguments: toolCall.function.arguments,
+            }}
+          />
+        ));
+      }
+      return [];
+    });
 
     return (
       <Box
@@ -344,7 +378,7 @@ const TurnRow = React.forwardRef(
             </Typography>
           )}
 
-          {turn.duration != null && turn.duration > 0 && (
+          {!hideTurnDurations && turn.duration != null && turn.duration > 0 && (
             <Typography
               sx={{
                 fontFamily: "monospace",
@@ -356,7 +390,7 @@ const TurnRow = React.forwardRef(
             </Typography>
           )}
 
-          {turn.overlapsPrev && (
+          {!hideInterruptBadges && turn.overlapsPrev && (
             <Tooltip
               title="Interruption — started before previous turn ended"
               arrow
@@ -453,6 +487,13 @@ const TurnRow = React.forwardRef(
             <CellMarkdown spacing={0} text={turn.content} />
           )}
         </Box>
+
+
+        {toolCards.length > 0 && (
+          <Stack spacing={0.5} sx={{ mt: 0.75 }}>
+            {toolCards}
+          </Stack>
+        )}
       </Box>
     );
   },
@@ -468,6 +509,8 @@ TurnRow.propTypes = {
   onSeek: PropTypes.func,
   onCopy: PropTypes.func,
   onAnnotate: PropTypes.func,
+  hideTurnDurations: PropTypes.bool,
+  hideInterruptBadges: PropTypes.bool,
 };
 
 // Memoized wrapper — with ~40 turns and a 60Hz currentTime poll, the list
@@ -483,6 +526,8 @@ const MemoTurnRow = React.memo(TurnRow, (prev, next) => {
   if (prev.onSeek !== next.onSeek) return false;
   if (prev.onCopy !== next.onCopy) return false;
   if (prev.onAnnotate !== next.onAnnotate) return false;
+  if (prev.hideTurnDurations !== next.hideTurnDurations) return false;
+  if (prev.hideInterruptBadges !== next.hideInterruptBadges) return false;
   return true;
 });
 
@@ -553,6 +598,8 @@ const TranscriptView = ({
   // not silence — so the chat drawer passes true here to suppress the
   // inline silence dividers.
   hideSilenceMarkers = false,
+  hideTurnDurations = false,
+  hideInterruptBadges = false,
 }) => {
   const colors = useSpeakerColors();
 
@@ -936,6 +983,8 @@ const TranscriptView = ({
                 onSeek={handleSeek}
                 onCopy={handleCopyTurn}
                 onAnnotate={onAnnotate}
+                hideTurnDurations={hideTurnDurations}
+                hideInterruptBadges={hideInterruptBadges}
               />
             </React.Fragment>
           ))
@@ -994,6 +1043,8 @@ TranscriptView.propTypes = {
   hideTalkRatioPercentages: PropTypes.bool,
   talkRatioLegendAlign: PropTypes.oneOf(["left", "right"]),
   hideSilenceMarkers: PropTypes.bool,
+  hideTurnDurations: PropTypes.bool,
+  hideInterruptBadges: PropTypes.bool,
   embedded: PropTypes.bool,
 };
 
