@@ -23,17 +23,41 @@ config:
         import urllib.request
         text = kwargs.get("text", output or "")
         text = str(text)
-        pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
-        links = re.findall(pattern, text)
+        # Match URLs with explicit scheme, www. prefix, or bare domain.
+        # TLD must be 2+ alpha characters so decimals (3.14) never match.
+        # Lookbehind on \w and @ stops matches inside words or emails.
+        URL_RE = re.compile(
+            r"(?<![\w@])"
+            r"(?:https?://[^\s<>\"']+"
+            r"|www\.[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}(?:[^\s<>\"']*)"
+            r"|(?<![.@])[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}(?:[^\s<>\"']*)?)",
+            re.IGNORECASE,
+        )
+        # Common file extensions that look like TLDs but are not web addresses.
+        FILE_EXTS = {
+            "csv","txt","pdf","doc","docx","xls","xlsx","ppt","pptx",
+            "py","js","ts","jsx","tsx","java","cpp","c","h","go","rs",
+            "sh","bat","md","yaml","yml","json","xml","html","css","sql",
+            "zip","tar","gz","png","jpg","jpeg","gif","svg","mp4","mp3",
+            "log","env","cfg","ini","toml","lock","rb","php","swift","kt",
+        }
+        def _is_file(m):
+            if m.startswith(("http://", "https://", "www.")):
+                return False
+            ext = m.rsplit(".", 1)[-1].split("/")[0].split("?")[0].lower()
+            return ext in FILE_EXTS
+        matches = URL_RE.findall(text)
+        links = [m for m in matches if "@" not in m and not _is_file(m)]
         if not links:
             return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
         invalid_links = []
         for link in links:
             url = link
             if not url.startswith(("http://", "https://")):
-                url = "http://" + url
+                url = "https://" + url
             try:
-                req = urllib.request.Request(url, method='HEAD')
+                req = urllib.request.Request(url, method="HEAD",
+                                             headers={"User-Agent": "FutureAGI-eval/1.0"})
                 resp = urllib.request.urlopen(req, timeout=5)
                 if resp.status != 200:
                     invalid_links.append(f"{url} (status {resp.status})")
