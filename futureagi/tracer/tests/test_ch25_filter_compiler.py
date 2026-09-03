@@ -11,6 +11,7 @@ If the v1 base ever emits a new pattern the rewriter doesn't anticipate,
 the shadow harness will catch it in production — but a test failure here
 catches it in CI before any of that.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,27 +29,41 @@ class TestRewriteV1SqlToV2:
 
     # ─── Simple column renames ───────────────────────────────────────────────
     def test_soft_delete_column_renamed(self):
-        assert rewrite_v1_sql_to_v2("WHERE _peerdb_is_deleted = 0") == "WHERE is_deleted = 0"
+        assert (
+            rewrite_v1_sql_to_v2("WHERE _peerdb_is_deleted = 0")
+            == "WHERE is_deleted = 0"
+        )
 
     def test_version_column_renamed(self):
-        assert rewrite_v1_sql_to_v2("ORDER BY _peerdb_version DESC") == "ORDER BY _version DESC"
+        assert (
+            rewrite_v1_sql_to_v2("ORDER BY _peerdb_version DESC")
+            == "ORDER BY _version DESC"
+        )
 
     def test_span_attr_str_renamed(self):
         assert rewrite_v1_sql_to_v2("span_attr_str['key']") == "attrs_string['key']"
 
     def test_span_attr_num_renamed(self):
-        assert rewrite_v1_sql_to_v2("mapContains(span_attr_num, 'k')") == \
-               "mapContains(attrs_number, 'k')"
+        assert (
+            rewrite_v1_sql_to_v2("mapContains(span_attr_num, 'k')")
+            == "mapContains(attrs_number, 'k')"
+        )
 
     def test_span_attr_bool_renamed(self):
-        assert rewrite_v1_sql_to_v2("span_attr_bool['streaming'] = 1") == \
-               "attrs_bool['streaming'] = 1"
+        assert (
+            rewrite_v1_sql_to_v2("span_attr_bool['streaming'] = 1")
+            == "attrs_bool['streaming'] = 1"
+        )
 
     def test_multiple_column_renames_in_one_string(self):
-        v1 = ("SELECT span_attr_str['a'], span_attr_num['b'] "
-              "FROM spans WHERE is_deleted = 0")
-        v2 = ("SELECT attrs_string['a'], attrs_number['b'] "
-              "FROM spans WHERE is_deleted = 0")
+        v1 = (
+            "SELECT span_attr_str['a'], span_attr_num['b'] "
+            "FROM spans WHERE is_deleted = 0"
+        )
+        v2 = (
+            "SELECT attrs_string['a'], attrs_number['b'] "
+            "FROM spans WHERE is_deleted = 0"
+        )
         assert rewrite_v1_sql_to_v2(v1) == v2
 
     # ─── Dictionary-name renames ─────────────────────────────────────────────
@@ -73,8 +88,9 @@ class TestRewriteV1SqlToV2:
     def test_does_not_rewrite_substring_of_another_identifier(self):
         # `is_deleted_extra` should NOT be rewritten — only the
         # exact word `is_deleted` is the column we target.
-        assert "is_deleted_extra" in \
-               rewrite_v1_sql_to_v2("SELECT is_deleted_extra FROM x")
+        assert "is_deleted_extra" in rewrite_v1_sql_to_v2(
+            "SELECT is_deleted_extra FROM x"
+        )
 
     def test_does_not_rewrite_quoted_string_literal_token(self):
         # If a v1 query contained the LITERAL STRING "span_attr_str" inside
@@ -88,24 +104,18 @@ class TestRewriteV1SqlToV2:
         assert "attrs_string" in v2
 
     # ─── JSON path access rewrites ───────────────────────────────────────────
-    def test_jsonextractstring_attributes_extra(self):
-        v1 = "JSONExtractString(span_attributes_raw, 'gen_ai.request.model')"
-        v2 = "attributes_extra.gen_ai.request.model.:String"
+    @pytest.mark.parametrize(
+        "function",
+        ["JSONExtractString", "JSONExtractFloat", "JSONExtractInt", "JSONExtractBool"],
+    )
+    def test_jsonextract_attributes_extra_keeps_string_json_function(self, function):
+        v1 = f"{function}(span_attributes_raw, 'gen_ai.request.value')"
+        v2 = f"{function}(attributes_extra, 'gen_ai.request.value')"
         assert rewrite_v1_sql_to_v2(v1) == v2
 
-    def test_jsonextractfloat_attributes_extra(self):
-        v1 = "JSONExtractFloat(span_attributes_raw, 'gen_ai.request.temperature')"
-        v2 = "attributes_extra.gen_ai.request.temperature.:Float64"
-        assert rewrite_v1_sql_to_v2(v1) == v2
-
-    def test_jsonextractint_attributes_extra(self):
-        v1 = "JSONExtractInt(span_attributes_raw, 'gen_ai.request.max_tokens')"
-        v2 = "attributes_extra.gen_ai.request.max_tokens.:Int64"
-        assert rewrite_v1_sql_to_v2(v1) == v2
-
-    def test_jsonextractbool_attributes_extra(self):
-        v1 = "JSONExtractBool(span_attributes_raw, 'streaming')"
-        v2 = "attributes_extra.streaming.:Bool"
+    def test_jsonextract_attributes_extra_preserves_nested_path_arguments(self):
+        v1 = "JSONExtractString(span_attributes_raw, 'raw_log', 'type')"
+        v2 = "JSONExtractString(attributes_extra, 'raw_log', 'type')"
         assert rewrite_v1_sql_to_v2(v1) == v2
 
     def test_jsonextract_resource_attrs(self):
@@ -120,7 +130,7 @@ class TestRewriteV1SqlToV2:
 
     def test_jsonhas_attributes_extra(self):
         v1 = "JSONHas(span_attributes_raw, 'streaming')"
-        v2 = "(attributes_extra.streaming.:String IS NOT NULL)"
+        v2 = "JSONHas(attributes_extra, 'streaming')"
         assert rewrite_v1_sql_to_v2(v1) == v2
 
     def test_jsonhas_resource_attrs(self):
@@ -131,8 +141,30 @@ class TestRewriteV1SqlToV2:
     def test_jsonextract_with_whitespace_variations(self):
         # The base v1 sometimes emits extra whitespace around args.
         v1 = "JSONExtractString( span_attributes_raw , 'model' )"
-        v2 = "attributes_extra.model.:String"
+        v2 = "JSONExtractString( attributes_extra , 'model' )"
         assert rewrite_v1_sql_to_v2(v1) == v2
+
+    def test_attributes_extra_path_literals_are_preserved_byte_for_byte(self):
+        v1 = (
+            r"JSONExtractString(span_attributes_raw, 'customer\path', "
+            r"'quote\'key', 'café.路径')"
+        )
+        v2 = v1.replace("span_attributes_raw", "attributes_extra", 1)
+        assert rewrite_v1_sql_to_v2(v1) == v2
+
+    def test_attributes_extra_missing_null_and_type_mismatch_expressions_survive(self):
+        v1 = (
+            "JSONHas(span_attributes_raw, 'missing') = 0 OR "
+            "JSONExtractString(span_attributes_raw, 'nullable') IS NULL OR "
+            "JSONExtractFloat(span_attributes_raw, 'string_value') = 0"
+        )
+        v2 = rewrite_v1_sql_to_v2(v1)
+
+        assert "JSONHas(attributes_extra, 'missing') = 0" in v2
+        assert "JSONExtractString(attributes_extra, 'nullable') IS NULL" in v2
+        assert "JSONExtractFloat(attributes_extra, 'string_value') = 0" in v2
+        assert "span_attributes_raw" not in v2
+        assert "attributes_extra." not in v2
 
     # ─── Compound expression — JSON access AND column rename together ────────
     def test_compound_rewrite_jsonhas_inside_full_clause(self):
@@ -144,7 +176,7 @@ class TestRewriteV1SqlToV2:
         v2 = rewrite_v1_sql_to_v2(v1)
         assert "is_deleted = 0" in v2
         assert "_peerdb_is_deleted" not in v2
-        assert "(attributes_extra.streaming.:String IS NOT NULL)" in v2
+        assert "JSONHas(attributes_extra, 'streaming')" in v2
         assert "attrs_string['model'] = 'gpt-4o'" in v2
         assert "span_attr_str" not in v2
 
@@ -156,14 +188,26 @@ class TestRewriteV1SqlToV2:
         # after JSON access rewrite. Just verify the end-to-end is correct.
         v1 = "JSONExtractString(span_attributes_raw, 'a') AS x, span_attr_num['b'] AS y"
         v2 = rewrite_v1_sql_to_v2(v1)
-        assert "attributes_extra.a.:String" in v2
+        assert "JSONExtractString(attributes_extra, 'a')" in v2
         assert "attrs_number['b']" in v2
 
-    # ─── Bare SELECT-list ref — the one NON-idempotent rewrite ───────────────
-    def test_bare_select_list_ref_wrapped_with_alias(self):
+    # ─── Bare SELECT-list ref — attributes_extra is already String JSON ─────
+    def test_bare_select_list_ref_preserves_string_with_alias(self):
         v1 = "SELECT span_attributes_raw FROM spans"
-        v2 = "SELECT toJSONString(attributes_extra) AS span_attributes_raw FROM spans"
+        v2 = "SELECT attributes_extra AS span_attributes_raw FROM spans"
         assert rewrite_v1_sql_to_v2(v1) == v2
+
+    def test_argmax_tuple_json_projection_keeps_alias_outside_aggregate(self):
+        v1 = (
+            "argMax(tuple(span_attributes_raw), _peerdb_version).1 "
+            "AS latest_span_attributes_raw"
+        )
+        v2 = rewrite_v1_sql_to_v2(v1)
+
+        assert v2 == (
+            "argMax(tuple(attributes_extra), _version).1 AS latest_span_attributes_raw"
+        )
+        assert "attributes_extra AS span_attributes_raw" not in v2
 
     def test_bare_select_list_rewrite_is_not_idempotent(self):
         # Re-running re-wraps the alias. This is WHY the v2 filter builder may
@@ -173,7 +217,13 @@ class TestRewriteV1SqlToV2:
         once = rewrite_v1_sql_to_v2("SELECT span_attributes_raw FROM spans")
         twice = rewrite_v1_sql_to_v2(once)
         assert once != twice
-        assert "AS toJSONString(attributes_extra) AS span_attributes_raw" in twice
+        assert "AS attributes_extra AS span_attributes_raw" in twice
+
+    def test_attributes_extra_empty_checks_do_not_stringify_a_string(self):
+        v2 = rewrite_v1_sql_to_v2("span_attributes_raw != '{}'")
+
+        assert v2 == "length(attributes_extra) > 2"
+        assert "toJSONString(attributes_extra)" not in v2
 
 
 class TestClickHouseFilterBuilderV2:
@@ -194,9 +244,34 @@ class TestClickHouseFilterBuilderV2:
         b = ClickHouseFilterBuilderV2(table="spans")
         # The instance-level constant we override
         meta = b.SPAN_ATTR_TYPE_META
-        assert meta["text"][0]    == cols.ATTRS_STRING
-        assert meta["number"][0]  == cols.ATTRS_NUMBER
+        assert meta["text"][0] == cols.ATTRS_STRING
+        assert meta["number"][0] == cols.ATTRS_NUMBER
         assert meta["boolean"][0] == cols.ATTRS_BOOL
+
+    def test_ascii_text_equality_keeps_unicode_semantics_and_uses_value_index(self):
+        builder = ClickHouseFilterBuilderV2(table="spans")
+        sql, params = builder.translate(
+            [
+                {
+                    "column_id": "prompt_slug",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "Agent_K",
+                    },
+                }
+            ]
+        )
+
+        assert "lowerUTF8(toString(attrs_string['prompt_slug'])) =" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
+        assert params["attr_1"] == "agent_k"
+        assert {
+            value
+            for key, value in params.items()
+            if key.startswith("latest_filter_legacy_index_")
+        } == {"agent_k", "agent_\N{KELVIN SIGN}"}
 
 
 class TestEndUserDimensionSource:
@@ -233,8 +308,14 @@ class TestEndUserDimensionSource:
             self._filter("user", "in", ["bob", "carol"])
         )
         assert "trace_id IN (" in sql
-        assert "SELECT end_user_id FROM end_users FINAL" in sql
-        assert "is_deleted = 0" in sql
+        assert "FROM end_users AS eu FINAL" in sql
+        assert "FROM end_user_id_remap AS remap_match FINAL" in sql
+        assert "eu.is_deleted = 0" in sql
+        assert "matching_end_user_ids AS" in sql
+        assert "matching_end_user_group_ids AS" in sql
+        assert "WHERE remap.new_id IN (" in sql
+        assert "SELECT new_id FROM matching_end_user_group_ids" in sql
+        assert "OVER (PARTITION BY new_id)" not in sql
         # The dropped legacy table must NOT appear on the v2 path.
         assert "tracer_enduser" not in sql
         assert "_peerdb_is_deleted" not in sql
@@ -244,7 +325,8 @@ class TestEndUserDimensionSource:
         sql, _ = ClickHouseFilterBuilderV2(table="spans").translate(
             self._filter("user_id_type", "equals", "external")
         )
-        assert "FROM end_users FINAL" in sql
+        assert "FROM end_users AS eu FINAL" in sql
+        assert "FROM end_user_id_remap AS remap_match FINAL" in sql
         assert "tracer_enduser" not in sql
 
     def test_v2_negation_emits_not_in_against_end_users(self):
@@ -253,7 +335,8 @@ class TestEndUserDimensionSource:
             self._filter("user", "not_in", ["bob"])
         )
         assert "trace_id NOT IN (" in sql
-        assert "FROM end_users FINAL" in sql
+        assert "FROM end_users AS eu FINAL" in sql
+        assert "FROM end_user_id_remap AS remap_match FINAL" in sql
         assert "tracer_enduser" not in sql
 
     # ─── No-value path (is_null) — a different branch that skips the dim ──────
@@ -374,7 +457,9 @@ class TestFilterBuilderWiring:
             SpanListQueryBuilderV2,
         )
 
-        sql, _ = SpanListQueryBuilderV2(project_id="p1", filters=self.USER_FILTER).build()
+        sql, _ = SpanListQueryBuilderV2(
+            project_id="p1", filters=self.USER_FILTER
+        ).build()
         assert "end_users" in sql
         assert "tracer_enduser" not in sql
 
@@ -383,6 +468,8 @@ class TestFilterBuilderWiring:
             TraceListQueryBuilderV2,
         )
 
-        sql, _ = TraceListQueryBuilderV2(project_id="p1", filters=self.USER_FILTER).build()
+        sql, _ = TraceListQueryBuilderV2(
+            project_id="p1", filters=self.USER_FILTER
+        ).build()
         assert "end_users" in sql
         assert "tracer_enduser" not in sql

@@ -1,5 +1,5 @@
-/* eslint-disable react/prop-types */
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
@@ -11,17 +11,30 @@ import {
   formatValueWithConfig,
   fromAxisConfigPayload,
   getAutoDecimals,
+  getExactDashboardResult,
+  getDashboardMetricSeriesState,
+  getPlottedChartSeries,
   getSeriesScalar,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
   groupPieSeries,
-  makeSeriesKey,
   resolveSavedSelection,
   seriesHasDataPoints,
+  shouldConnectAcrossMissingBuckets,
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  AGGREGATION_REQUEST_TIMEOUT_MS,
+  AGGREGATION_PREPARING_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+  createAggregationPollController,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+  getQueryCompletedAt,
+} from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 const CHART_HEIGHT_FALLBACK = 280;
@@ -83,9 +96,61 @@ function getApexType(chartType) {
   return map[chartType] || "line";
 }
 
-export default function WidgetChart({ widget, globalDateRange }) {
+function QueryReadStatus({
+  unavailable,
+  hasSnapshot,
+  retryUnavailable,
+  pollingPaused,
+}) {
+  if (!unavailable || (hasSnapshot && !retryUnavailable && !pollingPaused)) {
+    return null;
+  }
+
+  return (
+    <Typography
+      role="status"
+      variant="caption"
+      color="text.secondary"
+      sx={{ width: "100%", px: 1, pt: 0.5, textAlign: "center" }}
+    >
+      {retryUnavailable
+        ? QUERY_FAILED_RETRY_MESSAGE
+        : pollingPaused
+          ? AGGREGATION_POLLING_PAUSED_MESSAGE
+          : AGGREGATION_PREPARING_MESSAGE}
+    </Typography>
+  );
+}
+
+QueryReadStatus.propTypes = {
+  unavailable: PropTypes.bool,
+  hasSnapshot: PropTypes.bool,
+  retryUnavailable: PropTypes.bool,
+  pollingPaused: PropTypes.bool,
+};
+
+const getDashboardSnapshot = (response, signature) => {
+  const result = getExactDashboardResult(response);
+  if (!result) return null;
+
+  return {
+    signature,
+    result,
+    exact: result.query_exact !== false,
+    updatedAt: getQueryCompletedAt(response),
+  };
+};
+
+export default function WidgetChart({
+  widget,
+  dashboardId,
+  globalDateRange,
+  refreshRequestId = 0,
+  onQuerySettled,
+}) {
   const theme = useTheme();
   const queryMutation = useDashboardQuery();
+  const mutateDashboardQuery = queryMutation.mutate;
   const rawQueryConfig = widget.query_config;
   // If globalDateRange is provided, override the widget's time range
   const queryConfig = useMemo(() => {
@@ -110,10 +175,41 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
+  const connectsAcrossMissingBuckets =
+    shouldConnectAcrossMissingBuckets(apexType);
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
   const [chartHeight, setChartHeight] = useState(CHART_HEIGHT_FALLBACK);
+
+  // ApexCharts places the tooltip entirely above the cursor — `cursorY - gridTop -
+  // tooltipHeight` — and never clamps that at 0; it clamps x three ways and clamps y
+  // only against the grid's bottom. Any point in the top `tooltipHeight` px of the
+  // plot therefore gets a negative top and is drawn above the canvas, where the
+  // widget card's `overflow: hidden` slices it. On these cards that is most of the
+  // plot: 134px of tooltip against a 230px grid. The card cannot drop the overflow
+  // (the chart's ResizeObserver then loses its height constraint and the canvas
+  // grows unbounded), `tooltip.fixed` is ignored on the intersect path these charts
+  // use, and a chart-level `mouseMove` hook loses the race — Apex rewrites the style
+  // after it, even a frame later. Watching the attribute is what reliably catches
+  // the write, whenever Apex makes it.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const clampTooltips = () => {
+      el.querySelectorAll(".apexcharts-tooltip").forEach((tip) => {
+        const top = Number.parseFloat(tip.style.top);
+        if (Number.isFinite(top) && top < 0) tip.style.top = "0px";
+      });
+    };
+    const mo = new MutationObserver(clampTooltips);
+    mo.observe(el, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["style"],
+    });
+    return () => mo.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -134,48 +230,266 @@ export default function WidgetChart({ widget, globalDateRange }) {
     () => JSON.stringify(queryConfig || {}),
     [queryConfig],
   );
-  useEffect(() => {
-    if (queryConfig?.metrics?.length > 0) {
-      queryMutation.mutate(queryConfig);
-    }
-  }, [querySignature, queryConfig]);
+  // Mutation data can be pre-seeded by a caller/query cache on first mount.
+  // Subsequent responses are accepted only through the exactness gate below.
+  const initialSnapshot = getDashboardSnapshot(
+    queryMutation.data,
+    querySignature,
+  );
+  const [lastRenderableSnapshot, setLastRenderableSnapshot] =
+    useState(initialSnapshot);
+  const [latestOutcome, setLatestOutcome] = useState(() => ({
+    signature: querySignature,
+    unavailable: Boolean(queryMutation.data && !initialSnapshot),
+    retryUnavailable: false,
+    pollingPaused: false,
+  }));
+  const [acknowledgedRequest, setAcknowledgedRequest] = useState(() =>
+    queryMutation.data ? { signature: querySignature, refreshRequestId } : null,
+  );
+  const previousSignatureRef = useRef(null);
+  const previousRefreshRequestRef = useRef(refreshRequestId);
+  const onQuerySettledRef = useRef(onQuerySettled);
+  onQuerySettledRef.current = onQuerySettled;
 
-  const result = queryMutation.data?.data?.result;
-  const series = useMemo(() => {
-    const s = [];
-    if (result?.metrics) {
-      for (const [metricIndex, metric] of result.metrics.entries()) {
-        for (const ms of metric.series || []) {
-          const isSingleMetric = result.metrics.length === 1;
-          let label;
-          if (ms.name === "total") {
-            label = `${metric.name} (${metric.aggregation})`;
-          } else if (isSingleMetric) {
-            label = ms.name;
-          } else {
-            label = `${metric.name} / ${ms.name} (${metric.aggregation})`;
-          }
-          s.push({
-            name: label,
-            key: makeSeriesKey(metric, ms.name),
-            // Metric identity survives only inside `label`, which is a composite
-            // display string. Carry it explicitly so pie rendering can group
-            // series per metric and honour each metric's own aggregation.
-            metricIndex,
-            metricName: metric.name,
-            aggregation: metric.aggregation,
-            unit: metric.unit ?? "",
-            breakdownName: ms.name,
-            data: (ms.data || []).map((point) => ({
-              x: new Date(point.timestamp).getTime(),
-              y: point.value != null ? Number(point.value) : null,
-            })),
-          });
-        }
+  useEffect(() => {
+    if (!queryConfig?.metrics?.length) return undefined;
+
+    const signatureChanged = previousSignatureRef.current !== querySignature;
+    const isManualRefresh =
+      !signatureChanged && refreshRequestId > previousRefreshRequestRef.current;
+    previousSignatureRef.current = querySignature;
+    previousRefreshRequestRef.current = refreshRequestId;
+    let active = true;
+    let pollTimer = null;
+    let requestTimer = null;
+    let requestController = null;
+    let requestGeneration = 0;
+    const pollingController = createAggregationPollController();
+    let refreshWasQueued = false;
+    let settled = false;
+
+    const settle = (snapshot, exact, pollingPaused = false) => {
+      if (!active || settled) return;
+      settled = true;
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
       }
-    }
-    return s;
-  }, [result]);
+      if (requestTimer !== null) {
+        window.clearTimeout(requestTimer);
+        requestTimer = null;
+      }
+      requestController?.abort();
+      requestController = null;
+      onQuerySettledRef.current?.({
+        dashboardId,
+        widgetId: widget.id,
+        refreshRequestId,
+        manualRefresh: isManualRefresh,
+        exact,
+        pollingPaused,
+        updatedAt: exact ? snapshot?.updatedAt || null : null,
+      });
+    };
+
+    const schedulePoll = () => {
+      if (!active || pollTimer !== null) return;
+      pollingController.start();
+      const delay = pollingController.nextDelay();
+      if (delay === false) {
+        const pollingPaused =
+          pollingController.getTerminationReason() === "poll_budget";
+        setLatestOutcome({
+          signature: querySignature,
+          unavailable: true,
+          retryUnavailable: !pollingPaused,
+          pollingPaused,
+        });
+        settle(null, false, pollingPaused);
+        return;
+      }
+      pollTimer = window.setTimeout(() => {
+        pollTimer = null;
+        pollingController.recordAttempt();
+        executeQuery(false);
+      }, delay);
+    };
+
+    const executeQuery = (refresh) => {
+      const generation = requestGeneration + 1;
+      requestGeneration = generation;
+      requestController?.abort();
+      const controller = new AbortController();
+      requestController = controller;
+      if (requestTimer !== null) window.clearTimeout(requestTimer);
+
+      const handleQueuedTransportFailure = () => {
+        const exhausted = !pollingController.recordFailure();
+        setLatestOutcome({
+          signature: querySignature,
+          unavailable: true,
+          retryUnavailable: exhausted,
+          pollingPaused: false,
+        });
+        if (exhausted) settle(null, false);
+        else schedulePoll();
+      };
+
+      requestTimer = window.setTimeout(() => {
+        if (!active || settled || generation !== requestGeneration) return;
+        requestGeneration += 1;
+        requestTimer = null;
+        controller.abort();
+        if (refreshWasQueued) {
+          handleQueuedTransportFailure();
+          return;
+        }
+        setLatestOutcome({
+          signature: querySignature,
+          unavailable: true,
+          retryUnavailable: true,
+          pollingPaused: false,
+        });
+        settle(null, false);
+      }, AGGREGATION_REQUEST_TIMEOUT_MS);
+
+      const acceptResponse = () => {
+        if (!active || settled || generation !== requestGeneration)
+          return false;
+        if (requestTimer !== null) {
+          window.clearTimeout(requestTimer);
+          requestTimer = null;
+        }
+        if (requestController === controller) requestController = null;
+        return true;
+      };
+
+      mutateDashboardQuery(
+        { queryConfig, refresh, signal: controller.signal },
+        {
+          onSuccess: (response) => {
+            if (!acceptResponse()) return;
+            setAcknowledgedRequest({
+              signature: querySignature,
+              refreshRequestId,
+            });
+            const snapshot = getDashboardSnapshot(response, querySignature);
+            const { isRefreshing, refreshFailed } =
+              getAggregationRefreshState(response);
+            const readState = getExactAggregationReadState(response);
+            pollingController.recordSuccess();
+            if (snapshot) setLastRenderableSnapshot(snapshot);
+
+            if (
+              isRefreshing &&
+              !refreshFailed &&
+              (snapshot || readState === "pending")
+            ) {
+              setLatestOutcome({
+                signature: querySignature,
+                unavailable: !snapshot,
+                retryUnavailable: false,
+                pollingPaused: false,
+              });
+              refreshWasQueued = true;
+              schedulePoll();
+              return;
+            }
+            if (refreshFailed) {
+              setLatestOutcome({
+                signature: querySignature,
+                unavailable: true,
+                retryUnavailable: true,
+                pollingPaused: false,
+              });
+              settle(snapshot, false);
+              return;
+            }
+            if (snapshot) {
+              setLatestOutcome({
+                signature: querySignature,
+                unavailable: false,
+                retryUnavailable: false,
+                pollingPaused: false,
+              });
+              settle(snapshot, snapshot.exact);
+              return;
+            }
+            // Sampled, degraded, unmarked and otherwise malformed terminal
+            // bodies are failures, not long-running exact work. Keep any
+            // prior exact snapshot visible and offer one finite retry state.
+            setLatestOutcome({
+              signature: querySignature,
+              unavailable: true,
+              retryUnavailable: true,
+              pollingPaused: false,
+            });
+            settle(null, false);
+          },
+          onError: () => {
+            if (!acceptResponse()) return;
+            if (refreshWasQueued) {
+              handleQueuedTransportFailure();
+              return;
+            }
+            setLatestOutcome({
+              signature: querySignature,
+              unavailable: true,
+              retryUnavailable: true,
+              pollingPaused: false,
+            });
+            settle(null, false);
+          },
+        },
+      );
+    };
+
+    executeQuery(isManualRefresh);
+
+    return () => {
+      active = false;
+      requestGeneration += 1;
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      if (requestTimer !== null) window.clearTimeout(requestTimer);
+      requestController?.abort();
+    };
+  }, [
+    mutateDashboardQuery,
+    dashboardId,
+    queryConfig,
+    querySignature,
+    refreshRequestId,
+    widget.id,
+  ]);
+
+  const renderableSnapshot =
+    lastRenderableSnapshot?.signature === querySignature
+      ? lastRenderableSnapshot
+      : null;
+  const result = renderableSnapshot?.result;
+  const { renderableMetrics, series } = useMemo(
+    () => getDashboardMetricSeriesState(result?.metrics),
+    [result?.metrics],
+  );
+  const hasRunnableQuery = Boolean(queryConfig?.metrics?.length);
+  // Until a complete renderable snapshot exists, the query is unresolved—not empty. This
+  // also covers the first paint before the mutation effect starts and the
+  // render between changing a widget query and receiving its new response.
+  const awaitingFirstResult = hasRunnableQuery && !renderableSnapshot;
+  const readUnavailable =
+    awaitingFirstResult ||
+    (latestOutcome.signature === querySignature && latestOutcome.unavailable) ||
+    (queryMutation.isError && !queryMutation.isPending);
+  const retryUnavailable =
+    latestOutcome.signature === querySignature &&
+    latestOutcome.retryUnavailable === true;
+  const pollingPaused =
+    latestOutcome.signature === querySignature &&
+    latestOutcome.pollingPaused === true;
+  const hasAcknowledgedCurrentRequest =
+    acknowledgedRequest?.signature === querySignature &&
+    acknowledgedRequest?.refreshRequestId === refreshRequestId;
 
   // Auto-select top 10 series by total value when there are many breakdown series
   const MAX_CHART_SERIES = 10;
@@ -217,6 +531,11 @@ export default function WidgetChart({ widget, globalDateRange }) {
     if (visibleSeries === null) return series;
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
+
+  const plottedChartSeries = useMemo(
+    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
+    [chartSeries, connectsAcrossMissingBuckets],
+  );
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
@@ -271,9 +590,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
     [chartSeries],
   );
   const leftAxisFormatConfig = useMemo(() => {
-    const suggested = getSuggestedUnitConfig(result?.metrics || []);
+    const metrics = renderableMetrics.map(({ metric }) => metric);
+    const suggested = getSuggestedUnitConfig(metrics);
     const leftAxis = axisConfig?.leftY || {};
-    const metricUnits = (result?.metrics || []).map((m) => m?.unit ?? "");
+    const metricUnits = metrics.map((m) => m?.unit ?? "");
     const isMixedUnits = new Set(metricUnits).size > 1;
     const effectiveUnit = isMixedUnits ? "" : leftAxis.unit || suggested.unit;
     return {
@@ -283,7 +603,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ? leftAxis.prefixSuffix || suggested.prefixSuffix || "prefix"
         : suggested.prefixSuffix,
     };
-  }, [axisConfig?.leftY, result?.metrics]);
+  }, [axisConfig?.leftY, renderableMetrics]);
 
   const isDark = theme.palette.mode === "dark";
   const makeFormatter =
@@ -292,7 +612,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
       formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
   const formatVal = makeFormatter(leftAxisFormatConfig);
 
-  if (queryMutation.isPending) {
+  // Some mutation adapters/interceptors can leave `isPending` true even after
+  // this component's independently bounded request has timed out. Once the
+  // current query scope is terminal, render the retry state instead of letting
+  // the adapter's stale pending flag mask it forever.
+  if (
+    queryMutation.isPending &&
+    !renderableSnapshot &&
+    !hasAcknowledgedCurrentRequest &&
+    !retryUnavailable &&
+    !pollingPaused
+  ) {
     return (
       <Box
         ref={containerRef}
@@ -310,32 +640,13 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
-  if (queryMutation.isError) {
-    return (
-      <Box
-        ref={containerRef}
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          width: "100%",
-          height: "100%",
-          minHeight: 0,
-        }}
-      >
-        <Typography variant="body2" color="error">
-          Failed to load chart data
-        </Typography>
-      </Box>
-    );
-  }
-
   if (!series.length) {
     return (
       <Box
         ref={containerRef}
         sx={{
           display: "flex",
+          flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
           width: "100%",
@@ -343,9 +654,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
           minHeight: 0,
         }}
       >
-        <Typography variant="body2" color="text.disabled">
-          No output for the selected inputs.
-        </Typography>
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
+        {!readUnavailable && (
+          <Typography variant="body2" color="text.disabled">
+            No output for the selected inputs.
+          </Typography>
+        )}
       </Box>
     );
   }
@@ -356,6 +675,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ref={containerRef}
         sx={{
           display: "flex",
+          flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
           width: "100%",
@@ -364,6 +684,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           px: 2,
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <Typography variant="body2" color="text.disabled">
           {NO_DATA_FOR_RANGE_MESSAGE}
         </Typography>
@@ -375,37 +701,51 @@ export default function WidgetChart({ widget, globalDateRange }) {
   // each metric would otherwise render as a meaningless 100%-full circle.
   if (isMetricCard || (isPie && !pieHasBreakdown)) {
     return (
-      <Stack
+      <Box
         ref={containerRef}
-        direction="row"
-        gap={3}
-        justifyContent="center"
-        alignItems="center"
-        sx={{ width: "100%", height: "100%", minHeight: 0 }}
+        sx={{
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
       >
-        {series.map((s, i) => {
-          // Honour the metric's own aggregation: a "max" metric must show the
-          // peak bucket, not the mean of the per-bucket maxima.
-          const value = getSeriesScalar(s.data, s.aggregation);
-          const cellConfig = s.unit
-            ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
-            : leftAxisFormatConfig;
-          return (
-            <Box key={i} sx={{ textAlign: "center" }}>
-              <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
-                {value == null
-                  ? "—"
-                  : formatValueWithConfig(value, cellConfig, {
-                      fallbackDecimals: autoDecimals,
-                    })}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {s.name}
-              </Typography>
-            </Box>
-          );
-        })}
-      </Stack>
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
+        <Stack
+          direction="row"
+          gap={3}
+          justifyContent="center"
+          alignItems="center"
+          sx={{ flex: 1, minHeight: 0 }}
+        >
+          {series.map((s, i) => {
+            const value = getSeriesScalar(s.data, s.aggregation);
+            const cellConfig = s.unit
+              ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
+              : leftAxisFormatConfig;
+            return (
+              <Box key={i} sx={{ textAlign: "center" }}>
+                <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
+                  {value == null
+                    ? "—"
+                    : formatValueWithConfig(value, cellConfig, {
+                        fallbackDecimals: autoDecimals,
+                      })}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {s.name}
+                </Typography>
+              </Box>
+            );
+          })}
+        </Stack>
+      </Box>
     );
   }
 
@@ -435,6 +775,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           minHeight: 0,
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <table
           style={{
             width: "100%",
@@ -585,6 +931,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ref={containerRef}
         sx={{ width: "100%", height: "100%", minHeight: 0 }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <WidgetPieCharts
           groups={pieGroups}
           colorFor={pieColorFor}
@@ -621,6 +973,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           overflow: "hidden",
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         {/* Legend */}
         <Stack
           direction="row"
@@ -784,6 +1142,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
         ref={containerRef}
         sx={{
           display: "flex",
+          flexDirection: "column",
+          gap: 1,
           justifyContent: "center",
           alignItems: "center",
           width: "100%",
@@ -792,6 +1152,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
           px: 2,
         }}
       >
+        <QueryReadStatus
+          unavailable={readUnavailable}
+          hasSnapshot={Boolean(renderableSnapshot)}
+          retryUnavailable={retryUnavailable}
+          pollingPaused={pollingPaused}
+        />
         <Alert severity="warning" sx={{ width: "100%" }}>
           {outOfRangeWarning}
         </Alert>
@@ -1145,10 +1511,16 @@ export default function WidgetChart({ widget, globalDateRange }) {
         flexDirection: "column",
       }}
     >
+      <QueryReadStatus
+        unavailable={readUnavailable}
+        hasSnapshot={Boolean(renderableSnapshot)}
+        retryUnavailable={retryUnavailable}
+        pollingPaused={pollingPaused}
+      />
       {legendNames.length > 1 && (
         <ChartLegend
           items={legendNames}
-          colors={COLORS}
+          colors={chartSeries.map((s) => colorFor(s.name))}
           onHoverSeries={handleLegendHover}
           onLeaveSeries={handleLegendLeave}
         />
@@ -1157,7 +1529,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         <ReactApexChart
           key={`${axisConfig?.leftY?.unit}-${axisConfig?.leftY?.prefixSuffix}-${axisConfig?.leftY?.abbreviation}-${axisConfig?.leftY?.decimals}-${axisConfig?.leftY?.outOfBounds}`}
           options={options}
-          series={chartSeries}
+          series={plottedChartSeries}
           type={apexType}
           height={chartHeight - legendHeight}
         />
@@ -1165,3 +1537,26 @@ export default function WidgetChart({ widget, globalDateRange }) {
     </Box>
   );
 }
+
+WidgetChart.propTypes = {
+  widget: PropTypes.shape({
+    id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    query_config: PropTypes.object,
+    chart_config: PropTypes.object,
+  }).isRequired,
+  dashboardId: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  globalDateRange: PropTypes.shape({
+    start: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.number,
+      PropTypes.instanceOf(Date),
+    ]),
+    end: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.number,
+      PropTypes.instanceOf(Date),
+    ]),
+  }),
+  refreshRequestId: PropTypes.number,
+  onQuerySettled: PropTypes.func,
+};

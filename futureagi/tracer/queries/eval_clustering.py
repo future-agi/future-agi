@@ -236,7 +236,7 @@ def find_nearest_centroid(
         ensure_centroid_table(db)
         vector_str = "[" + ",".join(map(str, embedding)) + "]"
         family = _eval_family(eval_name, target_type)
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT
                 cluster_id,
@@ -248,6 +248,7 @@ def find_nearest_centroid(
             LIMIT 1
             """,
             {"project_id": project_id, "family": family},
+            max_result_rows=1,
         )
 
         if rows and rows[0][1] < COSINE_THRESHOLD:
@@ -553,7 +554,7 @@ def assign_to_cluster(
     family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
-        rows = db.client.execute(
+        rows = db.execute_read(
             f"""
             SELECT centroid, member_count
             FROM {CENTROIDS_TABLE}
@@ -561,6 +562,7 @@ def assign_to_cluster(
             LIMIT 1
             """,
             {"cluster_id": cluster_id},
+            max_result_rows=1,
         )
 
         if rows:

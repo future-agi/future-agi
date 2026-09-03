@@ -1,4 +1,6 @@
 import { endOfToday, sub } from "date-fns";
+import { tokenToPreset } from "src/sections/projects/timeWindowPresets";
+import { inferPresetForLegacy } from "src/sections/projects/legacyPresetInference";
 import EvalsAndTasksCustomTooltip from "./Renderers/EvalsAndTasksCustomToolTip";
 import FilterChipsRenderer from "./Renderers/FilterChipsRenderer";
 import RunningStatusRenderer from "./Renderers/RunningStatusRenderer";
@@ -9,6 +11,8 @@ import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
 import { canonicalEntries } from "src/utils/utils";
 import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
+import { readEvalTaskDetail } from "./task_detail_read";
 
 // Operator categories shared by the task filter wire builders (validation.js,
 // TaskLivePreview) and TaskFilterBar.
@@ -208,6 +212,7 @@ export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
 const RESERVED_FILTER_KEYS = new Set([
   "project_id",
   "date_range",
+  "date_preset",
   "start_date",
   "end_date",
   "filters",
@@ -226,19 +231,19 @@ export const formatTaskFilters = (filters_applied) => {
   // (snake_case — see extractAttributeFilters). Prefer the canonical `filters`
   // key; fall back to legacy `span_attributes_filters`. `col_type` round-trips
   // as `apiColType` so the panel picks the right chip.
-  const span_attributes_filters = (
-    filters_applied.filters ||
-    filters_applied.span_attributes_filters ||
-    []
+  const span_attributes_filters = hydrateStoredFilterList(
+    filters_applied.filters || filters_applied.span_attributes_filters || [],
   ).map((i) => ({
     property: "attributes",
     propertyId: i?.column_id,
+    ...(i?.property_id ? { registryId: i.property_id } : {}),
     apiColType: i?.filter_config?.col_type,
     filterConfig: {
       filterType: i?.filter_config?.filter_type,
       filterOp: i?.filter_config?.filter_op,
       filterValue: i?.filter_config?.filter_value,
       colType: i?.filter_config?.col_type,
+      attributeValueTypes: i?.filter_config?.attribute_value_types,
     },
   }));
 
@@ -301,6 +306,11 @@ export const getDefaultTaskValues = (data, observeId) => {
       }
     }
 
+    // Without a stored key the task predates the field, so infer.
+    const storedPreset = tokenToPreset(data?.filters_applied?.date_preset);
+    values.datePreset =
+      storedPreset || inferPresetForLegacy(values.startDate, values.endDate);
+
     return values;
   } else {
     return {
@@ -317,21 +327,36 @@ export const getDefaultTaskValues = (data, observeId) => {
         }),
       ),
       endDate: formatDate(endOfToday()),
+      datePreset: "6M",
       runType: "",
     };
   }
 };
 
 export const useGetTaskData = (taskId, options) => {
+  const configuredRefetchInterval = options?.refetchInterval;
+
   return useQuery({
     ...options,
     queryKey: ["taskDetails", taskId],
-    queryFn: () => axios.get(endpoints.project.getEvalTaskDetails(taskId)),
+    queryFn: ({ signal }) =>
+      readEvalTaskDetail(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(endpoints.project.getEvalTaskDetails(taskId), {
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      ),
     select: (d) => d?.data?.result,
-    retry: (failureCount, error) => {
-      const status = error?.statusCode || error?.response?.status;
-      if (status === 400 || status === 404) return false;
-      return failureCount < 1;
-    },
+    retry: false,
+    refetchInterval: configuredRefetchInterval
+      ? (query) => {
+          if (query?.state?.status === "error") return false;
+          return typeof configuredRefetchInterval === "function"
+            ? configuredRefetchInterval(query)
+            : configuredRefetchInterval;
+        }
+      : false,
   });
 };

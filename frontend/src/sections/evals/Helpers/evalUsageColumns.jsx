@@ -5,8 +5,7 @@ import { alpha } from "@mui/material/styles";
 import { useMemo } from "react";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
-
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 
 export const ScoreCell = ({ value }) => {
   if (value == null)
@@ -51,14 +50,62 @@ export const normalizeRow = (raw) => {
 };
 
 export const DEFAULT_COLUMN_CONFIG = [
-  { value: "score", label: "Score", enabled: true, is_visible: true, order_index: 0 },
-  { value: "result", label: "Result", enabled: true, is_visible: true, order_index: 1 },
-  { value: "input", label: "Input", enabled: true, is_visible: true, order_index: 2 },
-  { value: "reason", label: "Reason", enabled: true, is_visible: true, order_index: 3 },
-  { value: "source", label: "Source", enabled: true, is_visible: true, order_index: 4 },
-  { value: "version", label: "Version", enabled: true, is_visible: true, order_index: 5 },
-  { value: "feedback", label: "Feedback", enabled: true, is_visible: true, order_index: 6 },
-  { value: "created_at", label: "Ran at", enabled: true, is_visible: true, order_index: 7 },
+  {
+    value: "score",
+    label: "Score",
+    enabled: true,
+    is_visible: true,
+    order_index: 0,
+  },
+  {
+    value: "result",
+    label: "Result",
+    enabled: true,
+    is_visible: true,
+    order_index: 1,
+  },
+  {
+    value: "input",
+    label: "Input",
+    enabled: true,
+    is_visible: true,
+    order_index: 2,
+  },
+  {
+    value: "reason",
+    label: "Reason",
+    enabled: true,
+    is_visible: true,
+    order_index: 3,
+  },
+  {
+    value: "source",
+    label: "Source",
+    enabled: true,
+    is_visible: true,
+    order_index: 4,
+  },
+  {
+    value: "version",
+    label: "Version",
+    enabled: true,
+    is_visible: true,
+    order_index: 5,
+  },
+  {
+    value: "feedback",
+    label: "Feedback",
+    enabled: true,
+    is_visible: true,
+    order_index: 6,
+  },
+  {
+    value: "created_at",
+    label: "Ran at",
+    enabled: true,
+    is_visible: true,
+    order_index: 7,
+  },
 ];
 
 export const COLUMN_CONFIG_URL_PARAM = "cols";
@@ -70,7 +117,6 @@ export const encodeColumnConfig = (cols) =>
     .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
     .map((c) => (c.enabled && c.is_visible ? c.value : `~${c.value}`))
     .join(",");
-
 
 export const decodeColumnConfig = (str, base) => {
   if (!str) return null;
@@ -106,7 +152,6 @@ export const decodeColumnConfig = (str, base) => {
   return result.length ? result : null;
 };
 
-
 export const StatPill = ({ label, value, color }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
     <Typography variant="s3" color="text.secondary">
@@ -118,9 +163,9 @@ export const StatPill = ({ label, value, color }) => (
   </Box>
 );
 
-
 export const DATE_OPTION_TO_PERIOD = {
   "30 mins": "30m",
+  "1 hr": "1h",
   "6 hrs": "6h",
   Today: "1d",
   Yesterday: "1d",
@@ -133,7 +178,8 @@ export const DATE_OPTION_TO_PERIOD = {
 };
 
 export const periodForRange = (start, end) => {
-  const hours = (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000;
+  const hours =
+    (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000;
   if (!(hours > 0)) return "30d";
   if (hours <= 1) return "30m";
   if (hours <= 6) return "6h";
@@ -144,7 +190,6 @@ export const periodForRange = (start, end) => {
   if (hours <= 24 * 180) return "180d";
   return "365d";
 };
-
 
 const indicatorColumn = {
   id: "indicator",
@@ -176,11 +221,12 @@ const indicatorColumn = {
   },
 };
 
-
 const renderResult = ({ getValue, row: tableRow }) => {
   const v = getValue();
   const warnings = tableRow.original?.warnings || [];
-  const partial = warnings.find?.((w) => w?.type === PARTIAL_INPUT_WARNING_TYPE);
+  const partial = warnings.find?.(
+    (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
+  );
   const partialBadge = partial ? (
     <CustomTooltip
       show
@@ -323,9 +369,7 @@ const renderFeedback = ({ row: tableRow }) => {
   const original = tableRow.original;
   if (original.composite) {
     const childCount =
-      original.detail?.total_children ??
-      original.detail?.children?.length ??
-      0;
+      original.detail?.total_children ?? original.detail?.children?.length ?? 0;
     return (
       <Tooltip title={`${childCount} child evaluators`}>
         <Chip
@@ -404,7 +448,12 @@ const COLUMN_DEFS = {
   reason: { meta: { flex: 1.5 }, minSize: 150, cell: renderReason },
   source: { size: 100, cell: renderSource },
   version: { size: 80, cell: renderVersion },
-  feedback: { header: "", size: 50, enableSorting: false, cell: renderFeedback },
+  feedback: {
+    header: "",
+    size: 50,
+    enableSorting: false,
+    cell: renderFeedback,
+  },
   created_at: { size: 140, cell: renderCreatedAt },
 };
 
@@ -412,7 +461,9 @@ const COLUMN_DEFS = {
 export const useColumns = (columnConfig) =>
   useMemo(() => {
     const source =
-      columnConfig && columnConfig.length ? columnConfig : DEFAULT_COLUMN_CONFIG;
+      columnConfig && columnConfig.length
+        ? columnConfig
+        : DEFAULT_COLUMN_CONFIG;
     const dynamic = source
       .filter((c) => c.enabled && c.is_visible)
       .slice()
