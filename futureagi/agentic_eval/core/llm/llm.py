@@ -1800,7 +1800,7 @@ class LLM:
                                     },
                                 }
                             )
-                        except:
+                        except Exception:
                             # If conversion fails, keep original format
                             new_content.append(content)
                     elif (
@@ -1816,7 +1816,7 @@ class LLM:
                             new_content.append(
                                 {"type": "image_url", "image_url": {"url": url}}
                             )
-                        except:
+                        except Exception:
                             # If conversion fails, keep original format
                             new_content.append(content)
                     else:
