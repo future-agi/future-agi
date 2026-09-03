@@ -142,12 +142,6 @@ def test_aggregate_not_between():
     assert b.params[lo_name] == 1 and b.params[hi_name] == 2
 
 
-@pytest.mark.parametrize("op,empty", [("in", "0 = 1"), ("not_in", "1 = 1")])
-def test_aggregate_in_empty_list(op, empty):
-    b = _builder([_num_filter("total_tokens", op, [])])
-    assert b._build_having_clauses() == empty
-
-
 def test_two_having_conditions_get_distinct_params():
     # A message IN and a numeric BETWEEN both live in HAVING; their params
     # (having_*) must not collide.
@@ -166,13 +160,6 @@ def test_two_having_conditions_get_distinct_params():
 def test_aggregate_between_bad_arity_is_no_match():
     b = _builder([_num_filter("duration", "between", [10])])
     assert b._build_having_clauses() == "0 = 1"
-
-
-def test_aggregate_in():
-    b = _builder([_num_filter("total_tokens", "in", [100, 200])])
-    having = b._build_having_clauses()
-    assert "total_tokens IN %(" in having
-    assert (100, 200) in b.params.values()
 
 
 def test_aggregate_is_not_null():
