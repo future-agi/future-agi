@@ -80544,6 +80544,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Synthetic regenerate",
           type: "boolean",
         },
+        failure_reason: {
+          title: "Failure reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         is_processing_data: {
           title: "Is processing data",
           type: "boolean",

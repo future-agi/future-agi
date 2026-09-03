@@ -380,6 +380,8 @@ class UpdateSyntheticDatasetConfigView(APIView):
 
                 dataset.column_order = column_order
                 dataset.column_config = column_config
+                dataset.failure_reason = None
+                dataset.status = StatusType.RUNNING.value
                 dataset.save()
 
                 for i in range(validated_data["num_rows"]):

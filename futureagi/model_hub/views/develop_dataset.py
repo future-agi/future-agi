@@ -3312,6 +3312,7 @@ class GetDatasetTableView(APIView):
                 "synthetic_dataset": (
                     True if dataset.synthetic_dataset_config else False
                 ),
+                "failure_reason": dataset.failure_reason or None,
                 "is_processing_data": is_processing_data,
             }
             if not snapshot_bound:
