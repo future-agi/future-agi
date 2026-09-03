@@ -644,9 +644,7 @@ const TestDetailSideDrawerChild = ({
         <SkeltonForTestDeatilDrawer />
       </ShowComponent>
 
-      <ShowComponent
-        condition={isFetching !== "initial" && isVoiceCall && !compareReplay}
-      >
+      <ShowComponent condition={isFetching !== "initial" && isVoiceCall}>
         <VoiceDetailDrawerV2
           data={mergedData}
           onClose={closeDetailDrawer}
@@ -659,18 +657,13 @@ const TestDetailSideDrawerChild = ({
           onCompareBaseline={
             urlModule === "simulate" ? setCompareReplay : undefined
           }
+          compareReplay={urlModule === "simulate" && compareReplay}
+          onExitCompare={() => setCompareReplay(false)}
           scenarioId={scenarioId}
           isLoading={isVoiceDetailLoading}
         />
       </ShowComponent>
 
-      {/* Chat simulate rows render in the revamped ChatDetailDrawerV2 —
-          including the Compare with baseline flow, which lives inside the
-          drawer (body swaps; chrome stays). The drawer reads `compareReplay`
-          and toggles its content between the two-panel chat layout and the
-          ChatCompareView, with `onExitCompare` for the back-arrow affordance.
-          The legacy fallback branch's condition still excludes chat sims so
-          we don't render two drawers. */}
       <ShowComponent
         condition={
           isFetching !== "initial" && urlModule === "simulate" && isChatSim
@@ -696,7 +689,7 @@ const TestDetailSideDrawerChild = ({
       <ShowComponent
         condition={
           isFetching !== "initial" &&
-          !(isVoiceCall && !compareReplay) &&
+          !isVoiceCall &&
           !(urlModule === "simulate" && isChatSim)
         }
       >
@@ -769,7 +762,10 @@ const TestDetailSideDrawerChild = ({
             </Suspense>
           </ShowComponent>
           <ShowComponent condition={compareReplay}>
-            <BaseLineVsReplay rowData={mergedData} />
+            <BaseLineVsReplay
+              rowData={mergedData}
+              onBack={() => setCompareReplay(false)}
+            />
           </ShowComponent>
           <ShowComponent condition={!compareReplay}>
             <ShowComponent condition={urlModule === "simulate"}>
