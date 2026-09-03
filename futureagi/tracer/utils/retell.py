@@ -2,6 +2,8 @@ import json
 import math
 from datetime import UTC, datetime, timedelta
 
+import structlog
+
 from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
 from tracer.utils.helper import flatten_dict
 from tracer.utils.otel import (
@@ -11,6 +13,8 @@ from tracer.utils.otel import (
     SpanAttributes,
 )
 from tracer.utils.vapi_recording import VapiRecordingService
+
+logger = structlog.get_logger(__name__)
 
 _RETELL_RECORDING_KEY_BY_ARTIFACT_TYPE = {
     "mono_combined": (
@@ -87,9 +91,15 @@ def _rehost_recording_urls_sync(
                 artifact_type=artifact_type,
                 project_id=project_id,
             )
-        except Exception:
+        except Exception as exc:
             # Rehosting is best-effort; retaining Retell's URL makes a later
             # poll eligible to retry this artifact.
+            logger.warning(
+                "retell_recording_rehost_failed",
+                project_id=project_id,
+                artifact_type=artifact_type,
+                error_type=type(exc).__name__,
+            )
             continue
 
         if durable_url and durable_url != source_url:
@@ -109,15 +119,21 @@ def _map_status(call_status: str) -> str:
 
 
 def _extract_timestamps(log: dict) -> tuple:
-    """Extracts start and end timestamps from a Retell AI log."""
+    """Extracts start and end timestamps from a Retell AI log.
+
+    A present-but-null value (the poll path hydrates via a merge that can
+    leave a key with a null) is treated the same as an absent key.
+    """
+    raw_start = log.get("start_timestamp")
+    raw_end = log.get("end_timestamp")
     start_time = (
-        datetime.fromtimestamp(log["start_timestamp"] / 1000, tz=UTC)
-        if "start_timestamp" in log
+        datetime.fromtimestamp(raw_start / 1000, tz=UTC)
+        if raw_start is not None
         else None
     )
     end_time = (
-        datetime.fromtimestamp(log["end_timestamp"] / 1000, tz=UTC)
-        if "end_timestamp" in log
+        datetime.fromtimestamp(raw_end / 1000, tz=UTC)
+        if raw_end is not None
         else None
     )
     return start_time, end_time
