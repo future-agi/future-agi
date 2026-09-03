@@ -63021,6 +63021,8 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
         pricing: zod.record(zod.string(), zod.object({}).passthrough()),
       })
       .optional(),
+    plan_change_locked: zod.boolean().optional(),
+    plan_change_locked_reason: zod.string().optional(),
     pending_cancel: zod.boolean(),
     cancel_at: zod.string().min(1).optional(),
   }),

@@ -140078,6 +140078,14 @@
                 "customDetails": {
                     "$ref": "#/definitions/UsageCustomPlanDetails"
                 },
+                "plan_change_locked": {
+                    "title": "Plan change locked",
+                    "type": "boolean"
+                },
+                "plan_change_locked_reason": {
+                    "title": "Plan change locked reason",
+                    "type": "string"
+                },
                 "pending_cancel": {
                     "title": "Pending cancel",
                     "type": "boolean"

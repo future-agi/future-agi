@@ -26433,6 +26433,8 @@ export interface UsagePlansAndAddonsResultApi {
   pricing: UsagePlansAndAddonsResultApiPricing;
   isCustomPricing: boolean;
   customDetails?: UsageCustomPlanDetailsApi;
+  plan_change_locked?: boolean;
+  plan_change_locked_reason?: string;
   pending_cancel: boolean;
   /** @minLength 1 */
   cancel_at?: string;
