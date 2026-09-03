@@ -42,6 +42,24 @@ test('PROMPT-E2E-001: a prompt created from the workbench appears in All Prompts
   // out rather than on the outer timeout.
   test.setTimeout(240_000);
 
+  // The backend assigns the lowest free Untitled-N in the org, counting
+  // deleted rows too — its numbering query has no deleted filter
+  // (views/prompt_template.py:1231-1253). Predict it from the same rows the
+  // backend reads, before the create consumes it.
+  const expectedUntitled = await test.step('storage: predict the next free Untitled-N', async () => {
+    const rows = await probe.pg<{ name: string }>(
+      "SELECT name FROM model_hub_prompttemplate WHERE organization_id = $1 AND name LIKE 'Untitled-%'",
+      [actor.organizationId]);
+    const used = new Set<number>();
+    for (const { name } of rows) {
+      const num = Number(name.split('-')[1]);
+      if (Number.isInteger(num)) used.add(num);
+    }
+    let n = 1;
+    while (used.has(n)) n += 1;
+    return `Untitled-${n}`;
+  });
+
   const created = await test.step('UI: create a prompt from scratch', async () => {
     await page.goto('/dashboard/workbench/all', { waitUntil: 'domcontentloaded' });
     // An empty org renders a second "Create prompt" in the empty layout
@@ -78,7 +96,7 @@ test('PROMPT-E2E-001: a prompt created from the workbench appears in All Prompts
     expect(rows[0].prompt_folder_id).toBeNull();
     // The UI sends name:"" (workbench/constant.js:22), so the backend assigns
     // the next free Untitled-N in the org (views/prompt_template.py:1231-1252).
-    expect(rows[0].name).toMatch(/^Untitled-\d+$/);
+    expect(rows[0].name).toBe(expectedUntitled);
     expect(rows[0].name).toBe(created.name);
   });
 
