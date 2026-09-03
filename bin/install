@@ -407,6 +407,32 @@ set_env_var() {
   fi
 }
 
+# Keep VITE_HOST_API in sync when BACKEND_PORT auto-switches (#2340).
+# Empty/unset (the .env.example default) and existing localhost URLs all
+# fall through to the SPA's http://localhost:8000 fallback; after a port
+# switch that would miss the backend. Custom/split-domain URLs are left
+# alone. Prints the new URL when a write happens (empty stdout = skipped).
+# The frontend entrypoint regenerates /config.js from this env var at
+# container start, so no image rebuild is needed.
+sync_vite_host_api() {
+  local new_port="$1"
+  local current=""
+  if grep -Eq '^VITE_HOST_API=' .env; then
+    current=$(grep -E '^VITE_HOST_API=' .env | tail -1 | cut -d= -f2- || true)
+  fi
+  current="${current%$'\r'}"
+  local unquoted="$current"
+  case "$unquoted" in
+    \"*\") unquoted="${unquoted#\"}"; unquoted="${unquoted%\"}" ;;
+    \'*\') unquoted="${unquoted#\'}"; unquoted="${unquoted%\'}" ;;
+  esac
+  if [[ -z "$unquoted" || "$unquoted" =~ ^https?://localhost:[0-9]+/?$ ]]; then
+    set_env_var "VITE_HOST_API" "http://localhost:${new_port}"
+    printf '%s\n' "http://localhost:${new_port}"
+  fi
+  return 0
+}
+
 # All host-bound ports. Data-store ports bind 127.0.0.1 in compose, but
 # they still collide with anything else on that interface (other docker
 # stacks, SSH tunnels, host services). PeerDB ports only matter in --full.
@@ -483,14 +509,17 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   if (( apply == 1 )); then
     set_env_var "$var" "$suggestion"
     ok "  $var=$suggestion  written to .env"
-    # Keep VITE_HOST_API in sync when BACKEND_PORT moves. The frontend
-    # bundle bakes the URL at build time; if .env still has the old
-    # localhost:8000 default after we switch BACKEND_PORT, the bundle
-    # would call a port that's no longer ours.
-    if [[ "$var" == "BACKEND_PORT" ]] && \
-       grep -Eq '^VITE_HOST_API=https?://localhost:[0-9]+/?$' .env; then
-      sed_inplace -E "s|^VITE_HOST_API=.*|VITE_HOST_API=http://localhost:${suggestion}|" .env
-      ok "  VITE_HOST_API=http://localhost:${suggestion}  (kept in sync)"
+    # Keep VITE_HOST_API in sync when BACKEND_PORT moves. Empty
+    # (the .env.example default) and existing localhost URLs would
+    # otherwise keep calling http://localhost:8000 after the switch.
+    # Custom/split-domain URLs are left alone. The frontend entrypoint
+    # regenerates /config.js from this env var at container start, so
+    # no image rebuild is needed.
+    if [[ "$var" == "BACKEND_PORT" ]]; then
+      synced="$(sync_vite_host_api "$suggestion" || true)"
+      if [[ -n "$synced" ]]; then
+        ok "  VITE_HOST_API=${synced}  (kept in sync)"
+      fi
     fi
   else
     UNRESOLVED+=("$var=$port  ←  $holder")
