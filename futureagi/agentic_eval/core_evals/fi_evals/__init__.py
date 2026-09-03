@@ -92,6 +92,9 @@ from ...core_evals.fi_evals.function.wrapper import (
     IsRefusal,
     LatencyCheck,
     FleissKappa,
+    BoundingBoxIoU,
+    ElementGrounding,
+    RegionSimilarity,
 )
 
 from ...core_evals.fi_evals.grounded.grounded_evaluator import GroundedEvaluator
@@ -222,4 +225,7 @@ __all__ = [
     "IsRefusal",
     "LatencyCheck",
     "FleissKappa",
+    "BoundingBoxIoU",
+    "ElementGrounding",
+    "RegionSimilarity",
 ]

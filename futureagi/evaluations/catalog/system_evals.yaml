@@ -2532,3 +2532,27 @@ protect_flash:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # (Defined in system_eval_code.py — each eval has a Python function)
+
+bounding_box_iou:
+  eval_type: code
+  output: score
+  required_keys: [output, expected]
+  description: Coordinate IoU for UI grounding with GIoU and center distance.
+  tags: [Multimodal, Grounding]
+  rule_prompt: ""
+
+element_grounding:
+  eval_type: code
+  output: score
+  required_keys: [output, expected]
+  description: Box overlap plus label match for UI elements.
+  tags: [Multimodal, Grounding]
+  rule_prompt: ""
+
+region_similarity:
+  eval_type: code
+  output: score
+  required_keys: [output, expected]
+  description: Crop-aware image similarity for a cited screen region.
+  tags: [Multimodal, Grounding]
+  rule_prompt: ""
