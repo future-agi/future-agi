@@ -19,6 +19,7 @@ import Iconify from "src/components/iconify";
 const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState("");
+  const [nameError, setNameError] = useState("");
   const [scenarioName, setScenarioName] = useState("");
   const [scenarioDescription, setScenarioDescription] = useState("");
 
@@ -33,6 +34,7 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
   const handleClose = () => {
     if (!isEditing) {
       setError("");
+      setNameError("");
       // Reset form data
       setScenarioName(scenario?.name || "");
       setScenarioDescription(scenario?.description || "");
@@ -45,6 +47,7 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
 
     setIsEditing(true);
     setError("");
+    setNameError("");
 
     try {
       const payload = {
@@ -57,11 +60,19 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
       onEditSuccess?.();
       handleClose();
     } catch (err) {
-      setError(
-        err.response?.data?.error ||
-          err.message ||
-          "Failed to update scenario. Please try again.",
-      );
+      // Map backend field-level validation errors.
+      const details = err?.details;
+      if (details?.name) {
+        setNameError(
+          Array.isArray(details.name) ? details.name[0] : details.name,
+        );
+      } else {
+        setError(
+          err?.message ||
+            err?.error ||
+            "Failed to update scenario. Please try again.",
+        );
+      }
     } finally {
       setIsEditing(false);
     }
@@ -107,16 +118,22 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
               label="Scenario Name"
               placeholder="Enter scenario name"
               value={scenarioName}
-              onChange={(e) => setScenarioName(e.target.value)}
+              onChange={(e) => {
+                setScenarioName(e.target.value);
+                if (nameError) setNameError("");
+              }}
               size="medium"
               required
               fullWidth
               disabled={isEditing}
-              error={!scenarioName.trim() && scenarioName.length > 0}
+              error={
+                !!nameError || (!scenarioName.trim() && scenarioName.length > 0)
+              }
               helperText={
-                !scenarioName.trim() && scenarioName.length > 0
+                nameError ||
+                (!scenarioName.trim() && scenarioName.length > 0
                   ? "Scenario name is required"
-                  : ""
+                  : "")
               }
             />
 
