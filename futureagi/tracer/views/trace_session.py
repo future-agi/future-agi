@@ -390,22 +390,21 @@ def _merge_session_attribute_sources(attr_row: dict) -> dict:
     JSON wins on duplicate keys, matching the other direct-write read paths.
     """
 
+    from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+
     raw = attr_row.get("span_attributes_raw", "{}")
     try:
-        attrs = _json_loads(raw) if isinstance(raw, str) and raw else (raw or {})
+        extra = _json_loads(raw) if isinstance(raw, str) and raw else (raw or {})
     except (json.JSONDecodeError, ValueError, TypeError):
-        attrs = {}
-    if not isinstance(attrs, dict):
-        attrs = {}
-    for map_name in ("attrs_string", "attrs_number", "attrs_bool"):
-        typed_map = attr_row.get(map_name) or {}
-        if not isinstance(typed_map, dict):
-            continue
-        for key, value in typed_map.items():
-            if map_name == "attrs_bool":
-                value = bool(value)
-            attrs.setdefault(key, value)
-    return attrs
+        extra = {}
+    if not isinstance(extra, dict):
+        extra = {}
+    return merge_span_attributes(
+        attr_row.get("attrs_string"),
+        attr_row.get("attrs_number"),
+        attr_row.get("attrs_bool"),
+        extra,
+    )
 
 
 def _resolve_session_ids_to_canonical(
