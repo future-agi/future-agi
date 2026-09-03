@@ -356,7 +356,7 @@ func TestCheckpointLoaderUsesNewestBoundedInventoryAndConstantStreamProofs(t *te
 			wantLimit := fmt.Sprintf("%d", DefaultCheckpointMaxStreams+1)
 			if values.Get("max_result_rows") != wantLimit ||
 				values.Get("param_inventory_limit") != wantLimit ||
-				values.Get("max_execution_time") != "10" {
+				values.Get("max_execution_time") != "120" {
 				t.Fatalf("inventory bounds=%v", values)
 			}
 			return checkpointHTTPResponse(checkpointBody(t, inventoryValues...)), nil
@@ -982,5 +982,83 @@ func TestDeliveryLeaseGuardRequiresPhaseCoupledEqualLiveDeadlines(t *testing.T) 
 				t.Fatal("phase/deadline mismatch was accepted")
 			}
 		})
+	}
+}
+
+func TestCheckpointLoaderInventoryOutlivesDeliveryTransportTimeout(t *testing.T) {
+	inventory := validCheckpointInventory(t, false)
+	inventoryValues := make([]any, len(inventory))
+	proofs := make(map[string]string, len(inventory)-1)
+	for index, row := range inventory {
+		inventoryValues[index] = row
+		if row.StreamEnvelopeVersion == EnvelopeVersion {
+			proofs[string(row.StreamSourceAdapter)+"\x00"+row.StreamProducerStreamID] =
+				checkpointBody(t, validCheckpointProof(row, false))
+		}
+	}
+	const deliveryTimeout = 20 * time.Millisecond
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		values := request.URL.Query()
+		query := checkpointRequestStatement(t, request)
+		if strings.Contains(query, "newest_reservation_revisions") {
+			if values.Get("max_execution_time") != "5" {
+				t.Fatalf("inventory max_execution_time=%q", values.Get("max_execution_time"))
+			}
+			// The delivery transport would have cancelled this request; the
+			// inventory read must be governed by its own, longer deadline.
+			select {
+			case <-time.After(5 * deliveryTimeout):
+				return checkpointHTTPResponse(checkpointBody(t, inventoryValues...)), nil
+			case <-request.Context().Done():
+				return nil, request.Context().Err()
+			}
+		}
+		if values.Get("max_execution_time") != "10" {
+			t.Fatalf("stream proof max_execution_time=%q", values.Get("max_execution_time"))
+		}
+		body, exists := proofs[values.Get("param_source_adapter")+"\x00"+values.Get("param_producer_stream_id")]
+		if !exists {
+			t.Fatalf("unexpected proof scope: %v", values)
+		}
+		return checkpointHTTPResponse(body), nil
+	})
+	loader, err := NewClickHouseCheckpointLoader(ClickHouseSinkConfig{
+		URL: "http://clickhouse:8123", Database: "property_catalog_dev_checkpoint_test",
+		Environment: DevelopmentEnvironment,
+		Username:    "ledger_reader", Password: "secret", RequestTimeout: deliveryTimeout,
+		RoundTripper: transport,
+	}, CheckpointLoaderLimits{
+		MaxStreams:        DefaultCheckpointMaxStreams,
+		InventoryMaxBytes: DefaultCheckpointInventoryMaxBytes,
+		InventoryTimeout:  5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoints, err := loader.LoadCheckpoints(context.Background())
+	if err != nil || len(checkpoints) != 10 {
+		t.Fatalf("checkpoints=%d err=%v", len(checkpoints), err)
+	}
+}
+
+func TestCheckpointLoaderBoundsInventoryTimeout(t *testing.T) {
+	base := ClickHouseSinkConfig{
+		URL: "http://clickhouse:8123", Database: "property_catalog_dev_checkpoint_test",
+		Environment: DevelopmentEnvironment, Username: "ledger_reader", Password: "secret",
+	}
+	loader, err := NewClickHouseCheckpointLoader(base, CheckpointLoaderLimits{
+		MaxStreams: DefaultCheckpointMaxStreams, InventoryMaxBytes: DefaultCheckpointInventoryMaxBytes,
+	})
+	if err != nil || loader.inventoryTimeout != DefaultCheckpointInventoryTimeout ||
+		loader.inventoryClient == nil || loader.inventoryClient.Timeout != DefaultCheckpointInventoryTimeout {
+		t.Fatalf("zero inventory timeout did not resolve to the default: %+v err=%v", loader, err)
+	}
+	for _, timeout := range []time.Duration{-time.Second, MaximumCheckpointInventoryTimeout + time.Second} {
+		if _, err := NewClickHouseCheckpointLoader(base, CheckpointLoaderLimits{
+			MaxStreams: DefaultCheckpointMaxStreams, InventoryMaxBytes: DefaultCheckpointInventoryMaxBytes,
+			InventoryTimeout: timeout,
+		}); err == nil {
+			t.Fatalf("inventory timeout %s was accepted", timeout)
+		}
 	}
 }

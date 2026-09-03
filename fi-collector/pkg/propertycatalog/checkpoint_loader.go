@@ -439,11 +439,19 @@ const (
 	MaximumCheckpointMaxStreams        = 262_144
 	DefaultCheckpointInventoryMaxBytes = int64(64 << 20)
 	MaximumCheckpointInventoryMaxBytes = int64(512 << 20)
+	// The one-shot startup inventory streams every producer stream's
+	// checkpoint state and is bounded by its own deadline. Per-delivery
+	// stages keep MaxDeliveryTimeout.
+	DefaultCheckpointInventoryTimeout = 120 * time.Second
+	MaximumCheckpointInventoryTimeout = 600 * time.Second
 )
 
 type CheckpointLoaderLimits struct {
 	MaxStreams        int
 	InventoryMaxBytes int64
+	// InventoryTimeout bounds the startup inventory query end to end. Zero
+	// selects DefaultCheckpointInventoryTimeout.
+	InventoryTimeout time.Duration
 }
 
 type CheckpointLoader interface {
@@ -452,6 +460,8 @@ type CheckpointLoader interface {
 
 type ClickHouseCheckpointLoader struct {
 	sink              *ClickHouseSink
+	inventoryClient   *http.Client
+	inventoryTimeout  time.Duration
 	now               func() time.Time
 	maxStreams        int
 	inventoryMaxBytes int64
@@ -482,12 +492,26 @@ func NewClickHouseCheckpointLoader(
 			MaximumCheckpointInventoryMaxBytes,
 		)
 	}
+	if limits.InventoryTimeout == 0 {
+		limits.InventoryTimeout = DefaultCheckpointInventoryTimeout
+	}
+	if limits.InventoryTimeout < time.Second || limits.InventoryTimeout > MaximumCheckpointInventoryTimeout {
+		return nil, fmt.Errorf(
+			"propertycatalog: checkpoint inventory timeout must be in [1s,%s]",
+			MaximumCheckpointInventoryTimeout,
+		)
+	}
 	sink, err := NewClickHouseSink(cfg)
 	if err != nil {
 		return nil, err
 	}
+	inventoryClient := &http.Client{
+		Transport: sink.client.Transport, Timeout: limits.InventoryTimeout,
+		CheckRedirect: sink.client.CheckRedirect,
+	}
 	return &ClickHouseCheckpointLoader{
-		sink: sink, now: time.Now,
+		sink: sink, inventoryClient: inventoryClient, inventoryTimeout: limits.InventoryTimeout,
+		now:        time.Now,
 		maxStreams: limits.MaxStreams, inventoryMaxBytes: limits.InventoryMaxBytes,
 	}, nil
 }
@@ -636,9 +660,10 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 	inventory := make([]checkpointInventoryJSON, 0, 16)
 	err := l.queryJSONEachRow(
 		ctx,
+		l.inventoryClient,
 		checkpointInventoryQuery,
 		map[string]string{"param_inventory_limit": fmt.Sprintf("%d", l.maxStreams+1)},
-		map[string]string{"max_execution_time": "10"},
+		map[string]string{"max_execution_time": fmt.Sprintf("%d", int64(l.inventoryTimeout/time.Second))},
 		l.maxStreams,
 		l.inventoryMaxBytes,
 		"checkpoint inventory",
@@ -718,6 +743,7 @@ func (l *ClickHouseCheckpointLoader) loadCheckpointStreamProof(
 	rows := make([]checkpointStreamProofJSON, 0, 1)
 	err := l.queryJSONEachRow(
 		ctx,
+		l.sink.client,
 		checkpointStreamQuery,
 		params,
 		settings,
@@ -746,6 +772,7 @@ func (l *ClickHouseCheckpointLoader) deliveryLedgerNonempty(ctx context.Context)
 	rows := make([]checkpointLedgerProbeJSON, 0, 1)
 	err := l.queryJSONEachRow(
 		ctx,
+		l.sink.client,
 		checkpointLedgerProbeQuery,
 		nil,
 		map[string]string{"max_execution_time": "2"},
@@ -775,6 +802,7 @@ func (l *ClickHouseCheckpointLoader) deliveryLedgerNonempty(ctx context.Context)
 
 func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 	ctx context.Context,
+	client *http.Client,
 	statement string,
 	params map[string]string,
 	settings map[string]string,
@@ -783,7 +811,7 @@ func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 	label string,
 	visit func(int, []byte) error,
 ) error {
-	if ctx == nil || statement == "" || maxRows < 1 || maxBytes < 1 || label == "" || visit == nil {
+	if ctx == nil || client == nil || statement == "" || maxRows < 1 || maxBytes < 1 || label == "" || visit == nil {
 		return errors.New("propertycatalog: invalid bounded checkpoint query")
 	}
 	endpoint := *l.sink.baseURL
@@ -807,7 +835,7 @@ func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 	}
 	request.Header.Set("Content-Type", "text/plain; charset=utf-8")
 	request.SetBasicAuth(l.sink.username, l.sink.password)
-	response, err := l.sink.client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("propertycatalog: %s: %w", label, err)
 	}
