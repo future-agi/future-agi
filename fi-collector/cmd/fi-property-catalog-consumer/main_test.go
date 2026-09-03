@@ -151,6 +151,29 @@ func TestProductionConsumerRequiresExactGateMatchingDatabaseAndLedgerSeed(t *tes
 	}
 }
 
+func TestCheckpointInventoryTimeoutSupportsOnlyBoundedEnvironmentOverrides(t *testing.T) {
+	cfg, err := loadConfig([]string{"--start-sequence-one-only"}, mapLookup(validEnvironment()))
+	if err != nil || cfg.checkpointLimits.InventoryTimeout != propertycatalog.DefaultCheckpointInventoryTimeout {
+		t.Fatalf("default inventory timeout=%s err=%v", cfg.checkpointLimits.InventoryTimeout, err)
+	}
+	values := validEnvironment()
+	values[envCheckpointTimeout] = "90s"
+	cfg, err = loadConfig([]string{"--start-sequence-one-only"}, mapLookup(values))
+	if err != nil || cfg.checkpointLimits.InventoryTimeout != 90*time.Second ||
+		cfg.ledger.RequestTimeout != propertycatalog.DefaultDeliveryTransportTimeout {
+		t.Fatalf("inventory timeout must not touch the delivery transport: %+v err=%v", cfg.checkpointLimits, err)
+	}
+	for _, value := range []string{"0s", "-5s", "11m", "invalid", " 90s", ""} {
+		values := validEnvironment()
+		values[envCheckpointTimeout] = value
+		if _, err := loadConfig(
+			[]string{"--start-sequence-one-only"}, mapLookup(values),
+		); err == nil || !strings.Contains(err.Error(), envCheckpointTimeout) {
+			t.Fatalf("value=%q error=%v", value, err)
+		}
+	}
+}
+
 func TestProductionConsumerBindsToConfiguredProductionDatabase(t *testing.T) {
 	const isolated = "th7247_catalog_prod_20260823a"
 	isolatedEnvironment := func() map[string]string {
