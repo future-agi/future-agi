@@ -126,3 +126,116 @@
 - first create returns 200 and persists the view
 - second create with the same (project, user, name) returns 400, not a silent upsert
 - renaming another view onto the taken name returns 400
+
+## prompts
+
+### PROMPT-E2E-001 — a prompt created from the workbench appears in All Prompts
+
+**Goal:** A user creates a new prompt from the workbench and finds it in the All Prompts list  
+**Spec:** `flows/prompts/create-prompt.spec.ts:21`  
+**Tags:** —
+
+**User steps:**
+
+1. open All Prompts
+2. click Create prompt
+3. choose "Start from scratch"
+4. land on the editor for the new draft
+5. return to All Prompts
+6. read the new row
+
+**Backend state verified:**
+
+- create-draft persists a PromptTemplate in PG model_hub_prompttemplate, scoped to the actor org, deleted=false
+- the backend names an unnamed draft Untitled-<n>, the next free number in the org
+- the All Prompts list endpoint returns that prompt with type PROMPT
+- the list renders exactly one row linking to the new prompt id
+
+### PROMPT-E2E-002 — a prompt filed into a folder shows up under that folder
+
+**Goal:** A user files a prompt into a folder they created, and the folder shows that prompt rather than the whole library  
+**Spec:** `flows/prompts/folder-organisation.spec.ts:27`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a prompt by API
+2. create a folder from the sidebar
+3. return to All Prompts
+4. open the prompt's row menu and move it into the folder
+5. open the folder from the sidebar
+6. read its rows
+
+**Backend state verified:**
+
+- the folder is a PG model_hub_prompt_folder row, org-scoped, parent_folder null, deleted=false
+- Move sets prompt_folder_id on the prompt row to that folder
+- the list endpoint scoped by prompt_folder returns exactly the moved prompt
+- All Prompts renders the folder as its own row alongside prompts
+- the folder view renders exactly the moved prompt
+
+### PROMPT-E2E-003 — search from All Prompts finds a prompt inside a folder
+
+**Goal:** A user searching from All Prompts finds a prompt even though it lives inside a folder, and sees which folder that is  
+**Spec:** `flows/prompts/search.spec.ts:24`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a folder, a prompt inside it and a loose prompt sharing one minted token
+2. seed a decoy prompt that does not carry the token
+3. open All Prompts
+4. type the token into the search field
+5. read the rows once the debounce settles
+
+**Backend state verified:**
+
+- the list endpoint with name=<token> returns both prompts and the folder, and not the decoy
+- the in-folder prompt is returned from All Prompts without prompt_folder being sent — search is not folder-scoped
+- the rendered row set equals exactly the three seeded items
+- the sort and breadcrumb bar is hidden while a search is active
+- the in-folder prompt row names the folder it lives in
+
+### PROMPT-E2E-004 — sorting and paging the prompt list keeps it complete
+
+**Goal:** A user sorting and paging the prompt list gets a stable ordering with no row lost or repeated  
+**Spec:** `flows/prompts/sort-and-paging.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a folder and eleven prompts whose names sort unambiguously
+2. open All Prompts
+3. widen the page size and sort by Name descending
+4. toggle the same sort to ascending
+5. return to ten per page and step from page 1 to page 2
+
+**Backend state verified:**
+
+- the list endpoint returns the seeded prompts in the requested sort_by/sort_order, both directions
+- the UI's rendered order of the seeded prompts matches the API's for the same query
+- paging the same query never repeats a row and covers every seeded prompt
+- the "No.of prompts" count is the prompt count and excludes the folder rows the same response carries
+
+### PROMPT-E2E-005 — renaming and deleting a prompt from its row
+
+**Goal:** A user renames a prompt from its row and deletes one they no longer want, and the list reflects both  
+**Spec:** `flows/prompts/rename-and-delete.spec.ts:23`  
+**Tags:** —
+
+**User steps:**
+
+1. seed two prompts
+2. open All Prompts
+3. rename the first from its row menu
+4. rename the second to that same name in the dialog and read the refusal
+5. delete the second from its row menu
+6. read the list
+
+**Backend state verified:**
+
+- save-name persists the new name on the PG row
+- renaming to a name already used in the org is refused with a 400, the dialog surfaces the error and stays open, and the second prompt's name is unchanged in PG
+- bulk-delete soft-deletes: the PG row survives with deleted=true
+- the list endpoint no longer returns the deleted prompt but still returns the renamed one
+- the list shows the renamed row and no row for the deleted prompt
