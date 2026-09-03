@@ -1,9 +1,13 @@
-"""Cloud Marketplace usage reporting schedules.
+"""Cloud Marketplace schedules: one supervisor and two reporting jobs.
 
-Hourly reporting, which is the cadence Google's usage reporting guide states.
+The supervisor keeps the Pub/Sub consumer alive; nothing else starts it.
+
+Hourly reporting is the cadence Google's usage reporting guide states.
 Reconciliation runs daily: it is the only thing that detects a silent
 under-report, since nobody complains about being charged too little.
 """
+
+from typing import Any
 
 import structlog
 
@@ -11,6 +15,13 @@ from tfc.temporal.drop_in import temporal_activity
 from tfc.temporal.schedules.config import ScheduleConfig
 
 logger = structlog.get_logger(__name__)
+
+
+def _consumer_workflow() -> Any:
+    """Lazy import: the workflow module pulls in temporalio's sandbox guards."""
+    from tfc.temporal.marketplace.workflows import GCPMarketplaceConsumerWorkflow
+
+    return GCPMarketplaceConsumerWorkflow
 
 
 @temporal_activity(time_limit=900, queue="default")
@@ -32,6 +43,19 @@ def reconcile_gcp_marketplace_usage_activity():
 
 
 MARKETPLACE_SCHEDULES = [
+    # The consumer is a singleton that runs forever, so this is a supervisor
+    # rather than a job: the default SKIP overlap policy makes every tick a
+    # no-op while it is alive, and restarts it within 5 minutes if it dies.
+    # The fixed workflow id means a missed skip cannot produce two consumers
+    # racing on the same subscription.
+    ScheduleConfig(
+        schedule_id="gcp-marketplace-consumer",
+        activity_name="drain_gcp_marketplace_events_activity",
+        interval_seconds=300,
+        queue="default",
+        description="Keep the Marketplace Pub/Sub consumer running",
+        workflow_class=_consumer_workflow(),
+    ),
     ScheduleConfig(
         schedule_id="gcp-marketplace-usage-report",
         activity_name="report_gcp_marketplace_usage_activity",
