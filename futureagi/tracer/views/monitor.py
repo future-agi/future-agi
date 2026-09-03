@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import structlog
 from django.core.exceptions import PermissionDenied
-from django.db.models import Count, Exists, Max, OuterRef, Q
+from django.db.models import Count, Exists, Max, Min, OuterRef, Q
 from django.http import Http404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -239,6 +239,19 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 data["last_triggered_at"] = latest_log.created_at
             else:
                 data["last_triggered_at"] = None
+
+            # The span this alert has actually fired over, aggregated before the
+            # type filter and pagination below. "View Trace" on the alert header
+            # has no single fire to scope to, and picking one out of
+            # logs["results"] would follow whichever slice the issues grid last
+            # requested. Both bounds are nullable on the model, so alerts that
+            # fired before those columns existed yield None rather than a
+            # half-open range.
+            window = logs_queryset.aggregate(
+                start=Min("time_window_start"), end=Max("time_window_end")
+            )
+            data["window_start"] = window["start"]
+            data["window_end"] = window["end"]
 
             if log_types:
                 logs_queryset = logs_queryset.filter(type__in=log_types)
