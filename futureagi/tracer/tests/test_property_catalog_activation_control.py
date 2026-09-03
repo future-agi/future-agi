@@ -347,6 +347,29 @@ def test_production_selector_honors_activate_and_disable_and_dev_is_unwired() ->
     assert unavailable.value.reason == "control_disabled"
 
 
+def test_production_selector_accepts_native_clickhouse_uuid_fields() -> None:
+    store = _Store((_qualified(1, 9),))
+    activated = _activate_latest(store)
+    row = activated.event.as_row()
+    for field in (
+        "organization_id",
+        "workspace_id",
+        "request_id",
+        "target_build_token",
+    ):
+        row[field] = uuid.UUID(row[field])
+
+    selector = ClickHouseActivationControlSelector(
+        _QueryExecutor([row]),
+        database=PROD_DATABASE,
+    )
+
+    assert selector.select_target(
+        scope={"organization_id": ORG, "workspace_id": WORKSPACE},
+        timeout_ms=500,
+    ) == _target(1)
+
+
 class _CatalogClient:
     catalog_database = PROD_DATABASE
 
