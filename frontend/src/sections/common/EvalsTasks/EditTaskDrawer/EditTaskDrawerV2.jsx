@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Drawer,
   FormHelperText,
   IconButton,
@@ -39,6 +41,7 @@ import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { red } from "src/theme/palette";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 import {
   extractAttributeFilters,
   getTaskFilterApiKey,
@@ -51,6 +54,8 @@ import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 // ── Configured Eval Card ──
 
@@ -88,7 +93,7 @@ const ConfiguredEvalCard = ({ evalItem, onRemove, isEditing }) => {
             {mappedKeys.slice(0, 3).map((key) => (
               <Chip
                 key={key}
-                label={`${key} → ${evalItem.mapping[key]}`}
+                label={mappingChipLabel(key, evalItem.mapping[key])}
                 size="small"
                 sx={{
                   fontSize: "10px",
@@ -185,7 +190,8 @@ const EditTaskDrawerV2Content = ({
     enabled: !!observeId,
   });
 
-  // Debounced filters for API calls
+  // Debounced filters for configured-eval lookup only. Attribute mapping uses
+  // the exact retained-key cursor below and is independent of task filters.
   const _filters = useMemo(() => {
     return getNewTaskFilters(formValues, project, true).filters || {};
   }, [formValues, project]);
@@ -210,27 +216,16 @@ const EditTaskDrawerV2Content = ({
     if (configuredEvalList) replace(configuredEvalList);
   }, [configuredEvalList, replace]);
 
-  // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(filters),
-        },
-      }),
-    select: (d) => d.data?.result,
+  const {
+    sourceColumns,
+    attributeFields: evalAttributes,
+    onSourceColumnSearchChange,
+    sourceColumnInventoryControls,
+  } = useTaskEvalAttributeInventory({
+    projectId: project,
+    rowType,
+    enabled: Boolean(project),
   });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   // Fetch project list
   const { data: projectsList } = useQuery({
@@ -683,7 +678,11 @@ const EditTaskDrawerV2Content = ({
         open={evalPickerOpen}
         onClose={() => setEvalPickerOpen(false)}
         source="task"
+        sourceId={project || ""}
+        sourceRowType={rowType}
         sourceColumns={sourceColumns}
+        onSourceColumnSearchChange={onSourceColumnSearchChange}
+        sourceColumnInventoryControls={sourceColumnInventoryControls}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
       />
@@ -713,7 +712,14 @@ const EditTaskDrawerV2 = ({
   const theme = useTheme();
   const taskId = selectedRow?.id;
 
-  const { data: taskDetails } = useGetTaskData(taskId, {
+  const {
+    data: taskDetails,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useGetTaskData(taskId, {
     enabled: !!taskId && open,
   });
 
@@ -740,6 +746,40 @@ const EditTaskDrawerV2 = ({
         BackdropProps: { style: { backgroundColor: "rgba(0, 0, 0, 0.3)" } },
       }}
     >
+      {isLoading && !taskDetails && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      )}
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ m: 2, flexShrink: 0 }}
+        >
+          {getSafeActionErrorMessage(
+            error,
+            "Task details could not be loaded.",
+          )}
+          {taskDetails ? " Existing task details are still shown." : ""}
+        </Alert>
+      )}
       {taskDetails && (
         <EditTaskDrawerV2Content
           selectedRow={selectedRow}

@@ -151,6 +151,18 @@ describe("resolveMappingFromRow", () => {
     ]);
     expect(out).toEqual({ note: "from-row" });
   });
+
+  it("omits a non-string mapping value instead of throwing on it", () => {
+    // Called out as a behaviour change: this used to throw out of the walker
+    // and unmount the page. The variable is now simply absent, and the panel
+    // labels it invalid so the owner can see which one to re-map.
+    const out = resolveMappingFromRow(
+      { bad: { value: "input.value" }, good: "input.value" },
+      spanDetail,
+    );
+    expect(out).toEqual({ good: "hello" });
+    expect("bad" in out).toBe(false);
+  });
 });
 
 describe("executeEvalForRow — single eval", () => {
@@ -204,9 +216,13 @@ describe("executeEvalForRow — single eval", () => {
     });
   });
 
-  it("returns ok:false with errorMessage on non-status response", async () => {
+  it("does not trust an error payload carried by a successful response", async () => {
     POST.mockResolvedValueOnce({
-      data: { status: false, result: "boom" },
+      data: {
+        status: false,
+        result:
+          "Code: 159. DB::Exception: Timeout exceeded; SELECT secret FROM spans",
+      },
     });
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
@@ -215,10 +231,14 @@ describe("executeEvalForRow — single eval", () => {
       spanDetail: {},
       mapping: {},
     });
-    expect(result).toMatchObject({ ok: false, errorMessage: "boom" });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Evaluation failed. Please retry.",
+    });
+    expect(result.errorMessage).not.toContain("DB::Exception");
   });
 
-  it("catches axios throw and returns ok:false", async () => {
+  it("does not expose an untrusted thrown error message", async () => {
     POST.mockRejectedValueOnce({ message: "network down" });
     const result = await executeEvalForRow({
       evalItem: { template_id: "tpl-1" },
@@ -227,7 +247,30 @@ describe("executeEvalForRow — single eval", () => {
       spanDetail: {},
       mapping: {},
     });
-    expect(result).toMatchObject({ ok: false, errorMessage: "network down" });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Failed to run evaluation. Please retry.",
+    });
+  });
+
+  it("preserves a concise validation error from a safe response status", async () => {
+    POST.mockRejectedValueOnce({
+      response: {
+        status: 400,
+        data: { detail: "Map every required input before testing." },
+      },
+    });
+    const result = await executeEvalForRow({
+      evalItem: { template_id: "tpl-1" },
+      rowType: "Span",
+      currentRow: { span_id: "s1" },
+      spanDetail: {},
+      mapping: {},
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      errorMessage: "Map every required input before testing.",
+    });
   });
 });
 

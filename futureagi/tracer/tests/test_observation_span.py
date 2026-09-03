@@ -7,9 +7,11 @@ Tests for /tracer/observation-span/ endpoints.
 import json
 import uuid
 from datetime import timedelta
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 
@@ -18,6 +20,7 @@ from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import AnnotationTypeChoices, FeedbackSourceChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.evals_metric import Feedback
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -160,6 +163,38 @@ class TestObservationSpanRetrieveAPI:
 class TestObservationSpanWorkspaceScopeAPI:
     """Same-organization spans must stay scoped to the requested workspace."""
 
+    def test_project_scope_without_workspace_remains_organization_scoped(
+        self, organization, observe_project, user
+    ):
+        """API-key requests without a workspace cannot see another tenant."""
+        from accounts.models.organization import Organization
+        from tracer.views.observation_span import _project_workspace_scope_q
+
+        foreign_organization = Organization.objects.create(
+            name=f"Foreign Span Org {uuid.uuid4().hex[:8]}"
+        )
+        foreign_project = Project.no_workspace_objects.create(
+            name=f"Foreign Span Project {uuid.uuid4().hex[:8]}",
+            organization=foreign_organization,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            metadata={},
+        )
+        request = SimpleNamespace(
+            organization=organization,
+            user=user,
+            workspace=None,
+        )
+
+        visible_ids = set(
+            Project.no_workspace_objects.filter(
+                _project_workspace_scope_q(request, project_prefix=""),
+                id__in=(observe_project.id, foreign_project.id),
+            ).values_list("id", flat=True)
+        )
+
+        assert visible_ids == {observe_project.id}
+
     def test_retrieve_rejects_same_org_other_workspace_span(
         self, auth_client, organization, user
     ):
@@ -184,6 +219,70 @@ class TestObservationSpanWorkspaceScopeAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_eval_detail_rejects_same_org_other_workspace_config_before_ch(
+        self,
+        auth_client,
+        organization,
+        user,
+        eval_template,
+    ):
+        _, other_project, _, _, other_span = make_same_org_other_workspace_span(
+            organization, user, trace_type="observe"
+        )
+        foreign_config = CustomEvalConfig.no_workspace_objects.create(
+            name=f"Other Workspace Eval {uuid.uuid4().hex[:8]}",
+            project=other_project,
+            eval_template=eval_template,
+        )
+
+        with patch(
+            "tracer.views.observation_span.V2AnalyticsQueryService"
+        ) as analytics_cls:
+            response = auth_client.get(
+                "/tracer/observation-span/get_evaluation_details/",
+                {
+                    "observation_span_id": other_span.id,
+                    "custom_eval_config_id": str(foreign_config.id),
+                },
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        analytics_cls.assert_not_called()
+
+    def test_eval_detail_passes_authorized_config_project_anchor_to_ch(
+        self,
+        auth_client,
+        observation_span,
+        custom_eval_config,
+    ):
+        with patch(
+            "tracer.views.observation_span.V2AnalyticsQueryService"
+        ) as analytics_cls:
+            analytics_cls.return_value.get_eval_detail_ch.return_value = {
+                "output_bool": 1,
+                "output_float": None,
+                "output_str_list": [],
+                "output_str": None,
+                "eval_explanation": "passed",
+                "error": 0,
+                "error_message": None,
+                "output_metadata": {},
+            }
+            response = auth_client.get(
+                "/tracer/observation-span/get_evaluation_details/",
+                {
+                    "observation_span_id": observation_span.id,
+                    "custom_eval_config_id": str(custom_eval_config.id),
+                },
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        analytics_cls.return_value.get_eval_detail_ch.assert_called_once_with(
+            observation_span.id,
+            str(custom_eval_config.id),
+            project_id=str(custom_eval_config.project_id),
+        )
 
     def test_root_spans_omits_same_org_other_workspace_trace(
         self, auth_client, organization, user
@@ -527,6 +626,69 @@ class TestObservationSpanListSpansAPI:
         # Check for expected keys
         assert "metadata" in data or "table" in data or "column_config" in data
 
+    @override_settings(
+        CLICKHOUSE_V2={"QUERY_TYPES_V2_ONLY": "", "QUERY_TYPES_V2_PRIMARY": ""}
+    )
+    def test_list_spans_uses_direct_v2_pair_when_routing_is_disabled(
+        self, auth_client, project_version
+    ):
+        from tracer.views.observation_span import ObservationSpanView
+
+        analytics = MagicMock(name="v2_span_list_analytics")
+        captured = {}
+
+        def fake_list(
+            view,
+            request,
+            project_version_id,
+            project_version,
+            supplied_analytics,
+            validated_data,
+            *,
+            read_deadline=None,
+        ):
+            captured["analytics"] = supplied_analytics
+            captured["read_deadline"] = read_deadline
+            return view._gm.success_response(
+                {"metadata": {"total_rows": 0}, "table": [], "column_config": []}
+            )
+
+        with (
+            patch(
+                "tracer.views.observation_span.V2AnalyticsQueryService",
+                return_value=analytics,
+            ) as v2_service,
+            patch(
+                "tracer.views.observation_span.AnalyticsQueryService",
+                side_effect=AssertionError("legacy span-list service selected"),
+            ) as legacy_service,
+            patch(
+                "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
+                side_effect=AssertionError("SPAN_LIST dispatch was consulted"),
+            ) as dispatch,
+            patch(
+                "tracer.services.clickhouse.v2.query_service.query_service_for_builder",
+                side_effect=AssertionError("SPAN_LIST service remap was consulted"),
+            ) as service_remap,
+            patch.object(
+                ObservationSpanView,
+                "_list_spans_non_observe_clickhouse",
+                fake_list,
+            ),
+        ):
+            response = auth_client.get(
+                "/tracer/observation-span/list_spans/",
+                {"project_version_id": str(project_version.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert captured["analytics"] is analytics
+        assert captured["read_deadline"] is not None
+        v2_service.assert_called_once_with()
+        legacy_service.assert_not_called()
+        dispatch.assert_not_called()
+        service_remap.assert_not_called()
+
     def test_list_spans_with_pagination(
         self, auth_client, project, project_version, trace, multiple_spans
     ):
@@ -588,17 +750,12 @@ class TestObservationSpanListSpansAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_list_spans_falls_back_to_postgres_when_clickhouse_fails(
-        self, auth_client, project_version, observation_span, monkeypatch
+    def test_list_spans_does_not_fall_back_to_postgres_when_clickhouse_fails(
+        self, auth_client, project_version, monkeypatch
     ):
-        """Unlike the fail-closed observe sibling, the experiment/prototype
-        `list_spans` path keeps the PG fallback: a CH error returns PG rows
-        rather than 400ing the prototype span list."""
+        """Programming defects preserve sanitized 400 without a PG fallback."""
         from tracer.services.clickhouse.query_service import QueryType
         from tracer.views.observation_span import ObservationSpanView
-
-        observation_span.project_version = project_version
-        observation_span.save(update_fields=["project_version"])
 
         monkeypatch.setattr(
             "tracer.views.observation_span.AnalyticsQueryService.should_use_clickhouse",
@@ -621,14 +778,22 @@ class TestObservationSpanListSpansAPI:
             fail_clickhouse,
         )
 
+        def fail_if_postgres_is_called(*_args, **_kwargs):
+            raise AssertionError("Postgres telemetry fallback must not be called")
+
+        monkeypatch.setattr(
+            ObservationSpanView,
+            "_list_spans_postgres",
+            fail_if_postgres_is_called,
+        )
+
         response = auth_client.get(
             "/tracer/observation-span/list_spans/",
             {"project_version_id": str(project_version.id), "filters": "[]"},
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        rows = get_result(response).get("table", [])
-        assert any(row["span_id"] == observation_span.id for row in rows)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "clickhouse unavailable" not in str(response.json())
 
 
 @pytest.mark.integration
@@ -645,9 +810,17 @@ class TestObservationSpanListSpansObserveAPI:
         assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_spans_observe_missing_project(self, auth_client):
-        """List spans observe fails without project ID."""
-        response = auth_client.get("/tracer/observation-span/list_spans_observe/")
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        """An empty organization scope returns an exact empty page."""
+        with patch(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService"
+        ) as analytics_cls:
+            response = auth_client.get("/tracer/observation-span/list_spans_observe/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["metadata"]["total_rows"] == 0
+        assert result["table"] == []
+        analytics_cls.assert_not_called()
 
     def test_list_spans_observe_success(
         self, auth_client, observe_project, trace_session, session_trace
@@ -670,11 +843,97 @@ class TestObservationSpanListSpansObserveAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    @override_settings(
+        CLICKHOUSE_V2={"QUERY_TYPES_V2_ONLY": "", "QUERY_TYPES_V2_PRIMARY": ""}
+    )
+    def test_list_spans_observe_uses_direct_v2_pair_when_routing_is_disabled(
+        self, auth_client, observe_project
+    ):
+        from tracer.views.observation_span import ObservationSpanView
+
+        analytics = MagicMock(name="v2_observe_span_list_analytics")
+        captured = {}
+
+        def fake_list(
+            view,
+            request,
+            project_id,
+            validated_data,
+            supplied_analytics,
+            **kwargs,
+        ):
+            captured["analytics"] = supplied_analytics
+            return view._gm.success_response(
+                {"metadata": {"total_rows": 0}, "table": [], "config": []}
+            )
+
+        with (
+            patch(
+                "tracer.views.observation_span.V2AnalyticsQueryService",
+                return_value=analytics,
+            ) as v2_service,
+            patch(
+                "tracer.views.observation_span.AnalyticsQueryService",
+                side_effect=AssertionError("legacy span-list service selected"),
+            ) as legacy_service,
+            patch(
+                "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
+                side_effect=AssertionError("SPAN_LIST dispatch was consulted"),
+            ) as dispatch,
+            patch(
+                "tracer.services.clickhouse.v2.query_service.query_service_for_builder",
+                side_effect=AssertionError("SPAN_LIST service remap was consulted"),
+            ) as service_remap,
+            patch.object(
+                ObservationSpanView,
+                "_list_spans_clickhouse",
+                fake_list,
+            ),
+        ):
+            response = auth_client.get(
+                "/tracer/observation-span/list_spans_observe/",
+                {"project_id": str(observe_project.id)},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert captured["analytics"] is analytics
+        v2_service.assert_called_once_with()
+        legacy_service.assert_not_called()
+        dispatch.assert_not_called()
+        service_remap.assert_not_called()
+
+    def test_list_spans_observe_rejects_nested_map_with_typed_400(
+        self, auth_client, observe_project
+    ):
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans_observe/",
+            {
+                "project_id": str(observe_project.id),
+                "filters": json.dumps(
+                    [
+                        {
+                            "column_id": "customer.context",
+                            "filter_config": {
+                                "col_type": "SPAN_ATTRIBUTE",
+                                "filter_type": "json",
+                                "filter_op": "contains",
+                                "filter_value": {"nested": ["vip"]},
+                            },
+                        }
+                    ]
+                ),
+            },
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        rendered = response.content.decode()
+        assert "Nested JSON map filter values are not supported" in rendered
+        assert "DB::Exception" not in rendered
+
     def test_list_spans_observe_fails_closed_when_clickhouse_fails(
         self, auth_client, observe_project, session_trace, monkeypatch
     ):
-        """CH is authoritative post-migration: a CH error surfaces as 400
-        rather than falling back to the dropped-table PG path."""
+        """CH is authoritative and programming defects return sanitized 500."""
         from tracer.services.clickhouse.query_service import QueryType
         from tracer.views.observation_span import ObservationSpanView
 
@@ -709,7 +968,9 @@ class TestObservationSpanListSpansObserveAPI:
             {"project_id": str(observe_project.id), "filters": "[]"},
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.json()["code"] == "server_error"
+        assert "clickhouse unavailable" not in str(response.json())
 
 
 @pytest.mark.integration
@@ -827,17 +1088,30 @@ class TestObservationSpanGraphMethodsAPI:
         # Accept 200 or 400
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
 
-    def test_get_graph_methods_filtered_system_metric_falls_back_to_postgres(
+    def test_get_graph_methods_filtered_system_metric_returns_503_without_postgres(
         self, auth_client, observe_project, monkeypatch
     ):
-        """Span graph filters use the list-query metric aliases in PG fallback."""
+        """A CH25 timeout returns 503 and never reads stale PG telemetry."""
+        from clickhouse_driver.errors import ServerException
+
+        from tracer.views.observation_span import ObservationSpanView
+
         monkeypatch.setattr(
             "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
             lambda self, query_type: True,
         )
         monkeypatch.setattr(
             "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query",
-            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                ServerException("private timeout detail", code=159)
+            ),
+        )
+        monkeypatch.setattr(
+            ObservationSpanView,
+            "_system_metric_graph_postgres",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("PostgreSQL telemetry fallback must not run")
+            ),
         )
 
         trace = Trace.objects.create(project=observe_project, name="Span Graph Trace")
@@ -878,8 +1152,50 @@ class TestObservationSpanGraphMethodsAPI:
             format="json",
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        assert isinstance(get_result(response).get("data"), list)
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        payload = response.json()
+        assert payload["code"] == "service_unavailable"
+        assert "private timeout detail" not in str(payload)
+
+    def test_get_graph_methods_rejects_foreign_eval_config_before_ch_read(
+        self,
+        auth_client,
+        observe_project,
+        project,
+        eval_template,
+        monkeypatch,
+    ):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        foreign_config = CustomEvalConfig.objects.create(
+            name=f"Foreign Eval {uuid.uuid4()}",
+            project=project,
+            eval_template=eval_template,
+        )
+        event_reads = []
+        monkeypatch.setattr(
+            "tracer.views.observation_span.fetch_eval_graph_ch",
+            lambda **kwargs: (
+                event_reads.append(kwargs) or {"metric_name": "x", "data": []}
+            ),
+        )
+
+        response = auth_client.post(
+            "/tracer/observation-span/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "hour",
+                "req_data_config": {
+                    "id": str(foreign_config.id),
+                    "type": "EVAL",
+                    "output_type": "SCORE",
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert event_reads == []
 
 
 @pytest.mark.integration
@@ -986,17 +1302,18 @@ class TestObservationSpanExportAPI:
     def test_export_spans_success(
         self, auth_client, project, project_version, trace, observation_span
     ):
-        """Export spans for a project version."""
+        """Span export remains available through the bounded CSV contract."""
         # Associate span with project version
         observation_span.project_version = project_version
         observation_span.save()
 
         response = auth_client.get(
             "/tracer/observation-span/get_spans_export_data/",
-            {"project_version_id": str(project_version.id)},
+            {"project_id": str(project.id)},
         )
-        # Can be 200 with file or 400 if no spans
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+        assert response.status_code == status.HTTP_200_OK
+        assert response["Content-Type"].startswith("text/csv")
+        assert "attachment" in response["Content-Disposition"]
 
 
 @pytest.mark.integration

@@ -47,6 +47,7 @@ import { PROVIDER_CHOICES } from "../constants";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import { copyToClipboard } from "src/utils/utils";
+import { HOST_API } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -443,9 +444,7 @@ const EditAgentDetails = ({
                   <Typography
                     typography={"s2_1"}
                     onClick={() => {
-                      copyToClipboard(
-                        "https://api.futureagi.com/tracer/webhook",
-                      );
+                      copyToClipboard(`${HOST_API}/tracer/webhook`);
                       enqueueSnackbar({
                         message: "Copied to clipboard",
                         variant: "success",
@@ -459,7 +458,7 @@ const EditAgentDetails = ({
                       },
                     }}
                   >
-                    https://api.futureagi.com/tracer/webhook
+                    {`${HOST_API}/tracer/webhook`}
                   </Typography>
                   <Typography typography={"s2_1"} color={"blue.500"}>
                     to the Agent Level Webhook URL on Retell

@@ -9,6 +9,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+PARTIAL_INPUT_WARNING_TYPE = "partial_input"
+
+PARTIAL_INPUT_MESSAGE = (
+    "Eval ran with some inputs empty. "
+    "Result may be less reliable. "
+    "Ignore if this is intentional."
+)
+
 
 def is_empty_value(value: Any) -> bool:
     """Return True when ``value`` is effectively empty for eval purposes."""
@@ -111,14 +119,10 @@ def validate_eval_inputs(
         warning = None
         if empty:
             warning = {
-                "type": "partial_input",
+                "type": PARTIAL_INPUT_WARNING_TYPE,
                 "empty_keys": empty,
                 "filled_keys": nonempty,
-                "message": (
-                    "Eval ran with some inputs empty. "
-                    "Result may be less reliable. "
-                    "Ignore if this is intentional."
-                ),
+                "message": PARTIAL_INPUT_MESSAGE,
             }
         return warning, normalized
 

@@ -31,18 +31,11 @@ export const buildDefaultDateEntry = (existingFilters, dateFilter) => {
 /**
  * Combine filters for the graph POST body.
  *
- * Two modes depending on whether the caller provides `extraFilters`:
- *   Trace/Span mode (`extraFilters` passed, LLMTracingView): strip `filters`
- *     down to the date entry only — other col-level filters (name, status, …)
- *     carry no col_type and the trace/span graph endpoint rejects them. All
- *     non-date graph filters come via `extraFilters` from the toolbar.
- *   Users/Sessions mode (`extraFilters` omitted → undefined): the caller
- *     already merged everything into `filters`; pass them all through
- *     unchanged so the users/sessions graph stays in sync with its table.
- *
- * The mode check is strict prop presence (`undefined`), NOT emptiness: an
- * empty extraFilters array is a valid trace-mode state (toolbar filters
- * cleared) and must still strip col-level filters.
+ * Keep the merge order stable so every visualization describes the same row
+ * set as its grid: validated grid/saved-view filters, explicit graph filters,
+ * Display filters, eval-only, then the date constraint. The first explicit
+ * created_at filter wins by that same source precedence; all other created_at
+ * entries are omitted so the graph never receives conflicting date ranges.
  *
  * UI-only keys (the FE React-key `id`, etc.) are NOT stripped here — callers
  * pass the result through `toBackendFilters` (../common) at the POST
@@ -51,19 +44,24 @@ export const buildDefaultDateEntry = (existingFilters, dateFilter) => {
 export const combineGraphFilters = ({
   filters,
   extraFilters,
+  metricFilters,
   dateFilter,
   hasEvalFilter,
 }) => {
-  const isTracingMode = extraFilters !== undefined;
-  const baseFilters = isTracingMode
-    ? (filters || []).filter(isCreatedAtFilter)
-    : filters || [];
-  const base = [...baseFilters, ...(extraFilters || [])];
+  const merged = [
+    ...(filters || []),
+    ...(extraFilters || []),
+    ...(metricFilters || []),
+  ];
+  const explicitDateFilter = merged.find(isCreatedAtFilter);
+  const nonDateFilters = merged.filter((filter) => !isCreatedAtFilter(filter));
 
   return [
-    ...base,
+    ...nonDateFilters,
     ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-    ...buildDefaultDateEntry(base, dateFilter),
+    ...(explicitDateFilter
+      ? [explicitDateFilter]
+      : buildDefaultDateEntry([], dateFilter)),
   ];
 };
 
@@ -75,3 +73,47 @@ export const selectPanelGraphFilters = (
   extraFilters,
   compareExtraFilters,
 ) => (filterTarget === "compare" ? compareExtraFilters : extraFilters);
+
+/**
+ * Return the one project selected by a positive Project filter.
+ *
+ * Cross-project user detail has no route-level project id. Its property,
+ * retained-attribute, and value catalogs can become project-scoped only after
+ * the user chooses Project in the filter panel. Do not guess a scope for a
+ * multi-project, negative, or otherwise non-equality predicate.
+ */
+export const singleProjectIdFromFilters = (filters) => {
+  const projectFilters = (filters || []).filter(
+    (filter) => filter?.column_id === "project_id",
+  );
+  if (projectFilters.length !== 1) return null;
+
+  const config = projectFilters[0]?.filter_config || {};
+  const operator = config.filter_op;
+  if (!new Set(["equals", "is", "in"]).has(operator)) return null;
+
+  const rawValue = config.filter_value;
+  const values = (Array.isArray(rawValue) ? rawValue : [rawValue]).filter(
+    (value) => typeof value === "string" && value.length > 0,
+  );
+  return values.length === 1 ? values[0] : null;
+};
+
+/**
+ * Resolve topology scopes independently for the two compare panes.
+ *
+ * Project Observe routes have one authoritative route project. Cross-project
+ * user detail has no such route scope, so each pane must supply its own single
+ * positive Project filter. Never let the currently edited filter panel choose
+ * the other pane's project.
+ */
+export const resolveAgentGraphProjectScopes = ({
+  routeProjectId,
+  primaryFilters,
+  compareFilters,
+}) => ({
+  primaryProjectId:
+    routeProjectId || singleProjectIdFromFilters(primaryFilters),
+  compareProjectId:
+    routeProjectId || singleProjectIdFromFilters(compareFilters),
+});

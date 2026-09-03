@@ -45,6 +45,7 @@ const BulkActionsBar = ({
   isSimulator,
   actions = DEFAULT_ACTIONS,
   allMatching = false,
+  selectedCountIsLowerBound = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const anchorRef = useRef(null);
@@ -54,8 +55,11 @@ const BulkActionsBar = ({
   const visibleActions = actions.filter(
     (a) =>
       (!a.simulatorOnly || isSimulator) &&
-      (!a.requiresSingle || selectedCount === 1),
+      (!a.requiresSingle ||
+        (!selectedCountIsLowerBound && selectedCount === 1)),
   );
+
+  const formattedCount = `${selectedCountIsLowerBound ? "≥" : ""}${selectedCount.toLocaleString()}`;
 
   return (
     <Stack direction="row" spacing={1} alignItems="center">
@@ -64,8 +68,10 @@ const BulkActionsBar = ({
         sx={{ fontSize: 13, color: "text.secondary", whiteSpace: "nowrap" }}
       >
         {allMatching
-          ? `All ${selectedCount.toLocaleString()} matching filter`
-          : `${selectedCount} selected`}
+          ? selectedCountIsLowerBound
+            ? `All matching filter (${formattedCount})`
+            : `All ${formattedCount} matching filter`
+          : `${formattedCount} selected`}
       </Typography>
 
       <Button
@@ -145,6 +151,7 @@ BulkActionsBar.propTypes = {
   isSimulator: PropTypes.bool,
   actions: PropTypes.array,
   allMatching: PropTypes.bool,
+  selectedCountIsLowerBound: PropTypes.bool,
 };
 
 export default React.memo(BulkActionsBar);

@@ -2,6 +2,7 @@ import React from "react";
 import SvgColor from "src/components/svg-color";
 import { z } from "zod";
 import CallLogsCellRenderer from "./CallLogs/CallLogsCellRenderer";
+import withVoiceQuickFilter from "./CallLogs/withVoiceQuickFilter";
 import VoiceCostCell from "./CallLogs/VoiceCostCell";
 import VoiceLatencyCell from "./CallLogs/VoiceLatencyCell";
 import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
@@ -15,6 +16,17 @@ import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/Evaluatio
 import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
+import {
+  isListCursorContinuationLimitError,
+  listContinuationParams,
+  loadExactListPage,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
+import { getVoiceCallFilterField } from "src/sections/projects/LLMTracing/voiceCallFilterFields";
+
+const voiceColumnLabel = (responseKey) => {
+  const field = getVoiceCallFilterField(responseKey);
+  return field?.columnLabel || field?.label || responseKey;
+};
 
 export const agentDefinitionSections = [
   {
@@ -430,6 +442,51 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       };
     }
 
+    // CHOICES `**` ids never resolve to an eval config, so the backend
+    // returns a matches-nothing subquery (query_builders/filters.py:1423).
+    const normalizedOutput = String(item.output_type || "")
+      .toUpperCase()
+      .replace(/[/ ]/g, "_");
+    const isFilterableEval =
+      !isReason && ["SCORE", "PASS_FAIL"].includes(normalizedOutput);
+    const EvalCell = (params) => {
+      const evalData = params?.data?.eval_outputs?.[dataKey] || {};
+      if (isReason) {
+        const reason = evalData?.reason;
+        return (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              height: "100%",
+              width: "100%",
+              padding: "4px 8px",
+              color: "text.primary",
+            }}
+          >
+            {reason || "-"}
+          </Box>
+        );
+      }
+      // PASS_FAIL carries a numeric pass rate — route it through the score
+      // (percentage) renderer so it shows "X%" instead of the pill path,
+      // which string-matches "fail" and would render 0% as a false "Pass".
+      const rawType = evalData?.output_type;
+      const isPassFail =
+        String(rawType || "")
+          .toLowerCase()
+          .replace(/[/ ]/g, "_") === "pass_fail";
+      return (
+        <EvalCellRenderer
+          value={{
+            ...evalData,
+            type: isPassFail ? "percentage" : rawType,
+            value: evalData.output,
+          }}
+        />
+      );
+    };
+
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
@@ -439,43 +496,25 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       headerComponent: CallLogsHeaderCellRenderer,
       headerComponentParams: { displayName },
       valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
-      cellRenderer: (params) => {
-        const evalData = params?.data?.eval_outputs?.[dataKey] || {};
-        if (isReason) {
-          const reason = evalData?.reason;
-          return (
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                height: "100%",
-                width: "100%",
-                padding: "4px 8px",
-                color: "text.primary",
-              }}
-            >
-              {reason || "-"}
-            </Box>
-          );
-        }
-        // PASS_FAIL carries a numeric pass rate — route it through the score
-        // (percentage) renderer so it shows "X%" instead of the pill path,
-        // which string-matches "fail" and would render 0% as a false "Pass".
-        const rawType = evalData?.output_type;
-        const isPassFail =
-          String(rawType || "")
-            .toLowerCase()
-            .replace(/[/ ]/g, "_") === "pass_fail";
-        return (
-          <EvalCellRenderer
-            value={{
-              ...evalData,
-              type: isPassFail ? "percentage" : rawType,
-              value: evalData.output,
-            }}
-          />
-        );
-      },
+      ...(isFilterableEval && {
+        context: {
+          sourceColumn: {
+            id: evalId,
+            name: displayName,
+            groupBy: "Evaluation Metrics",
+            outputType: item.output_type,
+          },
+        },
+      }),
+      cellRenderer: isFilterableEval
+        ? withVoiceQuickFilter(EvalCell, (params) => {
+            const output = params?.data?.eval_outputs?.[dataKey]?.output;
+            if (normalizedOutput !== "PASS_FAIL") return output;
+            // Only 0/100 maps to a token; an averaged rate has none.
+            const rate = Number(output);
+            return rate === 0 || rate === 100 ? output : null;
+          })
+        : EvalCell,
     };
   });
 };
@@ -622,6 +661,75 @@ const generateAnnotationColumnsFromConfig = (
   );
 };
 
+// Quick-filterable voice columns, keyed by grid field; `id` is the backend
+// filter id. Anything absent either has no backend filter or its displayed
+// value doesn't match what the filter compares against.
+const VOICE_QUICK_FILTER_COLUMNS = {
+  duration_seconds: {
+    id: "duration",
+    name: "Duration",
+    groupBy: "System Metrics",
+  },
+  avg_agent_latency_ms: {
+    id: "avg_agent_latency_ms",
+    name: "Agent latency",
+    groupBy: "System Metrics",
+  },
+  turn_count: {
+    id: "turn_count",
+    name: "Turn count",
+    groupBy: "System Metrics",
+  },
+  agent_talk_percentage: {
+    id: "agent_talk_percentage",
+    name: "% agent talk",
+    groupBy: "System Metrics",
+  },
+  user_interruption_count: {
+    id: "user_interruption_count",
+    name: "User interruptions",
+    groupBy: "System Metrics",
+  },
+  ai_interruption_count: {
+    id: "ai_interruption_count",
+    name: "Agent interruption",
+    groupBy: "System Metrics",
+  },
+  user_wpm: { id: "user_wpm", name: "User WPM", groupBy: "System Metrics" },
+  bot_wpm: { id: "bot_wpm", name: "Agent WPM", groupBy: "System Metrics" },
+  // No `groupBy` on purpose: this one is text, and the `System Metrics` branch
+  // in applyQuickFilters assumes numeric — it would emit
+  // `filter_value: ["customer-ended-call", ""]` into the number popover.
+  ended_reason: { id: "ended_reason", name: "Ended reason" },
+};
+
+// VoiceLatencyCell displays `avg_agent_latency_ms || turnLatencyAverage`, but
+// this column only filters the former — `turnLatencyAverage` is a separate
+// backend column (aliased `response_time`). Suppress the affordance when the
+// number on screen came from the fallback, so a click can never filter a value
+// the row never displayed. Returning null hides the button.
+export const getAgentLatencyFilterValue = (params) => {
+  const value = Number(params?.data?.avg_agent_latency_ms);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const VOICE_QUICK_FILTER_VALUE_GETTERS = {
+  avg_agent_latency_ms: getAgentLatencyFilterValue,
+};
+
+const withQuickFilterIfSupported = (column) => {
+  const sourceColumn = VOICE_QUICK_FILTER_COLUMNS[column.field];
+  if (!sourceColumn || !column.cellRenderer) return column;
+  return {
+    ...column,
+    context: { ...column.context, sourceColumn },
+    cellRenderer: withVoiceQuickFilter(
+      column.cellRenderer,
+      VOICE_QUICK_FILTER_VALUE_GETTERS[column.field],
+    ),
+  };
+};
+
 // Generate AG Grid columns from evalOutputs
 export const getCallLogsColumnDefs = (
   _rows = [],
@@ -654,7 +762,7 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Status",
+      headerName: voiceColumnLabel("status"),
       field: "status",
       flex: 0,
       minWidth: 100,
@@ -662,7 +770,7 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Duration",
+      headerName: voiceColumnLabel("duration_seconds"),
       field: "duration_seconds",
       flex: 0,
       minWidth: 90,
@@ -671,21 +779,21 @@ export const getCallLogsColumnDefs = (
 
     // ── Performance ───────────────────────────────────────────────────
     {
-      headerName: "Avg Latency",
+      headerName: voiceColumnLabel("avg_agent_latency_ms"),
       field: "avg_agent_latency_ms",
       flex: 0,
       minWidth: 140,
       cellRenderer: VoiceLatencyCell,
     },
     {
-      headerName: "Turn Count",
+      headerName: voiceColumnLabel("turn_count"),
       field: "turn_count",
       flex: 0,
       minWidth: 110,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Talk Ratio",
+      headerName: voiceColumnLabel("talk_ratio"),
       field: "talk_ratio",
       flex: 0,
       minWidth: 120,
@@ -695,14 +803,14 @@ export const getCallLogsColumnDefs = (
 
     // ── Resources ─────────────────────────────────────────────────────
     {
-      headerName: "Tokens",
+      headerName: voiceColumnLabel("gen_ai.usage.total_tokens"),
       field: "gen_ai.usage.total_tokens",
       flex: 0,
       minWidth: 220,
       cellRenderer: VoiceTokenCell,
     },
     {
-      headerName: "Cost",
+      headerName: voiceColumnLabel("cost_cents"),
       field: "cost_cents",
       flex: 0,
       minWidth: 120,
@@ -711,21 +819,21 @@ export const getCallLogsColumnDefs = (
 
     // ── Conversation quality ──────────────────────────────────────────
     {
-      headerName: "User Interrupts",
+      headerName: voiceColumnLabel("user_interruption_count"),
       field: "user_interruption_count",
       flex: 0,
       minWidth: 140,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Agent Interrupts",
+      headerName: voiceColumnLabel("ai_interruption_count"),
       field: "ai_interruption_count",
       flex: 0,
       minWidth: 140,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Ended Reason",
+      headerName: voiceColumnLabel("ended_reason"),
       field: "ended_reason",
       flex: 1,
       minWidth: 120,
@@ -741,28 +849,28 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Type",
+      headerName: voiceColumnLabel("call_type"),
       field: "call_type",
       flex: 0,
       minWidth: 90,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "User WPM",
+      headerName: voiceColumnLabel("user_wpm"),
       field: "user_wpm",
       flex: 0,
       minWidth: 110,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Agent WPM",
+      headerName: voiceColumnLabel("bot_wpm"),
       field: "bot_wpm",
       flex: 0,
       minWidth: 110,
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Agent Talk (%)",
+      headerName: voiceColumnLabel("agent_talk_percentage"),
       field: "agent_talk_percentage",
       flex: 0,
       minWidth: 130,
@@ -786,7 +894,7 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
     {
-      headerName: "Call ID",
+      headerName: voiceColumnLabel("call_id"),
       field: "call_id",
       flex: 1,
       minWidth: 120,
@@ -811,13 +919,17 @@ export const getCallLogsColumnDefs = (
     }));
   }
 
-  return [...baseColumns, ...evalColumns, ...annotationColumns];
+  return [
+    ...baseColumns.map(withQuickFilterIfSupported),
+    ...evalColumns,
+    ...annotationColumns,
+  ];
 };
 
 export const useAgentsList = () => {
   const { data, isLoading, error } = useQuery({
     queryKey: ["agents"],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       let allAgents = [];
       let page = 1;
       let totalPages = null;
@@ -853,12 +965,16 @@ export const useCallLogs = ({
   page,
   pageLimit,
   params,
+  paginationParams,
+  paginationRevision = 0,
+  cursorPagination,
+  paginationGeneration,
   enabled = true,
 }) => {
   const isProjectModule = module === "project";
   const condition = isProjectModule ? !!id : !!id && !!version;
   const queryKey = isProjectModule
-    ? ["callLogs", module, id, pageLimit, params, page]
+    ? ["callLogs", module, id, pageLimit, params, page, paginationRevision]
     : ["callLogs", module, id, version, pageLimit, params, page];
   const getEndpoint = () =>
     isProjectModule
@@ -866,19 +982,112 @@ export const useCallLogs = ({
       : endpoints.agentDefinitions.getCallLogs(id, version);
   const { data, isLoading, error } = useQuery({
     queryKey: queryKey,
-    queryFn: () =>
-      axios.get(getEndpoint(), {
-        params: { page, page_size: pageLimit, ...params },
-      }),
+    queryFn: async ({ signal }) => {
+      const baseParams = {
+        page,
+        page_size: pageLimit,
+        ...params,
+      };
+      if (isProjectModule && cursorPagination) {
+        const cursorBaseParams = { page_size: pageLimit, ...params };
+        const exactPage = await loadExactListPage({
+          pagination: cursorPagination,
+          pageNumber: page - 1,
+          targetRowCount: pageLimit,
+          cancellationSignal: signal,
+          loadResponse: (requestSignal) =>
+            axios.get(getEndpoint(), {
+              params: cursorPagination.requestParams(
+                page - 1,
+                cursorBaseParams,
+              ),
+              signal: requestSignal,
+            }),
+          nextResponse: (cursor, requestSignal) =>
+            axios.get(getEndpoint(), {
+              params: listContinuationParams(cursorBaseParams, cursor),
+              signal: requestSignal,
+            }),
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          rowIdentity: (row) =>
+            row?.call_id || row?.id || row?.trace_id || null,
+          isCurrent: () => cursorPagination.isCurrent(paginationGeneration),
+        });
+        const rawResponse = exactPage.response || {};
+        const payload = rawResponse.data || {};
+        const result = payload.result || payload;
+        const exactMetadata = {
+          pending: exactPage.pending,
+          stale: exactPage.stale,
+          isLastPage: exactPage.isLastPage,
+          canPrefetch: exactPage.canPrefetch,
+        };
+        const mergedResult = {
+          ...result,
+          results: exactPage.rows,
+          __exactPage: exactMetadata,
+        };
+        return {
+          ...rawResponse,
+          data: payload.result
+            ? {
+                ...payload,
+                ...mergedResult,
+                result: mergedResult,
+              }
+            : mergedResult,
+        };
+      }
+      return axios.get(getEndpoint(), {
+        params: paginationParams
+          ? { ...params, ...paginationParams }
+          : baseParams,
+      });
+    },
     enabled: condition && enabled,
     select: (data) => data?.data,
+    // CallLogsGrid owns a concise retry/empty state. Never let a failed
+    // ClickHouse-backed list request reach the global raw-error snackbar.
+    meta: { errorHandled: true },
+    ...(isProjectModule
+      ? {
+          // Exact project cursors are single-use client state. Do not replay a
+          // visible page on focus, remount, reconnect, or automatic retry;
+          // CallLogsGrid explicitly refreshes from a new page-one generation.
+          staleTime: Infinity,
+          refetchOnWindowFocus: false,
+          refetchOnMount: false,
+          refetchOnReconnect: false,
+          retry: false,
+        }
+      : {
+          retry: (failureCount, queryError) =>
+            !isListCursorContinuationLimitError(queryError) &&
+            failureCount < 1,
+        }),
   });
   return { queryKey, data, isLoading, error };
 };
 
 export const prefetchCallLogs = (
   queryClient,
-  { module, id, version, page, pageLimit, params },
+  {
+    module,
+    id,
+    version,
+    page,
+    pageLimit,
+    params,
+    paginationParams,
+    paginationRevision = 0,
+    cursorPagination,
+    paginationGeneration,
+  },
 ) => {
   const isProjectModule = module === "project";
   const condition = isProjectModule ? !!id : !!id && !!version;
@@ -889,14 +1098,76 @@ export const prefetchCallLogs = (
     ? endpoints.project.getCallLogs
     : endpoints.agentDefinitions.getCallLogs(id, version);
   const queryKey = isProjectModule
-    ? ["callLogs", module, id, pageLimit, params, page]
+    ? ["callLogs", module, id, pageLimit, params, page, paginationRevision]
     : ["callLogs", module, id, version, pageLimit, params, page];
   queryClient.prefetchQuery({
     queryKey,
-    queryFn: () =>
-      axios.get(endpoint, {
-        params: { page, page_size: pageLimit, ...params },
-      }),
+    queryFn: async ({ signal }) => {
+      const baseParams = { page, page_size: pageLimit, ...params };
+      if (isProjectModule && cursorPagination) {
+        const cursorBaseParams = { page_size: pageLimit, ...params };
+        const exactPage = await loadExactListPage({
+          pagination: cursorPagination,
+          pageNumber: page - 1,
+          targetRowCount: pageLimit,
+          cancellationSignal: signal,
+          loadResponse: (requestSignal) =>
+            axios.get(endpoint, {
+              params: cursorPagination.requestParams(
+                page - 1,
+                cursorBaseParams,
+              ),
+              signal: requestSignal,
+            }),
+          nextResponse: (cursor, requestSignal) =>
+            axios.get(endpoint, {
+              params: listContinuationParams(cursorBaseParams, cursor),
+              signal: requestSignal,
+            }),
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          rowIdentity: (row) =>
+            row?.call_id || row?.id || row?.trace_id || null,
+          isCurrent: () => cursorPagination.isCurrent(paginationGeneration),
+        });
+        const rawResponse = exactPage.response || {};
+        const payload = rawResponse.data || {};
+        const result = payload.result || payload;
+        const exactMetadata = {
+          pending: exactPage.pending,
+          stale: exactPage.stale,
+          isLastPage: exactPage.isLastPage,
+          canPrefetch: exactPage.canPrefetch,
+        };
+        const mergedResult = {
+          ...result,
+          results: exactPage.rows,
+          __exactPage: exactMetadata,
+        };
+        return {
+          ...rawResponse,
+          data: payload.result
+            ? {
+                ...payload,
+                ...mergedResult,
+                result: mergedResult,
+              }
+            : mergedResult,
+        };
+      }
+      return axios.get(endpoint, {
+        params: paginationParams
+          ? { ...params, ...paginationParams }
+          : baseParams,
+      });
+    },
+    // A speculative next-page failure must stay silent; the foreground read
+    // renders the normal retry state if the user advances to that page.
+    meta: { errorHandled: true },
   });
 };
 

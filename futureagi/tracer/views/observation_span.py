@@ -1,14 +1,14 @@
 import concurrent.futures
 import hashlib
-import io
 import json
 import uuid
 from collections import defaultdict
-from dataclasses import asdict
-from datetime import datetime, timedelta
+from dataclasses import replace
+from datetime import datetime
+from typing import Any
 
-import pandas as pd
 import structlog
+from django.conf import settings
 from django.core.cache import cache as django_cache
 from django.db import close_old_connections
 from django.db.models import (
@@ -20,16 +20,15 @@ from django.db.models import (
     FloatField,
     IntegerField,
     JSONField,
-    Max,
     OuterRef,
     Q,
     Subquery,
     When,
 )
 from django.db.models.functions import JSONObject, Round
-from django.http import FileResponse
 from django.utils import timezone
-from rest_framework import serializers
+from drf_yasg import openapi
+from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -55,6 +54,7 @@ from model_hub.views.scores import (
     _auto_create_queue_items_for_default_queues,
 )
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -64,10 +64,19 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
+from tracer.selectors.trace_filter_reads import (
+    CURSOR_REQUIRED_CODE,
+    CURSOR_REQUIRED_MESSAGE,
+    PAGE_DEPTH_EXCEEDED_CODE,
+    PAGE_DEPTH_EXCEEDED_MESSAGE,
+    bounded_numbered_page_depth_exceeded,
+    numbered_page_depth_exceeded,
+)
 from tracer.serializers.filters import (
+    ObserveGraphDataQuerySerializer,
     ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
+    PageDepthExceededErrorSerializer,
 )
 from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
@@ -80,22 +89,83 @@ from tracer.serializers.observation_span import (
     SpanListQuerySerializer,
     SpanObserveIndexQuerySerializer,
     SpanObserveListQuerySerializer,
+    SpanObserveListResponseSerializer,
+    SpanPrototypeListResponseSerializer,
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
+from tracer.services.clickhouse.attribute_reads import (
+    ATTRIBUTE_READ_EXPLICIT_SEGMENT,
+    AttributeReadMetadata,
+    AttributeReadSelector,
+    IncompleteLatestStateReplay,
+    InvalidAttributeKey,
+    InvalidAttributeSearch,
+    merge_read_metadata,
+)
+from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
+from tracer.services.clickhouse.graph_action_deadline import (
+    GraphActionUnavailable,
+    bounded_graph_action_request,
+    finish_graph_action_response,
+    graph_action_postgres_budget,
+    graph_action_remaining_ms,
+    start_graph_action_deadline,
+)
 from tracer.services.clickhouse.graph_dispatch import (
+    enforce_exact_graph_data_contract,
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
+    graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.list_cursor import (
+    ListCursorError,
+    cursor_page_metadata,
+    cursor_scope_for_request,
+    decode_list_cursor,
+    encode_list_cursor,
+    exact_total_explicitly_required,
+    frozen_window_filter,
+    snapshot_cursor_supported,
+)
+from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
+)
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    ReadDeadlineExceeded,
+    is_clickhouse_api_read_unavailable_error,
+    is_clickhouse_query_error,
+    is_read_budget_error,
+)
+from tracer.services.clickhouse.v2.query_builders.span_list import (
+    SpanListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 from tracer.services.clickhouse.v2.span_selectors import (
+    bound_observe_list_value,
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.filter_attestation import (
+    applied_filter_attestation,
+    graph_execution_filters,
+    graph_query_evidence,
+)
+from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
+    bind_request_my_annotations_principal,
+)
 from tracer.utils.annotations import build_annotation_subqueries
+from tracer.utils.bounded_csv import (
+    BOUNDED_SPAN_EXPORT_PAGE_SIZE,
+    bounded_page_csv_response,
+)
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
     evaluate_observation_span,
@@ -103,7 +173,7 @@ from tracer.utils.eval import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
-    FieldConfig,
+    get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
     update_column_config_based_on_eval_config,
@@ -113,9 +183,129 @@ from tracer.utils.otel import (
     ResourceLimitError,
     calculate_cost_from_tokens,
 )
+from tracer.utils.property_registry import validate_property_graph_namespace
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
+
+
+SPAN_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SPAN_LIST_CANDIDATE_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SPAN_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SPAN_LIST_READ_SETTINGS = {
+    "max_threads": 1,
+    "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
+    "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
+    "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
+    "max_result_rows": settings.OBSERVABILITY_LIST_MAX_RESULT_ROWS,
+    "read_overflow_mode": "throw",
+    "result_overflow_mode": "throw",
+    "timeout_overflow_mode": "throw",
+}
+
+
+def _span_filtered_page_depth_exceeded(
+    filters: list[dict], page_number: int, page_size: int
+) -> bool:
+    """Preflight finite numbered-page work without reading ClickHouse."""
+
+    if numbered_page_depth_exceeded(
+        page_number=page_number,
+        page_size=page_size,
+    ):
+        return True
+
+    has_non_time_filter = any(
+        isinstance(item, dict)
+        and (item.get("column_id") or item.get("columnId"))
+        not in {"created_at", "start_time"}
+        for item in filters
+    )
+    return has_non_time_filter and bounded_numbered_page_depth_exceeded(
+        page_number=page_number,
+        page_size=page_size,
+        classify_batch_size=settings.OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE,
+        seed_batch_size=settings.OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE,
+    )
+
+
+SPAN_NAVIGATION_CANDIDATE_LIMIT = settings.OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT
+SPAN_NAVIGATION_SCAN_PAGE_SIZE = settings.OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE
+SPAN_NAVIGATION_MAX_QUERIES = settings.OBSERVABILITY_NAVIGATION_MAX_QUERIES
+SPAN_NAVIGATION_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+
+
+class SpanNavigationReadUnavailable(RuntimeError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def _span_page_identity_sets(
+    rows: list[dict],
+    *,
+    default_project_id: str | None = None,
+) -> tuple[
+    list[tuple[str, str, str, object]],
+    list[tuple[str, str]],
+    dict[tuple[str, str], tuple[str, str, str]],
+]:
+    """Build physical and external span keys without an identity downgrade."""
+
+    physical: list[tuple[str, str, str, object]] = []
+    external: list[tuple[str, str]] = []
+    app_identity_by_external: dict[tuple[str, str], tuple[str, str, str]] = {}
+    for row in rows:
+        project_id = str(row.get("project_id") or default_project_id or "")
+        trace_id = str(row.get("trace_id") or "")
+        span_id = str(row.get("id") or "")
+        start_time = row.get("start_time")
+        if not project_id or not trace_id or not span_id:
+            continue
+        if not row.get("project_id"):
+            row["project_id"] = project_id
+        external_key = (trace_id, span_id)
+        app_key = (project_id, trace_id, span_id)
+        previous = app_identity_by_external.setdefault(external_key, app_key)
+        if previous != app_key:
+            # Eval/score tables cannot reliably carry project identity. A page
+            # containing this collision cannot be decorated safely.
+            raise ValueError("ambiguous trace-scoped span identity")
+        external.append(external_key)
+        if start_time is not None:
+            physical.append((project_id, trace_id, span_id, start_time))
+    return (
+        list(dict.fromkeys(physical)),
+        list(dict.fromkeys(external)),
+        app_identity_by_external,
+    )
+
+
+def _span_cursor_order_for_partial_page(
+    *, rows: list[dict], bounded_page: Any, cursor_state: Any
+) -> tuple[Any, ...]:
+    """Return the exact row boundary or a progressed empty scan boundary."""
+
+    if rows:
+        row = rows[-1]
+        return (
+            row.get("start_time"),
+            str(row.get("id", "")),
+            str(row.get("trace_id", "")),
+            str(row.get("project_id", "")),
+        )
+    if cursor_state is not None:
+        return tuple(cursor_state.order)
+    checkpoint_time = (
+        bounded_page.continuation_before_start_time
+        or bounded_page.continuation_slice_end
+    )
+    if checkpoint_time is None:
+        raise ValueError("partial span page has no continuation checkpoint")
+    token = bounded_page.continuation_before_id
+    if isinstance(token, tuple) and len(token) == 3:
+        return checkpoint_time, *(str(value) for value in token)
+    return checkpoint_time, "\U0010ffff", "\U0010ffff", "\U0010ffff"
 
 
 class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
@@ -264,18 +454,24 @@ def _get_request_organization(request):
 
 
 def _project_workspace_scope_q(request, project_prefix="project__"):
+    organization = _get_request_organization(request)
+    organization_field = f"{project_prefix}organization"
+    scope = Q(**{organization_field: organization})
+
     workspace = getattr(request, "workspace", None)
     if not workspace:
-        return Q()
+        # API-key and other non-workspace requests still belong to exactly one
+        # organization.  Returning an empty Q here turns any caller that relies
+        # on this helper into an unscoped cross-tenant lookup.
+        return scope
 
     workspace_field = f"{project_prefix}workspace"
-    organization_field = f"{project_prefix}organization_id"
     organization_id = getattr(workspace, "organization_id", None) or getattr(
-        _get_request_organization(request), "id", None
+        organization, "id", None
     )
 
     if getattr(workspace, "is_default", False):
-        return (
+        scope &= (
             Q(**{workspace_field: workspace})
             | Q(
                 **{
@@ -286,12 +482,13 @@ def _project_workspace_scope_q(request, project_prefix="project__"):
             | Q(
                 **{
                     f"{workspace_field}__isnull": True,
-                    organization_field: organization_id,
+                    f"{project_prefix}organization_id": organization_id,
                 }
             )
         )
+        return scope
 
-    return Q(**{workspace_field: workspace})
+    return scope & Q(**{workspace_field: workspace})
 
 
 def allowed_root_spans_for_request(
@@ -442,7 +639,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         rows = [
             self._span_row_from_postgres(span) for span in qs[start : start + page_size]
         ]
-        column_config = get_default_span_config()
+        column_config = get_default_span_config(include_user_fields=True)
         return self._gm.success_response(
             {
                 "metadata": {"total_rows": total_count},
@@ -482,75 +679,118 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
         return {"metric_name": metric_id, "data": rows}
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
-        try:
-            observation_span_id = kwargs.get("pk")
-
-            # Cross-store tenant gate. CH `spans` rows don't carry org_id
-            # filterability, so we enforce the project__organization scope
-            # here in PG before any CH dispatch. KEEP-PG.
-            try:
-                ObservationSpan.objects.only("id").get(
-                    _project_workspace_scope_q(request),
-                    id=observation_span_id,
-                    project__organization=_get_request_organization(request),
-                )
-            except ObservationSpan.DoesNotExist:
-                logger.exception(
-                    f"Observation span with id {observation_span_id} does not exist for this organization."
-                )
-                return self._gm.bad_request(
-                    get_error_message("OBSERVATION_SPAN_NOT_FOUND")
-                )
-
-            # ClickHouse dispatch for span detail
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-            )
-
-            # CH-only path post-migration. The legacy ORM body that lived
-            # below (PromptVersion lookup → EvalLogger scan → eval_metrics
-            # pivot) was removed per D-027: CH is the authoritative span +
-            # eval store, and the equivalent CH pivot lives in
-            # `_retrieve_clickhouse`.
-            analytics = AnalyticsQueryService()
-            return self._retrieve_clickhouse(request, observation_span_id, analytics)
-        except Exception as e:
-            logger.exception(f"Error in fetching observation span: {str(e)}")
-            return self._gm.bad_request(
-                f"Error retrieving observation span {get_error_message('FAILED_GET_OBSERVATION_SPAN')}"
-            )
-
-    def _retrieve_clickhouse(self, request, observation_span_id, analytics):
-        """Retrieve span detail from ClickHouse with eval metrics."""
-        from tracer.constants.provider_logos import PROVIDER_LOGOS
-
-        # Fetch span from CH — query the denormalized `spans` table which has
-        # renamed columns vs PG. Map them back to the expected field names.
-        span_query = """
-            SELECT
-                id, project_id, project_version_id, trace_id, parent_span_id,
-                name, observation_type, start_time, end_time, input, output,
-                model, '' AS model_parameters, latency_ms, prompt_tokens,
-                completion_tokens, total_tokens, cost, status, status_message,
-                tags, toJSONString(attributes_extra) AS span_attributes,
-                span_events, provider,
-                toJSONString(metadata) AS metadata_json,
-                custom_eval_config_id,
-                attrs_string, attrs_number, attrs_bool
-            FROM spans
-            WHERE id = %(span_id)s
-              AND is_deleted = 0
-            LIMIT 1
-        """
-        result = analytics.execute_ch_query(
-            span_query, {"span_id": str(observation_span_id)}, timeout_ms=5000
+        from tracer.services.clickhouse.v2.trace_detail_reads import (
+            TraceDetailNotFound,
+            TraceDetailReadUnavailable,
         )
 
-        if not result.data:
-            return self._gm.bad_request(get_error_message("OBSERVATION_SPAN_NOT_FOUND"))
+        try:
+            observation_span_id = kwargs.get("pk")
+            organization = _get_request_organization(request)
+            project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+            authorized_project_ids = [
+                str(project_id)
+                for project_id in project_manager.filter(
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    organization=organization,
+                    deleted=False,
+                ).values_list("id", flat=True)[:4097]
+            ]
+            if len(authorized_project_ids) > 4096:
+                raise TraceDetailReadUnavailable("project_scope_too_large")
 
-        row = result.data[0]
+            # Direct-write CH25 is the sole span source.  The project dimension
+            # above is the tenant authority; no PG ObservationSpan existence
+            # check or span-attribute fallback is valid after cutover.
+            analytics = V2AnalyticsQueryService()
+            return self._retrieve_clickhouse(
+                request,
+                observation_span_id,
+                analytics,
+                authorized_project_ids=authorized_project_ids,
+            )
+        except TraceDetailNotFound:
+            return self._gm.bad_request(get_error_message("OBSERVATION_SPAN_NOT_FOUND"))
+        except TraceDetailReadUnavailable as exc:
+            logger.warning(
+                "span_detail_bounded_read_incomplete",
+                span_id=str(kwargs.get("pk") or ""),
+                error_code=exc.code,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span details are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            logger.exception(
+                "span_detail_request_failed",
+                span_id=str(kwargs.get("pk") or ""),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Span details could not be loaded")
+
+    def _retrieve_clickhouse(
+        self,
+        request,
+        observation_span_id,
+        analytics,
+        *,
+        authorized_project_ids,
+    ):
+        """Retrieve span detail from ClickHouse with eval metrics."""
+        from tracer.constants.provider_logos import PROVIDER_LOGOS
+        from tracer.services.clickhouse.v2.trace_detail_reads import read_span_detail
+
+        config_by_id = {}
+
+        def _resolve_eval_config_ids(project_id):
+            configs = list(
+                CustomEvalConfig.no_workspace_objects.filter(
+                    project_id=project_id,
+                    project__organization=_get_request_organization(request),
+                    deleted=False,
+                ).select_related("eval_template")[:4097]
+            )
+            if len(configs) > 4096:
+                from tracer.services.clickhouse.v2.trace_detail_reads import (
+                    TraceDetailReadUnavailable,
+                )
+
+                raise TraceDetailReadUnavailable("eval_config_scope_too_large")
+            config_by_id.update({str(config.id): config for config in configs})
+            return tuple(config_by_id)
+
+        detail_read = read_span_detail(
+            analytics=analytics,
+            project_ids=list(authorized_project_ids),
+            span_id=str(observation_span_id),
+            eval_config_ids_resolver=_resolve_eval_config_ids,
+            # This endpoint renders span fields and eval metrics only. Avoid an
+            # unrelated score-table read that adds latency and can make an
+            # otherwise valid span detail unavailable.
+            include_annotations=False,
+        )
+        matching_rows = [
+            candidate
+            for candidate in detail_read.spans
+            if str(candidate.get("id") or "") == str(observation_span_id)
+        ]
+        if len(matching_rows) != 1:
+            from tracer.services.clickhouse.v2.trace_detail_reads import (
+                TraceDetailReadUnavailable,
+            )
+
+            raise TraceDetailReadUnavailable("ambiguous_span_identity")
+        row = matching_rows[0]
         provider = row.get("provider")
 
         # Parse JSON string fields from CH (stored as String columns)
@@ -578,25 +818,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
         except (ValueError, TypeError):
             span_attrs = {}
-        if not span_attrs:
-            # Fall back to reconstructing from decomposed maps
+        if not isinstance(span_attrs, dict):
             span_attrs = {}
-            for k, v in (row.get("attrs_string") or {}).items():
-                span_attrs[k] = v
-            for k, v in (row.get("attrs_number") or {}).items():
-                span_attrs[k] = v
-            for k, v in (row.get("attrs_bool") or {}).items():
-                span_attrs[k] = bool(v)
-        # Fallback: if CH has no span_attributes, try PG
-        if not span_attrs:
-            try:
-                pg_span = ObservationSpan.objects.only(
-                    "span_attributes", "eval_attributes"
-                ).get(id=observation_span_id)
-                span_attrs = pg_span.span_attributes or pg_span.eval_attributes or {}
-            except ObservationSpan.DoesNotExist:
-                pass
-
+        # Direct writes split scalar values into typed Maps and structured
+        # overflow into span_attributes. Always union all sources; overflow
+        # keeps precedence when a malformed producer duplicates a key.
+        for k, v in (row.get("attrs_string") or {}).items():
+            span_attrs.setdefault(k, v)
+        for k, v in (row.get("attrs_number") or {}).items():
+            span_attrs.setdefault(k, v)
+        for k, v in (row.get("attrs_bool") or {}).items():
+            span_attrs.setdefault(k, bool(v))
         # Build metadata from CH JSON column
         metadata_raw = row.get("metadata_json") or "{}"
         metadata = _parse_json(metadata_raw, default={})
@@ -645,6 +877,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             "custom_eval_config": (
                 str(row["custom_eval_config_id"])
                 if row.get("custom_eval_config_id")
+                and str(row["custom_eval_config_id"]) in config_by_id
                 else None
             ),
             "eval_status": None,
@@ -668,34 +901,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except PromptVersion.DoesNotExist:
                 observation_span["prompt_version"] = None
 
-        # Fetch children span IDs from CH
-        children_query = """
-            SELECT DISTINCT id
-            FROM spans
-            WHERE trace_id = %(trace_id)s
-              AND project_id = %(project_id)s
-              AND is_deleted = 0
-        """
-        children_result = analytics.execute_ch_query(
-            children_query,
-            {"trace_id": str(row["trace_id"]), "project_id": str(row["project_id"])},
-            timeout_ms=5000,
-        )
-        children_span_ids = [str(r["id"]) for r in children_result.data]
+        children_span_ids = [str(candidate["id"]) for candidate in detail_read.spans]
 
         # Fetch eval metrics from CH
         evals_metrics = {}
         if children_span_ids:
-            eval_rows = analytics.get_children_eval_metrics_ch(children_span_ids)
+            eval_rows = list(detail_read.evals)
 
             # Get config names from PG (small config table)
-            config_ids = list({r["config_id"] for r in eval_rows if r.get("config_id")})
+            config_ids = list(
+                {
+                    str(r.get("eval_config_id") or r.get("config_id"))
+                    for r in eval_rows
+                    if r.get("eval_config_id") or r.get("config_id")
+                }
+            )
             config_name_map = {}
             config_output_type_map = {}
             if config_ids:
-                configs = CustomEvalConfig.objects.filter(
-                    id__in=config_ids
-                ).select_related("eval_template")
+                configs = [
+                    config_by_id[config_id]
+                    for config_id in config_ids
+                    if config_id in config_by_id
+                ]
                 for c in configs:
                     config_name_map[str(c.id)] = c.name
                     config_output_type_map[str(c.id)] = _get_configured_output_type(c)
@@ -707,7 +935,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             _status_rank = {"pending": 1, "running": 2, "skipped": 3}
 
             for eval_row in eval_rows:
-                config_id = eval_row.get("config_id")
+                config_id = str(
+                    eval_row.get("eval_config_id") or eval_row.get("config_id") or ""
+                )
                 span_id = eval_row.get("span_id")
                 config_name = config_name_map.get(
                     config_id, eval_row.get("eval_type_id", "score")
@@ -1088,16 +1318,36 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error creating observation span: {get_error_message('FAILED_CREATION_OBSERVATION_SPAN')}"
             )
 
+    @bounded_list_request(
+        wall_ms=SPAN_LIST_WALL_DEADLINE_MS,
+        resource="prototype_spans",
+        unavailable_message="Span data is temporarily unavailable. Please retry.",
+    )
+    @validated_request(
+        query_serializer=SpanListQuerySerializer,
+        responses={
+            200: SpanPrototypeListResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            422: PageDepthExceededErrorSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def list_spans(self, request, *args, **kwargs):
         """
         List spans filtered by project ID and project version ID with optimized queries.
         """
+        project_version_id = ""
         try:
             serializer = SpanListQuerySerializer(data=request.query_params)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
-            validated_data = serializer.validated_data
+            validated_data = dict(serializer.validated_data)
+            validated_data["filters"] = bind_request_my_annotations_principal(
+                request,
+                validated_data.get("filters", []),
+            )
             project_version_id = str(validated_data["project_version_id"])
 
             # Tenant gate via PG (ProjectVersion + Project.organization).
@@ -1107,44 +1357,45 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 project__organization=_get_request_organization(request),
             )
 
-            # ClickHouse dispatch
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-            )
-
-            # CH-only path post-migration. D-027: the previous PG fallback
+            # Direct-write CH25-only path post-migration. D-027: the previous PG fallback
             # (huge ObservationSpan.objects.filter + per-config metric
             # annotations + Score subqueries + Python pivot, ~270 LOC)
             # was deleted. CH is the authoritative span + eval store; the
             # eval/annotation pivots live in `_list_spans_non_observe_clickhouse`
-            # via SpanListQueryBuilder.
-            analytics = AnalyticsQueryService()
-            try:
-                return self._list_spans_non_observe_clickhouse(
-                    request,
-                    project_version_id,
-                    project_version,
-                    analytics,
-                    validated_data,
-                )
-            except Exception:
-                logger.warning(
-                    "list_spans_clickhouse_failed, falling back to postgres",
-                    project_version_id=project_version_id,
-                    exc_info=True,
-                )
-                return self._list_spans_postgres(
-                    request,
-                    str(project_version.project_id),
-                    validated_data,
-                    project_version_id=project_version_id,
-                )
-
-        except Exception as e:
-            logger.exception(f"Error in fetching the spans list: {str(e)}")
-            return self._gm.bad_request(
-                f"error fetching the spans list {get_error_message('FAILED_TO_FETCH_TRACE_LIST')}"
+            # via SpanListQueryBuilderV2. Legacy routing is not a fallback.
+            analytics = V2AnalyticsQueryService()
+            return self._list_spans_non_observe_clickhouse(
+                request,
+                project_version_id,
+                project_version,
+                analytics,
+                validated_data,
+                read_deadline=kwargs.get("read_deadline"),
             )
+
+        except ProjectVersion.DoesNotExist:
+            return self._gm.bad_request("Project version not found")
+        except UnsupportedFilterShapeError:
+            return self._gm.bad_request("Span filter configuration is invalid")
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
+                logger.warning(
+                    "span_list_query_unavailable",
+                    project_version_id=str(project_version_id),
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Span data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
+                "span_list_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Span data could not be loaded")
 
     @action(detail=False, methods=["post"])
     def submit_feedback(self, request, *args, **kwargs):
@@ -1379,17 +1630,41 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(
                 {"message": "Action type submitted successfully"}
             )
-        except Exception as e:
-            logger.exception(f"Error in submitting the feedback action type: {str(e)}")
+        except Exception:
+            logger.exception("Error in submitting the feedback action type")
             return self._gm.bad_request(
-                f"Error submitting feedback action type: {str(e)}"
+                "Unable to submit feedback action. Please try again."
             )
 
-    @validated_request(query_serializer=SpanObserveListQuerySerializer)
+    @bounded_list_request(
+        wall_ms=SPAN_LIST_WALL_DEADLINE_MS,
+        resource="observe_spans",
+        unavailable_message="Span data is temporarily unavailable. Please retry.",
+    )
+    @validated_request(
+        query_serializer=SpanObserveListQuerySerializer,
+        responses={
+            200: SpanObserveListResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            422: PageDepthExceededErrorSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def list_spans_observe(self, request, *args, **kwargs):
         try:
-            validated_data = request.validated_query_data
+            validated_data = dict(request.validated_query_data)
+            if kwargs.get("bounded_export"):
+                validated_data.update(
+                    page_number=0,
+                    page_size=BOUNDED_SPAN_EXPORT_PAGE_SIZE,
+                    cursor_mode=True,
+                )
+            validated_data["filters"] = bind_request_my_annotations_principal(
+                request,
+                validated_data.get("filters", []),
+            )
 
             project_id = (
                 str(validated_data["project_id"])
@@ -1416,21 +1691,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         deleted=False,
                     ).values_list("id", flat=True)
                 )
+                # An organization with no visible projects is an exact empty
+                # scope. Do not construct an org-scoped builder with an empty
+                # project list: BaseQueryBuilder would otherwise fall back to
+                # the single-project predicate and bind ``project_id=None``.
+                if not org_project_ids:
+                    return self._gm.success_response(
+                        {
+                            "metadata": {"total_rows": 0},
+                            "table": [],
+                            "config": get_default_span_config(include_user_fields=True),
+                        }
+                    )
 
-            # ClickHouse dispatch
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-            )
-
-            # CH-only path post-migration. D-027: the previous PG fallback
+            # Direct-write CH25-only path post-migration. D-027: the previous PG fallback
             # body (ObservationSpan.objects.filter + per-config metric
             # annotations + Score subqueries + Python pivot, ~350 LOC) was
             # deleted. CH is the authoritative span + eval store and the
             # pivot now lives in `_list_spans_clickhouse` via
-            # SpanListQueryBuilder. A CH read failure surfaces via the outer
+            # SpanListQueryBuilderV2. A CH read failure surfaces via the outer
             # handler instead of silently degrading to the empty post-migration
             # Postgres path, which masked CH failures as "0 rows".
-            analytics = AnalyticsQueryService()
+            analytics = V2AnalyticsQueryService()
             return self._list_spans_clickhouse(
                 request,
                 project_id,
@@ -1438,12 +1720,41 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 analytics,
                 org_project_ids=org_project_ids,
                 org=org,
+                read_deadline=kwargs.get("read_deadline"),
             )
 
-        except Exception as e:
-            logger.exception(f"Error in fetching the spans list of observe: {str(e)}")
-            return self._gm.bad_request(
-                f"error fetching the spans list of observe {str(e)}"
+        except ListCursorError as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
+            )
+        except UnsupportedFilterShapeError:
+            return self._gm.bad_request("Span filter configuration is invalid")
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "observe_span_list_query_unavailable",
+                    project_id=str(
+                        getattr(request, "validated_query_data", {}).get(
+                            "project_id", ""
+                        )
+                    ),
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Span data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
+                "observe_span_list_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Span data could not be loaded",
+                code="server_error",
             )
 
     def _list_spans_clickhouse(
@@ -1454,30 +1765,50 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         analytics,
         org_project_ids=None,
         org=None,
+        read_deadline=None,
     ):
-        """List spans using ClickHouse backend.
-
-        Builder class is resolved via the v1↔v2 dispatch — set
-        CH25_QUERY_TYPES_V2_PRIMARY=SPAN_LIST (or V2_ONLY) to flip this
-        endpoint to the CH 25.3 schema. Defaults to v1 (CH 24.10) until
-        flipped. See tracer/services/clickhouse/v2/dispatch.py.
-        """
+        """List spans from the direct-write ClickHouse 25 schema."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
-        BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
+        read_deadline = read_deadline or ReadDeadline.start(SPAN_LIST_WALL_DEADLINE_MS)
 
         org_scope = bool(org_project_ids)
         if org is None:
             org = _get_request_organization(request)
-        # The v2 builder is a subclass of the v1 builder, so the pivot
-        # helpers below (called as classmethods on the v1 name) work for
-        # both — keep the v1 import for those static calls.
+        # Keep the v1 class import only for its schema-agnostic static pivot
+        # helpers below. Query construction is always SpanListQueryBuilderV2.
 
         filters = list(validated_data.get("filters", []) or [])
+        attested_filters = list(filters)
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
-
+        cursor_token = validated_data.get("cursor")
+        cursor_requested = bool(cursor_token or validated_data.get("cursor_mode"))
+        scope_project_ids = [
+            str(value)
+            for value in (org_project_ids or ([project_id] if project_id else []))
+        ]
+        cursor_scope = cursor_scope_for_request(request, project_ids=scope_project_ids)
+        cursor_query = dict(validated_data)
+        cursor_state = None
+        if cursor_token:
+            cursor_state = decode_list_cursor(
+                cursor_token,
+                resource="observe_spans",
+                scope=cursor_scope,
+                query=cursor_query,
+                page_size=page_size,
+            )
+            if (
+                len(cursor_state.order) != 4
+                or not isinstance(cursor_state.order[0], datetime)
+                or not all(isinstance(value, str) for value in cursor_state.order[1:])
+            ):
+                raise ListCursorError(
+                    "invalid_cursor", "The continuation cursor is invalid."
+                )
+            filters.append(frozen_window_filter(cursor_state))
+            page_number = 0
         # P3b step2 precondition — user_id → end_user reverse-resolve (CH, not PG).
         # The old PG `EndUser.objects.get(user_id=…).id` FREEZES post-step2: a
         # NET-NEW user (first seen after the ingest get_or_create is dropped) has
@@ -1508,91 +1839,81 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs. Single-project uses the fast CH dict-lookup;
-        # org-scoped falls back to a PG EvalLogger scan.
+        if not cursor_token and _span_filtered_page_depth_exceeded(
+            filters, page_number, page_size
+        ):
+            logger.info(
+                "span_list_page_depth_exceeded_preflight",
+                project_id=str(project_id) if project_id else None,
+                page_number=page_number,
+                page_size=page_size,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                PAGE_DEPTH_EXCEEDED_MESSAGE,
+                code=PAGE_DEPTH_EXCEEDED_CODE,
+            )
+
+        # Eval configuration metadata is small and remains in PostgreSQL. Do
+        # not infer which configs have data through PG ObservationSpan or
+        # EvalLogger telemetry: direct-write CH25 is authoritative.
         eval_config_ids = []
         if org_scope:
-            _eval_ids = (
-                EvalLogger.objects.filter(
-                    observation_span__project_id__in=org_project_ids
-                )
-                .values("custom_eval_config_id")
-                .distinct()
-            )
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=_eval_ids, deleted=False
+                project_id__in=org_project_ids,
+                deleted=False,
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            # PERF: resolve this project's configs from PG first (indexed by the
-            # project FK), then ask CH which of them have recent data via a
-            # ``custom_eval_config_id IN (…)`` scope — the eval table's leading
-            # sort key, so CH prunes to just those configs. This replaces the old
-            # full-table trace-join discovery (tens of seconds / OOM-prone at
-            # scale) with a sub-second read. See
-            # AnalyticsQueryService.get_eval_config_ids_with_data_ch.
-            project_configs = list(
+            # Configuration metadata is already a finite project-scoped PG
+            # read. A window-wide CH discovery query before the page selector
+            # consumed the entire endpoint deadline on high-volume tenants.
+            # Include all project configs; page-scoped eval hydration below is
+            # bounded by the selected span identities and simply returns no
+            # cell for configs without page data.
+            eval_configs = list(
                 CustomEvalConfig.objects.filter(
                     project_id=project_id, deleted=False
                 ).select_related("eval_template")
             )
-            candidate_ids = [str(c.id) for c in project_configs]
-            # Discover eval columns over the SAME window the user is viewing, not
-            # a fixed 30 days: cover [requested-start, now] so a config with data
-            # anywhere in the requested range keeps its column (no missing columns
-            # on a 6-month view, no spurious empty columns on a 24h view).
-            # candidate_config_ids keeps the scan bounded by the eval table's
-            # leading sort key at any depth. Default (unfiltered) view → ~30 days.
-            window_days = SpanListQueryBuilder.window_days_covering(filters)
-            # Short-TTL cache: "which configs have data" changes on config
-            # creation / first eval write, not per page load — the fast-path CH
-            # read still costs ~0.4-0.9s per request at 10M eval rows (measured),
-            # and this endpoint fires it on EVERY page. Key includes the
-            # candidate set and window so a newly-created config or a different
-            # time range gets a fresh entry; worst case a brand-new config's
-            # column appears one TTL late.
-            ids_with_data: set[str] = set()
-            if candidate_ids:
-                cache_key = (
-                    "span_list_eval_cfgs:"
-                    + hashlib.sha256(
-                        (
-                            str(project_id)
-                            + "|"
-                            + ",".join(sorted(candidate_ids))
-                            + f"|w={window_days}"
-                        ).encode()
-                    ).hexdigest()
-                )
-                cached_ids = django_cache.get(cache_key)
-                if cached_ids is not None:
-                    ids_with_data = set(cached_ids)
-                else:
-                    ids_with_data = set(
-                        analytics.get_eval_config_ids_with_data_ch(
-                            str(project_id),
-                            timeout_ms=30000,
-                            candidate_config_ids=candidate_ids,
-                            window_days=window_days,
-                        )
-                    )
-                    django_cache.set(cache_key, list(ids_with_data), timeout=120)
-            eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
             eval_config_ids = [str(c.id) for c in eval_configs]
 
-        # Labels can be project-local or org/shared labels that are referenced
-        # by span scores. Use the score-backed helper so span columns and
-        # annotation filters match the actual data returned from ClickHouse.
-        annotation_labels = get_annotation_labels_for_project(
-            project_id, project_ids=org_project_ids if org_scope else None
-        )
+        # Labels can be project-local or org/shared labels referenced by span
+        # scores. Completeness is project-local, so retain that mapping for the
+        # residual classifier instead of feeding it an org-wide union.
+        annotation_label_ids_by_project = None
+        if org_scope:
+            labels_by_project = get_annotation_labels_by_project(
+                [str(project_id) for project_id in org_project_ids],
+                organization=org,
+            )
+            annotation_label_ids_by_project = {
+                project_key: [str(label.id) for label in labels]
+                for project_key, labels in labels_by_project.items()
+            }
+            annotation_labels = list(
+                {
+                    str(label.id): label
+                    for labels in labels_by_project.values()
+                    for label in labels
+                }.values()
+            )
+        else:
+            annotation_labels = list(get_annotation_labels_for_project(project_id))
         annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
         label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
         # No `end_user_id=` arg: the user filter is now a synthetic `user_id`
         # filter in `filters` (resolved via the remap-aware `end_users` path
         # above), so the builder's bespoke single-id end_user path is unused here.
-        builder = BuilderCls(
+        cursor_supported = snapshot_cursor_supported(filters, resource="observe_spans")
+        if cursor_state is not None and not cursor_supported:
+            raise ListCursorError(
+                "cursor_unsupported",
+                "Cursor pagination is unavailable for this query shape.",
+            )
+        cursor_enabled = cursor_requested and cursor_supported
+        builder = SpanListQueryBuilderV2(
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
@@ -1600,45 +1921,198 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
+            annotation_label_ids_by_project=annotation_label_ids_by_project,
+            bounded_internal_scan=cursor_enabled,
         )
+        requires_cursor = builder.requires_cursor_for_long_filtered_read()
+        if requires_cursor and not cursor_supported:
+            # A cursor-ineligible long filter must fail closed before any
+            # broad legacy ClickHouse read can be attempted.
+            raise UnsupportedFilterShapeError(
+                "Long-window span filter is not cursor-safe"
+            )
+        if not cursor_requested and requires_cursor:
+            if "cursor_mode" in request.query_params:
+                return self._gm.custom_error_response(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    CURSOR_REQUIRED_MESSAGE,
+                    code=CURSOR_REQUIRED_CODE,
+                )
+            logger.info(
+                "span_list_legacy_numbered_cursor_compatibility",
+                project_id=str(project_id) if project_id else None,
+                page_number=page_number,
+            )
+        # Custom-sort/time-only legacy reads do not apply the bounded
+        # selector's keyset tuple. Advertising a cursor for that path would
+        # replay the first page forever, so keep its existing numbered-page
+        # contract and fail closed if a continuation somehow reaches it.
+        if cursor_enabled and not builder.supports_bounded_filter_scan():
+            if cursor_state is not None:
+                raise ListCursorError(
+                    "cursor_unsupported",
+                    "Cursor pagination is unavailable for this query shape.",
+                )
+            cursor_enabled = False
+            builder._bounded_internal_scan = False
+        # Freeze the finite request window and keyset, not mutable physical
+        # versions. ReplacingMergeTree merges can discard the old version a
+        # ceiling needs, so each page resolves current latest state instead.
+        page_read_settings = SPAN_LIST_READ_SETTINGS
 
         # Phase 1: Paginated spans (light columns — no input/output).
-        #
-        # Progressive time slices: the sort is `start_time DESC`, so every row
-        # in a newer slice sorts before every older row — a slice that already
-        # yields the full prefix [0, offset + 2*page_size) IS the global
-        # prefix, and older data cannot change the page. Try the newest slices
-        # first (7d → 30d → 180d), fall back to the full requested window only
-        # when the prefix is short. Typical pages fill from recent data and
-        # read ~100x fewer rows (measured 0.02-0.17s vs ~1.2s over 18 months at
-        # 10M spans). Slices that don't narrow the requested window are
-        # skipped, so a "last 24h" view still runs exactly one query.
-        prefix_needed = (page_number * page_size) + 2 * page_size
-        win_start, _win_end = SpanListQueryBuilder.parse_time_range(filters)
-        utc_now = datetime.utcnow()
-        slice_starts = [
-            utc_now - timedelta(days=d)
-            for d in (7, 30, 180)
-            if win_start is None or utc_now - timedelta(days=d) > win_start
-        ]
-        result = None
-        for since in [*slice_starts, None]:
-            query, params = builder.build(since=since)
-            result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-            if len(result.data) >= prefix_needed:
-                break
+        bounded_page = None
+        bounded_error_code = builder.bounded_filter_degraded_error_code()
+        if bounded_error_code == "unsupported_filter_shape":
+            raise UnsupportedFilterShapeError(
+                "Span filter cannot be evaluated by the bounded list reader"
+            )
+        try:
+            candidate_deadline_ms = read_deadline.remaining_ms(
+                SPAN_LIST_CANDIDATE_DEADLINE_MS
+            )
+        except ReadDeadlineExceeded:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        if builder.supports_bounded_filter_scan():
+            from tracer.selectors.trace_filter_reads import read_bounded_filter_page
+            from tracer.services.clickhouse.query_service import QueryResult
 
-        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY id` (its
-        # O(window) full sort OOM-crashed CH — see SpanListQueryBuilder.build)
-        # and instead fetched the sorted prefix [0, offset + 2*page_size).
-        # De-dup the prefix by span id and slice the page — every page is a
-        # disjoint slice of the same globally de-duplicated stream, so a span
-        # can never appear on two pages and none is skipped. See page_dedup.py.
-        result.data, has_more = paginate_deduped(
-            result.data, "id", page_number, page_size
+            bounded_page = read_bounded_filter_page(
+                builder=builder,
+                analytics=analytics,
+                filters=filters,
+                key_field="id",
+                page_number=page_number,
+                page_size=page_size,
+                deadline_ms=candidate_deadline_ms,
+                cursor_start_time=(
+                    cursor_state.order[0] if cursor_state is not None else None
+                ),
+                cursor_order_token=(
+                    tuple(cursor_state.order[1:]) if cursor_state is not None else None
+                ),
+                read_settings=page_read_settings,
+                include_incomplete_rows=cursor_enabled,
+                continuation_slice_start=(
+                    cursor_state.scan_slice_start if cursor_state is not None else None
+                ),
+                continuation_slice_end=(
+                    cursor_state.scan_slice_end if cursor_state is not None else None
+                ),
+                continuation_before_start_time=(
+                    cursor_state.scan_before_start_time
+                    if cursor_state is not None
+                    else None
+                ),
+                continuation_before_id=(
+                    cursor_state.scan_before_id if cursor_state is not None else None
+                ),
+                bounded_continuation=cursor_enabled,
+            )
+            if not bounded_page.complete:
+                if bounded_page.error_code == PAGE_DEPTH_EXCEEDED_CODE:
+                    logger.info(
+                        "span_list_page_depth_exceeded",
+                        project_id=str(project_id) if project_id else None,
+                        page_number=page_number,
+                        page_size=page_size,
+                    )
+                    return self._gm.custom_error_response(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        PAGE_DEPTH_EXCEEDED_MESSAGE,
+                        code=PAGE_DEPTH_EXCEEDED_CODE,
+                    )
+                failed_attempt = next(
+                    (
+                        attempt
+                        for attempt in bounded_page.attempts
+                        if attempt.error_code is not None
+                    ),
+                    None,
+                )
+                safe_cursor_checkpoint = bool(
+                    cursor_enabled and bounded_page.continuation_slice_end is not None
+                )
+                if failed_attempt is not None and not safe_cursor_checkpoint:
+                    logger.warning(
+                        "span_list_bounded_statement_failed",
+                        project_id=str(project_id) if project_id else None,
+                        page_number=page_number,
+                        error_code=failed_attempt.error_code,
+                    )
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Filtered span data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+                if failed_attempt is not None:
+                    logger.warning(
+                        "span_list_bounded_statement_checkpoint_published",
+                        project_id=str(project_id) if project_id else None,
+                        page_number=page_number,
+                        error_code=failed_attempt.error_code,
+                    )
+                logger.warning(
+                    "span_list_bounded_read_incomplete",
+                    project_id=str(project_id) if project_id else None,
+                    page_number=page_number,
+                    error_code=bounded_page.error_code,
+                )
+                if not cursor_enabled or bounded_page.continuation_slice_end is None:
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Filtered span data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+            result = QueryResult(
+                data=bounded_page.rows,
+                row_count=len(bounded_page.rows),
+                backend_used="clickhouse",
+                query_time_ms=bounded_page.elapsed_ms,
+            )
+            has_more = bounded_page.has_more
+        elif bounded_error_code:
+            logger.warning(
+                "span_list_filter_unsupported",
+                project_id=str(project_id) if project_id else None,
+                page_number=page_number,
+                error_code=bounded_error_code,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filtered span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        else:
+            query, params = builder.build()
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=read_deadline.remaining_ms(1_200),
+                settings=page_read_settings,
+            )
+
+            result.data, has_more = paginate_deduped(
+                result.data,
+                ("project_id", "trace_id", "id"),
+                page_number,
+                page_size,
+            )
+
+        span_ids = [str(row.get("id", "")) for row in result.data if row.get("id")]
+        # OTel span IDs are unique only within their trace. Carry that logical
+        # identity through every page-scoped read and merge; a bare span ID can
+        # otherwise attach content/evals/annotations from another trace.
+        span_identities, span_entities, app_identity_by_external = (
+            _span_page_identity_sets(
+                result.data,
+                default_project_id=None if org_scope else str(project_id),
+            )
         )
-
-        span_ids = [str(row.get("id", "")) for row in result.data]
         # Oldest created_at on the page — lower bound for the eval/annotation
         # reads below. Both tables are PARTITION BY toYYYYMM(created_at) and an
         # eval/score row cannot be created before its span row exists, so the
@@ -1649,23 +2123,83 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         ]
         page_min_created_at = min(page_created_ats) if page_created_ats else None
 
+        query_count = bounded_page.query_count if bounded_page is not None else 1
+        query_rows_returned = (
+            bounded_page.rows_returned if bounded_page is not None else len(result.data)
+        )
+        query_result_payload_bytes = (
+            bounded_page.result_payload_bytes
+            if bounded_page is not None
+            else len(
+                json.dumps(
+                    result.data,
+                    default=str,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+        )
+
+        # Build count SQL on the request thread: filter translation may read PG
+        # metadata, whose connections must remain request-thread owned.
+        if bounded_page is None:
+            count_query, count_params = builder.build_count_query()
+        else:
+            count_query, count_params = "", {}
+
+        end_user_ids = {
+            str(row.get("end_user_id")) for row in result.data if row.get("end_user_id")
+        }
+        from tracer.services.clickhouse.v2.end_user_dict_reader import (
+            resolve_end_user_fields,
+        )
+
+        def _stats(value, rows, query_executed: bool):
+            if not query_executed:
+                return value, 0, 0, 0
+            return (
+                value,
+                1,
+                len(rows),
+                len(
+                    json.dumps(
+                        rows,
+                        default=str,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ),
+            )
+
         # Phases 1b/2/3 + count are independent once the page ids are known —
         # run them concurrently so request latency is Phase1 + max(rest), not
-        # the serial sum. `analytics.ch_client` pools connections behind a lock
-        # (see ClickHouseClient._get_client), so concurrent execute_ch_query
-        # calls are safe. Any worker exception propagates via .result() and is
-        # handled by the endpoint's outer try/except, same as the serial code.
+        # the serial sum. `analytics.ch_client` uses the driver's queue-backed
+        # connection pool, so these independent reads do not share a socket.
+        # Programming defects still propagate; only typed CH/read-budget
+        # failures become a sanitized unavailable response below.
         def _fetch_content():
-            if not span_ids:
-                return []
-            content_query, content_params = builder.build_content_query(span_ids)
+            if not span_identities:
+                return _stats([], [], False)
+            content_query, content_params = builder.build_content_query(
+                span_ids, span_identities=span_identities
+            )
             if not content_query:
-                return []
-            return analytics.execute_ch_query(
-                content_query, content_params, timeout_ms=10000
-            ).data
+                return _stats([], [], False)
+            content_result = analytics.execute_ch_query(
+                content_query,
+                content_params,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
+                settings=page_read_settings,
+            )
+            return _stats(content_result.data, content_result.data, True)
 
         def _fetch_count():
+            if bounded_page is not None:
+                return _stats(
+                    bounded_page.total_rows_lower_bound,
+                    [],
+                    False,
+                )
             # Short-TTL cache keyed by the query + bindings: the count re-scans
             # the full filtered window (measured 0.65-1.15s at 10M+ rows) and is
             # identical across pages of the same view. Value is exact; staleness
@@ -1693,62 +2227,150 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
             cached_total = django_cache.get(count_key)
             if cached_total is not None:
-                return cached_total
+                return _stats(cached_total, [], False)
             count_result = analytics.execute_ch_query(
-                count_query, count_params, timeout_ms=10000
+                count_query,
+                count_params,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
+                settings=SPAN_LIST_READ_SETTINGS,
             )
             total = count_result.data[0].get("total", 0) if count_result.data else 0
             django_cache.set(count_key, total, timeout=60)
-            return total
+            return _stats(total, count_result.data, True)
 
         def _fetch_evals():
-            if not (span_ids and eval_config_ids):
-                return {}
+            if not (span_entities and eval_config_ids):
+                return _stats({}, [], False)
             eval_query, eval_params = builder.build_eval_query(
-                span_ids, created_after=page_min_created_at
+                span_ids,
+                created_after=page_min_created_at,
+                span_entities=span_entities,
             )
             if not eval_query:
-                return {}
+                return _stats({}, [], False)
             eval_result = analytics.execute_ch_query(
-                eval_query, eval_params, timeout_ms=5000
+                eval_query,
+                eval_params,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
+                settings=SPAN_LIST_READ_SETTINGS,
             )
-            return SpanListQueryBuilder.pivot_eval_results(eval_result.data)
+            external_map = SpanListQueryBuilder.pivot_eval_results(
+                eval_result.data, key_by_trace=True
+            )
+            value = {
+                app_identity_by_external[external_key]: values
+                for external_key, values in external_map.items()
+                if external_key in app_identity_by_external
+            }
+            return _stats(value, eval_result.data, True)
 
         def _fetch_annotations():
-            if not (span_ids and annotation_label_ids):
-                return {}
+            if not (span_entities and annotation_label_ids):
+                return _stats({}, [], False)
             ann_query, ann_params = builder.build_annotation_query(
-                span_ids, created_after=page_min_created_at
+                span_ids,
+                created_after=page_min_created_at,
+                span_entities=span_entities,
             )
             if not ann_query:
-                return {}
+                return _stats({}, [], False)
             ann_result = analytics.execute_ch_query(
-                ann_query, ann_params, timeout_ms=5000
+                ann_query,
+                ann_params,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
+                settings=SPAN_LIST_READ_SETTINGS,
             )
-            return SpanListQueryBuilder.pivot_annotation_results(
-                ann_result.data, label_types
+            external_map = SpanListQueryBuilder.pivot_annotation_results(
+                ann_result.data, label_types, key_by_trace=True
             )
+            value = {
+                app_identity_by_external[external_key]: values
+                for external_key, values in external_map.items()
+                if external_key in app_identity_by_external
+            }
+            return _stats(value, ann_result.data, True)
 
-        # Build the count SQL on the request thread, NOT inside the pool worker.
-        # build_count_query() runs fb.translate(), which issues ORM queries
-        # (CustomEvalConfig/EvalTemplate) for eval/annotation filters. DB
-        # connections opened inside an ad-hoc ThreadPoolExecutor thread are
-        # thread-local and never closed by the request lifecycle
-        # (close_old_connections fires on the request thread only), so running
-        # translate() in a worker leaks a PG connection per filtered request.
-        # Only the CH execute below runs in the pool. This also keeps count
-        # SQL-building off the shared builder state that the pool reads.
-        count_query, count_params = builder.build_count_query()
+        def _fetch_end_users():
+            if not end_user_ids:
+                return _stats({}, [], False)
+            value = resolve_end_user_fields(
+                end_user_ids,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
+                settings=SPAN_LIST_READ_SETTINGS,
+            )
+            return _stats(value, list(value.items()), True)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            content_f = pool.submit(_fetch_content)
-            count_f = pool.submit(_fetch_count)
-            evals_f = pool.submit(_fetch_evals)
-            anns_f = pool.submit(_fetch_annotations)
-            content_rows = content_f.result()
-            total_count = count_f.result()
-            eval_map = evals_f.result()
-            annotation_map = anns_f.result()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        future_names = {
+            pool.submit(_fetch_content): "content",
+            pool.submit(_fetch_count): "count",
+            pool.submit(_fetch_evals): "evals",
+            pool.submit(_fetch_annotations): "annotations",
+            pool.submit(_fetch_end_users): "end_users",
+        }
+        completed: dict[str, tuple[Any, int, int, int]] = {}
+        try:
+            wait_seconds = read_deadline.remaining_ms() / 1000
+            for future in concurrent.futures.as_completed(
+                future_names, timeout=wait_seconds
+            ):
+                completed[future_names[future]] = future.result()
+            read_deadline.remaining_ms()
+        except (concurrent.futures.TimeoutError, ReadDeadlineExceeded) as exc:
+            logger.warning(
+                "span_list_enrichment_deadline_exceeded",
+                error_type=type(exc).__name__,
+                project_id=str(project_id) if project_id else None,
+                page_number=page_number,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            logger.warning(
+                "span_list_enrichment_failed",
+                error_type=type(exc).__name__,
+                project_id=str(project_id) if project_id else None,
+                page_number=page_number,
+                exc_info=True,
+            )
+            if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+                raise
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+        if set(completed) != set(future_names.values()):
+            raise AssertionError("span enrichment futures did not all complete")
+
+        for _value, phase_queries, phase_rows, phase_bytes in completed.values():
+            query_count += phase_queries
+            query_rows_returned += phase_rows
+            query_result_payload_bytes += phase_bytes
+
+        content_rows = completed["content"][0]
+        total_count = completed["count"][0]
+        eval_map = completed["evals"][0]
+        annotation_map = completed["annotations"][0]
+        end_user_map = completed["end_users"][0]
+        if span_identities and len(content_rows) < len(span_identities):
+            logger.warning(
+                "span_list_content_replay_incomplete",
+                returned=len(content_rows),
+                requested=len(span_identities),
+                project_id=str(project_id) if project_id else None,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
 
         # Phase 1b merge: input/output/attributes_extra AND the typed attr maps
         # (attrs_string/attrs_number/attrs_bool) onto the page rows. The typed
@@ -1760,7 +2382,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         merge_content_rows(
             result.data,
             content_rows,
-            id_key="id",
+            id_key=("project_id", "trace_id", "id", "start_time"),
             keys=(
                 "input",
                 "output",
@@ -1772,54 +2394,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         # Build column config (from PG config tables)
-        column_config = get_default_span_config()
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="user_id", name="User Id", is_visible=True, group_by=None
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="user_id_type",
-                    name="User Id Type",
-                    is_visible=False,
-                    group_by=None,
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="user_id_hash",
-                    name="User Id Hash",
-                    is_visible=False,
-                    group_by=None,
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="latency_ms", name="Latency (ms)", is_visible=True, group_by=None
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="total_tokens",
-                    name="Total Tokens",
-                    is_visible=False,
-                    group_by=None,
-                )
-            )
-        )
-        column_config.append(
-            asdict(FieldConfig(id="cost", name="Cost", is_visible=True, group_by=None))
-        )
+        column_config = get_default_span_config(include_user_fields=True)
         column_config = update_column_config_based_on_eval_config(
             column_config, eval_configs
         )
@@ -1840,21 +2415,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # span resolves to the old curated row, and a missing/orphan id → all-None
         # (faithful to the old FK miss). Returns {id (str): {user_id,
         # user_id_type, user_id_hash}}.
-        end_user_ids = {
-            str(r.get("end_user_id")) for r in result.data if r.get("end_user_id")
-        }
-        end_user_map = {}
-        if end_user_ids:
-            from tracer.services.clickhouse.v2.end_user_dict_reader import (
-                resolve_end_user_fields,
-            )
-
-            end_user_map = resolve_end_user_fields(end_user_ids)
-
         # Format response matching PG format
         table_data = []
         for row in result.data:
             span_id = str(row.get("id", ""))
+            span_entity = (
+                str(row.get("project_id", "")),
+                str(row.get("trace_id", "")),
+                span_id,
+            )
             cost = row.get("cost")
             eu = (
                 end_user_map.get(str(row.get("end_user_id")))
@@ -1862,9 +2431,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 else None
             )
             entry = {
+                "project_id": str(row.get("project_id", "")),
                 "span_id": span_id,
-                "input": row.get("input", ""),
-                "output": row.get("output", ""),
+                "input": bound_observe_list_value(row.get("input", "")),
+                "output": bound_observe_list_value(row.get("output", "")),
                 "trace_id": str(row.get("trace_id", "")),
                 "created_at": row.get("created_at"),
                 "node_type": row.get("observation_type", ""),
@@ -1887,7 +2457,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             }
 
             # Add eval metrics
-            span_evals = eval_map.get(span_id, {})
+            span_evals = eval_map.get(span_entity, {})
             for config in eval_configs:
                 config_id = str(config.id)
                 if config_id not in span_evals:
@@ -1916,7 +2486,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[config_id] = val
 
             # Add annotations
-            span_annotations = annotation_map.get(span_id, {})
+            span_annotations = annotation_map.get(span_entity, {})
             for label in annotation_labels:
                 label_id = str(label.id)
                 if label_id in span_annotations:
@@ -1927,8 +2497,133 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             table_data.append(entry)
 
+        try:
+            read_deadline.remaining_ms()
+        except ReadDeadlineExceeded:
+            logger.warning(
+                "span_list_response_deadline_exceeded",
+                project_id=str(project_id) if project_id else None,
+                page_number=page_number,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+
+        next_cursor = None
+        cursor_seen_rows = (
+            cursor_state.seen_rows
+            if cursor_state is not None
+            else page_number * page_size
+        ) + len(result.data)
+        cursor_has_more = False
+        if cursor_enabled and (
+            (bounded_page is None and has_more)
+            or (
+                bounded_page is not None
+                and bounded_page.complete
+                and bounded_page.has_more
+            )
+            or (
+                bounded_page is not None
+                and not bounded_page.complete
+                and (
+                    bounded_page.has_more
+                    or bounded_page.continuation_slice_end is not None
+                )
+            )
+        ):
+            window_start, window_end = builder.parse_time_range(filters)
+            next_cursor = encode_list_cursor(
+                resource="observe_spans",
+                scope=cursor_scope,
+                query=cursor_query,
+                page_size=page_size,
+                window_start=window_start,
+                window_end=window_end,
+                order=_span_cursor_order_for_partial_page(
+                    rows=result.data,
+                    bounded_page=bounded_page,
+                    cursor_state=cursor_state,
+                ),
+                seen_rows=cursor_seen_rows,
+                scan_slice_start=(
+                    bounded_page.continuation_slice_start
+                    if bounded_page is not None and not bounded_page.has_more
+                    else None
+                ),
+                scan_slice_end=(
+                    bounded_page.continuation_slice_end
+                    if bounded_page is not None and not bounded_page.has_more
+                    else None
+                ),
+                scan_before_start_time=(
+                    bounded_page.continuation_before_start_time
+                    if bounded_page is not None and not bounded_page.has_more
+                    else None
+                ),
+                scan_before_id=(
+                    bounded_page.continuation_before_id
+                    if bounded_page is not None and not bounded_page.has_more
+                    else None
+                ),
+            )
+            cursor_has_more = True
+
+        metadata = {"total_rows": total_count}
+        if bounded_page is not None:
+            public_chunk_complete = bounded_page.complete or cursor_has_more
+            metadata.update(
+                {
+                    "total_rows_is_lower_bound": True,
+                    "has_more": cursor_has_more,
+                    "query_complete": public_chunk_complete,
+                    "query_status": (
+                        "complete" if public_chunk_complete else bounded_page.status
+                    ),
+                    "query_error_code": (
+                        None if public_chunk_complete else bounded_page.error_code
+                    ),
+                    "query_elapsed_ms": round(read_deadline.elapsed_ms(), 3),
+                    "query_count": query_count,
+                    "query_rows_returned": query_rows_returned,
+                    "query_result_payload_bytes": query_result_payload_bytes,
+                }
+            )
+        metadata.update(
+            cursor_page_metadata(
+                enabled=cursor_enabled,
+                has_more=cursor_has_more,
+                seen_rows=cursor_seen_rows,
+                next_cursor=next_cursor,
+                unseen_row_proven=bool(
+                    bounded_page is not None and bounded_page.has_more
+                ),
+            )
+        )
+        if metadata.get(
+            "total_rows_is_lower_bound"
+        ) and exact_total_explicitly_required(
+            request,
+            validated_data,
+            allow_exact_cursor_lower_bound=True,
+        ):
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        if project_id:
+            filter_evidence = applied_filter_attestation(
+                project_id=project_id,
+                observe_type="span",
+                filters=attested_filters,
+            )
+            if filter_evidence["query_applied_filter_count"]:
+                metadata.update(filter_evidence)
         response = {
-            "metadata": {"total_rows": total_count},
+            "metadata": metadata,
             "table": table_data,
             "config": column_config,
         }
@@ -1936,33 +2631,80 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         return self._gm.success_response(response)
 
     def _list_spans_non_observe_clickhouse(
-        self, request, project_version_id, project_version, analytics, validated_data
+        self,
+        request,
+        project_version_id,
+        project_version,
+        analytics,
+        validated_data,
+        *,
+        read_deadline=None,
     ):
-        """List spans (non-observe, prompt version/eval task views) using ClickHouse backend.
-
-        Same v1↔v2 dispatch as `_list_spans_clickhouse` — flips together via
-        CH25_QUERY_TYPES_V2_PRIMARY=SPAN_LIST.
-        """
+        """List prompt-version/eval-task spans from direct-write ClickHouse 25."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
 
         filters = validated_data.get("filters", [])
         page_number = validated_data.get("page_number", 0)
         page_size = validated_data.get("page_size", 30)
 
         project_id = str(project_version.project_id)
+        read_deadline = read_deadline or ReadDeadline.start(SPAN_LIST_WALL_DEADLINE_MS)
 
-        # Get eval configs from PG (small config table)
-        eval_configs = CustomEvalConfig.objects.filter(
-            id__in=EvalLogger.objects.filter(
-                observation_span__project_id=project_id,
+        if _span_filtered_page_depth_exceeded(filters, page_number, page_size):
+            logger.info(
+                "prototype_span_list_page_depth_exceeded_preflight",
+                project_version_id=str(project_version_id),
+                page_number=page_number,
+                page_size=page_size,
             )
-            .values("custom_eval_config_id")
-            .distinct(),
-            deleted=False,
-        ).select_related("eval_template")
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                PAGE_DEPTH_EXCEEDED_MESSAGE,
+                code=PAGE_DEPTH_EXCEEDED_CODE,
+            )
+
+        # Configuration metadata stays in PG; telemetry presence is CH-only.
+        # The former EvalLogger→ObservationSpan PG join is empty/stale after
+        # direct-write cutover and silently removed eval columns from this
+        # task/prompt-version list.
+        project_configs = list(
+            CustomEvalConfig.objects.filter(
+                project_id=project_id, deleted=False
+            ).select_related("eval_template")
+        )
+        candidate_ids = [str(config.id) for config in project_configs]
+        ids_with_data: set[str] = set()
+        if candidate_ids:
+            window_days = SpanListQueryBuilderV2.window_days_covering(filters)
+            cache_key = (
+                "span_list_non_observe_eval_cfgs:"
+                + hashlib.sha256(
+                    (
+                        project_id
+                        + "|"
+                        + ",".join(sorted(candidate_ids))
+                        + f"|w={window_days}"
+                    ).encode()
+                ).hexdigest()
+            )
+            cached_ids = django_cache.get(cache_key)
+            if cached_ids is not None:
+                ids_with_data = set(cached_ids)
+            else:
+                ids_with_data = set(
+                    analytics.get_eval_config_ids_with_data_ch(
+                        project_id,
+                        timeout_ms=read_deadline.remaining_ms(
+                            SPAN_LIST_ENRICHMENT_TIMEOUT_MS
+                        ),
+                        candidate_config_ids=candidate_ids,
+                        window_days=window_days,
+                    )
+                )
+                django_cache.set(cache_key, list(ids_with_data), timeout=120)
+        eval_configs = [
+            config for config in project_configs if str(config.id) in ids_with_data
+        ]
         eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Labels can be project-local or org/shared labels that are referenced
@@ -1972,7 +2714,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
         label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
-        builder = BuilderCls(
+        builder = SpanListQueryBuilderV2(
             project_id=project_id,
             filters=filters,
             page_number=page_number,
@@ -1982,62 +2724,171 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             project_version_id=str(project_version_id),
         )
 
-        # Phase 1: Paginated spans (light columns — no input/output)
-        query, params = builder.build()
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        # Phase 1: Paginated spans (light columns — no input/output). Filtered
+        # task/prompt-version reads use the same bounded, latest-state reader as
+        # Observe. The project-version predicate is compiled into both the seed
+        # and exact classifier, so this path never widens to the whole project.
+        bounded_page = None
+        bounded_error_code = builder.bounded_filter_degraded_error_code()
+        if bounded_error_code == "unsupported_filter_shape":
+            raise UnsupportedFilterShapeError(
+                "Span filter cannot be evaluated by the bounded list reader"
+            )
+        if builder.supports_bounded_filter_scan():
+            from tracer.selectors.trace_filter_reads import read_bounded_filter_page
+            from tracer.services.clickhouse.query_service import QueryResult
 
-        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY id` (its
-        # O(window) full sort OOM-crashed CH — see SpanListQueryBuilder.build)
-        # and instead fetched the sorted prefix [0, offset + 2*page_size).
-        # De-dup the prefix by span id and slice the page — every page is a
-        # disjoint slice of the same globally de-duplicated stream, so a span
-        # can never appear on two pages and none is skipped. See page_dedup.py.
-        result.data, has_more = paginate_deduped(
-            result.data, "id", page_number, page_size
-        )
+            bounded_page = read_bounded_filter_page(
+                builder=builder,
+                analytics=analytics,
+                filters=filters,
+                key_field="id",
+                page_number=page_number,
+                page_size=page_size,
+                deadline_ms=read_deadline.remaining_ms(4_500),
+            )
+            if not bounded_page.complete:
+                if bounded_page.error_code == PAGE_DEPTH_EXCEEDED_CODE:
+                    logger.info(
+                        "prototype_span_list_page_depth_exceeded",
+                        project_version_id=str(project_version_id),
+                        page_number=page_number,
+                        page_size=page_size,
+                    )
+                    return self._gm.custom_error_response(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        PAGE_DEPTH_EXCEEDED_MESSAGE,
+                        code=PAGE_DEPTH_EXCEEDED_CODE,
+                    )
+                logger.warning(
+                    "non_observe_span_list_bounded_read_incomplete",
+                    project_id=project_id,
+                    project_version_id=str(project_version_id),
+                    page_number=page_number,
+                    error_code=bounded_page.error_code,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filtered span data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            result = QueryResult(
+                data=bounded_page.rows,
+                row_count=len(bounded_page.rows),
+                backend_used="clickhouse",
+                query_time_ms=bounded_page.elapsed_ms,
+            )
+        elif not bounded_error_code:
+            query, params = builder.build()
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_CANDIDATE_DEADLINE_MS),
+            )
+        else:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filtered span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+
+            # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY id` (its
+            # O(window) full sort OOM-crashed CH — see SpanListQueryBuilder.build)
+            # and instead fetched the sorted prefix [0, offset + 2*page_size).
+            # De-dup the prefix by span id and slice the page — every page is a
+            # disjoint slice of the same globally de-duplicated stream, so a span
+            # can never appear on two pages and none is skipped. See page_dedup.py.
+            result.data, _has_more = paginate_deduped(
+                result.data,
+                ("project_id", "trace_id", "id"),
+                page_number,
+                page_size,
+            )
 
         # Phase 1b: Fetch input/output for the page
-        span_ids = [str(row.get("id", "")) for row in result.data]
-        if span_ids:
-            content_query, content_params = builder.build_content_query(span_ids)
+        span_ids = [str(row.get("id", "")) for row in result.data if row.get("id")]
+        span_identities, span_entities, app_identity_by_external = (
+            _span_page_identity_sets(
+                result.data,
+                default_project_id=project_id,
+            )
+        )
+        if span_identities:
+            content_query, content_params = builder.build_content_query(
+                span_ids, span_identities=span_identities
+            )
             if content_query:
                 content_result = analytics.execute_ch_query(
-                    content_query, content_params, timeout_ms=10000
+                    content_query,
+                    content_params,
+                    timeout_ms=read_deadline.remaining_ms(
+                        SPAN_LIST_ENRICHMENT_TIMEOUT_MS
+                    ),
                 )
-                content_map = {str(r.get("id", "")): r for r in content_result.data}
-                for row in result.data:
-                    c = content_map.get(str(row.get("id", "")), {})
-                    row["input"] = c.get("input", "")
-                    row["output"] = c.get("output", "")
+                merge_content_rows(
+                    result.data,
+                    content_result.data,
+                    id_key=("project_id", "trace_id", "id", "start_time"),
+                    keys=("input", "output"),
+                )
 
-        # Count
-        count_query, count_params = builder.build_count_query()
-        count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=10000
-        )
-        total_count = count_result.data[0].get("total", 0) if count_result.data else 0
+        # A bounded filtered read intentionally reports the proven lower bound;
+        # re-running the old full-window count would reintroduce the timeout the
+        # bounded path avoids. Unfiltered reads retain their exact count.
+        if bounded_page is not None:
+            total_count = bounded_page.total_rows_lower_bound
+        else:
+            count_query, count_params = builder.build_count_query()
+            count_result = analytics.execute_ch_query(
+                count_query,
+                count_params,
+                timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
+            )
+            total_count = (
+                count_result.data[0].get("total", 0) if count_result.data else 0
+            )
 
         # Phase 2: Eval scores
         eval_map = {}
-        if span_ids and eval_config_ids:
-            eval_query, eval_params = builder.build_eval_query(span_ids)
+        if span_entities and eval_config_ids:
+            eval_query, eval_params = builder.build_eval_query(
+                span_ids, span_entities=span_entities
+            )
             if eval_query:
                 eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
+                    eval_query,
+                    eval_params,
+                    timeout_ms=read_deadline.remaining_ms(5_000),
                 )
-                eval_map = SpanListQueryBuilder.pivot_eval_results(eval_result.data)
+                external_map = SpanListQueryBuilder.pivot_eval_results(
+                    eval_result.data, key_by_trace=True
+                )
+                eval_map = {
+                    app_identity_by_external[external_key]: values
+                    for external_key, values in external_map.items()
+                    if external_key in app_identity_by_external
+                }
 
         # Phase 3: Annotations
         annotation_map = {}
-        if span_ids and annotation_label_ids:
-            ann_query, ann_params = builder.build_annotation_query(span_ids)
+        if span_entities and annotation_label_ids:
+            ann_query, ann_params = builder.build_annotation_query(
+                span_ids, span_entities=span_entities
+            )
             if ann_query:
                 ann_result = analytics.execute_ch_query(
-                    ann_query, ann_params, timeout_ms=5000
+                    ann_query,
+                    ann_params,
+                    timeout_ms=read_deadline.remaining_ms(5_000),
                 )
-                annotation_map = SpanListQueryBuilder.pivot_annotation_results(
-                    ann_result.data, label_types
+                external_map = SpanListQueryBuilder.pivot_annotation_results(
+                    ann_result.data, label_types, key_by_trace=True
                 )
+                annotation_map = {
+                    app_identity_by_external[external_key]: values
+                    for external_key, values in external_map.items()
+                    if external_key in app_identity_by_external
+                }
 
         # Build column config
         column_config = get_default_span_config()
@@ -2052,7 +2903,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         table_data = []
         for row in result.data:
             span_id = str(row.get("id", ""))
+            span_entity = (
+                str(row.get("project_id", "")),
+                str(row.get("trace_id", "")),
+                span_id,
+            )
             entry = {
+                "project_id": str(row.get("project_id", "")),
                 "node_type": row.get("observation_type", ""),
                 "span_id": span_id,
                 "input": row.get("input", ""),
@@ -2064,7 +2921,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             }
 
             # Add eval metrics
-            span_evals = eval_map.get(span_id, {})
+            span_evals = eval_map.get(span_entity, {})
             for config in eval_configs:
                 config_id = str(config.id)
                 if config_id not in span_evals:
@@ -2089,7 +2946,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     entry[config_id] = val
 
             # Add annotations
-            span_annotations = annotation_map.get(span_id, {})
+            span_annotations = annotation_map.get(span_entity, {})
             for label in annotation_labels:
                 label_id = str(label.id)
                 if label_id in span_annotations:
@@ -2097,43 +2954,118 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             table_data.append(entry)
 
+        metadata = {"total_rows": total_count}
+        if bounded_page is not None:
+            metadata.update(
+                {
+                    "total_rows_is_lower_bound": True,
+                    "has_more": bounded_page.has_more,
+                    "query_complete": bounded_page.complete,
+                    "query_status": bounded_page.status,
+                    "query_error_code": bounded_page.error_code,
+                    "query_elapsed_ms": round(bounded_page.elapsed_ms, 3),
+                    "query_count": bounded_page.query_count,
+                    "query_rows_returned": bounded_page.rows_returned,
+                    "query_result_payload_bytes": bounded_page.result_payload_bytes,
+                }
+            )
+        if metadata.get(
+            "total_rows_is_lower_bound"
+        ) and exact_total_explicitly_required(request, validated_data):
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+
         response = {
             "column_config": column_config,
-            "metadata": {"total_rows": total_count},
+            "metadata": metadata,
             "table": table_data,
         }
 
         return self._gm.success_response(response)
 
+    @bounded_graph_action_request(resource="span_graph")
     @validated_request(
+        query_serializer=ObserveGraphDataQuerySerializer,
         request_serializer=ObserveGraphDataRequestSerializer,
-        responses={200: ObserveGraphDataResponseSerializer},
+        responses={
+            200: ObserveGraphDataResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def get_graph_methods(self, request, *args, **kwargs):
         """
         Fetch data for the observe graph with optimized queries
         """
+        deadline = kwargs.pop("_graph_action_deadline", None)
+        deadline = deadline or start_graph_action_deadline()
+
+        def finish(response):
+            return finish_graph_action_response(deadline, response)
+
         try:
             body = request.validated_data
+            refresh = request.validated_query_data.get("refresh", False)
             project_id = str(body["project_id"])
 
-            project = Project.objects.get(
-                _project_workspace_scope_q(self.request, project_prefix=""),
-                id=project_id,
-                organization=_get_request_organization(request),
-            )
+            try:
+                with graph_action_postgres_budget(deadline):
+                    project = Project.objects.get(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        id=project_id,
+                        organization=_get_request_organization(request),
+                    )
+            except Project.DoesNotExist:
+                return finish(
+                    self._gm.bad_request("Project not found or access denied")
+                )
             if project.trace_type != "observe":
-                raise Exception("Project should be of type observe")
+                return finish(self._gm.bad_request("Project should be of type observe"))
 
-            filters = body["filters"]
+            filters = bind_request_my_annotations_principal(
+                request,
+                body["filters"],
+            )
+            filters = graph_execution_filters(filters)
             _property = body["property"]
             interval = body["interval"]
             req_data_config = body["req_data_config"]
+            try:
+                validate_property_graph_namespace(
+                    req_data_config.get("property_id"),
+                    expected_definition_source="spans",
+                )
+            except ValueError:
+                return finish(
+                    self._gm.bad_request(
+                        "property_id is not valid for this graph endpoint"
+                    )
+                )
 
-            type = req_data_config.get("type", None)
-            if type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
-                return self._gm.bad_request("Filter property type is not valid")
+            metric_type = req_data_config.get("type", None)
+            if metric_type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
+                return finish(self._gm.bad_request("Filter property type is not valid"))
+            metric_id = req_data_config.get("id", "latency")
+            # PostgreSQL remains authoritative for small config metadata and
+            # authorization only. Telemetry still comes exclusively from CH25.
+            if metric_type == "EVAL":
+                with graph_action_postgres_budget(deadline):
+                    eval_config_available = CustomEvalConfig.objects.filter(
+                        id=metric_id,
+                        project_id=project_id,
+                        deleted=False,
+                    ).exists()
+                if not eval_config_available:
+                    return finish(
+                        self._gm.bad_request(
+                            "Evaluation config is not available for this project"
+                        )
+                    )
 
             # CH-only path post-migration. D-027: the previous PG fallback
             # (ObservationSpan.objects.filter + per-config eval-metric
@@ -2141,61 +3073,143 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # deleted. SPAN_GRAPH is served by the three CH helpers
             # (fetch_system_metric_graph_ch / fetch_eval_graph_ch /
             # fetch_annotation_graph_ch).
-            analytics = AnalyticsQueryService()
-            if type == "SYSTEM_METRIC":
-                metric_id = req_data_config.get("id", "latency")
-                try:
-                    return self._gm.success_response(
-                        fetch_system_metric_graph_ch(
-                            analytics=analytics,
-                            project_id=project_id,
-                            filters=filters,
-                            interval=interval,
-                            metric_id=metric_id,
-                        )
-                    )
-                except Exception:
-                    logger.warning(
-                        "span_graph_clickhouse_failed, falling back to postgres",
-                        project_id=project_id,
-                        metric_id=metric_id,
-                        exc_info=True,
-                    )
-                    return self._gm.success_response(
-                        self._system_metric_graph_postgres(
-                            request, project_id, filters, interval, metric_id
-                        )
-                    )
-            elif type == "EVAL":
-                return self._gm.success_response(
-                    fetch_eval_graph_ch(
+            # Spans/traces are direct-write CH25 only. Use the process-wide V2
+            # pool and return a typed unavailable response on bounded read
+            # failure; never rebuild telemetry from stale PostgreSQL rows.
+            analytics = V2AnalyticsQueryService()
+            workspace_id = getattr(getattr(request, "workspace", None), "id", None)
+            try:
+                if metric_type == "SYSTEM_METRIC":
+                    graph = fetch_system_metric_graph_ch(
                         analytics=analytics,
                         project_id=project_id,
                         filters=filters,
                         interval=interval,
-                        req_data_config=req_data_config,
+                        metric_id=metric_id,
+                        observe_type="span",
+                        refresh=refresh,
+                        organization_id=(
+                            str(project.organization_id)
+                            if getattr(project, "organization_id", None)
+                            else None
+                        ),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
                     )
-                )
-            elif type == "ANNOTATION":
-                return self._gm.success_response(
-                    fetch_annotation_graph_ch(
+                elif metric_type == "EVAL":
+                    graph = fetch_eval_graph_ch(
                         analytics=analytics,
                         project_id=project_id,
                         filters=filters,
                         interval=interval,
                         req_data_config=req_data_config,
                         observe_type="span",
+                        refresh=refresh,
+                        organization_id=(
+                            str(project.organization_id)
+                            if getattr(project, "organization_id", None)
+                            else None
+                        ),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
+                    )
+                else:
+                    graph = fetch_annotation_graph_ch(
+                        analytics=analytics,
+                        project_id=project_id,
+                        filters=filters,
+                        interval=interval,
+                        req_data_config=req_data_config,
+                        observe_type="span",
+                        refresh=refresh,
+                        organization_id=(
+                            str(project.organization_id)
+                            if getattr(project, "organization_id", None)
+                            else None
+                        ),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
+                    )
+                graph.update(
+                    graph_query_evidence(
+                        project_id=project_id,
+                        observe_type="span",
+                        filters=filters,
                     )
                 )
-            return self._gm.bad_request("Filter property type is not valid")
+                graph = enforce_exact_graph_data_contract(graph)
+                if not graph_payload_is_publishable(
+                    graph,
+                    allow_sampled=False,
+                ):
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Graph data is temporarily unavailable. Please retry.",
+                            code="service_unavailable",
+                        )
+                    )
+                return finish(self._gm.success_response(graph))
+            except Exception as exc:
+                if not (
+                    isinstance(exc, BoundedGraphReadError)
+                    or is_clickhouse_api_read_unavailable_error(exc)
+                ):
+                    # A programming defect is not a successful degraded graph.
+                    # Re-raise into the outer sanitized handler, which records
+                    # the traceback without exposing it in the API response.
+                    raise
+                logger.warning(
+                    "span_graph_query_unavailable",
+                    project_id=project_id,
+                    metric_type=metric_type,
+                    metric_id=metric_id,
+                    error_type=type(exc).__name__,
+                )
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Graph data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+                )
 
-        except Exception as e:
-            logger.exception(f"Error in fetching graph data: {str(e)}")
-            return self._gm.bad_request(f"Error fetching graph data: {str(e)}")
+        except GraphActionUnavailable:
+            logger.warning(
+                "span_graph_action_deadline_exceeded",
+                project_id=str(
+                    getattr(request, "validated_data", {}).get("project_id", "")
+                ),
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except UnsupportedFilterShapeError:
+            return self._gm.bad_request("Graph filter configuration is invalid")
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            logger.exception(
+                "span_graph_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Graph data could not be loaded",
+                code="server_error",
+            )
 
     @validated_request(
         query_serializer=ObservationAttributeListQuerySerializer,
-        responses={200: ObservationAttributeListResponseSerializer},
+        responses={
+            200: ObservationAttributeListResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["get"])
     def get_span_attributes_list(self, request, *args, **kwargs):
@@ -2207,21 +3221,60 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Returns:
             List of attribute key strings.
         """
+        project_id = request.validated_query_data["filters"]["project_id"]
+        exact_key = request.validated_query_data.get("q")
+        if not self._attribute_project_for_request(request, project_id):
+            return self._gm.not_found("Project not found")
+
+        selector = AttributeReadSelector(
+            typed_only=True,
+            json_attribute_mode="structured",
+        )
         try:
-            project_id = request.validated_query_data["filters"]["project_id"]
-
-            result = self._get_span_attribute_keys(project_id)
-            return self._gm.success_response(result)
-
-        except Exception as e:
-            logger.exception(f"error fetching span attributes list: {str(e)}")
-            return self._gm.bad_request(
-                f"error fetching the span attributes list {str(e)}"
+            keys, metadata = self._get_span_attribute_inventory(
+                project_id,
+                selector=selector,
+                exact_key=exact_key,
+            )
+            if not self._attribute_metadata_allows_success(
+                metadata,
+                has_verified_results=bool(keys),
+                allow_empty_sample=exact_key is not None,
+            ):
+                return self._attribute_read_unavailable_response()
+            return self._attribute_list_response(keys, metadata)
+        except (InvalidAttributeKey, InvalidAttributeSearch):
+            return self._gm.bad_request("Attribute filter configuration is invalid")
+        except Exception as exc:
+            if isinstance(exc, IncompleteLatestStateReplay) or (
+                is_clickhouse_api_read_unavailable_error(exc)
+            ):
+                logger.warning(
+                    "span_attribute_discovery_unavailable",
+                    project_id=str(project_id),
+                    error_type=type(exc).__name__,
+                )
+                return self._attribute_read_unavailable_response()
+            logger.exception(
+                "span_attribute_discovery_failed",
+                project_id=str(project_id),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Span attributes could not be loaded",
+                code="server_error",
             )
 
     @validated_request(
         query_serializer=ObservationAttributeListQuerySerializer,
-        responses={200: ObservationAttributeListResponseSerializer},
+        responses={
+            200: ObservationAttributeListResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["get"])
     def get_eval_attributes_list(self, request, *args, **kwargs):
@@ -2242,38 +3295,100 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         ordering of ``traces.<i>`` / ``spans.<n>`` slots is decided at
         resolve time (see ``_resolve_session_path`` / ``_resolve_trace_path``).
         """
+        project_id = request.validated_query_data["filters"]["project_id"]
+        row_type = request.validated_query_data["row_type"]
+        exact_key = request.validated_query_data.get("q")
+        if not self._attribute_project_for_request(request, project_id):
+            return self._gm.not_found("Project not found")
+
+        selector = AttributeReadSelector(
+            typed_only=True,
+            # Eval field mapping can resolve arbitrary JSON values.  Unlike a
+            # filter picker it needs the key even when the value is an object,
+            # null, or a JSON-only scalar.
+            json_attribute_mode="all",
+        )
         try:
-            project_id = request.validated_query_data["filters"]["project_id"]
-            row_type = request.validated_query_data["row_type"]
+            span_attribute_keys, discovery_metadata = (
+                self._get_span_attribute_inventory(
+                    project_id,
+                    selector=selector,
+                    exact_key=exact_key,
+                )
+            )
+            if not self._attribute_metadata_allows_success(
+                discovery_metadata,
+                has_verified_results=bool(span_attribute_keys),
+                allow_empty_sample=exact_key is not None,
+            ):
+                return self._attribute_read_unavailable_response()
+            if row_type in ("spans", "voiceCalls"):
+                return self._attribute_list_response(
+                    span_attribute_keys, discovery_metadata
+                )
 
-            if row_type == "spans" or row_type == "voiceCalls":
-                # voiceCalls share the spans surface for the picker; they
-                # have their own evaluator pipeline upstream of EvalTask.
-                return self.get_span_attributes_list(request, *args, **kwargs)
-
-            span_attribute_keys = self._get_span_attribute_keys(project_id)
-
+            cardinality = selector.sample_cardinality(
+                [project_id],
+                # Trace pickers only need spans-per-trace and must not pay for
+                # the targeted session lane. Session pickers explicitly opt in.
+                ensure_session_sample=row_type == "sessions",
+            )
+            cardinality_has_verified_results = cardinality.max_spans_per_trace > 0 and (
+                row_type != "sessions" or cardinality.max_traces_per_session > 0
+            )
+            if not self._attribute_metadata_allows_success(
+                cardinality.metadata,
+                has_verified_results=cardinality_has_verified_results,
+                # A project with no verified session-bearing spans still has
+                # valid static session fields (name/bookmarked). Publish those
+                # with explicit sample coverage and zero invented
+                # ``traces.<n>`` positions. Resource/deadline failures remain
+                # degraded and continue to return the sanitized 503 below.
+                allow_empty_sample=row_type == "sessions",
+            ):
+                return self._attribute_read_unavailable_response()
+            metadata = merge_read_metadata(discovery_metadata, cardinality.metadata)
             if row_type == "traces":
                 paths = self._build_trace_attribute_paths(
-                    project_id, span_attribute_keys
+                    project_id,
+                    span_attribute_keys,
+                    max_spans=cardinality.max_spans_per_trace,
                 )
-                return self._gm.success_response(paths)
+                return self._attribute_list_response(paths, metadata)
 
             if row_type == "sessions":
                 paths = self._build_session_attribute_paths(
-                    project_id, span_attribute_keys
+                    project_id,
+                    span_attribute_keys,
+                    max_traces=cardinality.max_traces_per_session,
+                    max_spans=cardinality.max_spans_per_trace,
                 )
-                return self._gm.success_response(paths)
+                return self._attribute_list_response(paths, metadata)
 
-            return self._gm.bad_request(
-                f"Unknown row_type {row_type!r}. Expected one of: "
-                "spans, traces, sessions, voiceCalls."
+            return self._gm.bad_request("Unknown row type")
+        except (InvalidAttributeKey, InvalidAttributeSearch):
+            return self._gm.bad_request("Attribute filter configuration is invalid")
+        except Exception as exc:
+            if isinstance(exc, IncompleteLatestStateReplay) or (
+                is_clickhouse_api_read_unavailable_error(exc)
+            ):
+                logger.warning(
+                    "evaluation_attribute_discovery_unavailable",
+                    project_id=str(project_id),
+                    row_type=row_type,
+                    error_type=type(exc).__name__,
+                )
+                return self._attribute_read_unavailable_response()
+            logger.exception(
+                "evaluation_attribute_discovery_failed",
+                project_id=str(project_id),
+                row_type=row_type,
+                error_type=type(exc).__name__,
             )
-
-        except Exception as e:
-            logger.exception(f"error fetching eval attributes list: {str(e)}")
-            return self._gm.bad_request(
-                f"error fetching the eval attributes list {str(e)}"
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Evaluation attributes could not be loaded",
+                code="server_error",
             )
 
     # Trace + session model fields the resolver allow-lists; mirrors the
@@ -2294,6 +3409,89 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     # Most projects' traces have a few-to-dozens of spans; bounding the
     # sample keeps the path enumeration query cheap.
     _OBSERVED_MAX_SAMPLE_SIZE = 100
+
+    @staticmethod
+    def _attribute_metadata_allows_success(
+        metadata: AttributeReadMetadata,
+        *,
+        has_verified_results: bool,
+        allow_empty_sample: bool = False,
+    ) -> bool:
+        """Accept exact reads or an explicitly labelled finite-cap sample only."""
+
+        return metadata.query_complete or (
+            (has_verified_results or allow_empty_sample)
+            and metadata.query_status == "sampled"
+            and metadata.query_error_code == "sample_limit"
+        )
+
+    @staticmethod
+    def _attribute_read_unavailable_response():
+        return GeneralMethods().custom_error_response(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Attribute values are temporarily unavailable. Please retry.",
+            code="service_unavailable",
+        )
+
+    @staticmethod
+    def _attribute_list_response(paths: list[str], metadata: AttributeReadMetadata):
+        response = GeneralMethods().success_response(paths)
+        response.data.update(metadata.public_payload())
+        return response
+
+    @staticmethod
+    def _attribute_project_for_request(request, project_id: str):
+        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+        return (
+            project_manager.filter(
+                _project_workspace_scope_q(request, project_prefix=""),
+                id=project_id,
+                organization=_get_request_organization(request),
+                deleted=False,
+            )
+            .only("id")
+            .first()
+        )
+
+    @staticmethod
+    def _get_span_attribute_inventory(
+        project_id: str,
+        *,
+        selector: AttributeReadSelector,
+        exact_key: str | None,
+    ) -> tuple[list[str], AttributeReadMetadata]:
+        if exact_key is None:
+            # Generic pickers need a useful bounded inventory, not a seven-day
+            # first statement that can exceed the selector's 500k-row ceiling
+            # on dense voice projects. The selector already defines six hours
+            # as its production-safe dense segment. Prefer that frozen recent
+            # sample; only sparse/empty projects pay for the existing adaptive
+            # one-year search below.
+            window_end = selector.query_window_end
+            recent_read = selector.discover_keys(
+                [project_id],
+                window_start=window_end - ATTRIBUTE_READ_EXPLICIT_SEGMENT,
+                window_end=window_end,
+            )
+            recent_metadata = recent_read.metadata
+            recent_read_is_publishable = recent_metadata.query_complete or (
+                recent_metadata.query_status == "sampled"
+                and recent_metadata.query_error_code == "sample_limit"
+            )
+            if recent_read.rows and recent_read_is_publishable:
+                # Even an exact six-hour result is only a sample of the
+                # endpoint's historical inventory. Keep that coverage honest
+                # instead of presenting it as a complete all-time key list.
+                sampled_metadata = replace(
+                    recent_metadata,
+                    query_complete=False,
+                    query_status="sampled",
+                    query_error_code="sample_limit",
+                )
+                return [row.key for row in recent_read.rows], sampled_metadata
+
+        read = selector.discover_keys([project_id], exact_key=exact_key)
+        return [row.key for row in read.rows], read.metadata
 
     def _get_span_attribute_keys(self, project_id: str) -> list:
         """Project's distinct span_attributes keys, sourced from CH.
@@ -2325,46 +3523,22 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         return keys
 
     def _max_spans_per_trace(self, project_id: str) -> int:
-        """Max span count observed across the project's most recent traces.
+        """Bounded CH25-only span cardinality sample for legacy callers."""
 
-        Bounds the indexed positions exposed under ``spans.<n>.<...>``.
-        Samples the most recent ``_OBSERVED_MAX_SAMPLE_SIZE`` traces to
-        keep the aggregate cheap on large projects.
-        """
-        sample_trace_ids = list(
-            Trace.objects.filter(project_id=project_id)
-            .order_by("-created_at")
-            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        return (
+            AttributeReadSelector()
+            .sample_cardinality([project_id], ensure_session_sample=False)
+            .max_spans_per_trace
         )
-        if not sample_trace_ids:
-            return 0
-
-        # CH-routed: per_trace_aggregate returns {trace_id: {span_count, ...}}
-        # for the sampled traces; we just need the max span_count across
-        # them. One CH call replaces the prior values/annotate/aggregate
-        # roll-up against the PG spans table.
-        from tracer.services.clickhouse.v2 import get_reader
-
-        with get_reader() as reader:
-            agg = reader.per_trace_aggregate([str(t) for t in sample_trace_ids])
-        if not agg:
-            return 0
-        return max((row.get("span_count", 0) for row in agg.values()), default=0)
 
     def _max_traces_per_session(self, project_id: str) -> int:
-        """Max trace count observed across the project's most recent sessions."""
-        sample_session_ids = (
-            TraceSession.objects.filter(project_id=project_id)
-            .order_by("-created_at")
-            .values_list("id", flat=True)[: self._OBSERVED_MAX_SAMPLE_SIZE]
+        """Bounded CH25-only trace cardinality sample for legacy callers."""
+
+        return (
+            AttributeReadSelector()
+            .sample_cardinality([project_id])
+            .max_traces_per_session
         )
-        agg = (
-            Trace.objects.filter(session_id__in=sample_session_ids)
-            .values("session_id")
-            .annotate(trace_count=Count("id"))
-            .aggregate(max_count=Max("trace_count"))
-        )
-        return agg["max_count"] or 0
 
     _SPAN_PUBLIC_FIELDS = (
         "latency_ms",
@@ -2382,12 +3556,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     )
 
     def _build_trace_attribute_paths(
-        self, project_id: str, span_attribute_keys: list
+        self,
+        project_id: str,
+        span_attribute_keys: list,
+        *,
+        max_spans: int | None = None,
     ) -> list:
         """Trace-level paths: trace fields + ``spans.<n>.<key>`` for each
         index up to the observed max spans-per-trace."""
         paths = list(self._TRACE_PUBLIC_FIELDS)
-        max_spans = self._max_spans_per_trace(project_id)
+        if max_spans is None:
+            max_spans = self._max_spans_per_trace(project_id)
         for i in range(max_spans):
             for field in self._SPAN_PUBLIC_FIELDS:
                 paths.append(f"spans.{i}.{field}")
@@ -2396,14 +3575,21 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         return paths
 
     def _build_session_attribute_paths(
-        self, project_id: str, span_attribute_keys: list
+        self,
+        project_id: str,
+        span_attribute_keys: list,
+        *,
+        max_traces: int | None = None,
+        max_spans: int | None = None,
     ) -> list:
         """Session-level paths: session fields + ``traces.<i>.<trace_field>``
         + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
         session and spans-per-trace."""
         paths = list(self._SESSION_PUBLIC_FIELDS)
-        max_traces = self._max_traces_per_session(project_id)
-        max_spans = self._max_spans_per_trace(project_id)
+        if max_traces is None:
+            max_traces = self._max_traces_per_session(project_id)
+        if max_spans is None:
+            max_spans = self._max_spans_per_trace(project_id)
         for i in range(max_traces):
             for trace_field in self._TRACE_PUBLIC_FIELDS:
                 paths.append(f"traces.{i}.{trace_field}")
@@ -2447,19 +3633,27 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(fields)
 
-        except Exception as e:
-            logger.exception(f"Error in getting observation span fields: {str(e)}")
-            return self._gm.bad_request(
-                f"Error getting observation span fields: {str(e)}"
+        except Exception as exc:
+            logger.exception(
+                "observation_span_fields_failed", error_type=type(exc).__name__
             )
+            return self._gm.bad_request("Observation span fields could not be loaded")
 
     def _get_evaluation_details_clickhouse(
-        self, observation_span_id, custom_eval_config_id, analytics
+        self,
+        observation_span_id,
+        custom_eval_config_id,
+        project_id,
+        analytics,
     ):
         """Get evaluation details from ClickHouse."""
         # Span- and trace-target rows both anchor to observation_span_id;
         # session rows don't and are served by /trace-session/:id/eval_logs/.
-        row = analytics.get_eval_detail_ch(observation_span_id, custom_eval_config_id)
+        row = analytics.get_eval_detail_ch(
+            observation_span_id,
+            custom_eval_config_id,
+            project_id=project_id,
+        )
         if not row:
             return self._gm.bad_request(
                 "No eval logger found for the given observation span id and custom eval config id"
@@ -2509,8 +3703,16 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             }
         )
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"])
     def get_evaluation_details(self, request, *args, **kwargs):
+        observation_span_id = None
         try:
             observation_span_id = self.request.query_params.get(
                 "observation_span_id", None
@@ -2524,122 +3726,105 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     "Observation span id and custom eval config id are required"
                 )
 
-            # ClickHouse dispatch
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
+            # The eval table has no project column.  Authorize the config through
+            # the request's organization/workspace project scope before any CH
+            # telemetry read, then pass that project anchor into the CH selector.
+            # Use one generic absence response so foreign config UUIDs do not
+            # become an existence oracle.
+            config_scope = (
+                CustomEvalConfig.no_workspace_objects.filter(
+                    _project_workspace_scope_q(self.request),
+                    id=custom_eval_config_id,
+                    project__organization=_get_request_organization(self.request),
+                    deleted=False,
+                )
+                .values("project_id")
+                .first()
             )
-
-            analytics = AnalyticsQueryService()
-            # CH-only path post-migration. EvalLogger reads previously
-            # served as a PG fallback; the CH variant reads from
-            # `tracer_eval_logger` via the CDC pipeline and is now the
-            # only routed path.
-            return self._get_evaluation_details_clickhouse(
-                observation_span_id, custom_eval_config_id, analytics
-            )
-
-            # Mirror the ClickHouse filter; excludes session-target rows.
-            eval_logger = EvalLogger.objects.filter(
-                observation_span_id=observation_span_id,
-                custom_eval_config_id=custom_eval_config_id,
-                target_type__in=["span", "trace"],
-            ).first()
-
-            if not eval_logger:
+            if config_scope is None:
                 return self._gm.bad_request(
                     "No eval logger found for the given observation span id and custom eval config id"
                 )
+            project_id = str(config_scope["project_id"])
 
-            output_metadata = eval_logger.output_metadata
+            # CH25-only path. V2AnalyticsQueryService keeps the direct CH25
+            # connection while honoring the independently configured eval
+            # table name.
+            analytics = V2AnalyticsQueryService()
+            return self._get_evaluation_details_clickhouse(
+                observation_span_id,
+                custom_eval_config_id,
+                project_id,
+                analytics,
+            )
 
-            if not output_metadata or not isinstance(output_metadata, dict):
-                output_metadata = {}
-
-            if eval_logger.error or eval_logger.output_str == "ERROR":
-                return self._gm.success_response(
-                    {
-                        "error_analysis": output_metadata.get("error_analysis"),
-                        "selected_input_key": output_metadata.get("selected_input_key"),
-                        "input_data": output_metadata.get("input_data"),
-                        "input_types": output_metadata.get("input_types"),
-                        "score": None,
-                        "explanation": eval_logger.error_message,
-                        "error": True,
-                    }
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "evaluation_detail_query_unavailable",
+                    span_id=str(observation_span_id or ""),
+                    error_type=type(exc).__name__,
                 )
-
-            evaluation_result = (
-                eval_logger.output_bool
-                if eval_logger.output_bool is not None
-                else (
-                    eval_logger.output_float
-                    if eval_logger.output_float is not None
-                    else eval_logger.output_str_list
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Evaluation details are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
                 )
+            logger.exception(
+                "evaluation_detail_request_failed",
+                error_type=type(exc).__name__,
             )
-            evaluation_explanation = (
-                eval_logger.eval_explanation
-                if eval_logger.eval_explanation
-                else eval_logger.error_message
-            )
-
-            result = {
-                "error_analysis": output_metadata.get("error_analysis", None),
-                "selected_input_key": output_metadata.get("selected_input_key", None),
-                "input_data": output_metadata.get("input_data", None),
-                "input_types": output_metadata.get("input_types", None),
-                "score": evaluation_result,
-                "explanation": evaluation_explanation,
-            }
-
-            return self._gm.success_response(result)
-
-        except Exception as e:
-            return self._gm.bad_request(
-                f"error fetching the eval attributes list {str(e)}"
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Evaluation details could not be loaded",
+                code="server_error",
             )
 
+    @validated_request(
+        query_serializer=SpanExportQuerySerializer,
+        responses={
+            200: openapi.Response(
+                "Bounded CSV export; a terminal comment row discloses truncation.",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            ),
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+        produces=["text/csv"],
+    )
     @action(detail=False, methods=["get"])
     def get_spans_export_data(self, request, *args, **kwargs):
         try:
-            serializer = SpanExportQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            validated_data = serializer.validated_data
-
-            response = self.list_spans_observe(request, export=True)
-
-            if response.status_code != 200:
-                return response
-
+            validated_data = request.validated_query_data
             project_id = str(validated_data["project_id"])
-            project = Project.objects.get(
-                _project_workspace_scope_q(self.request, project_prefix=""),
+            project = Project.objects.filter(
+                _project_workspace_scope_q(request, project_prefix=""),
                 id=project_id,
                 organization=_get_request_organization(request),
+            ).first()
+            if not project:
+                return self._gm.bad_request("Project not found")
+
+            page_response = self.list_spans_observe(request, bounded_export=True)
+            if page_response.status_code != status.HTTP_200_OK:
+                return page_response
+            result = page_response.data.get("result", {})
+            return bounded_page_csv_response(
+                rows=result.get("table"),
+                metadata=result.get("metadata"),
+                filename=f"{project.name or 'project'}_spans.csv",
             )
 
-            result = response.data.get("result")
-            table_data = result.get("table", None)
-
-            df = pd.DataFrame(table_data)
-
-            # Convert to CSV buffer
-            buffer = io.BytesIO()
-            df.to_csv(buffer, index=False, encoding="utf-8")
-            buffer.seek(0)
-
-            # Create the response with the file
-            filename = f"{project.name or 'project'}_spans.csv"
-            response = FileResponse(
-                buffer, as_attachment=True, filename=filename, content_type="text/csv"
+        except Exception as exc:
+            logger.exception(
+                "observation_span_export_failed", error_type=type(exc).__name__
             )
-
-            return response
-
-        except Exception as e:
-            logger.exception(f"Error in exporting the spans list of observe: {str(e)}")
-            return self._gm.bad_request(get_error_message(""))
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Span export could not be generated",
+                code="server_error",
+            )
 
     @validated_request(request_serializer=AddObservationSpanAnnotationsSerializer)
     @action(detail=False, methods=["post"])
@@ -2882,8 +4067,75 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
         except AnnotationsLabels.DoesNotExist:
             return self._gm.bad_request("Annotation label not found")
-        except Exception as e:
-            return self._gm.bad_request(f"error deleting the annotation label {str(e)}")
+        except Exception:
+            logger.exception("Error deleting annotation label")
+            return self._gm.bad_request(
+                "Unable to delete the annotation label. Please try again."
+            )
+
+    def _bounded_span_navigation_response(
+        self,
+        *,
+        project_id,
+        span_id,
+        filters,
+        project_version_id=None,
+        end_user_id=None,
+    ):
+        """Return adjacent trace ids from the exact bounded span-list order."""
+
+        from tracer.selectors.trace_filter_reads import read_bounded_filter_neighbors
+        from tracer.services.clickhouse.v2.query_builders.span_list import (
+            SpanListQueryBuilderV2,
+        )
+
+        builder = SpanListQueryBuilderV2(
+            project_id=str(project_id),
+            page_number=0,
+            page_size=SPAN_NAVIGATION_CANDIDATE_LIMIT,
+            filters=list(filters or []),
+            project_version_id=(
+                str(project_version_id) if project_version_id is not None else None
+            ),
+            end_user_id=str(end_user_id) if end_user_id is not None else None,
+            bounded_internal_scan=True,
+            bounded_identity_only=True,
+        )
+        error_code = builder.bounded_filter_degraded_error_code()
+        if error_code or not builder.supports_bounded_filter_scan():
+            raise SpanNavigationReadUnavailable(
+                error_code or "unsupported_filter_shape"
+            )
+        neighbors = read_bounded_filter_neighbors(
+            builder=builder,
+            analytics=V2AnalyticsQueryService(),
+            filters=list(filters or []),
+            key_field="id",
+            target_id=str(span_id),
+            scan_limit=SPAN_NAVIGATION_CANDIDATE_LIMIT,
+            page_size=SPAN_NAVIGATION_SCAN_PAGE_SIZE,
+            deadline_ms=SPAN_NAVIGATION_WALL_DEADLINE_MS,
+            max_query_count=SPAN_NAVIGATION_MAX_QUERIES,
+            require_unique_target=True,
+        )
+        if not neighbors.complete or neighbors.current is None:
+            code = neighbors.error_code or "read_incomplete"
+            if code in {"target_not_found", "ambiguous_identity"}:
+                code = "ambiguous_span_identity"
+            raise SpanNavigationReadUnavailable(code)
+
+        newer_row = neighbors.newer
+        older_row = neighbors.older
+        return self._gm.success_response(
+            {
+                "next_trace_id": (
+                    str(older_row.get("trace_id")) if older_row else None
+                ),
+                "previous_trace_id": (
+                    str(newer_row.get("trace_id")) if newer_row else None
+                ),
+            }
+        )
 
     @validated_request(query_serializer=SpanIndexQuerySerializer)
     @action(detail=False, methods=["get"])
@@ -2926,6 +4178,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 _project_workspace_scope_q(request),
                 id=project_version_id,
                 project__organization=_get_request_organization(request),
+            )
+
+            return self._bounded_span_navigation_response(
+                project_id=project_version.project_id,
+                project_version_id=project_version_id,
+                span_id=span_id,
+                filters=query["filters"],
             )
 
             base_query = ObservationSpan.objects.filter(
@@ -3136,9 +4395,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            logger.exception(f"Error fetching span id by index: {str(e)}")
-            return self._gm.bad_request(f"error fetching the span id by index {str(e)}")
+        except SpanNavigationReadUnavailable as exc:
+            logger.warning(
+                "span_navigation_bounded_read_incomplete", error_code=exc.code
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span navigation is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            logger.exception("span_navigation_failed", error_type=type(exc).__name__)
+            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Span navigation is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            return self._gm.bad_request("Span navigation could not be loaded")
 
     @validated_request(query_serializer=SpanObserveIndexQuerySerializer)
     @action(detail=False, methods=["get"])
@@ -3172,6 +4446,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             span_id = query["span_id"]
             project_id = str(query["project_id"])
             user_id = query.get("user_id") or None
+
+            project = Project.objects.get(
+                _project_workspace_scope_q(request, project_prefix=""),
+                id=project_id,
+                organization=_get_request_organization(request),
+            )
+            if project.trace_type not in ("observe", "experiment"):
+                raise SpanNavigationReadUnavailable("unsupported_project_type")
+            if user_id:
+                # The exact bounded classifier does not yet support the curated
+                # end-user remap as an order-preserving predicate.  Fail closed
+                # instead of silently navigating the unscoped span list.
+                raise SpanNavigationReadUnavailable("unsupported_filter_modifiers")
+            return self._bounded_span_navigation_response(
+                project_id=project_id,
+                span_id=span_id,
+                filters=query["filters"],
+            )
 
             # P3b step2 precondition — user_id → end_user reverse-resolve (CH, not
             # PG). The old PG `EndUser.objects.get(user_id=…).id` raised "User not
@@ -3440,9 +4732,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            logger.exception(f"Error fetching span id by index (observe): {str(e)}")
-            return self._gm.bad_request(f"error fetching the span id by index {str(e)}")
+        except SpanNavigationReadUnavailable as exc:
+            logger.warning(
+                "span_navigation_bounded_read_incomplete", error_code=exc.code
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Span navigation is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            logger.exception("span_navigation_failed", error_type=type(exc).__name__)
+            if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Span navigation is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            return self._gm.bad_request("Span navigation could not be loaded")
 
 
 def get_observation_spans(filters):

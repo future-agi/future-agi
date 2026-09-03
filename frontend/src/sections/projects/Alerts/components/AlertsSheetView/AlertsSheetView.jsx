@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Drawer,
@@ -9,7 +10,14 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import React, {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import BackButton from "src/sections/develop-detail/Common/BackButton";
 import SvgColor from "src/components/svg-color";
 import TracingControls from "src/sections/projects/LLMTracing/TracingControls";
@@ -29,6 +37,12 @@ import { useAlertSheetView } from "../../store/useAlertSheetView";
 import { AlertTableSkeleton } from "../AlertSkeletons";
 import _ from "lodash";
 import { isAlertMuted } from "../../common";
+import {
+  keepPreviousMonitorGraphData,
+  MONITOR_GRAPH_ERROR_MESSAGE,
+  monitorGraphDisplayState,
+  monitorGraphRequestConfig,
+} from "../../../monitor_graph_read";
 const Issues = lazy(() => import("./Issues"));
 const AlertDetails = lazy(() => import("./AlertDetails"));
 
@@ -54,6 +68,7 @@ export default function AlertsSheetView() {
   } = useAlertSheetView();
   const [dateFilter, setDateFilter] = useState(getDefaultDateRange());
   const [duplicateModal, setDuplicateModal] = useState(false);
+  const retainedGraphDataRef = useRef();
   const { mutate: mutateAlerts, isPending: isMutingAlerts } =
     useMuteAlertsMutation({
       onSuccessCallback: () => {
@@ -69,19 +84,38 @@ export default function AlertsSheetView() {
     handleStartCreatingAlerts();
   };
 
-  const { data } = useQuery({
+  const {
+    data: latestGraphData,
+    isError: isGraphError,
+    isFetching: isGraphFetching,
+    refetch: refetchGraph,
+  } = useQuery({
     queryKey: ["alert-graph", openSheetView, dateFilter],
-    queryFn: () =>
-      axiosInstance.get(endpoints.project.getAlertGraph(openSheetView), {
-        params: {
-          start_date: dateFilter?.dateFilter[0],
-          end_date: dateFilter?.dateFilter[1],
-        },
-      }),
-    refetchInterval: 10 * 1000,
+    queryFn: ({ signal }) =>
+      axiosInstance.get(
+        endpoints.project.getAlertGraph(openSheetView),
+        monitorGraphRequestConfig({ signal, dateFilter }),
+      ),
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : 10 * 1000,
     enabled: !!openSheetView,
     select: (data) => data?.data,
+    placeholderData: keepPreviousMonitorGraphData,
+    retry: false,
   });
+
+  useEffect(() => {
+    if (latestGraphData !== undefined) {
+      retainedGraphDataRef.current = latestGraphData;
+    }
+  }, [latestGraphData]);
+
+  const graphState = monitorGraphDisplayState({
+    latestData: latestGraphData,
+    retainedData: retainedGraphDataRef.current,
+    isError: isGraphError,
+  });
+  const data = graphState.data;
 
   const [chartKey] = useState(0);
 
@@ -404,7 +438,25 @@ export default function AlertsSheetView() {
               </Stack>
             </Stack>
           </Stack>
-          {renderChart()}
+          {graphState.showError && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2 }}
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={isGraphFetching}
+                  onClick={() => refetchGraph()}
+                >
+                  {isGraphFetching ? "Retrying…" : "Retry"}
+                </Button>
+              }
+            >
+              {MONITOR_GRAPH_ERROR_MESSAGE}
+            </Alert>
+          )}
+          {graphState.showGraph && renderChart()}
           <Grid
             container
             sx={{

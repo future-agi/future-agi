@@ -142,7 +142,7 @@ def gather_data_for_eval():
 
             """
 
-            clickhouse_data = client.execute(filter_query)
+            clickhouse_data = client.execute_read(filter_query)
 
             node_ids = [d[0] for d in clickhouse_data]
             uuids = [d[1] for d in clickhouse_data]
