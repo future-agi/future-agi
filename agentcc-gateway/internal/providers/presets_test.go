@@ -147,6 +147,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
 		"azure":       {BaseURL: "", APIFormat: "azure", PathPrefix: ""},
+		"smallest_ai": {BaseURL: "https://api.smallest.ai/waves/v1", APIFormat: "smallestai", PathPrefix: ""},
 	}
 
 	// Verify every expected provider is present with the correct values.
