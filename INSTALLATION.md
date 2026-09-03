@@ -206,7 +206,7 @@ The published backend image is a **slim build**: heavy ML, audio, and voice depe
 | Prompt optimization (Optuna, GEPA)                              | `prompt-opt` |
 | Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma)  | `vectordb`   |
 
-**What happens without the extra:** the stack runs normally, but invoking one of these features fails with an `ImportError` that names the missing extra and points here. Voice simulation is additionally gated up front and returns a clear "not available in this build" API error.
+**What happens without the extra:** most optional features fail with an `ImportError` that names the missing extra and points here; some evaluation and clustering paths degrade gracefully and log that the capability is unavailable. Voice simulation is gated up front and returns a clear "not available in this build" API error. If PII redaction is enabled for a project, ingestion fails closed until the `pii` extra is installed so unredacted data is never stored silently.
 
 **To enable extras**, rebuild the backend image with the `EXTRAS` build argument (comma-separated):
 

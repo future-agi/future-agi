@@ -165,3 +165,40 @@ def test_voice_gate_402s_when_deps_present_but_code_stripped():
     assert resp is not None
     assert resp.status_code == 402
     assert resp.data["feature"] == "voice_sim"
+
+
+def test_complete_voice_gate_enforces_cloud_plan_entitlement():
+    organization = SimpleNamespace(id="org-1")
+    feature_check = SimpleNamespace(
+        allowed=False,
+        reason="Voice simulation requires a higher plan",
+    )
+    with (
+        patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature",
+            return_value=feature_check,
+        ) as check_feature,
+    ):
+        resp = ee_gates.voice_sim_gate_response(organization)
+
+    check_feature.assert_called_once_with("org-1", "has_voice_sim")
+    assert resp is not None
+    assert resp.status_code == 403
+    assert resp.data["code"] == "permission_denied"
+    assert resp.data["feature"] == "voice_sim"
+
+
+def test_complete_voice_gate_allows_self_hosted_without_plan_check():
+    organization = SimpleNamespace(id="org-1")
+    with (
+        patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+        patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+        patch(
+            "ee.usage.services.entitlements.Entitlements.check_feature"
+        ) as check_feature,
+    ):
+        assert ee_gates.voice_sim_gate_response(organization) is None
+
+    check_feature.assert_not_called()

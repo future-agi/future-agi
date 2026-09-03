@@ -2,7 +2,9 @@
 PII Scrubber — Presidio-powered server-side PII redaction.
 
 Replaces detected PII with <ENTITY_TYPE> tokens (e.g., <EMAIL_ADDRESS>).
-Fail-open: any exception is caught and logged, original value preserved.
+Low-level helpers preserve their historical fail-open behavior.  Batch
+ingestion fails closed when a project explicitly enables PII redaction but
+the configured Presidio engines cannot be initialized.
 """
 
 import json
@@ -227,6 +229,17 @@ def scrub_pii_in_span_batch(
 
     Only scrubs spans whose project has PII redaction enabled.
     """
+    pii_enabled = any(
+        span_data.get("project_name")
+        and project_pii_settings.get(span_data["project_name"], False)
+        for span_data in otel_data_list
+    )
+    if pii_enabled and not _ensure_engines():
+        raise RuntimeError(
+            "PII redaction is enabled, but its engines are unavailable. "
+            "Rebuild the backend image with EXTRAS=pii."
+        )
+
     for span_data in otel_data_list:
         project_name = span_data.get("project_name")
         if not project_name or not project_pii_settings.get(project_name, False):

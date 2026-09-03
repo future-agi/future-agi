@@ -248,7 +248,11 @@ def _load_and_convert_audio(run_prompt_instance):
     raw_audio = run_prompt_instance._get_input_audio_from_messages()
 
     try:
-        audio_bytes = audio_bytes_from_url_or_base64(raw_audio)
+        # Deepgram is a base feature and performs its own pydub conversion
+        # below.  The shared silence-padding path uses librosa from the
+        # optional ``audio`` extra, so do not route base Deepgram traffic
+        # through it.
+        audio_bytes = audio_bytes_from_url_or_base64(raw_audio, pad_silence=False)
         logger.info(f"Audio loaded: {len(audio_bytes)} bytes")
     except Exception as e:
         logger.error(f"Failed to load audio: {e}")

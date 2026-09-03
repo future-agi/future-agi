@@ -1281,6 +1281,7 @@ ml = [
     { name = "transformers" },
 ]
 pii = [
+    { name = "en-core-web-sm" },
     { name = "presidio-analyzer" },
     { name = "presidio-anonymizer" },
     { name = "spacy" },
@@ -1345,6 +1346,7 @@ requires-dist = [
     { name = "djangorestframework-stubs", marker = "extra == 'dev'", specifier = ">=3.14.5" },
     { name = "drf-yasg" },
     { name = "elevenlabs", marker = "extra == 'audio'" },
+    { name = "en-core-web-sm", marker = "extra == 'pii'", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "filetype" },
     { name = "flower" },
     { name = "gepa", marker = "extra == 'prompt-opt'", specifier = "==0.1.1" },

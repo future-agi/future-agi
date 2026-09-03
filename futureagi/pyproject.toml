@@ -176,6 +176,7 @@ pii = [
     "presidio-analyzer>=2.2.0",
     "presidio-anonymizer>=2.2.0",
     "spacy>=3.7.0",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
 prompt-opt = [
     "optuna>=4.6.0",

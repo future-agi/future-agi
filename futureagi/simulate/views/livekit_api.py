@@ -448,6 +448,12 @@ class LiveCallListenerTokenView(APIView):
         },
     )
     def get(self, request: Request, call_id: str) -> Response:
+        from tfc.ee_gates import voice_sim_gate_response
+
+        denial = voice_sim_gate_response(request.user.organization)
+        if denial is not None:
+            return denial
+
         from tfc.utils.lazy_extras import load_extra
 
         _lk_api = load_extra("livekit.api", "voice")
@@ -536,6 +542,12 @@ class ValidateLiveKitCredentialsView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request: Request) -> Response:
+        from tfc.ee_gates import voice_sim_gate_response
+
+        denial = voice_sim_gate_response(request.user.organization)
+        if denial is not None:
+            return denial
+
         from tfc.utils.lazy_extras import load_extra
 
         _lk_api = load_extra("livekit.api", "voice")
@@ -681,7 +693,14 @@ class LiveKitWebhookView(AsyncAPIView):
 
         # Import OUTSIDE the try below: the except reports a 401 signature
         # failure, and a missing `voice` extra must not masquerade as an
-        # auth problem. load_extra raises an ImportError naming the extra.
+        # auth problem. Return the same clean 402 used by other voice entry
+        # points before touching the optional SDK.
+        from tfc.ee_gates import voice_sim_oss_gate_response
+
+        denial = voice_sim_oss_gate_response()
+        if denial is not None:
+            return denial
+
         from tfc.utils.lazy_extras import load_extra
 
         _lk_api = load_extra("livekit.api", "voice")

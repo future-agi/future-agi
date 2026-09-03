@@ -235,13 +235,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - uses: astral-sh/setup-uv@v5
         with:
+          version: "0.11.16"
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
       - name: Install base dependencies only (no extras)
-        run: uv sync --frozen
+        run: uv sync --frozen --no-dev
 
       - name: Requirements exports match uv.lock (drift check)
         run: |
@@ -255,7 +260,8 @@ jobs:
 
       - name: Boot Django, load URLconf and temporal registry
         run: |
-          uv run python - <<'EOF'
+          .venv/bin/python - <<'EOF'
+          import importlib
           import os
 
           os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
@@ -281,10 +287,25 @@ jobs:
           )
           print(f"temporal workflow registry OK: {sorted(names)} on tasks_l")
 
-          # Activities half — imports the Django-dependent activity modules
-          # (a different import closure than workflows; e.g. voice activities
-          # pull transformers). Missing-extra modules are skipped by the
-          # registry's per-block ImportError guards; anything else raises.
+          # Activities use a different import closure than workflows. Import
+          # every required module directly because the registry deliberately
+          # skips optional modules and otherwise swallows ImportError.
+          optional_activity_modules = {
+              "ee.voice.tasks.call_log_tasks",
+              "ee.cloud.telemetry.deployment_telemetry_integrations",
+          }
+          unexpected_import_failures = {}
+          for module_name in registry.TEMPORAL_ACTIVITY_MODULES:
+              try:
+                  importlib.import_module(module_name)
+              except ImportError as exc:
+                  if module_name not in optional_activity_modules:
+                      unexpected_import_failures[module_name] = str(exc)
+          assert not unexpected_import_failures, (
+              "required temporal activity modules failed to import: "
+              f"{unexpected_import_failures}"
+          )
+
           activity_count = sum(
               len(registry.get_activities_for_queue(queue))
               for queue in registry.get_all_queues()

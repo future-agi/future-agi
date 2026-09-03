@@ -34,7 +34,6 @@ TEMPORAL_ACTIVITY_MODULES = [
     "model_hub.tasks.user_evaluation",
     "model_hub.tasks.insights",
     "model_hub.tasks.agent",
-    "model_hub.tasks.model_log",
     "model_hub.tasks.dataset_embeddings",
     "model_hub.tasks.optimisation_runner",
     "model_hub.tasks.prompt_template_optimizer",
@@ -401,7 +400,7 @@ def _ensure_workflows_registered() -> None:
     # code tree is stripped. Note: the workflow modules themselves import only
     # temporalio + simulate types at module level, so on a deps-stripped build
     # that still ships ee/ code they DO register — there, voice dispatch is
-    # blocked up front by voice_sim_oss_gate_response at every entry point.
+    # blocked up front by the shared voice simulation gate at every entry point.
     try:
         from ee.voice.temporal.workflows.call_dispatcher_workflow import (
             CallDispatcherWorkflow,

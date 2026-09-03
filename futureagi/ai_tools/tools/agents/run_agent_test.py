@@ -37,7 +37,6 @@ class RunAgentTestTool(BaseTool):
     input_model = RunAgentTestInput
 
     def execute(self, params: RunAgentTestInput, context: ToolContext) -> ToolResult:
-
         from django.utils import timezone
 
         from simulate.models.run_test import RunTest
@@ -111,10 +110,8 @@ class RunAgentTestTool(BaseTool):
                 "Please assign a new simulator agent before running."
             )
 
-        # Voice simulation gate — mirrors the deny in the execute view's
-        # _voice_sim_gate_response. Without this, a slim OSS build (voice
-        # extra absent) would accept the run and dispatch a workflow the
-        # worker can never complete.
+        # Apply the same deployment and plan gate as the HTTP execute view
+        # before persisting or dispatching anything.
         from simulate.models.agent_definition import AgentDefinition
 
         if (
@@ -122,13 +119,14 @@ class RunAgentTestTool(BaseTool):
             and run_test.agent_definition.agent_type
             == AgentDefinition.AgentTypeChoices.VOICE
         ):
-            from tfc.ee_gates import voice_sim_oss_gate_response
+            from tfc.ee_gates import voice_sim_gate_response
 
-            if voice_sim_oss_gate_response() is not None:
+            denial = voice_sim_gate_response(context.organization)
+            if denial is not None:
                 return ToolResult.error(
-                    "Voice simulation is not available in this deployment. "
-                    "Upgrade to cloud or enterprise to run voice calls.",
-                    error_code="ENTITLEMENT_DENIED",
+                    denial.data["message"],
+                    data=denial.data,
+                    error_code=denial.data["code"],
                 )
 
         # Create test execution using ExecutionStatus enum
