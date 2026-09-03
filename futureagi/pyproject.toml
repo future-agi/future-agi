@@ -122,6 +122,11 @@ dependencies = [
     "jinja2",
     "pypdf",
     "google-cloud-aiplatform",
+    # GCP Marketplace: Pub/Sub for entitlement events,
+    # api-python-client for the discovery-based Procurement and Service Control APIs.
+    "google-cloud-pubsub",
+    "google-api-python-client",
+    "google-auth",  # imported directly to verify the Marketplace sign-up JWT
     "anthropic[vertex]",
     "rouge-score",
     "python-levenshtein",
