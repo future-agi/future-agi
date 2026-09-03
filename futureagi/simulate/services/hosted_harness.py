@@ -309,6 +309,7 @@ def provision_scenarios(
             agent_name=payload.get("agent_name"),
             description=payload.get("description", ""),
             modality=modality,
+            direction=_resolve_scenario_direction(job, payload),
         )
     except ALKSimulateIngestionError as exc:
         raise HostedHarnessError("scenario_provision_failed", str(exc)) from exc
@@ -359,6 +360,25 @@ def _resolve_scenario_modality(
         if authored in {"text", "voice"}:
             return authored
     return "text"
+
+
+def _resolve_scenario_direction(
+    job: HostedHarnessJob, payload: dict[str, Any]
+) -> str:
+    """Resolve inbound/outbound the same way, so an outbound agent is not recorded as inbound."""
+    explicit = str(payload.get("direction") or "").lower()
+    if explicit in {"inbound", "outbound"}:
+        return explicit
+    for output in job.stage_outputs or []:
+        if not isinstance(output, dict) or output.get("kind") != "contract":
+            continue
+        data = output.get("data")
+        if not isinstance(data, dict):
+            continue
+        authored = str(data.get("direction") or "").lower()
+        if authored in {"inbound", "outbound"}:
+            return authored
+    return "inbound"
 
 
 def begin_scenarios(

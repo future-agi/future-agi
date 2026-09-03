@@ -131,6 +131,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_MODEL": model,
     }
     for name in (
+        # Whether a simulated caller may be heard through ambient noise, and which backend each
+        # authoring stage runs on, are both deployment settings the sandbox cannot infer.
+        "ALK_BACKGROUND_NOISE",
+        "ALK_SCENARIOS_HARNESS",
+        "ALK_SCENARIOS_MODEL",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
@@ -1455,17 +1460,24 @@ class DaytonaHostedGateway:
         # using the exact same sealed scenario suite instead of asking the model to
         # author a different suite for an already-registered RunTest.
         metadata = (job.payload or {}).get("metadata") or {}
+        # A partial snapshot may already be held from the checkpoint below. Freezing the
+        # complete suite has to be allowed to replace it, so the test is "not already frozen"
+        # rather than "no archive at all".
+        frozen = bool(metadata.get("authoring_object_key")) and not metadata.get(
+            "authoring_partial"
+        )
         if (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
-            and not metadata.get("authoring_object_key")
+            and not frozen
         ):
             try:
                 packed = sandbox.process.exec(
                     "cd /work/authoring && set --; "
                     "for path in schema.sql store.json world.sqlite collections.json "
                     "contract.json environment.json scenarios.json simulator_prompt.md "
+                    "blueprint.json written.jsonl sub_goals.json "
                     "scenarios handlers; do "
                     '[ -e "$path" ] && set -- "$@" "$path"; '
                     "done; "
@@ -1477,12 +1489,44 @@ class DaytonaHostedGateway:
                     raise RuntimeError(str(packed.result or "authoring pack failed"))
                 body = sandbox.fs.download_file("/tmp/authoring-rerun.tar.gz")
                 store_authoring_archive(job, body, advance_lifecycle=False)
+                _mark_authoring_snapshot(job, partial=False)
                 job.refresh_from_db()
             except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
                     "could not freeze unified authoring snapshot job=%s attempt=%s",
                     job.id,
                     attempt.id,
+                )
+        elif isinstance(scenarios, list) and scenarios and not frozen:
+            # Checkpoint a suite that is still being written. The freeze above only fires on the
+            # complete count, so a guest that died at 199 of 200 left nothing to restore and the
+            # retry regenerated every scenario from scratch. Snapshotting the partial suite costs
+            # one tar per poll and turns a crash into a resume. `scenarios.json` is written as the
+            # suite grows, so its presence is the signal that there is something worth keeping.
+            try:
+                packed = sandbox.process.exec(
+                    "cd /work/authoring && set --; "
+                    "for path in schema.sql store.json world.sqlite collections.json "
+                    "contract.json environment.json scenarios.json simulator_prompt.md "
+                    "blueprint.json written.jsonl sub_goals.json "
+                    "scenarios handlers; do "
+                    '[ -e "$path" ] && set -- "$@" "$path"; '
+                    "done; "
+                    '[ -f contract.json ] && [ "$#" -gt 0 ] && '
+                    'tar -czf /tmp/authoring-partial.tar.gz "$@"',
+                    timeout=180,
+                )
+                if not packed.exit_code:
+                    body = sandbox.fs.download_file("/tmp/authoring-partial.tar.gz")
+                    store_authoring_archive(job, body, advance_lifecycle=False)
+                    _mark_authoring_snapshot(job, partial=True)
+                    job.refresh_from_db()
+            except Exception:  # noqa: BLE001 - a checkpoint is best effort, never fail the run
+                logger.warning(
+                    "could not checkpoint partial authoring job=%s attempt=%s scenarios=%s",
+                    job.id,
+                    attempt.id,
+                    len(scenarios),
                 )
         outputs = authoring_stage_outputs(
             contract,
@@ -2203,6 +2247,23 @@ def authoring_stage_outputs_from_archive(
         documents.get("environment.json"),
         scenarios,
     )
+
+
+def _mark_authoring_snapshot(job: HostedHarnessJob, *, partial: bool) -> None:
+    """Record whether the stored archive is a mid-run checkpoint or the finished suite.
+
+    A checkpoint must be replaceable by a later, fuller one and finally by the complete suite; a
+    frozen suite must not be overwritten by anything.
+    """
+    payload = dict(job.payload or {})
+    metadata = dict(payload.get("metadata") or {})
+    if partial:
+        metadata["authoring_partial"] = True
+    else:
+        metadata.pop("authoring_partial", None)
+    payload["metadata"] = metadata
+    job.payload = payload
+    job.save(update_fields=["payload", "updated_at"])
 
 
 def store_authoring_archive(
