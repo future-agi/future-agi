@@ -41,7 +41,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Cast, Coalesce
+from django.db.models.functions import Cast, Coalesce, Length
 from django.forms import model_to_dict
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
@@ -286,6 +286,7 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.kb_helpers import (
     cancel_kb_ingestion_workflow,
+    schedule_dataset_kb_ingestion_on_commit,
     schedule_kb_ingestion_on_commit,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
@@ -15520,6 +15521,22 @@ class CreateKnowledgeBaseView(APIView):
         size = kb.size if kb is not None else 0
         return size + sum(f.size for f in files)  # 1 GB
 
+    def calculate_dataset_kb_size(self, dataset, column_ids):
+        """Character length of the selected cells, as a size proxy for the
+        MAX_KB_SIZE gate — the same role ``calculate_total_size`` plays for
+        uploaded file bytes. Computed in the DB so it scales with the
+        dataset instead of loading every cell's text into Python."""
+        total = (
+            Cell.objects.filter(
+                dataset=dataset, column_id__in=column_ids, deleted=False
+            )
+            .exclude(value__isnull=True)
+            .exclude(value="")
+            .annotate(char_len=Length("value"))
+            .aggregate(total=Sum("char_len"))["total"]
+        )
+        return total or 0
+
     def validate_all_files(self, files):
         """
         Validate ALL files using ThreadPoolExecutor (same pattern as original dev).
@@ -15851,12 +15868,44 @@ class CreateKnowledgeBaseView(APIView):
 
             data = request.validated_data
             created_by = User.objects.get(id=request.user.id).name
-            uploaded_files = request.FILES.getlist("file")
+            dataset_id = data.get("dataset_id")
+            # De-dupe (order-preserving): a repeated column would otherwise
+            # double-count toward matched_columns below and get concatenated
+            # twice into every row's indexed text.
+            column_ids = list(dict.fromkeys(data.get("column_ids") or []))
+
+            if dataset_id and request.FILES.getlist("file"):
+                return self._gm.bad_request(
+                    get_error_message("DATASET_AND_FILES_PROVIDED")
+                )
+
+            dataset = None
+            if dataset_id:
+                dataset = (
+                    _request_dataset_queryset(request).filter(id=dataset_id).first()
+                )
+                if not dataset:
+                    return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
+                if not column_ids:
+                    return self._gm.bad_request(
+                        get_error_message("NO_COLUMNS_SELECTED")
+                    )
+                matched_columns = Column.objects.filter(
+                    id__in=column_ids, dataset=dataset, deleted=False
+                ).count()
+                if matched_columns != len(set(column_ids)):
+                    return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
+
+            uploaded_files = [] if dataset else request.FILES.getlist("file")
             file_names = {file.name for file in uploaded_files}
             if len(file_names) != len(uploaded_files):
                 return self._gm.bad_request(get_error_message("DUPLICATE_FILES"))
 
-            updated_size = self.calculate_total_size(uploaded_files)
+            updated_size = (
+                self.calculate_dataset_kb_size(dataset, column_ids)
+                if dataset
+                else self.calculate_total_size(uploaded_files)
+            )
             if updated_size > MAX_KB_SIZE:
                 return self._gm.bad_request(get_error_message("MAX_KB_SIZE_EXCEEDED"))
 
@@ -15930,27 +15979,41 @@ class CreateKnowledgeBaseView(APIView):
                     )
 
                 # All files are valid - create KB
+                # workspace=None for the upload path preserves its existing
+                # (pre-existing, out of scope here) behavior; the dataset
+                # path inherits the source dataset's own workspace.
                 kb = KnowledgeBaseFile.objects.create(
                     organization=org,
                     created_by=created_by,
                     name=final_kb_name,
                     size=updated_size,
+                    workspace=dataset.workspace if dataset else None,
                 )
 
-                # Create file records and start S3 upload (fire-and-forget)
-                created_files = self.create_files_and_upload(
-                    uploaded_files, created_by, kb.id, org_id=str(org.id)
-                )
+                if dataset:
+                    created_files = {"files": [], "file_metadata": {}}
+                    # Schedule dataset-row ingestion after transaction commits
+                    schedule_dataset_kb_ingestion_on_commit(
+                        dataset.id,
+                        column_ids,
+                        kb.id,
+                        org.id,
+                    )
+                else:
+                    # Create file records and start S3 upload (fire-and-forget)
+                    created_files = self.create_files_and_upload(
+                        uploaded_files, created_by, kb.id, org_id=str(org.id)
+                    )
 
-                kb.files.set(Files.objects.filter(id__in=created_files["files"]))
-                kb.save()
+                    kb.files.set(Files.objects.filter(id__in=created_files["files"]))
+                    kb.save()
 
-                # Schedule ingestion after transaction commits
-                schedule_kb_ingestion_on_commit(
-                    created_files.get("file_metadata", {}),
-                    kb.id,
-                    org.id,
-                )
+                    # Schedule ingestion after transaction commits
+                    schedule_kb_ingestion_on_commit(
+                        created_files.get("file_metadata", {}),
+                        kb.id,
+                        org.id,
+                    )
 
             end_time = time.time()
             logger.info(f"END TIME: {str(end_time)}")
