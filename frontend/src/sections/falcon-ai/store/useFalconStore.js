@@ -50,8 +50,7 @@ const useFalconStore = create((set, _get) => ({
   setActiveSkill: (skill) => set({ activeSkill: skill }),
   clearActiveSkill: () => set({ activeSkill: null }),
 
-  // Declared flows, keyed by skill id. The skills list response carries no
-  // example_trajectories, so each one is fetched once and kept.
+  // Declared flows by skill id; the list response carries none, so fetch once.
   skillPlans: {},
   setSkillPlan: (skillId, trajectories) =>
     set((s) => ({

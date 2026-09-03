@@ -1,17 +1,5 @@
-/**
- * Classify one assistant turn's tool calls for display.
- *
- * The agent loop self-corrects: it calls a tool, reads the validation error,
- * and calls it again with the right arguments. Both attempts arrive as tool
- * calls and the failed one used to render in red, so a turn that worked
- * perfectly could show seven red cards and no failures.
- *
- * A step is a retry, not a failure, when either
- *   - a later step called the same tool and it completed, or
- *   - the tool name did not exist, which the loop always follows with the
- *     real name.
- * Everything else is a real failure and stays visible.
- */
+// An error the loop recovered from is a retry, not a failure.
+export const RETRIED = "retried";
 
 const TOOL_NOT_FOUND = /^Tool '[^']*' not found/;
 
@@ -28,7 +16,7 @@ export function classifySteps(toolCalls = []) {
     const recoveredAt = succeededLater.get(tc.tool_name);
     const recovered = recoveredAt !== undefined && recoveredAt > i;
     const badName = TOOL_NOT_FOUND.test(tc.result_summary || "");
-    return { ...tc, outcome: recovered || badName ? "retried" : "error" };
+    return { ...tc, outcome: recovered || badName ? RETRIED : "error" };
   });
 }
 
@@ -66,7 +54,7 @@ export function humanize(toolName = "") {
 export function trailSummary(steps = []) {
   const running = steps.filter((s) => s.outcome === "running");
   const failed = steps.filter((s) => s.outcome === "error");
-  const retried = steps.filter((s) => s.outcome === "retried");
+  const retried = steps.filter((s) => s.outcome === RETRIED);
   return {
     total: steps.length,
     running: running.length,
@@ -85,10 +73,7 @@ export function formatElapsed(ms) {
   return s ? `${m}m ${s}s` : `${m}m`;
 }
 
-/**
- * Collapse each run of consecutive tool_call blocks into one trail block, so
- * the message renders as text, one trail line, text, not as forty cards.
- */
+// Consecutive tool calls become one trail block; text between them splits it.
 export function groupBlocks(blocks = []) {
   const grouped = [];
   blocks.forEach((block) => {
@@ -110,23 +95,11 @@ export function groupBlocks(blocks = []) {
   return grouped;
 }
 
-/**
- * A skill declares the flow it intends to follow in example_trajectories, so
- * the trail does not have to guess: it can say which declared step the run is
- * on instead of only relabelling the tool that already fired.
- *
- * A trajectory is { user, steps: [{ tool, params }] }. Only the ordered tool
- * names matter here.
- */
 export function declaredSteps(trajectory) {
   return (trajectory?.steps || []).map((s) => s?.tool).filter(Boolean);
 }
 
-/**
- * A skill may declare several flows for several kinds of request. Pick the one
- * that explains the most of what actually ran; before anything has run, the
- * longest declared flow is the best description of the job.
- */
+// Of several declared flows, the one explaining the most of what actually ran.
 export function pickTrajectory(trajectories = [], toolCalls = []) {
   const usable = (trajectories || []).filter((t) => declaredSteps(t).length);
   if (!usable.length) return null;
@@ -152,22 +125,8 @@ export function planFor(trajectories = [], toolCalls = []) {
   return declaredSteps(pickTrajectory(trajectories, toolCalls));
 }
 
-/**
- * Walk the live tool calls against the declared flow.
- *
- * A run does not walk its plan cleanly, so every call gets one of three
- * readings and none of them is dropped:
- *   plan       the next declared occurrence of this tool, at or after the
- *              cursor. Advances the run.
- *   revisit    a declared step the run already passed, either because the tool
- *              is being called again or because the plan was taken out of
- *              order. Counts as reached, never moves the cursor backwards.
- *   extra      the tool is nowhere in the declared flow.
- *
- * `done` counts distinct declared steps that were actually reached, so a
- * jumped step is never counted as run, and `pending` names the ones that were
- * not.
- */
+// Every call reads as plan, revisit or extra. A revisit never moves the cursor
+// backwards, and `done` counts only declared steps actually reached.
 export function alignToPlan(toolCalls = [], plan = []) {
   const planned = plan.length;
   const empty = {
@@ -220,11 +179,7 @@ export function alignToPlan(toolCalls = [], plan = []) {
   return { steps, byCallId, planned, done: reached.size, extra, pending };
 }
 
-/**
- * Which skill a turn ran under, read off the message that triggered it. This
- * mirrors the backend's own parse exactly (startswith "/", first space
- * delimited token), so the trail can never name a skill the turn did not run.
- */
+// The same parse the consumer uses, so the trail cannot name a skill that never ran.
 export function slugFromMessage(content) {
   const text = String(content || "");
   if (!text.startsWith("/")) return null;

@@ -3,15 +3,7 @@ import useFalconStore from "../store/useFalconStore";
 import { planFor, slugFromMessage } from "../helpers/toolTrail";
 import { getSkill } from "./useFalconAPI";
 
-/**
- * The ordered tool flow a skill declared for the turn that produced this
- * assistant message, or an empty array when the turn ran no skill.
- *
- * The skill is read off the user message that triggered the turn, which is the
- * only per-turn record of it on the client. A turn with no leading slash
- * command, an unknown slug, or a skill that declares no trajectory returns
- * nothing and the trail falls back to its plain behaviour.
- */
+// The flow the turn's skill declared, or nothing, which is the common case.
 export default function useSkillPlan(messageId, toolCalls) {
   const skills = useFalconStore((s) => s.skills);
   const skillPlans = useFalconStore((s) => s.skillPlans);
