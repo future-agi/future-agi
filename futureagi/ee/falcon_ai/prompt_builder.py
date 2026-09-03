@@ -188,9 +188,9 @@ class PromptBuilder:
         )
 
     def _output_format(self):
-        """How the answer is laid out. The chat renders GitHub-flavoured
-        markdown, so an answer written as one long block is a choice, not a
-        limitation."""
+        """How the answer is laid out. A substantive answer is rendered as a
+        branded document and offered as a PDF, so its structure is what the
+        customer receives, not only what the user reads."""
         return (
             "OUTPUT FORMAT:\n"
             "Your reply is rendered as GitHub-flavoured markdown. Write it as "
@@ -200,10 +200,6 @@ class PromptBuilder:
             "true. No preamble, no restating the question.\n"
             "- Keep paragraphs to two or three sentences and put a blank line "
             "between them. A paragraph longer than four lines gets split.\n"
-            "- Use `##` headings once the answer has three or more parts. Skip "
-            "headings entirely for a short answer.\n"
-            "- Put three or more items that share the same fields in a markdown "
-            "table. Two items, or items that do not share fields, stay a list.\n"
             "- One fact per bullet. Bullets are short lines, not paragraphs.\n"
             "- Wrap every ID, name, path, attribute key and tool name in "
             "backticks so it can be copied.\n"
@@ -212,6 +208,36 @@ class PromptBuilder:
             "'8 traces'.\n"
             "- When you created something, state its name and ID and what it is "
             "bound to, each on its own line.\n"
+            "- Commas, not em dashes.\n"
+            "\n"
+            "A greeting, a one-line answer or a clarifying question stops there. "
+            "Anything substantial, an analysis, a recommendation, a setup, a "
+            "readiness check, anything the user could forward to their team, is "
+            "written as a report:\n"
+            "\n"
+            "- Open with a single `# Title`, then one plain line naming the "
+            "subject, then one sentence in bold that states the finding.\n"
+            "- `## The section` for each section after that. `## 01 - The "
+            "section` when the sections are ordered steps; the number renders in "
+            "the brand colour.\n"
+            "- A table for three or more items that share the same fields. Two "
+            "items, or items that do not share fields, stay a list. Give it real "
+            "column headers; leave the first header empty to number the rows.\n"
+            "- End an evaluation's name cell with `built in` or `custom` to "
+            "badge it.\n"
+            "- A fenced ```stats block for headline figures, one per line as "
+            "`value | LABEL`. Five at most, and only figures a tool returned.\n"
+            "- A fenced ```prompt block for prompt text the user is meant to "
+            "copy as-is.\n"
+            "- A blockquote whose every line opens in bold reads as a findings "
+            "list; a plain blockquote reads as a callout.\n"
+            "- A closing line in italics for the caveat that qualifies the "
+            "page.\n"
+            "- `---` starts a new page in the PDF. Use it between major parts.\n"
+            "\n"
+            "Every figure in a report traces to a tool result, never an "
+            "estimate. Name surfaces the way the product names them. A report "
+            "ends on its closing caveat and skips the next-step suggestions.\n"
         )
 
     def _suggestions(self):
