@@ -92,6 +92,8 @@ from ...core_evals.fi_evals.function.wrapper import (
     IsRefusal,
     LatencyCheck,
     FleissKappa,
+    ToolCallF1,
+    TrajectoryEfficiency,
 )
 
 from ...core_evals.fi_evals.grounded.grounded_evaluator import GroundedEvaluator
@@ -222,4 +224,6 @@ __all__ = [
     "IsRefusal",
     "LatencyCheck",
     "FleissKappa",
+    "ToolCallF1",
+    "TrajectoryEfficiency",
 ]

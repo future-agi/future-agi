@@ -1012,3 +1012,15 @@ class LatencyCheck(FunctionEvaluator):
 class FleissKappa(FunctionEvaluator):
     def __init__(self, display_name: str | None = None):
         super().__init__(function_name=FunctionEvalTypeId.FLEISS_KAPPA.value, function_arguments={}, display_name=display_name)
+
+
+class ToolCallF1(FunctionEvaluator):
+    def __init__(self, schemas: dict | None = None, display_name: str | None = None):
+        """Initialize ToolCallF1: multi-step F1 with optional arg-schema validation."""
+        super().__init__(function_name=FunctionEvalTypeId.TOOL_CALL_F1.value, function_arguments={"schemas": schemas or {}}, display_name=display_name)
+
+
+class TrajectoryEfficiency(FunctionEvaluator):
+    def __init__(self, optimal_steps: int | None = None, display_name: str | None = None):
+        """Initialize TrajectoryEfficiency: efficiency plus overlap and state-diff."""
+        super().__init__(function_name=FunctionEvalTypeId.TRAJECTORY_EFFICIENCY.value, function_arguments={"optimal_steps": optimal_steps}, display_name=display_name)

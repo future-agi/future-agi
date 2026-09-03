@@ -664,6 +664,76 @@ DEAD_AIR_DETECTION = '''def evaluate(input, output, expected, context, **kwargs)
 '''
 
 
+TOOL_CALL_F1 = '''def evaluate(input, output, expected, context, **kwargs):
+    import json
+    def _parse(value):
+        if value is None: return []
+        if isinstance(value, str):
+            try: value = json.loads(value)
+            except Exception: return []
+        if isinstance(value, dict): value = [value]
+        if not isinstance(value, list): return []
+        calls = []
+        for item in value:
+            if not isinstance(item, dict): continue
+            calls.append({"name": str(item.get("name", "")), "arguments": item.get("arguments", {})})
+        return calls
+    actual = _parse(kwargs.get("output", output))
+    wanted = _parse(kwargs.get("expected", expected))
+    if not wanted and not actual:
+        return {"score": 1.0, "reason": "ToolCallF1: 1.0000 (no calls either side)"}
+    if not wanted or not actual:
+        return {"score": 0.0, "reason": "ToolCallF1: 0.0000 (missing side)"}
+    used = set(); exact = 0; name_only = 0
+    for call in actual:
+        best = -1; best_exact = False
+        for index, want in enumerate(wanted):
+            if index in used: continue
+            if call["name"] != want["name"]: continue
+            if call["arguments"] == want["arguments"]:
+                best = index; best_exact = True; break
+            if best == -1: best = index
+        if best >= 0:
+            used.add(best)
+            if best_exact: exact += 1
+            else: name_only += 1
+    matched = exact + 0.5 * name_only
+    precision = matched / len(actual)
+    recall = matched / len(wanted)
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    return {"score": float(f1), "reason": f"ToolCallF1: {f1:.4f} ({exact} exact, {name_only} name-only)"}
+'''
+
+
+TRAJECTORY_EFFICIENCY = '''def evaluate(input, output, expected, context, **kwargs):
+    import json
+    def _names(value):
+        if isinstance(value, dict) and "actions" in value:
+            value = value.get("actions", [])
+        if isinstance(value, str):
+            try: value = json.loads(value)
+            except Exception: return []
+        if not isinstance(value, list): return []
+        return [str(item.get("name", item)) if isinstance(item, dict) else str(item) for item in value]
+    actual = _names(kwargs.get("output", output))
+    wanted = _names(kwargs.get("expected", expected))
+    try:
+        optimal = max(1, int(kwargs.get("optimal_steps", 0) or (len(wanted) or len(actual) or 1)))
+    except (TypeError, ValueError):
+        optimal = max(1, len(wanted) or 1)
+    efficiency = min(1.0, optimal / max(1, len(actual)))
+    if wanted:
+        common = len(set(actual) & set(wanted))
+        precision = common / len(set(actual)) if actual else 0.0
+        recall = common / len(set(wanted)) if wanted else 0.0
+        overlap = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    else:
+        overlap = 1.0
+    score = 0.6 * efficiency + 0.4 * overlap
+    return {"score": float(score), "reason": f"TrajectoryEfficiency: {score:.4f} (efficiency={efficiency:.3f}, overlap={overlap:.3f})"}
+'''
+
+
 # =============================================================================
 # Registry: eval_name → code string
 # =============================================================================
@@ -704,4 +774,6 @@ CODE_REGISTRY = {
     "clip_score": CLIP_SCORE,
     "fid_score": FID_SCORE,
     "dead_air_detection": DEAD_AIR_DETECTION,
+    "tool_call_f1": TOOL_CALL_F1,
+    "trajectory_efficiency": TRAJECTORY_EFFICIENCY,
 }

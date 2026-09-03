@@ -4007,6 +4007,246 @@ def calculate_fleiss_kappa(output, expected=None, **kwargs):
 """
 A dictionary containing the available operations and their corresponding functions.
 """
+
+
+def _parse_tool_calls(value):
+    """Parse tool calls from JSON string, dict, or list into normalized list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    calls = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        if "function" in item and isinstance(item["function"], dict):
+            func = item["function"]
+            name = str(func.get("name", ""))
+            args = func.get("arguments", {})
+        else:
+            name = str(item.get("name", item.get("tool", item.get("action", ""))))
+            args = item.get("arguments", item.get("args", item.get("parameters", {})))
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, ValueError):
+                args = {"_raw": args}
+        if not isinstance(args, dict):
+            args = {"_value": args}
+        calls.append({"name": name, "arguments": args})
+    return calls
+
+
+def _validate_args_against_schema(args, schema):
+    """Validate args dict against a minimal JSON-schema subset.
+
+    Supports type, required, properties with type, and enum. Returns
+    (valid, errors list).
+    """
+    errors = []
+    if not isinstance(schema, dict):
+        return True, errors
+    if not isinstance(args, dict):
+        return False, ["args not an object"]
+    for key in schema.get("required", []) or []:
+        if key not in args:
+            errors.append(f"missing required arg: {key}")
+    properties = schema.get("properties", {}) or {}
+    for key, value in args.items():
+        spec = properties.get(key)
+        if not isinstance(spec, dict):
+            continue
+        expected_type = spec.get("type")
+        if expected_type == "string" and not isinstance(value, str):
+            errors.append(f"arg {key} should be string")
+        elif expected_type == "integer" and not (isinstance(value, int) and not isinstance(value, bool)):
+            errors.append(f"arg {key} should be integer")
+        elif expected_type == "number" and not isinstance(value, (int, float)):
+            errors.append(f"arg {key} should be number")
+        elif expected_type == "boolean" and not isinstance(value, bool):
+            errors.append(f"arg {key} should be boolean")
+        elif expected_type == "array" and not isinstance(value, list):
+            errors.append(f"arg {key} should be array")
+        elif expected_type == "object" and not isinstance(value, dict):
+            errors.append(f"arg {key} should be object")
+        if "enum" in spec and value not in spec["enum"]:
+            errors.append(f"arg {key} not in enum")
+    return (len(errors) == 0), errors
+
+
+def _parse_state(value):
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, ValueError):
+            return {}
+    return {}
+
+
+def calculate_tool_call_f1(output, expected=None, schemas=None, **kwargs):
+    """Multi-step tool-call F1 with arg-schema validation.
+
+    Unlike ToolCallAccuracy (single-call exact match), this scores a whole
+    trajectory: precision and recall over tool-call names, argument equality
+    bonus, and schema violations penalty. Order-insensitive with greedy
+    matching so parallel and reordered calls get partial credit.
+
+    Args:
+        output: Actual trajectory (JSON list of {name, arguments}).
+        expected: Expected trajectory (same shape).
+        schemas: Optional {tool_name: json-schema} for argument validation.
+            May be dict, JSON string, or passed via kwargs.
+
+    Returns:
+        dict: {"result": float F1 0..1, "reason": str}
+    """
+    actual = _parse_tool_calls(output)
+    wanted = _parse_tool_calls(expected if expected is not None else kwargs.get("expected"))
+    schema_map = schemas if schemas is not None else kwargs.get("schemas", kwargs.get("tool_schemas", {}))
+    if isinstance(schema_map, str):
+        try:
+            schema_map = json.loads(schema_map)
+        except (json.JSONDecodeError, ValueError):
+            schema_map = {}
+    if not isinstance(schema_map, dict):
+        schema_map = {}
+    if not wanted and not actual:
+        return {"result": 1.0, "reason": "ToolCallF1: 1.0000 (no calls on either side)"}
+    if not wanted:
+        return {"result": 0.0, "reason": f"ToolCallF1: 0.0000 (0 wanted, {len(actual)} actual)"}
+    if not actual:
+        return {"result": 0.0, "reason": f"ToolCallF1: 0.0000 ({len(wanted)} wanted, 0 actual)"}
+    used = set()
+    exact = 0
+    name_only = 0
+    schema_errors = 0
+    schema_details = []
+    for call in actual:
+        schema = schema_map.get(call["name"])
+        if schema:
+            valid, errors = _validate_args_against_schema(call["arguments"], schema)
+            if not valid:
+                schema_errors += 1
+                schema_details.append(f"{call['name']}: {'; '.join(errors)}")
+    for call in actual:
+        best = -1
+        best_exact = False
+        for index, want in enumerate(wanted):
+            if index in used:
+                continue
+            if call["name"] != want["name"]:
+                continue
+            if call["arguments"] == want["arguments"]:
+                best = index
+                best_exact = True
+                break
+            if best == -1:
+                best = index
+        if best >= 0:
+            used.add(best)
+            if best_exact:
+                exact += 1
+            else:
+                name_only += 1
+    matched = exact + 0.5 * name_only
+    precision = matched / len(actual) if actual else 0.0
+    recall = matched / len(wanted) if wanted else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    if schema_errors:
+        f1 = max(0.0, f1 - 0.1 * schema_errors)
+    reason = (
+        f"ToolCallF1: {f1:.4f} (P={precision:.3f} R={recall:.3f}, "
+        f"{exact} exact, {name_only} name-only, {len(actual)} actual vs {len(wanted)} wanted"
+    )
+    if schema_errors:
+        reason += f", {schema_errors} schema violations: " + " | ".join(schema_details)
+    reason += ")"
+    return {"result": float(max(0.0, min(1.0, f1))), "reason": reason}
+
+
+def calculate_trajectory_efficiency(
+    output, expected=None, optimal_steps=None, **kwargs
+):
+    """Trajectory efficiency plus state-diff recovery signal.
+
+    Scores how close an agent trajectory is to the optimal path:
+    efficiency = optimal / actual (capped at 1), combined with F1 over
+    action names and an optional state-diff check (before vs after dicts).
+
+    Args:
+        output: Actual trajectory (JSON list) or {"actions": [...], "before": {}, "after": {}}.
+        expected: Expected trajectory (JSON list) or {"actions": [...], "state": {}}.
+        optimal_steps: Optimal step count override.
+
+    Returns:
+        dict: {"result": float 0..1, "reason": str}
+    """
+    def _split_trajectory(value):
+        if isinstance(value, dict) and "actions" in value:
+            return value.get("actions", []), value
+        return value, {}
+
+    actual_raw, actual_meta = _split_trajectory(output)
+    expected_raw, expected_meta = _split_trajectory(
+        expected if expected is not None else kwargs.get("expected")
+    )
+    actual = [c.get("name", str(c)) if isinstance(c, dict) else str(c) for c in _parse_tool_calls(actual_raw)]
+    if not actual and isinstance(actual_raw, list):
+        actual = [str(item.get("name", item)) if isinstance(item, dict) else str(item) for item in actual_raw]
+    wanted = [c.get("name", str(c)) if isinstance(c, dict) else str(c) for c in _parse_tool_calls(expected_raw)]
+    if not wanted and isinstance(expected_raw, list):
+        wanted = [str(item.get("name", item)) if isinstance(item, dict) else str(item) for item in expected_raw]
+    if optimal_steps is None:
+        optimal_steps = kwargs.get("optimal_steps", len(wanted) if wanted else len(actual))
+    try:
+        optimal = max(1, int(optimal_steps))
+    except (TypeError, ValueError):
+        optimal = max(1, len(wanted) if wanted else 1)
+    actual_len = max(1, len(actual))
+    efficiency = min(1.0, optimal / actual_len)
+    if wanted:
+        common = len(set(actual) & set(wanted))
+        precision = common / len(set(actual)) if actual else 0.0
+        recall = common / len(set(wanted)) if wanted else 0.0
+        overlap = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    else:
+        overlap = 1.0
+    before = _parse_state(actual_meta.get("before", kwargs.get("before")))
+    after = _parse_state(actual_meta.get("after", kwargs.get("after")))
+    want_state = _parse_state(expected_meta.get("state", kwargs.get("want_state", kwargs.get("state"))))
+    if want_state:
+        state_hits = sum(1 for key, value in want_state.items() if after.get(key) == value)
+        state_score = state_hits / len(want_state)
+        state_note = f", state {state_hits}/{len(want_state)}"
+    else:
+        state_score = 1.0
+        state_note = ""
+    if before and after and not want_state:
+        changed = sum(1 for key in set(before) | set(after) if before.get(key) != after.get(key))
+        state_note = f", {changed} keys changed"
+    score = 0.5 * efficiency + 0.3 * overlap + 0.2 * state_score
+    return {
+        "result": float(max(0.0, min(1.0, score))),
+        "reason": (
+            f"TrajectoryEfficiency: {score:.4f} (efficiency={efficiency:.3f} "
+            f"{optimal} optimal/{len(actual)} actual, overlap={overlap:.3f}{state_note})"
+        ),
+    }
 operations = {
     "Regex": regex,
     "ContainsAny": contains_any,
@@ -4098,4 +4338,6 @@ operations = {
     "IsRefusal": is_refusal,
     "LatencyCheck": latency_check,
     "FleissKappa": calculate_fleiss_kappa,
+    "ToolCallF1": calculate_tool_call_f1,
+    "TrajectoryEfficiency": calculate_trajectory_efficiency,
 }

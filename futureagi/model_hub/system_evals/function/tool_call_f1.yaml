@@ -1,0 +1,70 @@
+eval_id: 202
+name: tool_call_f1
+description: "ToolCallF1: multi-step F1 over tool-call trajectories with argument equality and optional JSON-schema validation. Gives partial credit for reordered calls."
+criteria: F1 from precision and recall over matched calls with schema-violation penalty.
+eval_tags:
+- Agents
+- Tool Use
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.7
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    schemas:
+      type: object
+      default: {}
+  config_params_desc:
+    output: Actual trajectory as JSON array of name plus arguments objects
+    expected: Expected trajectory in the same shape
+    schemas: Optional map of tool name to JSON schema for argument validation
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        def _parse(value):
+            if value is None: return []
+            if isinstance(value, str):
+                try: value = json.loads(value)
+                except Exception: return []
+            if isinstance(value, dict): value = [value]
+            if not isinstance(value, list): return []
+            calls = []
+            for item in value:
+                if not isinstance(item, dict): continue
+                if "function" in item and isinstance(item["function"], dict):
+                    func = item["function"]
+                    calls.append({"name": str(func.get("name", "")), "arguments": func.get("arguments", {})})
+                else:
+                    calls.append({"name": str(item.get("name", "")), "arguments": item.get("arguments", {})})
+            return calls
+        actual = _parse(kwargs.get("output", output))
+        wanted = _parse(kwargs.get("expected", expected))
+        if not wanted and not actual:
+            return {"score": 1.0, "reason": "ToolCallF1: 1.0000 (no calls either side)"}
+        if not wanted or not actual:
+            return {"score": 0.0, "reason": f"ToolCallF1: 0.0000 ({len(wanted)} wanted, {len(actual)} actual)"}
+        used = set(); exact = 0; name_only = 0
+        for call in actual:
+            best = -1; best_exact = False
+            for index, want in enumerate(wanted):
+                if index in used: continue
+                if call["name"] != want["name"]: continue
+                if call["arguments"] == want["arguments"]:
+                    best = index; best_exact = True; break
+                if best == -1: best = index
+            if best >= 0:
+                used.add(best)
+                if best_exact: exact += 1
+                else: name_only += 1
+        matched = exact + 0.5 * name_only
+        precision = matched / len(actual)
+        recall = matched / len(wanted)
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        return {"score": float(f1), "reason": f"ToolCallF1: {f1:.4f} (P={precision:.3f} R={recall:.3f}, {exact} exact, {name_only} name-only)"}

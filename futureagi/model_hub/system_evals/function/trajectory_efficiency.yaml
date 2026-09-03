@@ -1,0 +1,61 @@
+eval_id: 203
+name: trajectory_efficiency
+description: "TrajectoryEfficiency: efficiency plus overlap and state-diff signal for agent trajectories. Rewards short correct paths and state changes."
+criteria: Weighted mix of optimal over actual steps, action overlap, and wanted-state matches.
+eval_tags:
+- Agents
+- Trajectory
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.6
+config:
+  required_keys:
+  - output
+  - expected
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    optimal_steps:
+      type: integer
+      default: 0
+  config_params_desc:
+    output: Actual trajectory as JSON array or actions plus before and after state
+    expected: Expected trajectory or actions plus wanted state
+    optimal_steps: Optimal step count override (defaults to expected length)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        def _names(value):
+            if value is None: return []
+            if isinstance(value, dict) and "actions" in value:
+                value = value.get("actions", [])
+            if isinstance(value, str):
+                try: value = json.loads(value)
+                except Exception: return []
+            if not isinstance(value, list): return []
+            out = []
+            for item in value:
+                if isinstance(item, dict):
+                    out.append(str(item.get("name", item.get("action", item))))
+                else:
+                    out.append(str(item))
+            return out
+        actual = _names(kwargs.get("output", output))
+        wanted = _names(kwargs.get("expected", expected))
+        try:
+            optimal = max(1, int(kwargs.get("optimal_steps", 0) or (len(wanted) or len(actual) or 1)))
+        except (TypeError, ValueError):
+            optimal = max(1, len(wanted) or 1)
+        efficiency = min(1.0, optimal / max(1, len(actual)))
+        if wanted:
+            common = len(set(actual) & set(wanted))
+            precision = common / len(set(actual)) if actual else 0.0
+            recall = common / len(set(wanted)) if wanted else 0.0
+            overlap = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        else:
+            overlap = 1.0
+        score = 0.6 * efficiency + 0.4 * overlap
+        return {"score": float(score), "reason": f"TrajectoryEfficiency: {score:.4f} (efficiency={efficiency:.3f}, overlap={overlap:.3f})"}

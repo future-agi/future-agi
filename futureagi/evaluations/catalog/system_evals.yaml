@@ -2532,3 +2532,19 @@ protect_flash:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # (Defined in system_eval_code.py — each eval has a Python function)
+
+tool_call_f1:
+  eval_type: code
+  output: score
+  required_keys: [output, expected]
+  description: Multi-step tool-call F1 with argument equality and partial credit for reordered calls.
+  tags: [Agents, Tool Use]
+  rule_prompt: ""
+
+trajectory_efficiency:
+  eval_type: code
+  output: score
+  required_keys: [output, expected]
+  description: Efficiency plus overlap signal for agent trajectories.
+  tags: [Agents, Trajectory]
+  rule_prompt: ""
