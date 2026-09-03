@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.34.0](https://github.com/future-agi/future-agi/compare/v1.33.0...v1.34.0) (2026-09-03)
+
+
+### Features
+
+* **property-catalog:** add guarded production activation ([11b8626](https://github.com/future-agi/future-agi/commit/11b8626a0645d69db65d825a6a9b1908b8ba6a20))
+* **property-catalog:** remove fixed workspace ingestion cap ([c387ca6](https://github.com/future-agi/future-agi/commit/c387ca64e211489d2cbe181b6f08d1d61c2e9bd1))
+* **property-catalog:** support global production read scope ([e1ff488](https://github.com/future-agi/future-agi/commit/e1ff4884d64202621b7bcfe69328566a509e3fd1))
+
+
+### Bug Fixes
+
+* **alerts:** give the alert email CTA an absolute, region-correct URL ([63f51e9](https://github.com/future-agi/future-agi/commit/63f51e9650ce2dcaeb2cb04ca8f7c8895401c26c))
+* **alerts:** give the alert email CTA an absolute, region-correct URL ([ec6a4f8](https://github.com/future-agi/future-agi/commit/ec6a4f84ca583ee9edaed94173c99e0d3a94ce2e))
+* **alerts:** reopen a saved alert on its stored values, not the form defaults ([f06f3d6](https://github.com/future-agi/future-agi/commit/f06f3d670ce893e038a9b38d4c4e86cfff68ec97))
+* **alerts:** reopen a saved alert on its stored values, not the form defaults ([e209d89](https://github.com/future-agi/future-agi/commit/e209d89e3c773a139255d189f7836a51b104916e))
+* **alerts:** send a total notification payload so switching to email clears Slack ([7768c31](https://github.com/future-agi/future-agi/commit/7768c316f6ca51dde1664bc46b15b9d14a65eb2d))
+* **catalog:** allow complete interactive property reads ([8c47f1e](https://github.com/future-agi/future-agi/commit/8c47f1ef08a632669de909219cac61e45dc5ebe6))
+* **eval-task:** report the stored session id on usage log rows (TH-7761) ([a723cb2](https://github.com/future-agi/future-agi/commit/a723cb2a4c78c13bb067fd3d8fa2d534b1efdb5c))
+* **eval-task:** report the stored session id on usage log rows (TH-7761) ([134f54d](https://github.com/future-agi/future-agi/commit/134f54d7662463df7a2d2eb102c8e33196581d6f))
+* **evals:** surface Ground Truth not being applied on the Observe eval path (TH-7765) ([41a7af9](https://github.com/future-agi/future-agi/commit/41a7af902f0620615ce0c4698d742ac87867b42a))
+* **filters:** serialize datetime filter values as true UTC instants ([#1339](https://github.com/future-agi/future-agi/issues/1339)) ([c37283f](https://github.com/future-agi/future-agi/commit/c37283f1db768038fab10939e98f2d8121f4fe67))
+* **observe:** optimize filtered graphs and dashboard reads ([07ea766](https://github.com/future-agi/future-agi/commit/07ea76605ae18710d293f146024fca20d9499587))
+* **observe:** optimize heavy graph and dashboard reads ([d368edc](https://github.com/future-agi/future-agi/commit/d368edc63d49379f2c533cbba64e64fc43f0cb52))
+* **observe:** preserve exact empty graph contract ([ccb3904](https://github.com/future-agi/future-agi/commit/ccb3904dc36bfb471c7b3524ddc5d86432c9dca0))
+* **observe:** say Error Feed, not agent compass, on the sampling rate copy [TH-7797] ([f97a6d1](https://github.com/future-agi/future-agi/commit/f97a6d1b1eb8d6293d0f2593811a6fa8a3b9338f))
+* **observe:** say Error Feed, not agent compass, on the sampling rate copy [TH-7797] ([b2356f4](https://github.com/future-agi/future-agi/commit/b2356f4d9ed28a36157486923e4be6e4e051b6a7))
+* **property-catalog:** honor bounded read settings ([467f611](https://github.com/future-agi/future-agi/commit/467f611852488a9d2e43cee1d0c8c69dcba402b5))
+* reject duplicate saved-view names in observability ([bd23d56](https://github.com/future-agi/future-agi/commit/bd23d56ff78aad3ccdcfb56c253fe6580ccfe2b4))
+* skip max cell value length check for media type uploads ([32e3ede](https://github.com/future-agi/future-agi/commit/32e3ede3afcb387eea7cec8f3fdae77168dcd3d3))
+* skip max cell value length check for media type uploads ([fda8d2e](https://github.com/future-agi/future-agi/commit/fda8d2ed6fb9a921331c0cf889721eec675acbb4))
+* **traces:** allow content hydration to use request wall ([23c4e03](https://github.com/future-agi/future-agi/commit/23c4e03d5f0899f080a937cd1d5331c5863d7b70))
+* **tracing:** avoid full-history anchor bound scan ([b656db4](https://github.com/future-agi/future-agi/commit/b656db482d1ae73526c8ab4721c517ef3b6703ff))
+* **tracing:** preserve short-window graph read budget ([91a26be](https://github.com/future-agi/future-agi/commit/91a26be213fd17291508d5c6181ab533765d145e))
+
 ## [1.33.0](https://github.com/future-agi/future-agi/compare/v1.32.0...v1.33.0) (2026-09-01)
 
 
