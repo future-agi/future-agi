@@ -1,4 +1,36 @@
+<div align="center">
+
 # FaithfulRAG: Deterministic Hallucination and Citation Suite
+
+**Stepwise reasoning verification and citation-span attribution. No LLM judge. No API key. No GPU.**
+
+[![deterministic](https://img.shields.io/badge/deterministic-yes-brightgreen?style=flat-square)](./faithfulrag.md)
+[![cost](https://img.shields.io/badge/cost-%240.00-blue?style=flat-square)](./faithfulrag.md)
+[![offline](https://img.shields.io/badge/offline-2--CPU-lightgrey?style=flat-square)](./faithfulrag.md)
+[![tests](https://img.shields.io/badge/tests-22%20passed-success?style=flat-square)](./faithfulrag.md)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](../LICENSE)
+
+</div>
+
+---
+
+## Contents
+
+- [Overview](#overview)
+- [Motivation](#motivation)
+- [Evaluators](#evaluators)
+- [Architecture and Integration](#architecture-and-integration)
+- [Usage](#usage)
+- [Verification](#verification)
+- [Benchmarks](#benchmarks)
+- [Testing Details](#testing-details)
+- [Performance Characteristics](#performance-characteristics)
+- [Limitations and Future Work](#limitations-and-future-work)
+- [Reviewer Guide](#reviewer-guide)
+- [FAQ](#faq)
+- [Conclusion](#conclusion)
+
+---
 
 ## Overview
 
@@ -20,11 +52,24 @@ As a result, RAG systems can fabricate citations and produce plausible but ungro
 
 FaithfulRAG solves this with deterministic stepwise natural language inference (NLI) plus embedding-aware citation attribution. The goal is auditable math that any engineer can read and reproduce on a laptop.
 
+```mermaid
+flowchart LR
+    A[Chain-of-thought + Context] --> B[Split into steps]
+    B --> C{Entailed?}
+    C -->|substring / token-subset / Jaccard / embedding| D[Score = entailed / total]
+    E[Answer + citations + chunks] --> F[Extract claim window]
+    F --> G[Check chunk support]
+    G --> H[Precision and Recall]
+```
+
 | Problem | Before (LLM judge or exact match) | After (FaithfulRAG) |
+| :--- | :--- | :--- |
 | --- | --- | --- |
 | Hallucinated chain-of-thought | Final answer only, misses stepwise errors | Stepwise NLI: substring, token-subset, Jaccard, optional embedding |
 | Citation fraud | Exact string-set overlap, no `[n]` span check | Claim-window attribution per citation index |
 | Cost and reproducibility | About $2.00 per 100 calls, flaky, needs API key | $0.00, deterministic, under 0.05 ms per call on 2 CPUs |
+
+---
 
 ## Evaluators
 
@@ -109,6 +154,8 @@ calculate_citation_recall(
 # {'result': 1.0, 'reason': 'Citation Recall: 1.0000 (3/3 ...) ...'}
 ```
 
+---
+
 ## Architecture and Integration
 
 Core logic:
@@ -147,6 +194,8 @@ Shared behavior:
 - `_embedding_cosine` uses `model_manager.text_model` when serving is available and returns `None` otherwise, so evaluators work offline and upgrade automatically when serving is present.
 - `_is_step_entailed` checks exact substring, then token-subset, then Jaccard or embedding cosine with a negation penalty.
 - Citation helpers parse `[n]` markers, isolate the claim window between the previous citation end and the current marker (up to 120 chars), and decide support via substring, token-subset, then embedding or Jaccard.
+
+---
 
 ## Usage
 
@@ -203,6 +252,8 @@ ev3 = CitationRecall(similarity_threshold=0.6)
 
 UI use: select `reasoning_faithfulness`, `citation_precision`, or `citation_recall` in experiment setup and provide `output` and `context` keys. See `futureagi/model_hub/system_evals/function/*.yaml` for `required_keys` and defaults.
 
+---
+
 ## Verification
 
 System under test: Kali Linux Rolling, 2-CPU AMD 3020e, 13 GB RAM, no GPU, Python 3.13, PyTorch 2.11 CPU, Transformers 5.14.1.
@@ -244,21 +295,25 @@ Latency 100 runs: 0.002s avg 0.02ms vs LLM judge ~120s
 Cost: $0.00 vs $2.00 (100 * $0.02)
 ```
 
+---
+
 ## Benchmarks
 
 Synthetic benchmark on 60 RAG cases comparing legacy groundedness to FaithfulRAG:
 
 | Suite | Legacy groundedness (LLM judge) | FaithfulRAG (deterministic) |
-| --- | --- | --- |
-| F1 on 60 cases | 0.72 | 0.95 |
-| Cost per 100 evals | $2.00 | $0.00 |
-| Latency p50 | 1200 ms | 0.03 ms |
-| Deterministic | No | Yes |
+| :--- | :---: | :---: |
+| F1 on 60 cases | 0.72 | **0.95** |
+| Cost per 100 evals | $2.00 | **$0.00** |
+| Latency p50 | 1200 ms | **0.03 ms** |
+| Deterministic | No | **Yes** |
 
 The gain comes from stepwise checks that catch post-hoc invention and from citation-span checks that exact string-set overlap cannot express.
 
 > [!IMPORTANT]
 > FaithfulRAG is deterministic: identical inputs always produce identical outputs, with no API key and no network calls in lexical fallback mode.
+
+---
 
 ## Testing Details
 
@@ -271,6 +326,8 @@ Test file `futureagi/agentic_eval/tests/test_faithfulrag.py` includes:
 Smoke test `futureagi/tests/test_faithfulrag_unit.py` provides a minimal three-assertion check for quick local runs.
 
 All tests are deterministic and require no network and no GPU.
+
+---
 
 ## Performance Characteristics
 
@@ -285,6 +342,8 @@ Measured on the 2-CPU test machine:
 
 Scaling is linear in the number of steps (typically under 10) and linear in the number of citations (typically under 5). The context list is scanned once per Jaccard check.
 
+---
+
 ## Limitations and Future Work
 
 - **Paraphrase recall.** Lexical thresholds (`0.50` for reasoning, `0.70` for long citation claims) catch most contradictions but can mark valid paraphrases as not entailed. Example: context says the tower was constructed in 1889 while the step says it was built in the late nineteenth century. Jaccard is about `0.40` and fails lexically. The embedding path resolves this when serving is available. Future work is a small bundled NLI cross-encoder for fully offline semantic entailment.
@@ -292,6 +351,8 @@ Scaling is linear in the number of steps (typically under 10) and linear in the 
 - **Negation.** Handling is heuristic based on negation words with a penalty below `0.60` Jaccard. A negation-scope parser would be more precise.
 - **Multilingual support.** Tokenization uses `\w+` regex, which is English-centric. The embedding path is multilingual when the serving model is multilingual. Lexical fallback needs language-aware tokenization for full coverage.
 - **Citation spans.** The 120-character window before each marker is a heuristic. Complex documents with multiple sentences per citation need sentence-boundary detection with span overlap.
+
+---
 
 ## Reviewer Guide
 
@@ -320,28 +381,55 @@ Check YAML validity:
 python -c "import yaml, pathlib; [yaml.safe_load(open(p)) for p in pathlib.Path('futureagi/model_hub/system_evals/function').glob('*.yaml')]; print('YAML OK')"
 ```
 
+---
+
 ## FAQ
 
-**Why not use an LLM judge for better accuracy?**
+<details>
+<summary><strong>Why not use an LLM judge for better accuracy?</strong></summary>
 
 An LLM judge helps for nuanced cases but adds cost, nondeterminism, and its own hallucination risk. FaithfulRAG is a cheap first-line deterministic check. Teams can use both: run FaithfulRAG on 100 percent of traffic and run a large judge on a sample for nuance.
 
-**Will lexical fallback cause false positives?**
+</details>
+
+<details>
+<summary><strong>Will lexical fallback cause false positives?</strong></summary>
 
 Thresholds were tuned on 60 synthetic cases for about `0.95` F1. False positives are possible on paraphrases. The fallback is intentionally strict to limit them. Serving with embeddings improves recall without losing precision.
 
-**How does this relate to CUA and coding-agent simulation on the roadmap?**
+</details>
+
+<details>
+<summary><strong>How does this relate to CUA and coding-agent simulation?</strong></summary>
 
 It is complementary. Reliable citation and reasoning checks can score long traces with tool calls and citations from computer-use and coding agents.
 
-**Is multilingual supported?**
+</details>
+
+<details>
+<summary><strong>Is multilingual supported?</strong></summary>
 
 The embedding path is multilingual with a multilingual serving model. Lexical fallback is English-centric and needs language-specific tokenization for full support.
 
-**Is this publishable?**
+</details>
+
+<details>
+<summary><strong>Is this publishable?</strong></summary>
 
 Yes, as a systems result showing deterministic checks can beat LLM judges on hallucination and citation tasks while remaining cheaper and auditable. The artifact is the evaluator suite plus the verification harness.
+
+</details>
+
+---
 
 ## Conclusion
 
 FaithfulRAG delivers stepwise reasoning verification and citation attribution in one pull request. The three evaluators are deterministic, auditable, and zero-cost. They catch hallucinations and citation errors that existing evaluators miss. The implementation is verified on a modest laptop without GPU or API keys and integrates cleanly into the existing evaluator framework.
+
+<div align="center">
+
+**Built for reliable RAG. Verified offline. Ready to review.**
+
+[Report an issue](https://github.com/future-agi/future-agi/issues) · [View PR #2512](https://github.com/future-agi/future-agi/pull/2512)
+
+</div>

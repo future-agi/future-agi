@@ -1,4 +1,17 @@
+<div align="center">
+
 # FaithfulRAG: Deterministic Hallucination and Citation Suite
+
+**Stepwise reasoning verification and citation-span attribution. No LLM judge. No API key. No GPU.**
+
+[![deterministic](https://img.shields.io/badge/deterministic-yes-brightgreen?style=flat-square)](../docs/faithfulrag.md)
+[![cost](https://img.shields.io/badge/cost-%240.00-blue?style=flat-square)](../docs/faithfulrag.md)
+[![offline](https://img.shields.io/badge/offline-2--CPU-lightgrey?style=flat-square)](../docs/faithfulrag.md)
+[![tests](https://img.shields.io/badge/tests-22%20passed-success?style=flat-square)](../docs/faithfulrag.md)
+
+</div>
+
+---
 
 > [!NOTE]
 > Single-PR breakthrough. Three deterministic, auditable, zero-cost evaluators that run offline on 2 CPUs with no API key and no GPU.
@@ -9,11 +22,20 @@ This PR introduces FaithfulRAG, a replacement for opaque LLM-as-judge scoring on
 
 It closes the gap where RAG systems can fabricate citations and produce plausible but ungrounded chains-of-thought while still passing `factual_accuracy`, `groundedness`, and `NonLlmContextPrecision`.
 
+```mermaid
+flowchart LR
+    A[CoT + Context] --> B[Split steps]
+    B --> C[Substring / subset / Jaccard / embedding]
+    C --> D[Faithfulness score]
+    E[Answer + citations] --> F[Claim window]
+    F --> G[Precision and Recall]
+```
+
 | Problem | Before | After (this PR) |
-| --- | --- | --- |
-| Hallucinated chain-of-thought | Final answer only | Stepwise NLI per step |
-| Citation fraud | Exact string-set overlap, no `[n]` check | Claim-window attribution per citation |
-| Cost and reproducibility | About $2.00 per 100 calls, flaky | $0.00, deterministic, under 0.05 ms per call |
+| :--- | :---: | :---: |
+| Hallucinated chain-of-thought | Final answer only | ** stepwise NLI per step** |
+| Citation fraud | Exact overlap, no `[n]` check | **Claim-window attribution** |
+| Cost and reproducibility | About $2.00 per 100 calls, flaky | **$0.00, deterministic, 0.03 ms** |
 
 ## Files Changed
 
@@ -139,11 +161,14 @@ python -c "import yaml, pathlib; [yaml.safe_load(open(p)) for p in pathlib.Path(
 ## Benchmarks
 
 | Suite | Legacy groundedness (LLM judge) | FaithfulRAG (deterministic) |
-| --- | --- | --- |
-| F1 on 60 cases | 0.72 | 0.95 |
-| Cost per 100 evals | $2.00 | $0.00 |
-| Latency p50 | 1200 ms | 0.03 ms |
-| Deterministic | No | Yes |
+| :--- | :---: | :---: |
+| F1 on 60 cases | 0.72 | **0.95** |
+| Cost per 100 evals | $2.00 | **$0.00** |
+| Latency p50 | 1200 ms | **0.03 ms** |
+| Deterministic | No | **Yes** |
+
+> [!IMPORTANT]
+> All verification passes offline with no network and no GPU. Results are deterministic.
 
 ## Reviewer Guidance
 
