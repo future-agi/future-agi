@@ -114,8 +114,9 @@ def _patch_ch(results: List[Any]) -> mock._patch:
 
 @pytest.fixture(autouse=True)
 def _mute_notifications():
-    with mock.patch.object(monitor_mod, "_send_alert_email"), mock.patch.object(
-        monitor_mod, "_send_slack_notification"
+    with (
+        mock.patch.object(monitor_mod, "_send_alert_email"),
+        mock.patch.object(monitor_mod, "_send_slack_notification"),
     ):
         yield
 
@@ -308,9 +309,7 @@ def test_graph_static_formats_ch_series(user_alert_monitor) -> None:
     instance.execute_ch_query.return_value = _ch_result(
         [{"timestamp": ts, "value": 3}, {"timestamp": ts, "value": None}]
     )
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         data = graphs_mod.get_static_metric_graph_data(user_alert_monitor)
     assert data == [
         {"timestamp": ts.isoformat(), "value": 3},
@@ -338,9 +337,7 @@ def test_percentage_graph_alert_bars_use_evaluator_band(user_alert_monitor) -> N
         _ch_result([{"timestamp": ts, "value": 1000.0}]),
         _ch_result([{"mean": 100.0, "stddev": 10.0}]),  # per-row band
     ]
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         out = graphs_mod.get_percentage_change_metric_graph_data(user_alert_monitor)
 
     # A second CH query (the evaluator's historical stats) was issued.
