@@ -6453,7 +6453,8 @@ class TestEvalMetricsQueryBuilderExtended:
         query, params = builder.build()
         assert "countIf" in query
         assert "has(JSONExtract(output_str_list, 'Array(String)')" in query
-        assert "OR output_str =" in query
+        assert "OR output_str = %(choice_0)s" in query
+        assert "OR JSONExtractString(output_str, 'choice') = %(choice_0)s" in query
         assert "choice_0" in params
         assert "choice_1" in params
         assert "choice_2" in params
@@ -9032,12 +9033,14 @@ class TestMonitorMetricsQueryBuilder:
         query, params = builder.build_metric_value_query(
             "evaluation_metrics", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        # List-containment only: choice evals write output_str_list exclusively.
+        # TH-7788: the verdict may live in the list, a bare output_str, or the
+        # JSON ``choice`` key — all three must match.
         assert (
             "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)"
             in query
         )
-        assert "OR output_str =" not in query
+        assert "OR output_str = %(choice_val)s" in query
+        assert "OR JSONExtractString(output_str, 'choice') = %(choice_val)s" in query
         assert params["choice_val"] == "Good"
 
     def test_evaluation_metrics_no_config_returns_null(self):

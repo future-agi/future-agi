@@ -100,6 +100,7 @@ def _seed_evals(ch, config_id: str, evals: List[Dict[str, Any]]) -> None:
         "observation_span_id",
         "output_float",
         "output_bool",
+        "output_str",
         "output_str_list",
         "created_at",
     ]
@@ -112,6 +113,7 @@ def _seed_evals(ch, config_id: str, evals: List[Dict[str, Any]]) -> None:
                 "observation_span_id": ev["span_id"],
                 "output_float": ev.get("output_float"),
                 "output_bool": ev.get("output_bool"),
+                "output_str": ev.get("output_str"),
                 "output_str_list": ev.get("output_str_list", "[]"),
                 "created_at": ev.get("created_at", NOW),
             }
@@ -413,6 +415,49 @@ def test_evaluation_metrics_choices_rate(ch, project_id, eval_table):
         assert _eval_value(
             project_id, cfg, "CHOICES", threshold_metric_value="good"
         ) == pytest.approx(2 / 3)
+
+
+@pytest.mark.parametrize("eval_table", ["tracer_eval_logger", "tracer_eval_logger_v2"])
+def test_evaluation_metrics_choices_reads_verdict_from_output_str(
+    ch, project_id, eval_table
+):
+    """TH-7788: rows with an empty output_str_list must still count when the
+    verdict is in output_str (bare, or as the ``choice`` key of a JSON object).
+    The JSON shape is exactly what the reporting customer's rows look like."""
+    from django.test import override_settings
+
+    with override_settings(CH25_EVAL_LOGGER_TABLE=eval_table):
+        cfg = str(uuid.uuid4())
+        spans = [_span(project_id) for _ in range(5)]
+        _seed_spans(ch, spans)
+        _seed_evals(
+            ch,
+            cfg,
+            [
+                # legacy list shape
+                {"span_id": spans[0]["id"], "output_str_list": '["Complete"]'},
+                # bare string, empty list
+                {"span_id": spans[1]["id"], "output_str": "Complete"},
+                # JSON object, empty list (customer shape)
+                {
+                    "span_id": spans[2]["id"],
+                    "output_str": '{"score": 1.0, "choice": "Complete"}',
+                },
+                # JSON object with a different verdict
+                {
+                    "span_id": spans[3]["id"],
+                    "output_str": '{"score": 0.0, "choice": "Incomplete"}',
+                },
+                # free text that merely mentions the word must not match
+                {"span_id": spans[4]["id"], "output_str": "Not Complete at all"},
+            ],
+        )
+        assert _eval_value(
+            project_id, cfg, "CHOICES", threshold_metric_value="Complete"
+        ) == pytest.approx(3 / 5)
+        assert _eval_value(
+            project_id, cfg, "CHOICES", threshold_metric_value="Incomplete"
+        ) == pytest.approx(1 / 5)
 
 
 # --- Trailing-window (daily) --------------------------------------------------

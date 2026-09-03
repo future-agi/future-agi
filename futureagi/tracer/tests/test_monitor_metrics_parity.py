@@ -143,15 +143,17 @@ def test_provider_guard_excludes_empty_string_only() -> None:
         assert "provider IS NOT NULL" not in sql
 
 
-# --- Eval CHOICES list containment only (PG parity) ---------------------------
+# --- Eval CHOICES verdict match (list, bare string, JSON choice key) -----------
 
 
-def test_eval_choices_no_output_str_fallback() -> None:
+def test_eval_choices_matches_all_verdict_shapes() -> None:
+    # TH-7788: rows whose verdict lives only in output_str must count.
     sql, _ = _builder(eval_output_type="CHOICES").build_metric_value_query(
         MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
     )
     assert "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)" in sql
-    assert "OR output_str" not in sql
+    assert "OR output_str = %(choice_val)s" in sql
+    assert "OR JSONExtractString(output_str, 'choice') = %(choice_val)s" in sql
 
 
 # --- Evaluator routing: CH serves these metrics, PG is never touched ----------

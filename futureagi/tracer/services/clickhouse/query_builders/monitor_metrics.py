@@ -35,6 +35,9 @@ from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_version_column,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder, _parse_dt
+from tracer.services.clickhouse.query_builders.expressions import (
+    eval_choice_match_expr,
+)
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
@@ -125,8 +128,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def _eval_choice_match_expr(param_name: str = "choice_val") -> str:
-        """Choice membership in the JSON list (PG parity: list containment only)."""
-        return f"has(JSONExtract(output_str_list, 'Array(String)'), %({param_name})s)"
+        """Choice verdict match shared with the charts builder (TH-7788)."""
+        return eval_choice_match_expr(param_name)
 
     def _translate_filters(self) -> None:
         """Translate raw monitor filter JSON into CH WHERE clause fragments."""

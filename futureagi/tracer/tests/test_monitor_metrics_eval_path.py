@@ -262,3 +262,26 @@ def test_choices_time_series_shape() -> None:
     assert "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)" in sql
     assert params["choice_val"] == "Good"
     assert "GROUP BY timestamp" in sql
+
+
+def test_choices_match_shared_by_all_three_queries() -> None:
+    # TH-7788: value, historical stats and time series must all read the
+    # verdict from output_str_list, bare output_str, or the JSON choice key.
+    b = MonitorMetricsQueryBuilder(
+        project_id=PROJECT_ID,
+        eval_config_id=EVAL_CONFIG_ID,
+        eval_output_type="CHOICES",
+        threshold_metric_value="Complete",
+    )
+    mt = MonitorMetricTypeChoices.EVALUATION_METRICS
+    for sql, params in (
+        b.build_metric_value_query(mt, START, END),
+        b.build_historical_stats_query(mt, START, END),
+        b.build_time_series_query(mt, START, END, 3600),
+    ):
+        assert (
+            "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)" in sql
+        )
+        assert "OR output_str = %(choice_val)s" in sql
+        assert "OR JSONExtractString(output_str, 'choice') = %(choice_val)s" in sql
+        assert params["choice_val"] == "Complete"
