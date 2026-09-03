@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.34.1](https://github.com/future-agi/future-agi/compare/v1.34.0...v1.34.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **catalog:** bind consumer to the configured production database ([91833ed](https://github.com/future-agi/future-agi/commit/91833ed2d3710fb8fa0b3b92a427d39e31e8464d))
+* **catalog:** bind consumer to the configured production database ([b00ff52](https://github.com/future-agi/future-agi/commit/b00ff5220c7c9f1077428f49988f45253ef70d1d))
+
 ## [1.34.0](https://github.com/future-agi/future-agi/compare/v1.33.0...v1.34.0) (2026-09-03)
 
 
