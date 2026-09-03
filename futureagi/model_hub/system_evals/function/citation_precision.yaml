@@ -1,0 +1,96 @@
+eval_id: 203
+name: citation_precision
+description: FaithfulRAG — Citation Precision. Deterministic check of what fraction of citations [1], [2,3] actually support the claim via embedding/Jaccard vs cited chunk. Replaces token-set NonLlmContextPrecision.
+criteria: For each citation index, verifies the citing sentence is semantically supported by the cited chunk. Precision = supported / total citations.
+eval_tags:
+- RAG
+- Faithfulness
+- Citation
+- Hallucination
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.7
+config:
+  required_keys:
+  - output
+  - context
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    similarity_threshold:
+      type: float
+      default: 0.6
+  config_params_desc:
+    output: Answer text with citations like [1], [2,3]
+    context: Grounding chunks — JSON array or newline-separated (1-indexed)
+    similarity_threshold: Support threshold 0..1 (default 0.6)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json, re
+        def _parse(v):
+            if v is None: return []
+            if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+            if isinstance(v, str):
+                s=v.strip()
+                if not s: return []
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        p=json.loads(s)
+                        if isinstance(p, list): return [str(x).strip() for x in p if str(x).strip()]
+                    except: pass
+                if "\n" in s: return [p.strip() for p in s.split("\n") if p.strip()]
+                return [s]
+            return [str(v).strip()]
+        def _jacc(a,b):
+            import re
+            ta=set(re.findall(r"\w+", str(a).lower())); tb=set(re.findall(r"\w+", str(b).lower()))
+            if not ta and not tb: return 1.0
+            if not ta or not tb: return 0.0
+            return len(ta&tb)/len(ta|tb)
+        out=str(kwargs.get("output", output or "")).strip()
+        ctx_raw=kwargs.get("context", context if context is not None else expected)
+        if ctx_raw is None: ctx_raw=kwargs.get("contexts", kwargs.get("chunks"))
+        ctx=_parse(ctx_raw)
+        if not out: return {"score": 0.0, "reason": "Empty output"}
+        pat=re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+        cits=[]
+        for m in pat.finditer(out):
+            for p in m.group(1).split(","):
+                p=p.strip()
+                if p.isdigit(): cits.append(int(p))
+        if not cits: return {"score": 0.0, "reason": "No citations found (expected [1], [2,3])"}
+        if not ctx: return {"score": 0.0, "reason": f"Empty context — cannot verify {len(cits)} citations"}
+        thr=float(kwargs.get("similarity_threshold", 0.6) or 0.6)
+        sents=re.split(r"(?<=[.!?])\s+", out)
+        def _sent_for(idx):
+            for s in sents:
+                if f"[{idx}]" in s or f"[{idx}," in s or f",{idx}]" in s or f", {idx}]" in s: return s
+            return out
+        supported=0; invalid=0; dets=[]
+        for idx in cits:
+            if idx<1 or idx>len(ctx):
+                invalid+=1; dets.append(f"[{idx}] INVALID (range 1..{len(ctx)})"); continue
+            chunk=ctx[idx-1]; sent=_sent_for(idx)
+            j=_jacc(sent, chunk)
+            ok=j>=0.25
+            # Try embedding if available for higher precision
+            try:
+                from agentic_eval.core.embeddings.embedding_manager import model_manager
+                m=model_manager.text_model
+                if m is not None:
+                    import numpy as np
+                    e1, e2=m([sent]), m([chunk])
+                    e1=np.array(e1).flatten(); e2=np.array(e2).flatten()
+                    sim=float(e1.dot(e2)/(np.linalg.norm(e1)*np.linalg.norm(e2)+1e-9))
+                    ok=sim>=thr
+                    dets.append(f"[{idx}] {'SUPPORTED' if ok else 'UNSUPPORTED'} (emb={sim:.3f} jacc={j:.3f})")
+                    if ok: supported+=1
+                    continue
+            except: pass
+            if ok: supported+=1
+            dets.append(f"[{idx}] {'SUPPORTED' if ok else 'UNSUPPORTED'} (jacc={j:.3f})")
+        prec=supported/len(cits) if cits else 0.0
+        return {"score": float(prec), "reason": f"Citation Precision: {prec:.4f} ({supported}/{len(cits)} supported, {invalid} invalid, thr={thr}) | " + " || ".join(dets)}

@@ -984,6 +984,24 @@ class NonLlmContextRecall(FunctionEvaluator):
         super().__init__(function_name=FunctionEvalTypeId.NON_LLM_CONTEXT_RECALL.value, function_arguments={}, display_name=display_name)
 
 
+class ReasoningFaithfulness(FunctionEvaluator):
+    def __init__(self, threshold: float = 0.6, display_name: str | None = None):
+        """Initialize ReasoningFaithfulness — stepwise NLI faithfulness vs context. Deterministic, no LLM."""
+        super().__init__(function_name=FunctionEvalTypeId.REASONING_FAITHFULNESS.value, function_arguments={"threshold": threshold}, display_name=display_name)
+
+
+class CitationPrecision(FunctionEvaluator):
+    def __init__(self, similarity_threshold: float = 0.6, display_name: str | None = None):
+        """Initialize CitationPrecision — citation attribution precision via embedding/Jaccard."""
+        super().__init__(function_name=FunctionEvalTypeId.CITATION_PRECISION.value, function_arguments={"similarity_threshold": similarity_threshold}, display_name=display_name)
+
+
+class CitationRecall(FunctionEvaluator):
+    def __init__(self, similarity_threshold: float = 0.6, display_name: str | None = None):
+        """Initialize CitationRecall — citation attribution recall."""
+        super().__init__(function_name=FunctionEvalTypeId.CITATION_RECALL.value, function_arguments={"similarity_threshold": similarity_threshold}, display_name=display_name)
+
+
 class DistinctN(FunctionEvaluator):
     def __init__(self, n: int = 1, display_name: str | None = None):
         super().__init__(function_name=FunctionEvalTypeId.DISTINCT_N.value, function_arguments={"n": n}, display_name=display_name)

@@ -2532,3 +2532,27 @@ protect_flash:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # (Defined in system_eval_code.py — each eval has a Python function)
+
+reasoning_faithfulness:
+  eval_type: code
+  output: score
+  required_keys: [output, context]
+  description: FaithfulRAG — Reasoning Faithfulness. Stepwise NLI that checks each CoT step is entailed by context. Deterministic, no LLM cost.
+  tags: [RAG, Faithfulness, Reasoning, Hallucination]
+  rule_prompt: ""
+
+citation_precision:
+  eval_type: code
+  output: score
+  required_keys: [output, context]
+  description: FaithfulRAG — Citation Precision. Fraction of citations [1], [2,3] that are semantically supported by cited chunk.
+  tags: [RAG, Faithfulness, Citation, Hallucination]
+  rule_prompt: ""
+
+citation_recall:
+  eval_type: code
+  output: score
+  required_keys: [output, context]
+  description: FaithfulRAG — Citation Recall. Fraction of relevant chunks that were cited and supported.
+  tags: [RAG, Faithfulness, Citation, Hallucination]
+  rule_prompt: ""

@@ -1,0 +1,136 @@
+eval_id: 204
+name: citation_recall
+description: FaithfulRAG — Citation Recall. What fraction of relevant context chunks were cited and supported? If relevant indices not given, relevant = chunks semantically similar to output.
+criteria: Recall = supported relevant citations / total relevant chunks. Catches missing citations.
+eval_tags:
+- RAG
+- Faithfulness
+- Citation
+- Hallucination
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.7
+config:
+  required_keys:
+  - output
+  - context
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    similarity_threshold:
+      type: float
+      default: 0.6
+  config_params_desc:
+    output: Answer text with citations [1], [2,3]
+    context: All context chunks (1-indexed)
+    expected: Relevant chunk indices (optional, e.g. [1,3]) or relevant texts
+    similarity_threshold: Support threshold 0..1
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json, re
+        def _parse(v):
+            if v is None: return []
+            if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+            if isinstance(v, str):
+                s=v.strip()
+                if not s: return []
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        p=json.loads(s)
+                        if isinstance(p, list): return [str(x).strip() for x in p if str(x).strip()]
+                    except: pass
+                if "\n" in s: return [p.strip() for p in s.split("\n") if p.strip()]
+                return [s]
+            return [str(v).strip()]
+        def _jacc(a,b):
+            import re
+            ta=set(re.findall(r"\w+", str(a).lower())); tb=set(re.findall(r"\w+", str(b).lower()))
+            if not ta and not tb: return 1.0
+            if not ta or not tb: return 0.0
+            return len(ta&tb)/len(ta|tb)
+        out=str(kwargs.get("output", output or "")).strip()
+        ctx_raw=kwargs.get("context", context)
+        if ctx_raw is None: ctx_raw=kwargs.get("contexts", kwargs.get("chunks", expected))
+        ctx=_parse(ctx_raw)
+        if not out: return {"score": 0.0, "reason": "Empty output"}
+        if not ctx: return {"score": 0.0, "reason": "Empty context"}
+        thr=float(kwargs.get("similarity_threshold", 0.6) or 0.6)
+        pat=re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+        cits=[]; 
+        for m in pat.finditer(out):
+            for p in m.group(1).split(","):
+                p=p.strip()
+                if p.isdigit(): cits.append(int(p))
+        cited_set=set(cits)
+        # infer relevant
+        rel=[]
+        if expected is not None:
+            if isinstance(expected, (list, tuple)):
+                if expected and all(str(x).strip().isdigit() for x in expected):
+                    rel=[int(x) for x in expected]
+                else:
+                    ex=_parse(expected)
+                    for et in ex:
+                        best, bests=-1, -1.0
+                        for i,ch in enumerate(ctx,1):
+                            sc=_jacc(et, ch)
+                            if sc>bests: bests, best=sc, i
+                        if best!=-1 and bests>=0.5: rel.append(best)
+                    if not rel and ex: rel=list(range(1, len(ex)+1))
+            elif isinstance(expected, str):
+                s=expected.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        p=json.loads(s)
+                        if isinstance(p, list) and p and all(str(x).strip().isdigit() for x in p):
+                            rel=[int(x) for x in p]
+                        elif isinstance(p, list):
+                            rel=list(range(1, len(p)+1))
+                    except:
+                        parts=[p.strip() for p in s.strip("[]").split(",") if p.strip()]
+                        if parts and all(p.isdigit() for p in parts): rel=[int(p) for p in parts]
+                elif s.isdigit(): rel=[int(s)]
+            if not rel: rel=list(range(1, len(ctx)+1))
+        else:
+            # relevant = all ctx with jacc >0.1 to output
+            for i,ch in enumerate(ctx,1):
+                if _jacc(out, ch)>=0.1: rel.append(i)
+            if not rel: rel=list(range(1, len(ctx)+1))
+        # also handle kwargs expected_text
+        if not rel:
+            rel=list(range(1, len(ctx)+1))
+        rel=list(dict.fromkeys(rel))
+        sents=re.split(r"(?<=[.!?])\s+", out)
+        def _sent_for(idx):
+            for s in sents:
+                if f"[{idx}]" in s or f"[{idx}," in s or f",{idx}]" in s or f", {idx}]" in s: return s
+            return out
+        sup=0; dets=[]
+        for ridx in rel:
+            if ridx not in cited_set:
+                dets.append(f"[{ridx}] NOT_CITED"); continue
+            if ridx<1 or ridx>len(ctx):
+                dets.append(f"[{ridx}] INVALID"); continue
+            chunk=ctx[ridx-1]; sent=_sent_for(ridx)
+            j=_jacc(sent, chunk)
+            ok=j>=0.25
+            try:
+                from agentic_eval.core.embeddings.embedding_manager import model_manager
+                m=model_manager.text_model
+                if m is not None:
+                    import numpy as np
+                    e1,e2=m([sent]), m([chunk])
+                    e1=np.array(e1).flatten(); e2=np.array(e2).flatten()
+                    sim=float(e1.dot(e2)/(np.linalg.norm(e1)*np.linalg.norm(e2)+1e-9))
+                    ok=sim>=thr
+                    dets.append(f"[{ridx}] {'CITED+SUPPORTED' if ok else 'CITED+UNSUPPORTED'} (emb={sim:.3f})")
+                    if ok: sup+=1
+                    continue
+            except: pass
+            dets.append(f"[{ridx}] {'CITED+SUPPORTED' if ok else 'CITED+UNSUPPORTED'} (jacc={j:.3f})")
+            if ok: sup+=1
+        rec=sup/len(rel) if rel else 0.0
+        return {"score": float(rec), "reason": f"Citation Recall: {rec:.4f} ({sup}/{len(rel)} relevant supported, cited={sorted(cited_set)}, relevant={rel}) | " + " || ".join(dets)}

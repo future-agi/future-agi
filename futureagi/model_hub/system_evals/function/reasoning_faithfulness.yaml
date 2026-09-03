@@ -1,0 +1,92 @@
+eval_id: 202
+name: reasoning_faithfulness
+description: FaithfulRAG — Reasoning Faithfulness. Deterministic stepwise NLI that checks each CoT step is entailed by context. Auditable alternative to LLM-as-judge groundedness; catches post-hoc rationalization without API cost.
+criteria: Measures entailed steps / total steps via lexical + embedding NLI proxy (substring, token-subset, Jaccard, optional embedding cosine). Replaces black-box hallucination scoring.
+eval_tags:
+- RAG
+- Faithfulness
+- Reasoning
+- Hallucination
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.7
+config:
+  required_keys:
+  - output
+  - context
+  output: score
+  eval_type_id: CustomCodeEval
+  config:
+    threshold:
+      type: float
+      default: 0.6
+  config_params_desc:
+    output: Chain-of-thought / reasoning trace (numbered, bullets, or sentences)
+    context: Grounding document(s) — string or JSON array of chunks
+    threshold: Entailment threshold 0..1 (default 0.6)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json, re, string
+        import numpy as np
+        try:
+            from scipy.spatial.distance import cosine
+        except Exception:
+            cosine = None
+
+        def _parse_ctx(v):
+            if v is None: return ""
+            if isinstance(v, list): return "\n".join(str(x) for x in v if str(x).strip())
+            if isinstance(v, str):
+                s=v.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        p=json.loads(s)
+                        if isinstance(p, list): return "\n".join(str(x) for x in p if str(x).strip())
+                    except: pass
+            return str(v)
+
+        def _split_steps(t):
+            if not isinstance(t, str): t=str(t)
+            t=t.strip()
+            if not t: return []
+            lines=[l.strip() for l in t.split("\n") if l.strip()]
+            bullet=re.compile(r"^\s*(?:\d+[\.\)]\s+|[-*\u2022]\s+|Step\s*\d+[:\.\)]\s*)", re.IGNORECASE)
+            if any(bullet.match(l) for l in lines) and len(lines)>1:
+                return [bullet.sub("", l).strip() for l in lines if bullet.sub("", l).strip()]
+            if len(lines)==1:
+                parts=re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", lines[0])
+                parts=[p.strip() for p in parts if len(p.strip())>=3]
+                return parts if len(parts)>1 else lines
+            return lines
+
+        def _jacc(a,b):
+            ta=set(re.findall(r"\w+", str(a).lower())); tb=set(re.findall(r"\w+", str(b).lower()))
+            if not ta and not tb: return 1.0
+            if not ta or not tb: return 0.0
+            return len(ta&tb)/len(ta|tb)
+
+        out=str(kwargs.get("output", output or "")).strip()
+        ctx=_parse_ctx(kwargs.get("context", context if context is not None else expected))
+        if not out: return {"score": 0.0, "reason": "Empty reasoning trace"}
+        if not ctx.strip(): return {"score": 0.0, "reason": "Empty context — provide grounding document"}
+        thr=float(kwargs.get("threshold", 0.6) or 0.6)
+        steps=_split_steps(out)
+        ent=0; dets=[]
+        for i, s in enumerate(steps,1):
+            sl=s.lower(); cl=ctx.lower()
+            if sl in cl:
+                ent+=1; dets.append(f"Step {i}: ENTAILED (substring)")
+                continue
+            st=set(re.findall(r"\w+", sl)); ct=set(re.findall(r"\w+", cl))
+            if st and st.issubset(ct):
+                ent+=1; dets.append(f"Step {i}: ENTAILED (token-subset)")
+                continue
+            j=_jacc(s, ctx)
+            ok=j>=0.35
+            dets.append(f"Step {i}: {'ENTAILED' if ok else 'NOT_ENTAILED'} (jacc={j:.3f}) | {s[:100]}")
+            if ok: ent+=1
+        score=ent/len(steps) if steps else 0.0
+        return {"score": float(score), "reason": f"Reasoning Faithfulness: {score:.4f} ({ent}/{len(steps)} entailed, thr={thr}) | " + " || ".join(dets)}

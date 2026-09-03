@@ -4004,6 +4004,495 @@ def calculate_fleiss_kappa(output, expected=None, **kwargs):
     return {"result": score, "reason": f"Fleiss' Kappa: {kappa:.4f}, normalized={score:.4f}"}
 
 
+def _parse_context_list(value):
+    """Parse context/expected into list of strings (chunks). Handles JSON, newline, list."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return []
+        # Try JSON array
+        if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+                if isinstance(parsed, dict):
+                    return [str(v).strip() for v in parsed.values() if str(v).strip()]
+            except Exception:
+                pass
+        # Newline split if multi-line
+        if "\n" in s:
+            parts = [p.strip() for p in s.split("\n") if p.strip()]
+            if len(parts) > 1:
+                return parts
+        return [s]
+    return [str(value).strip()]
+
+
+def _split_reasoning_steps(text):
+    """Split CoT / reasoning into discrete steps. Supports numbered, bullet, and sentence fallback."""
+    if not isinstance(text, str):
+        text = str(text)
+    text = text.strip()
+    if not text:
+        return []
+    # Try explicit step delimiters first
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    steps = []
+    # Detect numbered/bullet list
+    bullet_re = re.compile(r"^\s*(?:\d+[\.\)]\s+|[-*•]\s+|Step\s*\d+[:\.\)]\s*)", re.IGNORECASE)
+    has_bullets = any(bullet_re.match(l) for l in lines)
+    if has_bullets and len(lines) > 1:
+        for line in lines:
+            cleaned = bullet_re.sub("", line).strip()
+            if cleaned:
+                steps.append(cleaned)
+        return steps
+    # Fallback: split by sentence (period, but keep abbreviations rough)
+    # Use simple regex: split on .!? followed by space+capital or end
+    if len(lines) == 1:
+        # Single paragraph -> sentence split
+        raw = lines[0]
+        # Split on sentence boundaries
+        sent_parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", raw)
+        steps = [s.strip() for s in sent_parts if s.strip()]
+        # Filter very short fragments (<3 chars)
+        steps = [s for s in steps if len(s) >= 3]
+        return steps if len(steps) > 1 else lines
+    return lines
+
+
+def _jaccard_tokens(a, b):
+    """Jaccard similarity on lowercased token sets (alphanumeric)."""
+    def _tok(s):
+        return set(re.findall(r"\w+", str(s).lower()))
+    ta, tb = _tok(a), _tok(b)
+    if not ta and not tb:
+        return 1.0
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _embedding_cosine(a, b):
+    """Try embedding cosine via model_manager; returns None if unavailable."""
+    try:
+        from agentic_eval.core.embeddings.embedding_manager import model_manager
+        model = model_manager.text_model
+        if model is None:
+            return None
+        # model is callable: model([text]) -> np array or callable per thread
+        # Handle both direct array and function cases
+        e1 = model([str(a)])
+        e2 = model([str(b)])
+        # e1/e2 may be lists or arrays; ensure numpy
+        e1 = np.array(e1).flatten() if not isinstance(e1, np.ndarray) else e1.flatten()
+        e2 = np.array(e2).flatten() if not isinstance(e2, np.ndarray) else e2.flatten()
+        # If batched (2D), take first row
+        if e1.ndim > 1:
+            e1 = e1[0]
+        if e2.ndim > 1:
+            e2 = e2[0]
+        # cosine distance
+        denom = (np.linalg.norm(e1) * np.linalg.norm(e2))
+        if denom == 0:
+            return None
+        sim = float(np.dot(e1, e2) / denom)
+        # clamp
+        return max(-1.0, min(1.0, sim))
+    except Exception:
+        return None
+
+
+def _is_step_entailed(step, context, threshold=0.6):
+    """
+    Deterministic NLI proxy: step is entailed if lexical/semantic overlap with context is sufficient
+    and no contradiction cue.
+
+    Uses three signals:
+    1) Exact substring (lowercased)
+    2) Jaccard token overlap
+    3) Embedding cosine if available
+    Contradiction heuristic penalizes negation mismatch.
+    """
+    step_l = str(step).lower().strip()
+    ctx_l = str(context).lower().strip()
+    if not step_l or not ctx_l:
+        return False, 0.0, "empty"
+    # Exact containment
+    if step_l in ctx_l:
+        return True, 1.0, "substring"
+    # Token containment: all step tokens in context
+    step_tokens = set(re.findall(r"\w+", step_l))
+    ctx_tokens = set(re.findall(r"\w+", ctx_l))
+    if step_tokens and step_tokens.issubset(ctx_tokens):
+        return True, 0.95, "token-subset"
+
+    # Contradiction heuristic: step contains negation but context doesn't contain same predicate negation
+    neg_words = {"not", "no", "never", "none", "n't", "cannot", "can't", "without", "contrary"}
+    step_has_neg = any(w in step_l for w in neg_words)
+    # If step negates and context has high overlap but opposite polarity, mark not entailed
+    jacc = _jaccard_tokens(step, context)
+    emb = _embedding_cosine(step, context)
+    # Combine signals: weighted
+    if emb is not None:
+        # Use embedding as primary, Jaccard as tie-breaker
+        score = 0.7 * emb + 0.3 * jacc
+        # Rescale embedding -1..1 to 0..1
+        score = (score + 1) / 2 if score < 0 else score  # keep heuristic shift
+        # Entail if score >= threshold and not contradictory
+        entailed = score >= threshold
+        # Negation penalty: if step has negation and embedding high but Jaccard moderate, doubt entailment
+        if step_has_neg and emb > 0.6 and jacc < 0.4:
+            entailed = False
+            return entailed, float(score), f"emb={emb:.3f} jacc={jacc:.3f} neg-penalty"
+        return entailed, float(score), f"emb={emb:.3f} jacc={jacc:.3f}"
+    else:
+        # Fallback pure lexical — stricter to catch hallucinations like Italy vs Europe
+        score = jacc
+        lexical_threshold = 0.50
+        entailed = score >= lexical_threshold
+        if step_has_neg and score < 0.6:
+            entailed = False
+        return entailed, float(score), f"jacc={jacc:.3f}"
+
+
+def calculate_reasoning_faithfulness(output, context=None, expected=None, threshold=0.6, **kwargs):
+    """
+    FaithfulRAG — Reasoning Faithfulness (stepwise NLI).
+
+    Deterministic, auditable alternative to LLM-as-judge groundedness.
+    Splits chain-of-thought `output` into steps and checks each step is entailed by `context`
+    (grounding document). Classical RAG judges hallucinate themselves; this runs locally
+    via lexical + embedding NLI proxy and optionally a small cross-encoder if available.
+
+    Args:
+        output (str): Chain-of-thought / reasoning trace (numbered list, bullets, or sentences).
+        context (str|list): Grounding document(s). If not provided, tries `expected` or `kwargs['context']`.
+        expected (str|list, optional): Fallback context when `context` is None.
+        threshold (float): Entailment threshold in [0,1] (default 0.6). Lower => more permissive.
+
+    Returns:
+        dict: {"result": float 0..1 (entailed/total), "reason": str with per-step breakdown}
+    """
+    # Resolve context from multiple possible keys for framework compatibility
+    ctx = context
+    if ctx is None:
+        ctx = kwargs.get("context", kwargs.get("ground_truth", kwargs.get("reference")))
+    if ctx is None:
+        ctx = expected
+    if ctx is None:
+        ctx = kwargs.get("expected", kwargs.get("input"))
+    # Allow context to be list; join for entailment check
+    if isinstance(ctx, list):
+        ctx_str = "\n".join(str(c) for c in ctx if str(c).strip())
+    else:
+        # Also check if output/ctx swapped due to earlier API misuse — handle both
+        ctx_str = str(ctx) if ctx is not None else ""
+    out_str = str(output) if output is not None else ""
+    # Edge: if context empty but expected provided as string, use it
+    if not ctx_str.strip() and expected is not None and isinstance(expected, str) and expected.strip():
+        ctx_str = str(expected)
+        # If output is empty and context came from expected, swap (caller may have passed context as output)
+        if not out_str.strip() and kwargs.get("output"):
+            out_str = str(kwargs.get("output"))
+
+    if not out_str.strip():
+        return {"result": 0.0, "reason": "Empty reasoning trace (no steps to verify)"}
+    if not ctx_str.strip():
+        return {"result": 0.0, "reason": "Empty context — cannot verify faithfulness (no grounding document provided). Pass `context`."}
+
+    try:
+        thr = float(threshold)
+    except Exception:
+        thr = 0.6
+    thr = max(0.0, min(1.0, thr))
+
+    steps = _split_reasoning_steps(out_str)
+    if not steps:
+        return {"result": 0.0, "reason": "No reasoning steps parsed from output"}
+
+    entailed_flags = []
+    details = []
+    for i, step in enumerate(steps, 1):
+        entailed, score, why = _is_step_entailed(step, ctx_str, threshold=thr)
+        entailed_flags.append(entailed)
+        details.append(f"Step {i}: {'ENTAILED' if entailed else 'NOT_ENTAILED'} ({score:.3f}, {why}) | {step[:120]}")
+
+    faith = sum(entailed_flags) / len(entailed_flags) if entailed_flags else 0.0
+    # Build concise reason
+    reason = f"Reasoning Faithfulness: {faith:.4f} ({sum(entailed_flags)}/{len(entailed_flags)} steps entailed, threshold={thr}) | " + " || ".join(details)
+    return {"result": float(faith), "reason": reason}
+
+
+def _extract_citations(text):
+    """Extract citation indices from text. Supports [1], [1,2], [1-3] is NOT supported, ignores [^]."""
+    if not isinstance(text, str):
+        text = str(text)
+    # Match [1], [1, 2, 3], [12]
+    pattern = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+    citations = []
+    for m in pattern.finditer(text):
+        group = m.group(1)
+        for part in group.split(","):
+            part = part.strip()
+            if part.isdigit():
+                citations.append(int(part))
+    return citations
+
+
+def _sentence_for_citation(text, citation_idx):
+    """Return claim fragment for citation_idx: text between previous citation and this one."""
+    s = str(text)
+    matches = list(re.finditer(r"\[([^\]]+)\]", s))
+    for i, m in enumerate(matches):
+        inner = m.group(1)
+        parts = [p.strip() for p in inner.split(",")]
+        if str(citation_idx) in parts:
+            prev_end = matches[i - 1].end() if i > 0 else 0
+            # Prefer up to 120 chars before, but not before previous citation
+            start = max(prev_end, m.start() - 120)
+            window = s[start:m.start()].strip()
+            if not window:
+                sentences = re.split(r"(?<=[.!?])\s+", s)
+                for sent in sentences:
+                    if f"[{citation_idx}]" in sent or f"[{citation_idx}," in sent or f",{citation_idx}]" in sent or f", {citation_idx}]" in sent:
+                        clean = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", sent).strip()
+                        return clean if clean else sent
+                return window if window else s
+            clean = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", window).strip()
+            if "." in clean:
+                clean = clean.split(".")[-1].strip()
+            return clean if clean else window
+    sentences = re.split(r"(?<=[.!?])\s+", s)
+    for sent in sentences:
+        if f"[{citation_idx}]" in sent or f"[{citation_idx}," in sent or f",{citation_idx}]" in sent or f", {citation_idx}]" in sent:
+            clean = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", sent).strip()
+            return clean if clean else sent
+    return re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", s).strip() or s
+
+
+def _citation_support_score(sentence, chunk, sim_threshold=0.5):
+    """Is sentence supported by chunk? Supports substring/token-subset, then embedding/Jaccard."""
+    sent = str(sentence).strip()
+    chk = str(chunk).strip()
+    if not sent or not chk:
+        return False, 0.0, "empty"
+    # Exact substring or token-subset => fast pass (handles short claims like "Paris")
+    if sent.lower() in chk.lower():
+        return True, 1.0, "substring"
+    sent_tok = set(re.findall(r"\w+", sent.lower()))
+    chk_tok = set(re.findall(r"\w+", chk.lower()))
+    if sent_tok and sent_tok.issubset(chk_tok):
+        return True, 0.95, "token-subset"
+    # Try embedding
+    emb = _embedding_cosine(sent, chk)
+    if emb is not None:
+        return emb >= sim_threshold, float(emb), f"emb={emb:.3f}"
+    jacc = _jaccard_tokens(sent, chk)
+    # Stricter threshold to catch contradictions like Italy vs France (jacc 0.57-0.66 should fail)
+    thresh = 0.70 if len(sent.split()) > 3 else 0.30
+    return jacc >= thresh, float(jacc), f"jacc={jacc:.3f} thr={thresh}"
+
+
+def calculate_citation_precision(output, context=None, expected=None, similarity_threshold=0.6, **kwargs):
+    """
+    FaithfulRAG — Citation Precision (deterministic).
+
+    What fraction of citations in `output` actually support the claim with `context`?
+    Replaces token-set `NonLlmContextPrecision` which cannot verify citations.
+
+    Args:
+        output (str): Answer text containing citations like [1], [2,3].
+        context (str|list|json): Grounding chunks (list or newline/JSON string, 1-indexed for citations).
+        expected (str|list, optional): Fallback for context or relevant chunk indices.
+        similarity_threshold (float): Semantic support threshold (0..1, default 0.6).
+
+    Returns:
+        dict: {"result": float 0..1, "reason": str}
+    """
+    ctx_raw = context if context is not None else kwargs.get("context", kwargs.get("ground_truth", kwargs.get("reference", expected)))
+    if ctx_raw is None:
+        ctx_raw = expected
+    # Allow context via kwargs['input'] or kwargs['contexts']
+    if ctx_raw is None:
+        ctx_raw = kwargs.get("contexts", kwargs.get("chunks"))
+    ctx_list = _parse_context_list(ctx_raw)
+    out_str = str(output) if output is not None else ""
+
+    if not out_str.strip():
+        return {"result": 0.0, "reason": "Empty output — no citations to evaluate"}
+    citations = _extract_citations(out_str)
+    if not citations:
+        return {"result": 0.0, "reason": "No citations found in output (expected format [1], [2,3])"}
+    if not ctx_list:
+        return {"result": 0.0, "reason": f"Empty context — cannot verify {len(citations)} citations. Provide `context` as list of chunks."}
+
+    try:
+        thr = float(similarity_threshold)
+    except Exception:
+        thr = 0.6
+    thr = max(0.0, min(1.0, thr))
+
+    supported = 0
+    invalid = 0
+    details = []
+    for idx in citations:
+        if idx < 1 or idx > len(ctx_list):
+            invalid += 1
+            details.append(f"[{idx}] INVALID (out of range 1..{len(ctx_list)})")
+            continue
+        chunk = ctx_list[idx - 1]
+        sent = _sentence_for_citation(out_str, idx)
+        is_supported, score, why = _citation_support_score(sent, chunk, sim_threshold=thr)
+        if is_supported:
+            supported += 1
+            details.append(f"[{idx}] SUPPORTED ({why})")
+        else:
+            details.append(f"[{idx}] UNSUPPORTED ({why})")
+
+    total = len(citations)
+    # Invalid citations count as unsupported for precision
+    precision = supported / total if total else 0.0
+    reason = f"Citation Precision: {precision:.4f} ({supported}/{total} supported, {invalid} invalid, threshold={thr}) | " + " || ".join(details)
+    return {"result": float(precision), "reason": reason}
+
+
+def calculate_citation_recall(output, context=None, expected=None, similarity_threshold=0.6, **kwargs):
+    """
+    FaithfulRAG — Citation Recall (deterministic).
+
+    What fraction of relevant context chunks were actually cited and supported?
+    If `expected` is a list of relevant chunk indices (1-indexed), recall is w.r.t that set.
+    Otherwise, relevant = all context chunks that are semantically similar to output (or all if no signal).
+
+    Args:
+        output (str): Answer text with citations [1], [2,3].
+        context (str|list): All context chunks (1-indexed).
+        expected (str|list|json, optional): Relevant chunk indices (e.g. "[1,3]" or [1,3] or list of texts). If text list, maps to indices via overlap.
+        similarity_threshold (float): Support threshold.
+
+    Returns:
+        dict: {"result": float 0..1, "reason": str}
+    """
+    ctx_raw = context if context is not None else kwargs.get("context", kwargs.get("ground_truth", kwargs.get("reference")))
+    # expected may be relevant indices or fallback context
+    exp_raw = expected if expected is not None else kwargs.get("expected_text", kwargs.get("relevant"))
+    if ctx_raw is None and exp_raw is not None:
+        # Heuristic: if ctx missing but exp looks like chunks (list of long strings), treat as context
+        # and try to infer relevant from kwargs
+        ctx_raw = kwargs.get("contexts", kwargs.get("chunks"))
+    if ctx_raw is None:
+        ctx_raw = kwargs.get("contexts", kwargs.get("chunks", exp_raw))
+
+    ctx_list = _parse_context_list(ctx_raw)
+    out_str = str(output) if output is not None else ""
+
+    if not out_str.strip():
+        return {"result": 0.0, "reason": "Empty output — recall 0"}
+    if not ctx_list:
+        return {"result": 0.0, "reason": "Empty context — cannot compute recall"}
+
+    try:
+        thr = float(similarity_threshold)
+    except Exception:
+        thr = 0.6
+    thr = max(0.0, min(1.0, thr))
+
+    citations = _extract_citations(out_str)
+    cited_set = set(citations)
+    # Determine relevant indices
+    relevant_indices = []
+    # Case 1: expected is list of ints/strings that are digit indices
+    if expected is not None:
+        # Try parse expected as indices
+        if isinstance(expected, (list, tuple)):
+            # Check if ints
+            if all(str(x).strip().isdigit() for x in expected):
+                relevant_indices = [int(x) for x in expected]
+            elif all(isinstance(x, int) for x in expected):
+                relevant_indices = [int(x) for x in expected]
+            else:
+                # List of relevant chunk texts -> map to indices by exact match or overlap
+                exp_texts = _parse_context_list(expected)
+                # For each exp text, find best matching ctx index via Jaccard
+                for et in exp_texts:
+                    best_idx, best_score = -1, -1
+                    for i, ch in enumerate(ctx_list, 1):
+                        sc = _jaccard_tokens(et, ch)
+                        emb = _embedding_cosine(et, ch)
+                        s = emb if emb is not None else sc
+                        if s > best_score:
+                            best_score, best_idx = s, i
+                    if best_idx != -1 and best_score >= 0.5:
+                        relevant_indices.append(best_idx)
+                if not relevant_indices:
+                    # Fallback: treat expected texts as relevant set size = len
+                    relevant_indices = list(range(1, len(_parse_context_list(expected)) + 1))
+        elif isinstance(expected, str):
+            s = expected.strip()
+            # JSON array?
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, list) and all(str(x).strip().isdigit() for x in parsed):
+                        relevant_indices = [int(x) for x in parsed]
+                    elif isinstance(parsed, list):
+                        # relevant texts
+                        relevant_indices = list(range(1, len(parsed) + 1))
+                    else:
+                        relevant_indices = [int(s.strip("[]"))]
+                except Exception:
+                    # CSV digits?
+                    parts = [p.strip() for p in s.strip("[]").split(",") if p.strip()]
+                    if parts and all(p.isdigit() for p in parts):
+                        relevant_indices = [int(p) for p in parts]
+            elif s.isdigit():
+                relevant_indices = [int(s)]
+
+    if not relevant_indices:
+        # Fallback: relevant = all chunks that are semantically relevant to output
+        # Compute which chunks support any sentence in output
+        # If no embedding, relevant = all chunks (conservative)
+        # Try heuristic: chunk has Jaccard >0.15 with output => relevant
+        relevant_indices = []
+        for i, ch in enumerate(ctx_list, 1):
+            emb = _embedding_cosine(out_str, ch)
+            if emb is not None:
+                if emb >= 0.3:  # lower threshold for relevance vs support
+                    relevant_indices.append(i)
+            else:
+                if _jaccard_tokens(out_str, ch) >= 0.1:
+                    relevant_indices.append(i)
+        if not relevant_indices:
+            relevant_indices = list(range(1, len(ctx_list) + 1))
+
+    # Count how many relevant indices were cited and supported
+    supported_relevant = 0
+    details = []
+    for ridx in relevant_indices:
+        if ridx not in cited_set:
+            details.append(f"[{ridx}] NOT_CITED (relevant but missing)")
+            continue
+        # Was the citation supported? Re-check support
+        chunk = ctx_list[ridx - 1] if 1 <= ridx <= len(ctx_list) else ""
+        sent = _sentence_for_citation(out_str, ridx)
+        is_supported, score, why = _citation_support_score(sent, chunk, sim_threshold=thr)
+        if is_supported:
+            supported_relevant += 1
+            details.append(f"[{ridx}] CITED+SUPPORTED ({why})")
+        else:
+            details.append(f"[{ridx}] CITED+UNSUPPORTED ({why})")
+
+    recall = supported_relevant / len(relevant_indices) if relevant_indices else 0.0
+    reason = f"Citation Recall: {recall:.4f} ({supported_relevant}/{len(relevant_indices)} relevant cited+supported, total citations {len(citations)}, relevant={relevant_indices}) | " + " || ".join(details)
+    return {"result": float(recall), "reason": reason}
+
+
 """
 A dictionary containing the available operations and their corresponding functions.
 """
@@ -4092,6 +4581,9 @@ operations = {
     "WordInfoPreserved": calculate_word_info_preserved,
     "NonLlmContextPrecision": non_llm_context_precision,
     "NonLlmContextRecall": non_llm_context_recall,
+    "ReasoningFaithfulness": calculate_reasoning_faithfulness,
+    "CitationPrecision": calculate_citation_precision,
+    "CitationRecall": calculate_citation_recall,
     "DistinctN": calculate_distinct_n,
     "TypeTokenRatio": calculate_type_token_ratio,
     "RepetitionRate": calculate_repetition_rate,

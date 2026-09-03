@@ -614,6 +614,176 @@ def evaluate(real_images, fake_images, **kwargs):
 '''
 
 
+REASONING_FAITHFULNESS = '''def evaluate(input, output, expected, context, **kwargs):
+    """FaithfulRAG — Reasoning Faithfulness. Deterministic stepwise NLI without LLM."""
+    import json, re
+    def _parse_ctx(v):
+        if v is None: return ""
+        if isinstance(v, list): return "\\n".join(str(x) for x in v if str(x).strip())
+        if isinstance(v, str):
+            s=v.strip()
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    p=json.loads(s)
+                    if isinstance(p, list): return "\\n".join(str(x) for x in p if str(x).strip())
+                except: pass
+        return str(v)
+    def _split_steps(t):
+        if not isinstance(t, str): t=str(t)
+        t=t.strip()
+        if not t: return []
+        lines=[l.strip() for l in t.split("\\n") if l.strip()]
+        bullet=re.compile(r"^\\s*(?:\\d+[\\.\\)]\\s+|[-*\\u2022]\\s+|Step\\s*\\d+[:\\.\\)]\\s*)", re.IGNORECASE)
+        if any(bullet.match(l) for l in lines) and len(lines)>1:
+            return [bullet.sub("", l).strip() for l in lines if bullet.sub("", l).strip()]
+        if len(lines)==1:
+            parts=re.split(r"(?<=[.!?])\\s+(?=[A-Z0-9])", lines[0])
+            parts=[p.strip() for p in parts if len(p.strip())>=3]
+            return parts if len(parts)>1 else lines
+        return lines
+    def _jacc(a,b):
+        ta=set(re.findall(r"\\w+", str(a).lower())); tb=set(re.findall(r"\\w+", str(b).lower()))
+        if not ta and not tb: return 1.0
+        if not ta or not tb: return 0.0
+        return len(ta&tb)/len(ta|tb)
+    out=str(kwargs.get("output", output or "")).strip()
+    ctx=_parse_ctx(kwargs.get("context", context if context is not None else expected))
+    if not out: return {"score": 0.0, "reason": "Empty reasoning trace"}
+    if not ctx.strip(): return {"score": 0.0, "reason": "Empty context"}
+    steps=_split_steps(out)
+    ent=0; dets=[]
+    for i,s in enumerate(steps,1):
+        if s.lower() in ctx.lower():
+            ent+=1; dets.append(f"Step {i}: ENTAILED (substring)"); continue
+        st=set(re.findall(r"\\w+", s.lower())); ct=set(re.findall(r"\\w+", ctx.lower()))
+        if st and st.issubset(ct):
+            ent+=1; dets.append(f"Step {i}: ENTAILED (token-subset)"); continue
+        j=_jacc(s, ctx); ok=j>=0.35
+        dets.append(f"Step {i}: {'ENTAILED' if ok else 'NOT_ENTAILED'} (jacc={j:.3f}) | {s[:80]}")
+        if ok: ent+=1
+    score=ent/len(steps) if steps else 0.0
+    return {"score": float(score), "reason": f"Reasoning Faithfulness: {score:.4f} ({ent}/{len(steps)}) | " + " || ".join(dets)}
+'''
+
+CITATION_PRECISION = '''def evaluate(input, output, expected, context, **kwargs):
+    """FaithfulRAG — Citation Precision. Fraction of citations [1] that are supported."""
+    import json, re
+    def _parse(v):
+        if v is None: return []
+        if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            s=v.strip()
+            if not s: return []
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    p=json.loads(s)
+                    if isinstance(p, list): return [str(x).strip() for x in p if str(x).strip()]
+                except: pass
+            if "\\n" in s: return [p.strip() for p in s.split("\\n") if p.strip()]
+            return [s]
+        return [str(v).strip()]
+    def _jacc(a,b):
+        ta=set(re.findall(r"\\w+", str(a).lower())); tb=set(re.findall(r"\\w+", str(b).lower()))
+        if not ta and not tb: return 1.0
+        if not ta or not tb: return 0.0
+        return len(ta&tb)/len(ta|tb)
+    out=str(kwargs.get("output", output or "")).strip()
+    ctx=_parse(kwargs.get("context", context if context is not None else expected))
+    if not out: return {"score": 0.0, "reason": "Empty output"}
+    pat=re.compile(r"\\[(\\d+(?:\\s*,\\s*\\d+)*)\\]")
+    cits=[]
+    for m in pat.finditer(out):
+        for p in m.group(1).split(","):
+            p=p.strip()
+            if p.isdigit(): cits.append(int(p))
+    if not cits: return {"score": 0.0, "reason": "No citations found"}
+    if not ctx: return {"score": 0.0, "reason": "Empty context"}
+    sents=re.split(r"(?<=[.!?])\\s+", out)
+    def _sent_for(idx):
+        for s in sents:
+            if f"[{idx}]" in s or f"[{idx}," in s or f",{idx}]" in s or f", {idx}]" in s: return s
+        return out
+    sup=0; dets=[]
+    for idx in cits:
+        if idx<1 or idx>len(ctx):
+            dets.append(f"[{idx}] INVALID"); continue
+        j=_jacc(_sent_for(idx), ctx[idx-1]); ok=j>=0.25
+        if ok: sup+=1
+        dets.append(f"[{idx}] {'SUPPORTED' if ok else 'UNSUPPORTED'} (jacc={j:.3f})")
+    prec=sup/len(cits) if cits else 0.0
+    return {"score": float(prec), "reason": f"Citation Precision: {prec:.4f} ({sup}/{len(cits)}) | " + " || ".join(dets)}
+'''
+
+CITATION_RECALL = '''def evaluate(input, output, expected, context, **kwargs):
+    """FaithfulRAG — Citation Recall. Fraction of relevant chunks cited and supported."""
+    import json, re
+    def _parse(v):
+        if v is None: return []
+        if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            s=v.strip()
+            if not s: return []
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    p=json.loads(s)
+                    if isinstance(p, list): return [str(x).strip() for x in p if str(x).strip()]
+                except: pass
+            if "\\n" in s: return [p.strip() for p in s.split("\\n") if p.strip()]
+            return [s]
+        return [str(v).strip()]
+    def _jacc(a,b):
+        ta=set(re.findall(r"\\w+", str(a).lower())); tb=set(re.findall(r"\\w+", str(b).lower()))
+        if not ta and not tb: return 1.0
+        if not ta or not tb: return 0.0
+        return len(ta&tb)/len(ta|tb)
+    out=str(kwargs.get("output", output or "")).strip()
+    ctx=_parse(kwargs.get("context", context))
+    if not out: return {"score": 0.0, "reason": "Empty output"}
+    if not ctx: return {"score": 0.0, "reason": "Empty context"}
+    pat=re.compile(r"\\[(\\d+(?:\\s*,\\s*\\d+)*)\\]")
+    cits=[]
+    for m in pat.finditer(out):
+        for p in m.group(1).split(","):
+            p=p.strip()
+            if p.isdigit(): cits.append(int(p))
+    cited=set(cits)
+    # relevant
+    rel=[]
+    if expected is not None:
+        if isinstance(expected, (list, tuple)):
+            if expected and all(str(x).strip().isdigit() for x in expected): rel=[int(x) for x in expected]
+            else:
+                ex=_parse(expected)
+                if ex: rel=list(range(1, len(ex)+1))
+        elif isinstance(expected, str):
+            s=expected.strip()
+            if s.startswith("[") and s.endswith("]"):
+                try:
+                    p=json.loads(s)
+                    if isinstance(p, list) and p and all(str(x).strip().isdigit() for x in p): rel=[int(x) for x in p]
+                    elif isinstance(p, list): rel=list(range(1, len(p)+1))
+                except: pass
+            elif s.isdigit(): rel=[int(s)]
+    if not rel:
+        for i,ch in enumerate(ctx,1):
+            if _jacc(out, ch)>=0.1: rel.append(i)
+        if not rel: rel=list(range(1, len(ctx)+1))
+    rel=list(dict.fromkeys(rel))
+    sents=re.split(r"(?<=[.!?])\\s+", out)
+    def _sent_for(idx):
+        for s in sents:
+            if f"[{idx}]" in s or f"[{idx}," in s or f",{idx}]" in s or f", {idx}]" in s: return s
+        return out
+    sup=0; dets=[]
+    for ridx in rel:
+        if ridx not in cited: dets.append(f"[{ridx}] NOT_CITED"); continue
+        j=_jacc(_sent_for(ridx), ctx[ridx-1] if 1<=ridx<=len(ctx) else ""); ok=j>=0.25
+        dets.append(f"[{ridx}] {'CITED+SUPPORTED' if ok else 'CITED+UNSUPPORTED'} (jacc={j:.3f})")
+        if ok: sup+=1
+    rec=sup/len(rel) if rel else 0.0
+    return {"score": float(rec), "reason": f"Citation Recall: {rec:.4f} ({sup}/{len(rel)} relevant) | " + " || ".join(dets)}
+'''
+
 DEAD_AIR_DETECTION = '''def evaluate(input, output, expected, context, **kwargs):
     """Detect dead air (silence) in an audio conversation.
 
@@ -704,4 +874,7 @@ CODE_REGISTRY = {
     "clip_score": CLIP_SCORE,
     "fid_score": FID_SCORE,
     "dead_air_detection": DEAD_AIR_DETECTION,
+    "reasoning_faithfulness": REASONING_FAITHFULNESS,
+    "citation_precision": CITATION_PRECISION,
+    "citation_recall": CITATION_RECALL,
 }
