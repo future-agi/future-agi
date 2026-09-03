@@ -61,6 +61,17 @@ createServer((req, res) => {
         scope: "enterprise",
       });
     }
+    if (path === "/telemetry/register/") {
+      // Deployment telemetry registers even when it is switched off:
+      // FUTURE_AGI_TELEMETRY_DISABLED downgrades the payload to instance id +
+      // version and stops the heartbeats, but sender.py still POSTs that one
+      // minimal registration — and the receiver announces every registration
+      // in a real Slack channel. The suite fabricates a tenant per worker per
+      // run, so the only way to stop announcing throwaway users is to keep the
+      // call inside the stack. 200 with no signing secret: the minimal kind
+      // never asks for one.
+      return json(res, 200, {});
+    }
     if (path === "/v1/models") {
       return json(res, 200, {
         object: "list",

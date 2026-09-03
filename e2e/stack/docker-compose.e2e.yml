@@ -49,6 +49,12 @@ services:
       # local run. The suite fabricates users by design, so none of it is a
       # real signup and all of it is noise in someone else's inbox.
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      # ...and the disabled path STILL registers once (sender.py
+      # `ensure_registration` posts a minimal payload before it checks the
+      # flag again), so the flag alone does not stop the Slack announcement.
+      # Keep the call inside the stack: mock-llm answers /telemetry/register/
+      # so nothing reaches api.futureagi.com from a test run.
+      FUTURE_AGI_TELEMETRY_URL: http://mock-llm:8080
   worker:
     restart: "no"
     mem_limit: 2g
