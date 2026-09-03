@@ -6,6 +6,10 @@ x-dev-worker: &dev-worker
     - ./futureagi:/app/backend
   environment:
     FAST_STARTUP: "true"
+    NO_STARTUP_DB_MUTATIONS: "true"
+    CH25_DROP_LEGACY_CDC_CHAIN: "false"
+    CH25_TRACE_DUAL_WRITE: "false"
+    CH_DUAL_WRITE: "false"
 
 services:
   frontend:
@@ -30,13 +34,49 @@ services:
       context: .
       dockerfile: Dockerfile
     image: futureagi/future-agi:dev
-    ports:
+    # The DEV API proxy owns the public HTTP port so OTLP/HTTP can be routed
+    # directly to fi-collector without exposing the collector itself.
+    ports: !override
       - "${BACKEND_GRPC_PORT:-50051}:50051"
       - "${FLOWER_PORT:-5555}:5555"
     volumes:
       - ./futureagi:/app/backend
     environment:
       FAST_STARTUP: "true"
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+
+  # The supervisor runs Django management commands from this checkout. Keep it
+  # on the same locally-built image and bind mount as backend; inheriting the
+  # root compose's release image can leave new commands unavailable on dev.
+  property-catalog-supervisor:
+    image: futureagi/future-agi:dev
+    pull_policy: never
+    volumes:
+      - ./futureagi:/app/backend
+
+  dev-api-proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # Restrict envsubst to these settings so native nginx variables such as
+      # $host and $remote_addr remain intact in the rendered configuration.
+      NGINX_ENVSUBST_FILTER: "^DEV_API_PROXY_"
+      DEV_API_PROXY_OTLP_MAX_BODY_SIZE: "${DEV_API_PROXY_OTLP_MAX_BODY_SIZE:-16m}"
+      DEV_API_PROXY_CONNECT_TIMEOUT: "${DEV_API_PROXY_CONNECT_TIMEOUT:-5s}"
+      DEV_API_PROXY_READ_TIMEOUT: "${DEV_API_PROXY_READ_TIMEOUT:-30s}"
+      DEV_API_PROXY_SEND_TIMEOUT: "${DEV_API_PROXY_SEND_TIMEOUT:-30s}"
+    volumes:
+      - ./deploy/dev-api-proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      backend:
+        condition: service_started
+      fi-collector:
+        condition: service_started
+    restart: unless-stopped
 
   # agentcc-gateway, serving, and code-executor are separate services we
   # don't modify in local dev, so they are NOT built from source here —
@@ -59,6 +99,9 @@ services:
     <<: *dev-worker
     profiles: !reset []
   worker-tasks-xl:
+    <<: *dev-worker
+    profiles: !reset []
+  worker-exact-aggregation:
     <<: *dev-worker
     profiles: !reset []
   worker-trace-ingestion:

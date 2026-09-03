@@ -65,6 +65,13 @@ def _run(select_rows):
     client = _RecordingClient(select_rows)
     db = MagicMock()
     db.client = client
+
+    def execute_read(sql, params=None, **_kwargs):
+        client.statements.append((sql, params or {}))
+        return select_rows
+
+    db.execute_read.side_effect = execute_read
+
     with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db), \
          patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
          patch("tracer.queries.scan_clustering.TraceErrorGroup") as group, \

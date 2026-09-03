@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.32.0](https://github.com/future-agi/future-agi/compare/v1.31.0...v1.32.0) (2026-08-31)
+
+
+### Features
+
+* **system-evals:** add seven insurance agent system evals ([ea2c238](https://github.com/future-agi/future-agi/commit/ea2c238f0ea79e194b725352a7d054d8db1f23f0))
+* **system-evals:** add seven insurance agent system evals and bump seed version ([5520980](https://github.com/future-agi/future-agi/commit/5520980d0856f2a6232000d4a9ad320c8f344f82))
+
+## [1.31.0](https://github.com/future-agi/future-agi/compare/v1.30.0...v1.31.0) (2026-08-27)
+
+
+### Features
+
+* group-only #tech nudges (drop owner DMs) ([bf7bad6](https://github.com/future-agi/future-agi/commit/bf7bad6c53cbc07328b13b3f83ca549c5d5cf2ac))
+* group-only #tech nudges for shipped-but-open tickets ([968f0d6](https://github.com/future-agi/future-agi/commit/968f0d642cb2d19eb0a1d1aa2841e67a6b779dc4))
+* nudge owners for in-flight tickets instead of force-closing ([aa99426](https://github.com/future-agi/future-agi/commit/aa9942650ab3c5dce0c2713c2259be550d3bb13b))
+* reconcile release tickets by state + fix discovery ([f605cd5](https://github.com/future-agi/future-agi/commit/f605cd59b4a63b7ecc4694169c3d5a62d22207f7))
+
+
+### Bug Fixes
+
+* broaden release ticket discovery to all PRs in the tag range ([7b006c7](https://github.com/future-agi/future-agi/commit/7b006c73f8c2c7886423afde8645bc6c4580769c))
+* **evals:** treat a non-string eval mapping value as invalid instead of crashing ([02ff5a9](https://github.com/future-agi/future-agi/commit/02ff5a9dd05761e3bed977c399ba4159ed239a16))
+* **evals:** treat a non-string eval mapping value as invalid instead of crashing ([1fdd5ed](https://github.com/future-agi/future-agi/commit/1fdd5ed8f7a3a1cf7540e2097fbc47f65c43ff25))
+* match only real merge formats when harvesting PR numbers ([a3d28ba](https://github.com/future-agi/future-agi/commit/a3d28bafcce0fe54a28a34bb5c9e27f1257bbf90))
+
+## [1.30.0](https://github.com/future-agi/future-agi/compare/v1.29.1...v1.30.0) (2026-08-25)
+
+
+### Features
+
+* automating internal ticketing ([5e02f38](https://github.com/future-agi/future-agi/commit/5e02f38b9841ac3e079447e0341f91ba84621171))
+* **gateway:** export caller metadata, body fields and headers as span attributes ([d9f36f2](https://github.com/future-agi/future-agi/commit/d9f36f256d7ba7ab89dfd059446fc43551d8fb88))
+* **gateway:** support Anthropic server tools on the OpenAI-format endpoint ([3b42204](https://github.com/future-agi/future-agi/commit/3b42204c0abea18b5bb3f36b2a6ef3f287ff3745))
+
+
+### Bug Fixes
+
+* **gateway:** resolve provider endpoint paths through one builder ([8d4cba1](https://github.com/future-agi/future-agi/commit/8d4cba1894e6f313b15954cfdd784bf57f230ae1))
+* key reasoning toggle by source_id, not sourceId ([#2321](https://github.com/future-agi/future-agi/issues/2321)) ([6ff2732](https://github.com/future-agi/future-agi/commit/6ff27322b49be7574a99aea4bfd443f6317d7c46))
+* mock get_user_organization in post-registration tests ([937f4fb](https://github.com/future-agi/future-agi/commit/937f4fba643cea54d5057a79303f6ade73c79043))
+* restore demo data seeding on new user signup ([f2d1e5a](https://github.com/future-agi/future-agi/commit/f2d1e5a208918ad50652e15044e06bb9e7ffae2e))
+* restore demo data seeding on new user signup ([941ffff](https://github.com/future-agi/future-agi/commit/941ffff150c635d67953b424026ec3f60a1f445c))
+
 ## [1.29.1](https://github.com/future-agi/future-agi/compare/v1.29.0...v1.29.1) (2026-08-24)
 
 

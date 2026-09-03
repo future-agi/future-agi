@@ -20,7 +20,7 @@ interface CreatedId { result: { id: string } }
 
 interface EvalResultRow {
   status: string;
-  output_bool: number | null;
+  output_bool: boolean | number | null;
   eval_explanation: string | null;
   output_metadata: string;
 }
@@ -154,7 +154,7 @@ test('EVAL-E2E-001: eval task runs over ingested spans via the mock LLM', {
       return row?.status;
     }, POLL.CDC_VISIBLE).toBe('completed');
 
-    expect(row?.output_bool).toBe(1);
+    expect([true, 1]).toContain(row?.output_bool);
     expect(row?.eval_explanation).toBe(`${verdict} saw llm`);
     const metadata = JSON.parse(row?.output_metadata ?? '{}') as { usage?: Record<string, number> };
     expect(metadata.usage).toEqual(MOCK_USAGE);

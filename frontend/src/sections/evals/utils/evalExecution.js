@@ -4,6 +4,7 @@
 // composite-vs-single decision lives in one place.
 
 import axios, { endpoints } from "src/utils/axios";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 import { resolvePath } from "./rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
@@ -94,8 +95,7 @@ export const executeEvalForRow = async ({
   const templateId = evalItem?.template_id ?? evalItem?.templateId;
   const model = evalItem?.model || "turing_large";
   const templateType = evalItem?.template_type ?? evalItem?.templateType;
-  const isComposite =
-    templateType === "composite" || !!compositeAdhocConfig;
+  const isComposite = templateType === "composite" || !!compositeAdhocConfig;
   const t = normalizeRowType(rowType);
   const isSession = t === "Session";
 
@@ -134,7 +134,7 @@ export const executeEvalForRow = async ({
         return {
           ok: false,
           isComposite: true,
-          errorMessage: data?.result || "Evaluation failed",
+          errorMessage: "Evaluation failed. Please retry.",
           raw: data,
         };
       }
@@ -176,7 +176,9 @@ export const executeEvalForRow = async ({
       return {
         ok: false,
         isComposite: false,
-        errorMessage: data?.result || "Evaluation failed",
+        // A 2xx transport response can still wrap provider/query failures in
+        // `result`. That payload is not a user-safe error channel.
+        errorMessage: "Evaluation failed. Please retry.",
         raw: data,
       };
     }
@@ -191,12 +193,10 @@ export const executeEvalForRow = async ({
     return {
       ok: false,
       isComposite,
-      errorMessage:
-        err?.response?.data?.result ||
-        err?.result ||
-        err?.detail ||
-        err?.message ||
-        "Failed to run evaluation",
+      errorMessage: getSafeActionErrorMessage(
+        err,
+        "Failed to run evaluation. Please retry.",
+      ),
       raw: err,
     };
   }

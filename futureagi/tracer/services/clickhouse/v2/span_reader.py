@@ -43,7 +43,10 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
-from tracer.services.clickhouse.v2.query_settings import current_settings
+from tracer.services.clickhouse.v2.query_settings import (
+    application_read_settings,
+    current_settings,
+)
 
 
 # Field list that the eval runner actually reads off of an ObservationSpan.
@@ -503,17 +506,36 @@ class CHSpanReader:
         username: str = "default",
         password: str = "",
         database: str = "default",
-        timeout_sec: int = 30,
+        timeout_sec: float = 9.5,
+        server_enforced_readonly: bool = False,
+        native_port: int | None = None,
     ):
-        self._client = clickhouse_connect.get_client(
-            host=host,
-            port=port,
-            username=username,
-            password=password,
-            database=database,
-            send_receive_timeout=timeout_sec,
-            settings=current_settings() or None,
-        )
+        if server_enforced_readonly:
+            if native_port is None:
+                raise ValueError(
+                    "native_port is required for a server-enforced read-only reader"
+                )
+            from tracer.services.clickhouse.server_readonly import (
+                ServerEnforcedReadOnlyNativeClient,
+            )
+
+            self._client = ServerEnforcedReadOnlyNativeClient(
+                host=host,
+                port=native_port,
+                username=username,
+                password=password,
+                database=database,
+            )
+        else:
+            self._client = clickhouse_connect.get_client(
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                database=database,
+                send_receive_timeout=timeout_sec,
+                settings=current_settings() or None,
+            )
 
     def close(self) -> None:
         self._client.close()
@@ -709,7 +731,9 @@ class CHSpanReader:
         return _row_to_chspan(rows[0]) if rows else None
 
     # ─── All spans in a session ──────────────────────────────────────────────
-    def list_by_session(self, session_id: str) -> list[CHSpan]:
+    def list_by_session(
+        self, session_id: str, *, project_id: str | None = None
+    ) -> list[CHSpan]:
         """For session-level evals (`EvalLogger.target_type='session'`).
 
         P3b step1.5 (DESIGN §3 / id_remap_sql): ``session_id`` is the OLD curated
@@ -721,17 +745,26 @@ class CHSpanReader:
         stays the span's RAW id (these are real span rows). Pre-flip NO span
         matches a ``new_id``, so the resolved id == the span's own id and this is
         a byte-identical no-op (gate B).
+
+        ``project_id`` is optional for backward compatibility. Callers that know
+        the session's tenant must pass it so the primary-key prefix prunes the
+        read and duplicate ids cannot mix spans across projects.
         """
         remap_join = remap_left_join(
             "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
         resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
+        where = [f"{resolved_ts} = %(session_id)s", "is_deleted = 0"]
+        params = {"session_id": session_id}
+        if project_id:
+            where.append("spans.project_id = %(project_id)s")
+            params["project_id"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
             f"{remap_join} "
-            f"WHERE {resolved_ts} = %(session_id)s AND is_deleted = 0 "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
-            parameters={"session_id": session_id},
+            parameters=params,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
@@ -1866,6 +1899,9 @@ class CHSpanReader:
         session_id: str | list[str] | None = None,
         created_at_gte: datetime | None = None,
         created_at_range: tuple[datetime, datetime] | None = None,
+        created_at_half_open_range: tuple[datetime, datetime] | None = None,
+        start_time_gte: datetime | None = None,
+        start_time_range: tuple[datetime, datetime] | None = None,
         roots_only: bool = False,
     ) -> int:
         """Replaces ObservationSpan.objects.filter(<Q-object>).count() for
@@ -1878,6 +1914,12 @@ class CHSpanReader:
         ``roots_only`` counts one row per trace (root span = empty parent),
         turning this into a trace count — used where the PG path counted
         ``Trace`` rows in a window rather than spans.
+
+        ``start_time_*`` is the event-time contract for normal CH25 product
+        windows and enables partition/primary-key pruning. ``created_at_*`` is
+        retained only for callers that deliberately require ingestion-time
+        parity (legacy/arrival reconciliation); the two meanings are never
+        silently remapped.
 
         Codex wave-2 fixes (2026-05-26):
           • P1: created_at_* predicates target the CH `created_at` column
@@ -1937,6 +1979,21 @@ class CHSpanReader:
         if created_at_range:
             where.append("created_at BETWEEN %(cr_s)s AND %(cr_e)s")
             params["cr_s"], params["cr_e"] = created_at_range
+        if created_at_half_open_range:
+            where.append("created_at >= %(chr_s)s")
+            where.append("created_at < %(chr_e)s")
+            params["chr_s"], params["chr_e"] = created_at_half_open_range
+        # Normal CH25 product windows use event time: ``start_time`` is the
+        # partition/primary-key time column. Keep the created_at arguments
+        # above only for the retired/continuous arrival-parity callers that
+        # deliberately mean ingestion time.
+        if start_time_gte:
+            where.append("start_time >= %(stg)s")
+            params["stg"] = start_time_gte
+        if start_time_range:
+            where.append("start_time >= %(str_s)s")
+            where.append("start_time < %(str_e)s")
+            params["str_s"], params["str_e"] = start_time_range
         # roots_only counts distinct traces, not root rows — a trace with more
         # than one parentless span must count once (mirrors the GROUP BY tid /
         # first-root-per-trace dedupe elsewhere in this reader).
@@ -2210,13 +2267,19 @@ class CHSpanReader:
         params: dict[str, Any] | None = None,
         *,
         batch_size: int = 10_000,
+        settings: dict[str, Any] | None = None,
     ) -> Iterator[list[str]]:
         """Stream a query's first column as strings, re-chunked to ``batch_size``
         so neither the client nor the caller holds the full result in memory — a
         large historical scan can be consumed in waves."""
         batch: list[str] = []
+        query_settings = application_read_settings(
+            {**current_settings(), **(settings or {})}
+        )
         with self._client.query_row_block_stream(
-            sql, parameters=params or {}
+            sql,
+            parameters=params or {},
+            settings=query_settings,
         ) as stream:
             for block in stream:
                 for row in block:

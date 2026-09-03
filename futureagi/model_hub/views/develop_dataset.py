@@ -23,25 +23,13 @@ import pandas as pd
 import requests
 import structlog
 import weaviate
-from accounts.models.user import User
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-    model_manager,
-)
-from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
-from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from analytics.utils import (
-    MixpanelEvents,
-    get_mixpanel_properties,
-    track_mixpanel_event,
-)
 from django.core.exceptions import ValidationError
-from django.db import close_old_connections, connection, transaction
+from django.db import DatabaseError, close_old_connections, connection, transaction
 from django.db.models import (
     Case,
     Count,
     DateTimeField,
+    Exists,
     F,
     FloatField,
     IntegerField,
@@ -61,6 +49,32 @@ from django.utils import timezone
 from docx import Document
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from pinecone import Pinecone
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+from qdrant_client import QdrantClient
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.generics import CreateAPIView
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from weaviate import AuthApiKey
+
+from accounts.models.user import User
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+    model_manager,
+)
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from analytics.utils import (
+    MixpanelEvents,
+    get_mixpanel_properties,
+    track_mixpanel_event,
+)
 from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
 from model_hub.constants import (
     CREATE_KB_SDK_CODE,
@@ -147,6 +161,7 @@ from model_hub.serializers.contracts import (
     EmbeddingsResponseSerializer,
     EvalConfigQuerySerializer,
     EvalStructureQuerySerializer,
+    ExperimentDatasetTableQuerySerializer,
     FeedbackDetailsResponseSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetDetailResponseSerializer,
@@ -166,6 +181,7 @@ from model_hub.serializers.contracts import (
     ManualDatasetCreateRequestSerializer,
     MergeDatasetRequestSerializer,
     ModelHubEmptyRequestSerializer,
+    ModelHubErrorResponseSerializer,
     ModelHubEvalConfigResponseSerializer,
     ModelHubStringResultResponseSerializer,
     PreviewRunEvalRequestSerializer,
@@ -215,6 +231,32 @@ from model_hub.serializers.develop_dataset_contracts import (
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
 from model_hub.serializers.eval_runner import UserEvalSerializer
 from model_hub.serializers.experiments import DerivedDatasetSerializer
+from model_hub.services.bounded_dataset_read import (
+    DATASET_ROW_ADJACENCY_MAX_ROWS,
+    BoundedDatasetPageDepthExceeded,
+    BoundedDatasetReadDeadline,
+    BoundedDatasetReadDeadlineExceeded,
+    BoundedDatasetReadLimitExceeded,
+    assert_bounded_page,
+    assert_bounded_projection,
+)
+from model_hub.services.dataset_table_snapshot import (
+    DATASET_TABLE_EXACT_MAX_COLUMNS,
+    DatasetTableCursorError,
+    DatasetTableExactLimitExceeded,
+    DatasetTableReadDeadline,
+    DatasetTableReadDeadlineExceeded,
+    DatasetTableSnapshotChanged,
+    DatasetTableSnapshotUnavailable,
+    assert_dataset_table_cells_within_limits,
+    assert_dataset_table_response_within_limits,
+    assert_dataset_table_revision,
+    assert_dataset_table_shape_within_limits,
+    begin_repeatable_read_snapshot,
+    capture_dataset_table_revision,
+    decode_dataset_table_cursor,
+    encode_dataset_table_cursor,
+)
 from model_hub.services.derived_variable_service import (
     cleanup_derived_variables_for_column,
     rename_derived_variables_for_column,
@@ -257,17 +299,6 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
-from pinecone import Pinecone
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
-from qdrant_client import QdrantClient
-from rest_framework import serializers, status, viewsets
-from rest_framework.decorators import action
-from rest_framework.generics import CreateAPIView
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
@@ -300,7 +331,6 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
-from weaviate import AuthApiKey
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -403,6 +433,69 @@ def _request_experiment_dataset_queryset(request):
         fk_scope | legacy_scope,
         deleted=False,
     ).distinct()
+
+
+class ExperimentDatasetIntegrityError(RuntimeError):
+    """An EDT has ambiguous or tenant-inconsistent ownership/projection state."""
+
+
+def _bounded_dataset_error(*, status_code, code, detail):
+    return Response(
+        {
+            "status": False,
+            "code": code,
+            "detail": detail,
+        },
+        status=status_code,
+    )
+
+
+def _request_experiment_queryset(request):
+    return ExperimentsTable.objects.filter(
+        _request_workspace_filter(request, field_name="dataset__workspace"),
+        dataset__organization=_request_organization(request),
+        dataset__deleted=False,
+        deleted=False,
+    )
+
+
+def _scoped_experiment_for_dataset(request, experiment_dataset, *, deadline=None):
+    """Resolve the FK/legacy parent only when both relationships agree.
+
+    The migration window permits both links to exist.  Picking the FK before
+    checking its tenant used to let a legacy in-scope relation select a foreign
+    FK parent.  Treat disagreement as corrupt state and disclose no parent.
+    """
+
+    parent_ids = set()
+    if experiment_dataset.experiment_id:
+        parent_ids.add(experiment_dataset.experiment_id)
+    if deadline is not None:
+        deadline.before_query()
+    parent_ids.update(
+        ExperimentsTable.no_workspace_objects.filter(
+            experiments_datasets=experiment_dataset,
+            deleted=False,
+        ).values_list("id", flat=True)
+    )
+    if len(parent_ids) != 1:
+        raise ExperimentDatasetIntegrityError(
+            "The experiment dataset has ambiguous experiment ownership."
+        )
+
+    if deadline is not None:
+        deadline.before_query()
+    experiment = (
+        _request_experiment_queryset(request)
+        .select_related("dataset", "snapshot_dataset", "column")
+        .filter(id=next(iter(parent_ids)))
+        .first()
+    )
+    if experiment is None:
+        raise ExperimentDatasetIntegrityError(
+            "The experiment dataset is outside the active request scope."
+        )
+    return experiment
 
 
 def _experiment_for_dataset(experiment_dataset):
@@ -2156,25 +2249,37 @@ class GetDatasetTableView(APIView):
     def _apply_sorting(
         self, all_cells, rows, sort_configs, error_messages, columns_map
     ):
-        # Apply sorting
+        """Apply one database-native cell sort without materializing all row IDs.
+
+        The legacy implementation built a Python list for every matching Cell
+        and then emitted one CASE/WHEN plus one IN parameter per row before the
+        outer queryset was paginated. A correlated scalar subquery keeps the
+        work in PostgreSQL and lets the caller apply its normal bounded slice.
+        """
+
         for sort_item in sort_configs:
-            # continue
             try:
                 column_id = sort_item.get("column_id")
-                sort_type = sort_item.get("type") or sort_item.get("type")
+                sort_type = sort_item.get("type")
 
                 if not column_id or not sort_type:
                     continue
 
-                cells = all_cells.filter(column_id=column_id)
-                column_type = columns_map.get(column_id).data_type
-                sort_prefix = "-" if sort_type == "descending" else ""
+                column = columns_map.get(column_id)
+                if column is None:
+                    continue
+                cells = all_cells.filter(
+                    column_id=column_id,
+                    row_id=OuterRef("pk"),
+                    deleted=False,
+                ).order_by("id")
+                column_type = column.data_type
 
                 if (
                     column_type == DataTypeChoices.TEXT.value
                     or column_type == DataTypeChoices.BOOLEAN.value
                 ):
-                    cells = cells.order_by(f"{sort_prefix}value")
+                    value_subquery = cells.values("value")[:1]
 
                 elif (
                     column_type == DataTypeChoices.INTEGER.value
@@ -2183,17 +2288,13 @@ class GetDatasetTableView(APIView):
                     cells = cells.filter(
                         value__regex=r"^-?\d*\.?\d+$",
                     ).annotate(numeric_value=Cast("value", FloatField()))
-                    cells = cells.order_by(f"{sort_prefix}numeric_value")
+                    value_subquery = cells.values("numeric_value")[:1]
 
                 elif column_type == DataTypeChoices.DATETIME.value:
                     cells = cells.annotate(
                         datetime_value=Cast("value", DateTimeField()),
-                        sort_key=Case(
-                            When(value__isnull=True, then=Value(1)),
-                            default=Value(0),
-                        ),
                     )
-                    cells = cells.order_by("sort_key", f"{sort_prefix}datetime_value")
+                    value_subquery = cells.values("datetime_value")[:1]
 
                 elif column_type == DataTypeChoices.AUDIO.value:
                     cells = cells.annotate(
@@ -2201,35 +2302,23 @@ class GetDatasetTableView(APIView):
                             "column_metadata__audio_duration_seconds",
                             output_field=FloatField(),
                         ),
-                        sort_key=Case(
-                            When(
-                                column_metadata__audio_duration_seconds__isnull=True,
-                                then=Value(1),
-                            ),
-                            default=Value(0),
-                        ),
                     )
-                    cells = cells.order_by("sort_key", f"{sort_prefix}numeric_value")
+                    value_subquery = cells.values("numeric_value")[:1]
 
                 else:
                     continue
 
-                # Use sorted cell row_ids to order rows without massive CASE expression
-                row_ids = list(cells.values_list("row_id", flat=True))
-                if not row_ids:
-                    rows = rows.none()
+                cell_id_subquery = cells.values("id")[:1]
+                rows = rows.annotate(
+                    _dataset_sort_cell_id=Subquery(cell_id_subquery),
+                    _dataset_sort_value=Subquery(value_subquery),
+                ).filter(_dataset_sort_cell_id__isnull=False, deleted=False)
+                value_order = F("_dataset_sort_value")
+                if sort_type == "descending":
+                    value_order = value_order.desc(nulls_last=True)
                 else:
-                    # Preserve cell-sorted order using a single subquery annotation
-                    # instead of O(n) CASE/WHEN clauses
-                    preserved = Case(
-                        *[When(id=rid, then=Value(i)) for i, rid in enumerate(row_ids)],
-                        default=Value(len(row_ids)),
-                    )
-                    rows = (
-                        rows.filter(id__in=row_ids, deleted=False)
-                        .annotate(_sort_order=preserved)
-                        .order_by("_sort_order")
-                    )
+                    value_order = value_order.asc(nulls_last=True)
+                rows = rows.order_by(value_order, "id")
 
             except Exception as e:
                 logger.error(f"error in sort : {e}")
@@ -2315,23 +2404,103 @@ class GetDatasetTableView(APIView):
 
     @validated_request(
         query_serializer=DatasetTableQuerySerializer,
-        responses={200: DatasetTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetTableResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            413: ModelHubErrorResponseSerializer,
+            503: ModelHubErrorResponseSerializer,
+        },
     )
     def get(self, request, dataset_id, *args, **kwargs):
+        query_data = request.validated_query_data
+        exact_snapshot = query_data.get("exact_snapshot", False) or bool(
+            query_data.get("cursor")
+        )
+        if exact_snapshot:
+            # REPEATABLE READ is required only for the signed continuation
+            # flow. Keep legacy grid reads out of a transaction so this new
+            # endpoint capability does not extend their MVCC lifetime.
+            with transaction.atomic():
+                return self._get_dataset_table(request, dataset_id, *args, **kwargs)
+        return self._get_dataset_table(request, dataset_id, *args, **kwargs)
+
+    def _get_dataset_table(self, request, dataset_id, *args, **kwargs):
+        exact_snapshot = False
+        exact_deadline = None
+
+        def exact_checkpoint(*, before_statement=False):
+            if exact_deadline is None:
+                return
+            if before_statement:
+                exact_deadline.set_statement_timeout()
+            else:
+                exact_deadline.checkpoint()
+
         try:
             query_data = request.validated_query_data
 
             filters = query_data.get("filters", [])
             sort_configs = query_data.get("sort", [])
             search = query_data.get("search", {})
-            from model_hub.services.dataset_validators import MAX_PAGE_SIZE
-
-            page_size = min(query_data.get("page_size", 10), MAX_PAGE_SIZE)
+            # The serializer preserves legacy clamping and rejects oversized
+            # pages only for the signed exact-import flow.
+            page_size = query_data.get("page_size", 10)
             current_page = query_data.get("current_page_index", 0)
             column_config_only = query_data.get("column_config_only", False)
+            cursor_token = query_data.get("cursor")
+            exact_snapshot = query_data.get("exact_snapshot", False) or bool(
+                cursor_token
+            )
+            if exact_snapshot:
+                # Every exact page shares this one absolute wall.  Later SQL
+                # statements receive only the time remaining on this action;
+                # Python stages checkpoint the same monotonic deadline.
+                exact_deadline = DatasetTableReadDeadline.start()
+            if exact_snapshot and (
+                filters
+                or sort_configs
+                or search
+                or column_config_only
+                or (not cursor_token and current_page != 0)
+            ):
+                return self._gm.bad_request(
+                    "Exact dataset continuation starts at page 0 and does not "
+                    "accept filters, search, sorting, or column-only mode."
+                )
+
+            snapshot_revision = None
+            snapshot_cursor = None
+            snapshot_bound = False
+            current_snapshot = None
+            if exact_snapshot:
+                try:
+                    current_snapshot = begin_repeatable_read_snapshot(exact_deadline)
+                except DatasetTableSnapshotUnavailable as exc:
+                    return Response(
+                        {
+                            "status": False,
+                            "code": "dataset_snapshot_unavailable",
+                            "message": str(exc),
+                        },
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
             # Get base dataset and rows
             try:
-                dataset = Dataset.objects.select_related("organization").get(
+                exact_checkpoint(before_statement=True)
+                dataset_query = Dataset.objects.select_related("organization")
+                if exact_snapshot:
+                    # Verify these potentially large fields in PostgreSQL before
+                    # asking Django to decode/materialize them.
+                    dataset_query = dataset_query.select_related(None).defer(
+                        "column_order",
+                        "column_config",
+                        "dataset_config",
+                        "synthetic_dataset_config",
+                        # This field is not part of the exact GT response and
+                        # can contain an unbounded generated summary.
+                        "eval_reasons",
+                    )
+                dataset = dataset_query.get(
                     id=dataset_id,
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
@@ -2339,11 +2508,97 @@ class GetDatasetTableView(APIView):
                 )
             except Dataset.DoesNotExist:
                 return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
-            rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
-            existing_column_config = dataset.column_config
+
+            if exact_snapshot:
+                try:
+                    exact_checkpoint()
+                    if cursor_token:
+                        snapshot_cursor = decode_dataset_table_cursor(
+                            cursor_token,
+                            dataset_id=str(dataset.id),
+                            organization_id=str(dataset.organization_id),
+                            workspace_id=(
+                                str(dataset.workspace_id)
+                                if dataset.workspace_id
+                                else None
+                            ),
+                            page_index=current_page,
+                            page_size=page_size,
+                        )
+                        snapshot_revision = snapshot_cursor.revision
+                        assert_dataset_table_revision(
+                            dataset_id=str(dataset.id),
+                            revision=snapshot_revision,
+                            deadline=exact_deadline,
+                        )
+                    else:
+                        snapshot_revision = capture_dataset_table_revision(
+                            dataset_id=str(dataset.id),
+                            snapshot=current_snapshot,
+                            deadline=exact_deadline,
+                        )
+                    assert_dataset_table_shape_within_limits(
+                        dataset_id=str(dataset.id),
+                        deadline=exact_deadline,
+                    )
+                    exact_checkpoint(before_statement=True)
+                    dataset.refresh_from_db(
+                        fields=[
+                            "column_order",
+                            "column_config",
+                            "dataset_config",
+                            "synthetic_dataset_config",
+                        ]
+                    )
+                    snapshot_bound = True
+                except DatasetTableSnapshotChanged as exc:
+                    return Response(
+                        {
+                            "status": False,
+                            "code": exc.code,
+                            "message": str(exc),
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                except DatasetTableCursorError as exc:
+                    return Response(
+                        {
+                            "status": False,
+                            "code": exc.code,
+                            "message": str(exc),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                except DatasetTableSnapshotUnavailable as exc:
+                    return Response(
+                        {
+                            "status": False,
+                            "code": "dataset_snapshot_unavailable",
+                            "message": str(exc),
+                        },
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+            # ``order`` is not unique.  The UUID tie-breaker makes adjacent
+            # bounded pages deterministic instead of allowing equal-order rows
+            # to move between page requests.
+            rows = Row.objects.filter(dataset=dataset, deleted=False).order_by(
+                "order", "id"
+            )
+            if snapshot_bound:
+                # Row.metadata is not returned by this endpoint and is not
+                # needed for the keyset. Avoid decoding arbitrary JSON before
+                # the exact page's cell/response fences run.
+                rows = rows.only("id", "dataset_id", "order")
+            # JSONField historically accepted NULL and non-object values.
+            # Presentation config is optional and must not make an otherwise
+            # exact Dataset/Column/Row/Cell snapshot unreadable.
+            existing_column_config = (
+                dataset.column_config if isinstance(dataset.column_config, dict) else {}
+            )
             error_messages = []
             # print("exiting sort")
-            # Calculate pagination offsets
+            # Calculate legacy pagination offsets. Exact reads replace this
+            # with the signed keyset below.
             start = current_page * page_size
             end = start + page_size
 
@@ -2360,6 +2615,12 @@ class GetDatasetTableView(APIView):
                         SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
                     ]
                 )
+            if snapshot_bound:
+                # BaseModel's -created_at ordering is not total when bulk
+                # inserts share a timestamp. The signed continuation requires
+                # an identical ordered column inventory on every page.
+                qs = qs.order_by("-created_at", "id")
+            exact_checkpoint(before_statement=True)
             all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
@@ -2403,7 +2664,11 @@ class GetDatasetTableView(APIView):
                 )
 
             # Get total count using DB COUNT instead of loading all rows
-            total_rows = rows.count()
+            if snapshot_bound:
+                exact_checkpoint()
+                total_rows = snapshot_revision.active_rows
+            else:
+                total_rows = rows.count()
 
             def process_single_column(
                 column,
@@ -2417,6 +2682,7 @@ class GetDatasetTableView(APIView):
                 columns_map,
             ):
                 try:
+                    exact_checkpoint()
                     if column_config_only:
                         avg_score = calculate_column_average(column)
                         is_numeric_eval = avg_score.get("is_numeric_eval", False)
@@ -2432,7 +2698,12 @@ class GetDatasetTableView(APIView):
                     status = column.status
                     metadata = {"run_prompt": False, "run_prompt_id": []}
                     column_metadata = column.metadata
-                    metadata.update(column_metadata)
+                    # Historical columns can have NULL (and JSONField can
+                    # technically contain a non-object). Presentation
+                    # metadata is optional; it must not make an otherwise
+                    # ledger-complete exact dataset page permanently fail.
+                    if isinstance(column_metadata, dict):
+                        metadata.update(column_metadata)
                     eval_tag = []
                     choices_map = {}
                     reason_column_flag = False
@@ -2496,11 +2767,24 @@ class GetDatasetTableView(APIView):
 
                     # Handle OPTIMISATION_EVALUATION source
                     elif column.source == SourceChoices.OPTIMISATION_EVALUATION.value:
-                        optimisation_id = column.source_id.split("-sourceid-")[0]
-                        user_metric_id = column.source_id.split("-sourceid-")[1]
-                        optimisation = optimisation_map.get(optimisation_id)
-                        status = optimisation.status
-                        if column_config_only:
+                        optimisation_id, separator, user_metric_id = str(
+                            column.source_id or ""
+                        ).partition("-sourceid-")
+                        optimisation = (
+                            optimisation_map.get(optimisation_id)
+                            if optimisation_id
+                            else None
+                        )
+                        # Exact snapshot reads intentionally do not hydrate
+                        # OptimizationDataset: it is outside the dataset
+                        # revision fingerprint and is not needed by Ground
+                        # Truth import. Preserve the fingerprint-bound Column
+                        # status when that presentation enrichment is absent
+                        # instead of dropping the column and turning every
+                        # retry into a dataset_exact_read_failed response.
+                        if optimisation is not None:
+                            status = optimisation.status
+                        if column_config_only and separator and user_metric_id:
                             user_eval = uem_map.get(user_metric_id)
                             if user_eval:
                                 choices_map = user_eval.template.config.get(
@@ -2604,16 +2888,20 @@ class GetDatasetTableView(APIView):
                         if experiment_map.get(column.source_id):
                             status = experiment_map.get(column.source_id).status
 
+                    raw_column_display_config = existing_column_config.get(
+                        str(column.id), {}
+                    )
+                    column_display_config = (
+                        raw_column_display_config
+                        if isinstance(raw_column_display_config, dict)
+                        else {}
+                    )
                     result = {
                         "id": str(column.id),
                         "name": column.name,
                         "eval_tag": eval_tag,
-                        "is_frozen": (existing_column_config or {})
-                        .get(str(column.id), {})
-                        .get("is_frozen", None),
-                        "is_visible": (existing_column_config or {})
-                        .get(str(column.id), {})
-                        .get("is_visible", True),
+                        "is_frozen": column_display_config.get("is_frozen", None),
+                        "is_visible": column_display_config.get("is_visible", True),
                         "data_type": column.data_type,
                         "source_type": "text",
                         "origin_type": column.source,
@@ -2631,7 +2919,15 @@ class GetDatasetTableView(APIView):
                         "is_numeric_eval": is_numeric_eval,
                         "is_numeric_eval_percentage": is_numeric_eval_percentage,
                     }
+                    exact_checkpoint()
                     result_queue.put((idx, result))
+                except (DatasetTableReadDeadlineExceeded, DatabaseError):
+                    if snapshot_bound:
+                        raise
+                    logger.exception(
+                        "Error processing a legacy dataset column within its read."
+                    )
+                    result_queue.put((idx, None))
                 except Exception as e:
                     logger.exception(f"Error processing column {column.id}: {str(e)}")
                     result_queue.put((idx, None))
@@ -2648,10 +2944,12 @@ class GetDatasetTableView(APIView):
                 if column.source == SourceChoices.EVALUATION.value:
                     source_ids["uem"].add(column.source_id)
                 elif column.source == SourceChoices.OPTIMISATION_EVALUATION.value:
-                    parts = column.source_id.split("-sourceid-")
-                    if len(parts) == 2:
-                        source_ids["optimization"].add(parts[0])
-                        source_ids["uem"].add(parts[1])
+                    optimisation_id, separator, user_metric_id = str(
+                        column.source_id or ""
+                    ).partition("-sourceid-")
+                    if separator and optimisation_id and user_metric_id:
+                        source_ids["optimization"].add(optimisation_id)
+                        source_ids["uem"].add(user_metric_id)
                 elif column.source == SourceChoices.RUN_PROMPT.value:
                     source_ids["run_prompter"].add(column.source_id)
                 elif column.source == SourceChoices.OPTIMISATION.value:
@@ -2664,7 +2962,13 @@ class GetDatasetTableView(APIView):
             optimisation_map = {}
             experiment_map = {}
 
-            if source_ids["uem"]:
+            # Exact GT pages expose only fingerprint-bound
+            # Dataset/Column/Row/Cell state. Source enrichments belong to other
+            # tables and are not consumed by the importer, so reading them here
+            # would widen the transaction and make repeated pages depend on
+            # unfenced data.
+            if source_ids["uem"] and not snapshot_bound:
+                exact_checkpoint(before_statement=True)
                 uem_map = {
                     str(obj.id): obj
                     for obj in list(
@@ -2676,7 +2980,8 @@ class GetDatasetTableView(APIView):
                     )
                 }
 
-            if source_ids["run_prompter"]:
+            if source_ids["run_prompter"] and not snapshot_bound:
+                exact_checkpoint(before_statement=True)
                 run_prompter_map = {
                     str(obj.id): obj
                     for obj in list(
@@ -2686,7 +2991,8 @@ class GetDatasetTableView(APIView):
                     )
                 }
 
-            if source_ids["optimization"]:
+            if source_ids["optimization"] and not snapshot_bound:
+                exact_checkpoint(before_statement=True)
                 optimisation_map = {
                     str(obj.id): obj
                     for obj in list(
@@ -2696,7 +3002,8 @@ class GetDatasetTableView(APIView):
                     )
                 }
 
-            if source_ids["experiment"]:
+            if source_ids["experiment"] and not snapshot_bound:
+                exact_checkpoint(before_statement=True)
                 experiment_map = {
                     str(obj.id): obj
                     for obj in list(
@@ -2709,6 +3016,7 @@ class GetDatasetTableView(APIView):
             # Process columns sequentially (no thread overhead needed)
             result_queue = Queue()
             for idx, column in enumerate(columns):
+                exact_checkpoint()
                 process_single_column(
                     column,
                     existing_column_config,
@@ -2733,8 +3041,28 @@ class GetDatasetTableView(APIView):
                 [result for _, result in sorted(results, key=lambda x: x[0])]
             )
 
+            if snapshot_bound and len(column_config) != len(columns):
+                # Legacy grid reads historically omitted a column when its
+                # presentation metadata failed to build. An exact import must
+                # never turn that partial representation into source data.
+                return Response(
+                    {
+                        "status": False,
+                        "code": "dataset_exact_read_failed",
+                        "message": (
+                            "A dataset column could not be loaded exactly. "
+                            "Retry the import."
+                        ),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
             if column_config_only:
-                dataset_config = dataset.dataset_config
+                dataset_config = (
+                    dataset.dataset_config
+                    if isinstance(dataset.dataset_config, dict)
+                    else {}
+                )
                 file_processing_status = dataset_config.get(
                     "file_processing_status", ""
                 )
@@ -2754,8 +3082,25 @@ class GetDatasetTableView(APIView):
             table_data = []
             processed_rows = set()
             all_cells = None
-            # Paginate at DB level
-            paginated_rows = list(rows[start:end])
+            # Paginate at DB level. Exact reads use the signed (order, UUID)
+            # keyset and read one proof row; legacy grid reads retain offsets.
+            if snapshot_bound:
+                page_rows = rows
+                if snapshot_cursor is not None:
+                    page_rows = page_rows.filter(
+                        Q(order__gt=snapshot_cursor.last_order)
+                        | Q(
+                            order=snapshot_cursor.last_order,
+                            id__gt=snapshot_cursor.last_id,
+                        )
+                    )
+                exact_checkpoint(before_statement=True)
+                page_window = list(page_rows[: page_size + 1])
+                paginated_rows = page_window[:page_size]
+                exact_has_more = len(page_window) > page_size
+            else:
+                paginated_rows = list(rows[start:end])
+                exact_has_more = False
             row_ids = [row.id for row in paginated_rows]
 
             # Fetch cells only for paginated rows
@@ -2763,10 +3108,33 @@ class GetDatasetTableView(APIView):
             all_cells = Cell.objects.filter(
                 row_id__in=row_ids, column_id__in=column_ids, deleted=False
             ).select_related("column")
+            if snapshot_bound:
+                # Keep materialization to the fields whose variable-size
+                # values were preflighted below. In particular, the unused
+                # Cell.column_metadata JSON must not bypass the byte fence.
+                all_cells = all_cells.only(
+                    "id",
+                    "row_id",
+                    "column_id",
+                    "value",
+                    "value_infos",
+                    "feedback_info",
+                    "status",
+                    "column__id",
+                    "column__data_type",
+                )
 
             # Create a dictionary to group cells by row_id for faster lookup
             cells_by_row: dict[Any, Any] = {}
+            if snapshot_bound:
+                assert_dataset_table_cells_within_limits(
+                    row_ids=[str(row_id) for row_id in row_ids],
+                    column_ids=[str(column_id) for column_id in column_ids],
+                    deadline=exact_deadline,
+                )
+            exact_checkpoint(before_statement=True)
             for cell in list(all_cells):
+                exact_checkpoint()
                 if cell.row_id not in cells_by_row:
                     cells_by_row[cell.row_id] = []
                 cells_by_row[cell.row_id].append(cell)
@@ -2775,6 +3143,7 @@ class GetDatasetTableView(APIView):
             row_processing_start = time.time()
 
             def process_row(row, cells_by_row, search, search_results):
+                exact_checkpoint()
                 if str(row.id) in processed_rows:
                     return None
 
@@ -2782,6 +3151,7 @@ class GetDatasetTableView(APIView):
                 row_cells = cells_by_row.get(row.id, [])
 
                 for cell in row_cells:
+                    exact_checkpoint()
                     response_time_ms = None
                     token_count = None
                     value_infos = None
@@ -2849,6 +3219,7 @@ class GetDatasetTableView(APIView):
 
             # Process rows sequentially (only ~page_size rows, no thread overhead needed)
             for row in paginated_rows:
+                exact_checkpoint()
                 result = process_row(row, cells_by_row, search, search_results)
                 if result:
                     table_data.append(result)
@@ -2856,9 +3227,13 @@ class GetDatasetTableView(APIView):
             logger.info(
                 f"[TIMING] Row processing: {time.time() - row_processing_start:.2f}s"
             )
-            task_manager = SyntheticTaskManager()
+            exact_checkpoint()
 
-            dataset_config = dataset.dataset_config
+            dataset_config = (
+                dataset.dataset_config
+                if isinstance(dataset.dataset_config, dict)
+                else {}
+            )
             file_processing_status = dataset_config.get("file_processing_status", "")
             is_processing_data = False
 
@@ -2869,64 +3244,192 @@ class GetDatasetTableView(APIView):
             ):
                 is_processing_data = True
 
+            if snapshot_bound:
+                exact_checkpoint()
+                previously_seen = (
+                    snapshot_cursor.seen_rows if snapshot_cursor is not None else 0
+                )
+                seen_rows = previously_seen + len(paginated_rows)
+                has_more = exact_has_more
+                if has_more != (seen_rows < total_rows) or (
+                    not has_more and seen_rows != total_rows
+                ):
+                    return Response(
+                        {
+                            "status": False,
+                            "code": "dataset_snapshot_changed",
+                            "message": (
+                                "The dataset changed while rows were loading. "
+                                "Restart the import."
+                            ),
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                next_page_index = current_page + 1 if has_more else None
+                next_cursor = None
+                if has_more:
+                    last_row = paginated_rows[-1]
+                    next_cursor = encode_dataset_table_cursor(
+                        dataset_id=str(dataset.id),
+                        organization_id=str(dataset.organization_id),
+                        workspace_id=(
+                            str(dataset.workspace_id) if dataset.workspace_id else None
+                        ),
+                        revision=snapshot_revision,
+                        page_index=next_page_index,
+                        page_size=page_size,
+                        seen_rows=seen_rows,
+                        last_order=last_row.order,
+                        last_id=str(last_row.id),
+                    )
+            else:
+                has_more = end < total_rows
+                next_page_index = current_page + 1 if has_more else None
+                next_cursor = None
             response_data = {
                 "metadata": {
                     "dataset_name": dataset.name,
                     "total_rows": total_rows,
                     "total_pages": (total_rows + page_size - 1) // page_size,
+                    "page_size": page_size,
+                    "current_page_index": current_page,
+                    "has_more": has_more,
+                    "next_page_index": next_page_index,
+                    "next_cursor": next_cursor,
+                    # A successful page is called exact only when it is bound
+                    # to the signed MVCC revision. Bare offset pages remain
+                    # truthful legacy pages, never an exact multi-click read.
+                    "is_exact": snapshot_bound and not error_messages,
+                    "snapshot_bound": snapshot_bound,
                     "error_messages": error_messages,
-                    "status": self._get_dataset_status(dataset, all_cells),
+                    "status": self._get_dataset_status(
+                        dataset, all_cells, deadline=exact_deadline
+                    ),
                 },
                 "column_config": column_config,
                 "table": table_data,
-                "dataset_config": dataset.dataset_config,
+                "dataset_config": dataset_config,
                 "synthetic_dataset": (
                     True if dataset.synthetic_dataset_config else False
                 ),
-                "synthetic_dataset_percentage": task_manager.get_progress(
-                    dataset_id=dataset.id, request_uuid=None
-                ),
-                "synthetic_regenerate": task_manager.operation_regenerate_key(
-                    op="get", dataset_id=dataset.id
-                ),
                 "is_processing_data": is_processing_data,
             }
+            if not snapshot_bound:
+                # Exact reads must perform no external I/O while their
+                # repeatable-read transaction is open. These cache-backed
+                # advisory fields are irrelevant to the GT importer.
+                task_manager = SyntheticTaskManager()
+                response_data["synthetic_dataset_percentage"] = (
+                    task_manager.get_progress(dataset_id=dataset.id, request_uuid=None)
+                )
+                response_data["synthetic_regenerate"] = (
+                    task_manager.operation_regenerate_key(
+                        op="get", dataset_id=dataset.id
+                    )
+                )
 
+            exact_checkpoint()
+            if snapshot_bound:
+                assert_dataset_table_response_within_limits(response_data)
+                # JSON encoding is bounded by the cap above but still belongs
+                # to this action's one absolute wall.
+                exact_checkpoint()
             return self._gm.success_response(response_data)
 
+        except DatasetTableExactLimitExceeded as exc:
+            return Response(
+                {
+                    "status": False,
+                    "code": exc.code,
+                    "message": str(exc),
+                },
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        except DatasetTableReadDeadlineExceeded:
+            logger.warning(
+                "exact_dataset_read_deadline_exceeded",
+                dataset_id=str(dataset_id),
+            )
+            return Response(
+                {
+                    "status": False,
+                    "code": "dataset_snapshot_unavailable",
+                    "message": (
+                        "Dataset rows could not be read within the deadline. Retry."
+                    ),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except DatabaseError:
+            if exact_snapshot:
+                logger.warning(
+                    "exact_dataset_database_read_unavailable",
+                    dataset_id=str(dataset_id),
+                )
+                return Response(
+                    {
+                        "status": False,
+                        "code": "dataset_snapshot_unavailable",
+                        "message": (
+                            "Dataset rows could not be read within the deadline. Retry."
+                        ),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            logger.exception("Database error while fetching legacy dataset metadata.")
+            return self._gm.internal_server_error_response(
+                get_error_message("FAILED_TO_GET_DATASET_METADATA")
+            )
         except Exception as e:
             logger.exception(f"Error in fetching dataset metadata: {str(e)}")
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_GET_DATASET_METADATA")
             )
 
-    def _get_dataset_status(self, dataset, all_cells=None):
+    def _get_dataset_status(self, dataset, all_cells=None, *, deadline=None):
         if all_cells is None:
+            if deadline is not None:
+                deadline.set_statement_timeout()
             all_cells = Cell.objects.filter(
                 row__dataset=dataset, row__deleted=False, deleted=False
             )
         if all_cells:
-            if dataset.dataset_config.get("dataset_source_local"):
-                columns_status = all_cells.filter(
-                    column__data_type__in=[
-                        DataTypeChoices.IMAGE.value,
-                        DataTypeChoices.AUDIO.value,
-                    ]
-                ).values_list("column__status", flat=True)
+            dataset_config = (
+                dataset.dataset_config
+                if isinstance(dataset.dataset_config, dict)
+                else {}
+            )
+            if dataset_config.get("dataset_source_local"):
+                if deadline is not None:
+                    deadline.set_statement_timeout()
+                columns_status = list(
+                    all_cells.filter(
+                        column__data_type__in=[
+                            DataTypeChoices.IMAGE.value,
+                            DataTypeChoices.AUDIO.value,
+                        ]
+                    ).values_list("column__status", flat=True)
+                )
                 if columns_status and any(
                     status == StatusType.UPLOADING.value for status in columns_status
                 ):
                     return {"dataset_status": DatasetStatus.PARTIAL_UPLOAD.value}
 
-                failed_cells = all_cells.filter(
-                    status=CellStatus.ERROR.value,
-                    column__data_type__in=[
-                        DataTypeChoices.IMAGE.value,
-                        DataTypeChoices.AUDIO.value,
-                    ],
-                ).all()
+                if deadline is not None:
+                    deadline.set_statement_timeout()
+                failed_cells = list(
+                    all_cells.filter(
+                        status=CellStatus.ERROR.value,
+                        column__data_type__in=[
+                            DataTypeChoices.IMAGE.value,
+                            DataTypeChoices.AUDIO.value,
+                        ],
+                    )
+                )
                 reasons = []
                 for cell in failed_cells:
+                    if deadline is not None:
+                        deadline.checkpoint()
                     try:
                         value_infos = (
                             json.loads(cell.value_infos)
@@ -2940,7 +3443,7 @@ class GetDatasetTableView(APIView):
                 if failed_cells:
                     return {
                         "dataset_status": DatasetStatus.PARTIAL_EXTRACTED.value,
-                        "failed_cells": failed_cells.count(),
+                        "failed_cells": len(failed_cells),
                         "reason": reasons,
                     }
                 else:
@@ -2989,123 +3492,197 @@ class GetRowDataView(APIView):
 
     @validated_request(
         request_serializer=DatasetRowDataRequestSerializer,
-        responses={200: DatasetRowDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetRowDataResponseSerializer,
+            413: ModelHubErrorResponseSerializer,
+            503: ModelHubErrorResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
+        deadline = BoundedDatasetReadDeadline.start()
         try:
-            request_data = request.validated_data
+            with transaction.atomic():
+                request_data = request.validated_data
+                filters = request_data.get("filters", [])
+                sort_configs = request_data.get("sort", [])
+                row_id = request_data.get("row_id")
 
-            filters = request_data.get("filters", [])
-            sort_configs = request_data.get("sort", [])
-            row_id = request_data.get("row_id")
+                deadline.before_query()
+                dataset = (
+                    _request_dataset_queryset(request).filter(id=dataset_id).first()
+                )
+                if dataset is None:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-            # Get base dataset and rows
-            dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
-            rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
-            error_messages = []
-            cells = Cell.objects.filter(row__in=rows, deleted=False)
-            qs = Column.objects.filter(dataset=dataset, deleted=False)
-            if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
-                qs = qs.exclude(
-                    source__in=[
-                        SourceChoices.EXPERIMENT.value,
-                        SourceChoices.EXPERIMENT_EVALUATION.value,
-                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                rows = _request_row_queryset(request, dataset).order_by("order", "id")
+                cells = Cell.no_workspace_objects.filter(
+                    dataset=dataset,
+                    row__dataset=dataset,
+                    column__dataset=dataset,
+                    row__deleted=False,
+                    column__deleted=False,
+                    deleted=False,
+                )
+                columns = _request_column_queryset(request).filter(dataset=dataset)
+                if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
+                    columns = columns.exclude(
+                        source__in=[
+                            SourceChoices.EXPERIMENT.value,
+                            SourceChoices.EXPERIMENT_EVALUATION.value,
+                            SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                        ]
+                    )
+                deadline.before_query()
+                all_columns = list(
+                    columns.order_by("created_at", "id")[
+                        : DATASET_TABLE_EXACT_MAX_COLUMNS + 1
                     ]
                 )
-            all_columns = list(qs)
-            columns_map = {str(col.id): col for col in all_columns}
+                assert_bounded_projection(
+                    column_count=len(all_columns), page_row_count=1
+                )
+                columns_map = {str(column.id): column for column in all_columns}
 
-            # Apply filters if any
-            if filters:
-                rows = GetDatasetTableView()._apply_filters(
-                    cells, rows, filters, error_messages, columns_map
+                requested_column_ids = {
+                    str(item.get("column_id"))
+                    for item in [*filters, *sort_configs]
+                    if item.get("column_id")
+                }
+                unknown_column_ids = sorted(
+                    requested_column_ids - set(columns_map.keys())
+                )
+                if unknown_column_ids:
+                    return self._gm.bad_request(
+                        {
+                            "column_id": [
+                                "Unknown or inaccessible dataset column: "
+                                + ", ".join(unknown_column_ids)
+                            ]
+                        }
+                    )
+
+                error_messages = []
+                if filters:
+                    rows = GetDatasetTableView()._apply_filters(
+                        cells, rows, filters, error_messages, columns_map
+                    )
+                if sort_configs:
+                    rows = GetDatasetTableView()._apply_sorting(
+                        cells, rows, sort_configs, error_messages, columns_map
+                    )
+
+                deadline.before_query()
+                current_row = rows.filter(id=row_id).first()
+                if current_row is None:
+                    return self._gm.not_found("Dataset row not found.")
+
+                if sort_configs:
+                    sort_type = sort_configs[0].get("type", "ascending")
+                    sort_value = getattr(current_row, "_dataset_sort_value", None)
+                    if sort_value is None:
+                        after_current = Q(
+                            _dataset_sort_value__isnull=True,
+                            id__gt=current_row.id,
+                        )
+                    else:
+                        value_lookup = (
+                            "_dataset_sort_value__lt"
+                            if sort_type == "descending"
+                            else "_dataset_sort_value__gt"
+                        )
+                        after_current = (
+                            Q(**{value_lookup: sort_value})
+                            | Q(
+                                _dataset_sort_value=sort_value,
+                                id__gt=current_row.id,
+                            )
+                            | Q(_dataset_sort_value__isnull=True)
+                        )
+                    next_rows = rows.filter(after_current)
+                else:
+                    next_rows = rows.filter(
+                        Q(order__gt=current_row.order)
+                        | Q(order=current_row.order, id__gt=current_row.id)
+                    ).order_by("order", "id")
+
+                deadline.before_query()
+                next_row_ids = list(
+                    next_rows.values_list("id", flat=True)[
+                        :DATASET_ROW_ADJACENCY_MAX_ROWS
+                    ]
                 )
 
-            # Apply sorting
-            if sort_configs:
-                rows = GetDatasetTableView()._apply_sorting(
-                    rows, sort_configs, columns_map
+                column_ids = list(columns_map.keys())
+                if connection.vendor == "postgresql":
+                    assert_dataset_table_cells_within_limits(
+                        row_ids=[str(row_id)],
+                        column_ids=column_ids,
+                        deadline=deadline,
+                    )
+                deadline.before_query()
+                current_cells = list(
+                    cells.filter(
+                        row_id=row_id,
+                        column_id__in=column_ids,
+                    ).select_related("column")
                 )
 
-            # print("exiting sort")
-
-            current_row = get_object_or_404(
-                rows, id=row_id, dataset=dataset, deleted=False
-            )
-
-            # Get the next 50 rows ordered after the current row
-            next_row_ids = list(
-                rows.filter(dataset=dataset, deleted=False, order__gt=current_row.order)
-                .order_by("order")
-                .values_list("id", flat=True)[:50]
-            )
-
-            # result = rows.annotate(
-            #     next_row_id=StringAgg(
-            #         Cast('id', output_field=CharField()),
-            #         delimiter=',',
-            #         ordering='order',
-            #         filter=Q(order__gt=OuterRef('order'))
-            #     )
-            # ).filter(id=row_id).values('id', 'next_row_id').first()
-            # previous_row_id = result['prev_row_id']
-
-            # Prepare table data
-            row_data_array = {}
-            # row_data_array.update({"previous": { "row_id": str(previous_row_id) if previous_row_id else None}})
-            row_data_array.update({"next": {"row_id": next_row_ids or []}})
-            row_data = {"row_id": str(row_id)}
-
-            current_cells = list(
-                Cell.objects.filter(
-                    row_id=row_id,
-                    deleted=False,
-                    dataset=dataset,
-                    column__id__in=columns_map.keys(),
-                )
-            )
-            for cell in current_cells:
-                response_time_ms = None
-                token_count = None
-                value_infos = None
-                if cell.value_infos:
+                row_data_array = {"next": {"row_id": next_row_ids or []}}
+                row_data = {"row_id": str(row_id)}
+                for cell in current_cells:
+                    deadline.checkpoint()
+                    response_time_ms = None
+                    token_count = None
+                    value_infos = cell.value_infos
                     try:
-                        metadata = {}
-                        value_infos = json.loads(cell.value_infos)
-                        if isinstance(value_infos.get("metadata", "{}"), str):
-                            value_infos["metadata"] = json.loads(
-                                value_infos.get("metadata", "{}")
-                            )
-                        if isinstance(value_infos.get("metadata", {}), dict):
-                            metadata = value_infos.get("metadata", {})
-                            response_time_ms = metadata.get("response_time", None)
-                            token_count = metadata.get("usage", {}).get(
-                                "total_tokens", None
-                            )
-                    except Exception:
-                        response_time_ms = None
-                        token_count = None
+                        if isinstance(value_infos, str):
+                            value_infos = json.loads(value_infos)
+                        if isinstance(value_infos, dict):
+                            raw_metadata = value_infos.get("metadata", {})
+                            if isinstance(raw_metadata, str):
+                                raw_metadata = json.loads(raw_metadata)
+                            if isinstance(raw_metadata, dict):
+                                response_time_ms = raw_metadata.get("response_time")
+                                usage = raw_metadata.get("usage", {})
+                                if isinstance(usage, dict):
+                                    token_count = usage.get("total_tokens")
+                    except (TypeError, ValueError, json.JSONDecodeError):
                         value_infos = cell.value_infos
 
-                row_data[str(cell.column_id)] = {
-                    "cell_id": str(cell.id),
-                    "cell_value": cell.value,
-                    "metadata": {
-                        "response_time_ms": response_time_ms,
-                        "token_count": token_count,
-                        "annotation": self._get_annotation_status(
-                            cell.feedback_info, cell.value
-                        ),
-                    },
-                    "status": cell.status,
-                    "value_infos": value_infos,
-                    "feedback_info": cell.feedback_info,
-                }
+                    row_data[str(cell.column_id)] = {
+                        "cell_id": str(cell.id),
+                        "cell_value": cell.value,
+                        "metadata": {
+                            "response_time_ms": response_time_ms,
+                            "token_count": token_count,
+                            "annotation": self._get_annotation_status(
+                                cell.feedback_info, cell.value
+                            ),
+                        },
+                        "status": cell.status,
+                        "value_infos": value_infos,
+                        "feedback_info": cell.feedback_info,
+                    }
 
-            row_data_array.update({"current": row_data})
-            return self._gm.success_response(row_data_array)
+                row_data_array["current"] = row_data
+                assert_dataset_table_response_within_limits(row_data_array)
+                deadline.checkpoint()
+                return self._gm.success_response(row_data_array)
 
+        except (BoundedDatasetReadLimitExceeded, DatasetTableExactLimitExceeded) as e:
+            return _bounded_dataset_error(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                code="dataset_read_limit_exceeded",
+                detail=str(e),
+            )
+        except (BoundedDatasetReadDeadlineExceeded, DatabaseError):
+            logger.exception("Bounded row-data read failed or timed out")
+            return _bounded_dataset_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="dataset_read_unavailable",
+                detail="The dataset read could not finish within the server deadline.",
+            )
         except Exception as e:
             logger.exception(f"Error in fetching dataset metadata: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -3157,276 +3734,397 @@ class GetExperimentDatasetTableView(APIView):
         except (ValueError, AttributeError, TypeError):
             return False
 
-    @swagger_auto_schema(
-        responses={200: DatasetTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    @validated_request(
+        query_serializer=ExperimentDatasetTableQuerySerializer,
+        responses={
+            200: DatasetTableResponseSerializer,
+            413: ModelHubErrorResponseSerializer,
+            422: ModelHubErrorResponseSerializer,
+            503: ModelHubErrorResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def get(self, request, experiment_dataset_id, *args, **kwargs):
+        deadline = BoundedDatasetReadDeadline.start()
         try:
-            # Get request parameters
-            page_size = int(request.GET.get("page_size", 10))
-            current_page = int(request.GET.get("current_page_index", 0))
-
-            dataset = (
-                _request_experiment_dataset_queryset(request)
-                .filter(id=experiment_dataset_id)
-                .first()
-            )
-            if not dataset:
-                return self._gm.not_found(
-                    get_error_message("EXPERIMENT_DATASET_NOT_FOUND")
+            with transaction.atomic():
+                query = request.validated_query_data
+                page_size = query["page_size"]
+                current_page = query["current_page_index"]
+                assert_bounded_page(
+                    page_size=page_size, current_page_index=current_page
                 )
+                start = current_page * page_size
+                end = start + page_size
 
-            # Calculate pagination offsets
-            start = current_page * page_size
-            end = start + page_size
-
-            # Get column configuration
-            columns_in_experiment = list(dataset.columns.all())
-
-            experiment = _experiment_for_dataset(dataset)
-            if not experiment:
-                return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
-            user_eval_metric = list(experiment.user_eval_template_ids.all())
-            total_columns = []
-            for metric in user_eval_metric:
-                runner = EvaluationRunner(
-                    user_eval_metric_id=metric.id,
-                    is_only_eval=True,
-                    format_output=True,
-                    source="experiment",
-                    source_id=metric.template.id,
+                deadline.before_query()
+                experiment_dataset = (
+                    _request_experiment_dataset_queryset(request)
+                    .filter(id=experiment_dataset_id)
+                    .first()
                 )
-                user_eval = UserEvalMetric.objects.get(id=metric.id)
-                cols_used = runner._get_all_column_ids_being_used(
-                    user_eval_metric=user_eval
-                )
-                logger.info(f"adding to total_columns cols_used: {cols_used}")
-                total_columns.extend([col_id for col_id in cols_used if col_id])
+                if experiment_dataset is None:
+                    return self._gm.not_found(
+                        get_error_message("EXPERIMENT_DATASET_NOT_FOUND")
+                    )
 
-            # V1 experiments have a single output column; V2 experiments do not.
-            if experiment.column:
-                logger.info(
-                    f"adding to total_columns experiment.column.id: {experiment.column.id}"
+                experiment = _scoped_experiment_for_dataset(
+                    request, experiment_dataset, deadline=deadline
                 )
-                total_columns.append(str(experiment.column.id))
-                if experiment.column.source == SourceChoices.RUN_PROMPT.value:
-                    run_prompt = RunPrompter.objects.get(id=experiment.column.source_id)
-                    # Extract all column UUIDs from messages
-                    message_column_ids = []
-                    for message in run_prompt.messages:
-                        content = message.get("content", "")
-                        if isinstance(content, list):
-                            for item in content:
-                                if isinstance(item, dict) and item["type"] == "text":
-                                    column_ids = re.findall(
-                                        r"\{\{([^}]*)\}\}", item["text"]
-                                    )
-                                    message_column_ids.extend(
-                                        [
-                                            col_id.strip()
-                                            for col_id in column_ids
-                                            if col_id
-                                        ]
-                                    )
-                        else:
-                            # Find all UUIDs between {{ and }}
-                            column_ids = re.findall(r"\{\{([^}]*)\}\}", content)
-                            # Clean up any whitespace and add to list
-                            message_column_ids.extend(
-                                [col_id.strip() for col_id in column_ids if col_id]
-                            )
+                working_dataset_id = (
+                    experiment.snapshot_dataset_id or experiment.dataset_id
+                )
+                deadline.before_query()
+                working_dataset = (
+                    _request_dataset_queryset(request)
+                    .filter(id=working_dataset_id)
+                    .first()
+                )
+                if working_dataset is None:
+                    return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-                    # Add unique column IDs to total_columns
-                    logger.info(
-                        f"adding to total_columns message_column_ids: {message_column_ids}"
+                latest_status = Cell.no_workspace_objects.filter(
+                    column_id=OuterRef("pk"),
+                    row__dataset=working_dataset,
+                    row__deleted=False,
+                    deleted=False,
+                ).order_by("-created_at", "-id")
+                deadline.before_query()
+                raw_experiment_columns = list(
+                    Column.all_objects.filter(
+                        experiments_dataset_column=experiment_dataset
+                    )
+                    .select_related("dataset")
+                    .annotate(
+                        _last_cell_status=Subquery(latest_status.values("status")[:1])
+                    )
+                    .order_by("created_at", "id")[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
+                )
+                if len(raw_experiment_columns) > DATASET_TABLE_EXACT_MAX_COLUMNS:
+                    raise BoundedDatasetReadLimitExceeded(
+                        "The experiment projection contains more than "
+                        f"{DATASET_TABLE_EXACT_MAX_COLUMNS} columns."
+                    )
+                if any(
+                    column.dataset_id != working_dataset.id
+                    for column in raw_experiment_columns
+                ):
+                    raise ExperimentDatasetIntegrityError(
+                        "The experiment projection contains a foreign dataset column."
+                    )
+                columns_in_experiment = [
+                    column
+                    for column in raw_experiment_columns
+                    if not column.deleted and not column.name.endswith("reason")
+                ]
+
+                deadline.before_query()
+                user_eval_metric = list(
+                    experiment.user_eval_template_ids.select_related("template")
+                    .filter(deleted=False)
+                    .order_by("id")[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
+                )
+                if len(user_eval_metric) > DATASET_TABLE_EXACT_MAX_COLUMNS:
+                    raise BoundedDatasetReadLimitExceeded(
+                        "The experiment contains more than "
+                        f"{DATASET_TABLE_EXACT_MAX_COLUMNS} evaluation metrics."
+                    )
+
+                total_columns = []
+                for metric in user_eval_metric:
+                    deadline.checkpoint()
+                    runner = EvaluationRunner(
+                        user_eval_metric_id=metric.id,
+                        is_only_eval=True,
+                        format_output=True,
+                        source="experiment",
+                        source_id=metric.template.id,
+                    )
+                    cols_used = runner._get_all_column_ids_being_used(
+                        user_eval_metric=metric
                     )
                     total_columns.extend(
-                        [
-                            col_id
-                            for col_id in message_column_ids
-                            if col_id not in [None, "None"]
-                        ]
+                        [str(column_id) for column_id in cols_used if column_id]
                     )
-                    logger.info(f"TOTAL COLUMNS: {total_columns}")
 
-            valid_total_columns = [s for s in total_columns if self.is_valid_uuid4(s)]
-            working_dataset = experiment.snapshot_dataset or experiment.dataset
-            columns_in_datasets = list(
-                Column.objects.filter(
-                    id__in=valid_total_columns,
-                    deleted=False,
-                    dataset=working_dataset,
-                ).order_by("created_at")
-            )
-            column_config = []
-            # Prepare table data - Modified to ensure each row appears only once
-            table_data = []
-            cells_by_row: dict[Any, Any] = {}
+                if experiment.column:
+                    total_columns.append(str(experiment.column.id))
+                    if experiment.column.source == SourceChoices.RUN_PROMPT.value:
+                        source_id = str(experiment.column.source_id or "")
+                        if not self.is_valid_uuid4(source_id):
+                            raise ExperimentDatasetIntegrityError(
+                                "The experiment prompt reference is invalid."
+                            )
+                        deadline.before_query()
+                        run_prompt = (
+                            RunPrompter.objects.filter(
+                                _request_workspace_filter(request),
+                                id=source_id,
+                                organization=_request_organization(request),
+                                dataset__organization=_request_organization(request),
+                                dataset_id__in={
+                                    experiment.dataset_id,
+                                    working_dataset.id,
+                                },
+                                deleted=False,
+                            )
+                            .only("messages")
+                            .first()
+                        )
+                        if run_prompt is None:
+                            raise ExperimentDatasetIntegrityError(
+                                "The experiment prompt is outside the request scope."
+                            )
+                        for message in run_prompt.messages or []:
+                            if not isinstance(message, dict):
+                                continue
+                            content = message.get("content", "")
+                            items = content if isinstance(content, list) else [content]
+                            for item in items:
+                                text = (
+                                    item.get("text", "")
+                                    if isinstance(item, dict)
+                                    and item.get("type") == "text"
+                                    else item
+                                    if isinstance(item, str)
+                                    else ""
+                                )
+                                total_columns.extend(
+                                    column_id.strip()
+                                    for column_id in re.findall(
+                                        r"\{\{([^}]*)\}\}", text
+                                    )
+                                    if column_id and column_id.strip() != "None"
+                                )
 
-            columns_in_experiment = [
-                col for col in columns_in_experiment if not col.name.endswith("reason")
-            ]
-            columns_in_datasets = [
-                col for col in columns_in_datasets if not col.name.endswith("reason")
-            ]
-
-            for column in columns_in_datasets:
-                column_config.append(
-                    {
-                        "id": str(column.id),
-                        "name": column.name,
-                        "origin_type": column.source,
-                        "is_frozen": None,
-                        "is_visible": True,
-                        "data_type": column.data_type,
-                        "status": "completed",
-                    }
+                valid_total_columns = {
+                    value for value in total_columns if self.is_valid_uuid4(value)
+                }
+                deadline.before_query()
+                columns_in_datasets = list(
+                    _request_column_queryset(request)
+                    .filter(
+                        id__in=valid_total_columns,
+                        dataset=working_dataset,
+                    )
+                    .exclude(name__endswith="reason")
+                    .order_by("created_at", "id")[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
                 )
 
-                for cell in column.cell_set.filter(
-                    deleted=False, row__deleted=False, column__deleted=False
-                ):
-                    if cell.row.deleted is False and cell.column.deleted is False:
-                        if str(cell.row_id) not in cells_by_row:
-                            cells_by_row[str(cell.row_id)] = {
-                                "row_id": str(cell.row_id)
-                            }
+                projected_column_ids = {
+                    column.id
+                    for column in [*columns_in_datasets, *columns_in_experiment]
+                }
+                assert_bounded_projection(
+                    # A linked column can appear in both the source and EDT
+                    # config; both entries contribute response work.
+                    column_count=len(columns_in_datasets) + len(columns_in_experiment),
+                    page_row_count=page_size,
+                )
 
-                        cells_by_row[str(cell.row_id)][str(column.id)] = {
+                live_projected_cell = Cell.no_workspace_objects.filter(
+                    row_id=OuterRef("pk"),
+                    row__dataset=working_dataset,
+                    column_id__in=projected_column_ids,
+                    column__dataset=working_dataset,
+                    column__deleted=False,
+                    deleted=False,
+                )
+                rows = (
+                    _request_row_queryset(request, working_dataset)
+                    .filter(Exists(live_projected_cell))
+                    .order_by("order", "id")
+                )
+                deadline.before_query()
+                total_rows = rows.count()
+                deadline.before_query()
+                paginated_rows = list(rows[start:end])
+                row_ids = [row.id for row in paginated_rows]
+
+                column_config = []
+                for column in columns_in_datasets:
+                    column_config.append(
+                        {
+                            "id": str(column.id),
+                            "name": column.name,
+                            "origin_type": column.source,
+                            "is_frozen": None,
+                            "is_visible": True,
+                            "data_type": column.data_type,
+                            "status": "completed",
+                        }
+                    )
+
+                reason_column_by_metric = {}
+                for metric in user_eval_metric:
+                    config = metric.template.config
+                    reason_column_by_metric[str(metric.id)] = bool(
+                        config.get("reason_column", False)
+                        if isinstance(config, dict)
+                        else False
+                    )
+
+                for column in columns_in_experiment:
+                    # Global averages are deliberately not computed in the
+                    # interactive row path: the legacy helper materializes the
+                    # full column before this page can return.
+                    average = None
+                    origin_type = column.source
+                    reason_column_flag = False
+                    if column.source == SourceChoices.EXPERIMENT_EVALUATION.value:
+                        origin_type = "evaluation"
+                        source_id = column.source_id or ""
+                        metric_id = (
+                            source_id.split("-sourceid-")[1]
+                            if "-sourceid-" in source_id
+                            else source_id
+                        )
+                        reason_column_flag = reason_column_by_metric.get(
+                            metric_id, False
+                        )
+                    elif (
+                        column.source == SourceChoices.EXPERIMENT_EVALUATION_TAGS.value
+                    ):
+                        origin_type = "evaluation_tags"
+                    column_config.append(
+                        {
+                            "id": str(column.id),
+                            "name": column.name,
+                            "is_frozen": None,
+                            "is_visible": True,
+                            "origin_type": origin_type,
+                            "data_type": column.data_type,
+                            "status": getattr(column, "_last_cell_status", None)
+                            or "NotStarted",
+                            "average_score": average,
+                            "reason_column": reason_column_flag,
+                        }
+                    )
+
+                cells_by_row = {
+                    row.id: {"row_id": str(row.id)} for row in paginated_rows
+                }
+                if connection.vendor == "postgresql":
+                    assert_dataset_table_cells_within_limits(
+                        row_ids=[str(row_id) for row_id in row_ids],
+                        column_ids=[
+                            str(column_id) for column_id in projected_column_ids
+                        ],
+                        deadline=deadline,
+                    )
+                if row_ids and projected_column_ids:
+                    deadline.before_query()
+                    page_cells = list(
+                        Cell.no_workspace_objects.filter(
+                            row_id__in=row_ids,
+                            row__dataset=working_dataset,
+                            column_id__in=projected_column_ids,
+                            column__dataset=working_dataset,
+                            row__deleted=False,
+                            column__deleted=False,
+                            deleted=False,
+                        )
+                        .select_related("column")
+                        .order_by("row__order", "row_id", "column_id", "id")
+                    )
+                else:
+                    page_cells = []
+
+                dataset_column_ids = {column.id for column in columns_in_datasets}
+                experiment_column_ids = {column.id for column in columns_in_experiment}
+                for cell in page_cells:
+                    deadline.checkpoint()
+                    row_data = cells_by_row.get(cell.row_id)
+                    if row_data is None:
+                        continue
+                    if (
+                        cell.column_id in dataset_column_ids
+                        and cell.column_id not in experiment_column_ids
+                    ):
+                        row_data[str(cell.column_id)] = {
                             "cell_value": cell.value or "",
                             "status": "completed",
                             "metadata": {},
                         }
+                        continue
 
-            # Build a lookup of reason_column flags keyed by user_eval_metric id
-            # so EXPERIMENT_EVALUATION columns can expose whether they have a
-            # paired reason column.
-            reason_column_by_metric = {}
-            for metric in user_eval_metric:
-                try:
-                    reason_column_by_metric[str(metric.id)] = bool(
-                        metric.template.config.get("reason_column", False)
-                    )
-                except Exception:
-                    reason_column_by_metric[str(metric.id)] = False
-
-            for column in columns_in_experiment:
-                last_cell = column.cell_set.filter(
-                    deleted=False, row__deleted=False, column__deleted=False
-                ).last()
-                origin_type = column.source
-                avg_score = calculate_column_average(column.id)
-                avg_score = avg_score.get("average", None)
-                reason_column_flag = False
-                if column.source == SourceChoices.EXPERIMENT_EVALUATION.value:
-                    origin_type = "evaluation"
-                    # source_id is typically "{edt_id}-sourceid-{user_eval_metric_id}"
-                    sid = column.source_id or ""
-                    metric_id = (
-                        sid.split("-sourceid-")[1] if "-sourceid-" in sid else sid
-                    )
-                    reason_column_flag = reason_column_by_metric.get(metric_id, False)
-                elif column.source == SourceChoices.EXPERIMENT_EVALUATION_TAGS.value:
-                    origin_type = "evaluation_tags"
-
-                column_config.append(
-                    {
-                        "id": str(column.id),
-                        "name": column.name,
-                        "is_frozen": None,
-                        "is_visible": True,
-                        "origin_type": origin_type,
-                        "data_type": column.data_type,
-                        "status": last_cell.status if last_cell else "NotStarted",
-                        "average_score": avg_score,
-                        "reason_column": reason_column_flag,
-                    }
-                )
-
-                for cell in column.cell_set.filter(
-                    deleted=False, row__deleted=False, column__deleted=False
-                ):
-                    if cell.row.deleted is False and cell.column.deleted is False:
+                    value_infos = cell.value_infos
+                    if isinstance(value_infos, str):
                         try:
-                            if str(cell.row_id) not in cells_by_row:
-                                cells_by_row[str(cell.row_id)] = {
-                                    "row_id": str(cell.row_id)
-                                }
-
-                            metadata = {}
+                            value_infos = json.loads(value_infos)
+                        except json.JSONDecodeError:
                             value_infos = {}
-                            value_infos = (
-                                json.loads(cell.value_infos) if cell.value_infos else {}
-                            )
+                    if not isinstance(value_infos, dict):
+                        value_infos = {}
+                    metadata = value_infos.get("metadata", {})
+                    if isinstance(metadata, str):
+                        try:
+                            metadata = json.loads(metadata)
+                        except json.JSONDecodeError:
+                            metadata = {}
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                    usage = metadata.get("usage", {})
+                    if not isinstance(usage, dict):
+                        usage = {}
+                    cell_data = {
+                        "cell_value": cell.value or "",
+                        "status": (
+                            cell.status.lower()
+                            if hasattr(cell.status, "lower")
+                            else cell.status
+                        ),
+                        "metadata": {
+                            "response_time_ms": metadata.get("response_time", 0),
+                            "token_count": usage.get("total_tokens", 0),
+                            "cost": metadata.get("cost", {}),
+                        },
+                    }
+                    if value_infos.get("reason"):
+                        cell_data["value_infos"] = {"reason": value_infos["reason"]}
+                    row_data[str(cell.column_id)] = cell_data
 
-                            if isinstance(value_infos.get("metadata", "{}"), str):
-                                value_infos["metadata"] = json.loads(
-                                    value_infos.get("metadata", "{}")
-                                )
-                                metadata = value_infos.get("metadata", {})
-                            if isinstance(value_infos.get("metadata", {}), dict):
-                                metadata = value_infos.get("metadata", {})
+                response_data = {
+                    "metadata": {
+                        "dataset_name": experiment_dataset.name,
+                        "experiment_id": str(experiment.id),
+                        "experiment_name": experiment.name,
+                        "total_rows": total_rows,
+                        "total_pages": (total_rows + page_size - 1) // page_size,
+                    },
+                    "column_config": column_config,
+                    "table": [cells_by_row[row.id] for row in paginated_rows],
+                }
+                assert_dataset_table_response_within_limits(response_data)
+                deadline.checkpoint()
+                return self._gm.success_response(response_data)
 
-                            # Prepare cell data
-
-                            cell_data = {
-                                "cell_value": cell.value or "",
-                                "status": (
-                                    cell.status.lower()
-                                    if hasattr(cell.status, "lower")
-                                    else cell.status
-                                ),
-                                "metadata": {
-                                    "response_time_ms": metadata.get(
-                                        "response_time", 0
-                                    ),
-                                    "token_count": metadata.get("usage", {}).get(
-                                        "total_tokens", 0
-                                    ),
-                                    "cost": metadata.get("cost", {}),
-                                },
-                            }
-
-                            # Add value_infos if there's a reason
-                            if value_infos.get("reason"):
-                                cell_data["value_infos"] = {
-                                    "reason": value_infos["reason"]
-                                }
-
-                            cells_by_row[str(cell.row_id)][str(column.id)] = cell_data
-
-                        except Exception as e:
-                            logger.error(e)
-                            continue
-
-            row_order_by_id = {
-                str(row.id): row.order
-                for row in Row.no_workspace_objects.filter(id__in=cells_by_row.keys())
-            }
-            all_table_data = sorted(
-                cells_by_row.values(),
-                key=lambda row: (
-                    row_order_by_id.get(str(row["row_id"]), float("inf")),
-                    str(row["row_id"]),
-                ),
+        except ExperimentDatasetIntegrityError as e:
+            logger.warning("Experiment dataset integrity check failed", error=str(e))
+            return _bounded_dataset_error(
+                status_code=status.HTTP_409_CONFLICT,
+                code="experiment_dataset_integrity_error",
+                detail="The experiment dataset configuration is inconsistent.",
             )
-            total_rows = len(all_table_data)
-            table_data = all_table_data[start:end]
-
-            response_data = {
-                "metadata": {
-                    "dataset_name": dataset.name,
-                    "experiment_id": str(experiment.id),
-                    "experiment_name": experiment.name,
-                    "total_rows": total_rows,
-                    "total_pages": (total_rows + page_size - 1) // page_size,
-                },
-                "column_config": column_config,
-                "table": table_data,
-            }
-
-            return self._gm.success_response(response_data)
-
+        except BoundedDatasetPageDepthExceeded as e:
+            return _bounded_dataset_error(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code="page_depth_exceeded",
+                detail=str(e),
+            )
+        except (BoundedDatasetReadLimitExceeded, DatasetTableExactLimitExceeded) as e:
+            return _bounded_dataset_error(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                code="dataset_read_limit_exceeded",
+                detail=str(e),
+            )
+        except (BoundedDatasetReadDeadlineExceeded, DatabaseError):
+            logger.exception("Bounded experiment dataset read failed or timed out")
+            return _bounded_dataset_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="dataset_read_unavailable",
+                detail="The dataset read could not finish within the server deadline.",
+            )
         except Exception as e:
             logger.exception(f"Error in fetching experiment dataset metadata: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -6596,8 +7294,9 @@ class DownloadDatasetView(APIView):
             )
 
 
-from model_hub.models.choices import OwnerChoices  # noqa: E402
 from rest_framework import serializers  # noqa: E402
+
+from model_hub.models.choices import OwnerChoices  # noqa: E402
 
 
 class TemplateEvalSerializer(serializers.Serializer):
@@ -7089,7 +7788,8 @@ class GetEvalsListView(APIView):
                     ).order_by("version_number"),
                     to_attr="_prefetched_versions",
                 ),
-            ).select_related("organization")
+            )
+            .select_related("organization")
         )
 
         if search_text:
@@ -7991,9 +8691,9 @@ class EditAndRunUserEvalView(APIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key][
-                                    "default"
-                                ] = value
+                                new_config["function_params_schema"][key]["default"] = (
+                                    value
+                                )
                     new_template.config = new_config
                     new_template.save()
                     # Assign the full object (not just _id) so the FK cache
@@ -8347,9 +9047,9 @@ class AddUserEvalView(CreateAPIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key][
-                                    "default"
-                                ] = value
+                                new_config["function_params_schema"][key]["default"] = (
+                                    value
+                                )
                     new_template.config = new_config
                     new_template.save()
                     template_id = new_template.id
@@ -14931,6 +15631,7 @@ class CreateKnowledgeBaseView(APIView):
         self, file_bytes, file_name, kb_id, file_id, org_id=None
     ):
         from django.db import close_old_connections, connection
+
         from tfc.utils.storage import upload_file_to_s3
 
         try:

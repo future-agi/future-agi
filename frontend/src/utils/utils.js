@@ -1,4 +1,4 @@
-import { format, formatISO } from "date-fns";
+import { format } from "date-fns";
 import React, { useCallback, useEffect, useRef } from "react";
 import { palette } from "src/theme/palette";
 
@@ -601,7 +601,7 @@ const hexToRgba = (hex, alpha) => {
 };
 
 export const formatISOCustom = (date) => {
-  return formatISO(date).split("+")[0] + ".000Z";
+  return new Date(date).toISOString();
 };
 
 // Start Generation Here
