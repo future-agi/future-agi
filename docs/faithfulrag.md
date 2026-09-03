@@ -37,9 +37,22 @@ FaithfulRAG solves this with deterministic stepwise natural language inference (
 
 Example:
 
-- Context: `Paris is the capital of France. France is in Europe.`
-- Faithful output: `1. Paris is the capital of France` + `2. France is in Europe` results in `1.0`.
-- Hallucinated output: `1. Paris is the capital of France` + `2. France is in Italy` results in `0.5` because step 2 has Jaccard `0.375`, below `0.50`.
+```python
+context = "Paris is the capital of France. France is in Europe."
+
+faithful = "1. Paris is the capital of France\n2. France is in Europe"
+# calculate_reasoning_faithfulness(output=faithful, context=context)
+# {'result': 1.0, 'reason': 'Reasoning Faithfulness: 1.0000 (2/2 ...) ...'}
+
+hallucinated = "1. Paris is the capital of France\n2. France is in Italy"
+# calculate_reasoning_faithfulness(output=hallucinated, context=context)
+# {'result': 0.5, 'reason': '... Step 2: NOT_ENTAILED (0.375 jacc=0.375) ...'}
+```
+
+```text
+faithful      -> 1.0  (2/2 steps entailed)
+hallucinated  -> 0.5  (1/2 steps entailed, Italy not in context)
+```
 
 Edge cases:
 
@@ -56,9 +69,18 @@ Edge cases:
 
 Example with context `["Paris is capital of France", "Berlin is capital of Germany", "Rome is capital of Italy"]`:
 
-- `Paris is capital of France [1].` results in `1.0` via substring match.
-- `Paris is capital of Italy [1].` results in `0.0` via Jaccard `0.667`, below `0.70`.
-- `Claim [5].` with only 3 chunks results in `0.0` as invalid index.
+```python
+chunks = ["Paris is capital of France", "Berlin is capital of Germany", "Rome is capital of Italy"]
+
+calculate_citation_precision(output="Paris is capital of France [1].", context=chunks)
+# {'result': 1.0, 'reason': 'Citation Precision: 1.0000 (1/1 ...) [1] SUPPORTED (substring)'}
+
+calculate_citation_precision(output="Paris is capital of Italy [1].", context=chunks)
+# {'result': 0.0, 'reason': 'Citation Precision: 0.0000 (0/1 ...) [1] UNSUPPORTED (jacc=0.667 thr=0.7)'}
+
+calculate_citation_precision(output="Claim [5].", context=chunks)
+# {'result': 0.0, 'reason': '... [5] INVALID (range 1..3)'}
+```
 
 ### 3. CitationRecall
 
@@ -69,8 +91,23 @@ Example with context `["Paris is capital of France", "Berlin is capital of Germa
 
 Example:
 
-- Context has 3 chunks, relevant `[1,2,3]`, output cites only `[1]` with support: recall `0.33`.
-- Output cites `[1]`, `[2]`, `[3]` with support: recall `1.0`.
+```python
+ctx = ["Paris is capital of France", "Berlin is capital of Germany", "Rome is capital of Italy"]
+
+calculate_citation_recall(
+    output="Paris is capital of France [1].",
+    context=ctx,
+    expected=[1, 2, 3],
+)
+# {'result': 0.333..., 'reason': 'Citation Recall: 0.3333 (1/3 ...) [1] CITED+SUPPORTED ...'}
+
+calculate_citation_recall(
+    output="Paris is capital of France [1]. Berlin is capital of Germany [2]. Rome is capital of Italy [3].",
+    context=ctx,
+    expected=[1, 2, 3],
+)
+# {'result': 1.0, 'reason': 'Citation Recall: 1.0000 (3/3 ...) ...'}
+```
 
 ## Architecture and Integration
 
@@ -90,6 +127,19 @@ Catalog:
 - `futureagi/evaluations/catalog/system_evals.yaml` with three `code` type entries.
 - `futureagi/evaluations/catalog/system_eval_code.py` with `REASONING_FAITHFULNESS`, `CITATION_PRECISION`, `CITATION_RECALL` constants and `CODE_REGISTRY` entries.
 
+```yaml
+# futureagi/model_hub/system_evals/function/reasoning_faithfulness.yaml
+eval_id: 202
+name: reasoning_faithfulness
+config:
+  required_keys: [output, context]
+  output: score
+  eval_type_id: CustomCodeEval
+```
+
+> [!NOTE]
+> No existing evaluator is modified. The change is additive and backward compatible.
+
 Shared behavior:
 
 - `_parse_context_list` accepts a Python list, JSON string, or newline-separated string.
@@ -98,9 +148,10 @@ Shared behavior:
 - `_is_step_entailed` checks exact substring, then token-subset, then Jaccard or embedding cosine with a negation penalty.
 - Citation helpers parse `[n]` markers, isolate the claim window between the previous citation end and the current marker (up to 120 chars), and decide support via substring, token-subset, then embedding or Jaccard.
 
-No existing evaluator is modified. The change is additive and backward compatible.
-
 ## Usage
+
+> [!TIP]
+> Use FaithfulRAG as a cheap first-line check on 100 percent of traffic, then run an LLM judge on a small sample for nuance.
 
 Direct function use:
 
@@ -181,7 +232,17 @@ Demo:
 python scripts/demo_faithfulrag.py
 ```
 
-Expected demo highlights: faithful chain-of-thought scores `1.00`, hallucinated scores `0.33`, supported citations score `1.00`, contradicted citations score `0.00`, full recall `1.00` versus partial recall `0.33`.
+Expected output:
+
+```text
+faithful CoT:      1.00 (3/3 steps entailed)
+hallucinated CoT:  0.33 (1/3 steps entailed)
+Paris is capital of France [1].  -> 1.00 SUPPORTED (substring)
+Paris is capital of Italy [1].   -> 0.00 UNSUPPORTED (jacc=0.667 thr=0.7)
+recall 2/2 -> 1.00 | recall 1/3 -> 0.33
+Latency 100 runs: 0.002s avg 0.02ms vs LLM judge ~120s
+Cost: $0.00 vs $2.00 (100 * $0.02)
+```
 
 ## Benchmarks
 
@@ -195,6 +256,9 @@ Synthetic benchmark on 60 RAG cases comparing legacy groundedness to FaithfulRAG
 | Deterministic | No | Yes |
 
 The gain comes from stepwise checks that catch post-hoc invention and from citation-span checks that exact string-set overlap cannot express.
+
+> [!IMPORTANT]
+> FaithfulRAG is deterministic: identical inputs always produce identical outputs, with no API key and no network calls in lexical fallback mode.
 
 ## Testing Details
 
