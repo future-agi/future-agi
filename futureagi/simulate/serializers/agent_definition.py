@@ -251,6 +251,10 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         """Object-level validations that depend on multiple fields"""
         # Use incoming data with fallback to existing instance for partial updates
         agent_type = attrs.get("agent_type", getattr(self.instance, "agent_type", None))
+        if agent_type == AgentTypeChoices.CUA:
+            raise serializers.ValidationError(
+                {"agent_type": "CUA agents are reserved and not yet runnable in simulation."}
+            )
         contact_number = attrs.get(
             "contact_number", getattr(self.instance, "contact_number", None)
         )

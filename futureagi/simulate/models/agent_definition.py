@@ -16,6 +16,7 @@ class AgentDefinitionAuthenticationChoices(models.TextChoices):
 class AgentTypeChoices(models.TextChoices):
     VOICE = "voice", "Voice"
     TEXT = "text", "Text"
+    CUA = "cua", "CUA (reserved, not yet runnable)"
 
 
 class AgentDefinition(BaseModel):
