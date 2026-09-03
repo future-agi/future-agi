@@ -106,6 +106,37 @@ def _validate_secret_refs_daytona(secret_refs: dict) -> None:
             )
 
 
+def _validate_known_daytona_egress(
+    payload: dict[str, Any], callback_url: str
+) -> None:
+    """Reject known Daytona egress overflow before persisting or enqueueing a
+    job."""
+    from simulate.services.hosted_harness_gateway import (
+        _known_simulator_egress_inputs,
+        _hostname_from_url,
+        _resolved_egress_domains,
+        _validate_egress_domains,
+        _validate_resolved_egress_domains,
+    )
+
+    security = payload.get("security") or {}
+    customer_domains = security.get("allowed_egress_domains") or []
+    agent = payload.get("agent") or {}
+    secret_refs = agent.get("secret_refs") or {}
+    # Admission has references, not decrypted values. An alias is enough to
+    # account for static provider dependencies; launch resolves value-derived
+    # connector endpoints authoritatively.
+    target_inputs = {str(alias): "" for alias in secret_refs}
+    _validate_egress_domains(customer_domains)
+    domains = _resolved_egress_domains(
+        payload,
+        target_inputs,
+        _known_simulator_egress_inputs(),
+        _hostname_from_url(callback_url),
+    )
+    _validate_resolved_egress_domains(domains)
+
+
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     attempt = job.attempts.order_by("-attempt_number").first()
     events: list[dict[str, Any]] = []
@@ -248,7 +279,6 @@ class DaytonaHarnessProvider:
             HostedHarnessError,
             create_hosted_job,
         )
-        from simulate.services.hosted_harness_gateway import _validate_egress_domains
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
         organization = _organization(request)
@@ -263,26 +293,25 @@ class DaytonaHarnessProvider:
                 {"detail": "Idempotency-Key header is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Validate egress and secret refs at admission.
+        payload = request.validated_data
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        # This uses only references/configuration and deployment env presence.
+        # Definitive launch validation runs again after vault resolution.
         try:
-            _validate_egress_domains(
-                request.validated_data["security"]["allowed_egress_domains"]
-            )
-            _validate_secret_refs_daytona(
-                request.validated_data["agent"]["secret_refs"]
-            )
+            _validate_secret_refs_daytona(payload["agent"]["secret_refs"])
+            _validate_known_daytona_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         try:
             job, _ = create_hosted_job(
                 organization,
-                request.validated_data,
+                payload,
                 idempotency_key=idempotency_key,
                 workspace=_workspace(request),
             )
-            base_url = getattr(
-                settings, "HARNESS_PUBLIC_BASE_URL", ""
-            ) or request.build_absolute_uri("/").rstrip("/")
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
                 str(job.id),
@@ -313,12 +342,15 @@ class DaytonaHarnessProvider:
         from simulate.services.hosted_harness_gateway import (
             HOSTED_ENGINE_CATALOG,
             HOSTED_RUNTIME_CATALOG,
-            _validate_egress_domains,
         )
-
         payload = request.validated_data
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
         try:
-            _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+            _validate_secret_refs_daytona(payload["agent"]["secret_refs"])
+            _validate_known_daytona_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         runtime = payload["runtime"]

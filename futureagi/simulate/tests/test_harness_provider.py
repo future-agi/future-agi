@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +15,7 @@ from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services.harness_provider import (
     DaytonaHarnessProvider,
     SandboxHarnessProvider,
+    _validate_known_daytona_egress,
     get_harness_provider,
 )
 from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
@@ -124,6 +126,67 @@ def test_customer_cannot_use_reserved_simulator_alias_for_agent_secret():
 
     assert not serializer.is_valid()
     assert "reserved" in str(serializer.errors)
+
+
+def test_known_daytona_egress_rejects_overflow_without_vault_resolution(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+        f"base-{index}.example.com" for index in range(19)
+    ]
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    with pytest.raises(HostedHarnessError, match="Daytona supports at most 20"):
+        _validate_known_daytona_egress(
+            _v1_payload(), "https://harness.example.test/"
+        )
+
+
+def test_daytona_preflight_rejects_known_egress_overflow(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+        f"base-{index}.example.com" for index in range(19)
+    ]
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    request = SimpleNamespace(
+        validated_data=_v1_payload(),
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+
+    response = DaytonaHarnessProvider().preflight(request)
+
+    assert response.status_code == 400
+    assert response.data["error"] == "egress_domain_limit_exceeded"
+
+
+@pytest.mark.django_db
+def test_daytona_create_rejects_known_egress_overflow_before_persisting(
+    user, workspace, settings
+):
+    settings.HARNESS_PROVIDER = "daytona"
+    settings.HARNESS_PUBLIC_BASE_URL = "https://harness.example.test"
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+        f"base-{index}.example.com" for index in range(19)
+    ]
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    with (
+        patch("simulate.services.hosted_harness.create_hosted_job") as create,
+        patch(
+            "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+        ) as start,
+    ):
+        response = client.post(
+            "/simulate/api/harness-jobs/",
+            _v1_payload(),
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="known-egress-overflow",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "egress_domain_limit_exceeded"
+    create.assert_not_called()
+    start.assert_not_called()
 
 
 def test_harness_create_cors_preflight_allows_idempotency_key():
