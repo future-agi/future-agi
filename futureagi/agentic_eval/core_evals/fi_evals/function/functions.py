@@ -4004,6 +4004,216 @@ def calculate_fleiss_kappa(output, expected=None, **kwargs):
     return {"result": score, "reason": f"Fleiss' Kappa: {kappa:.4f}, normalized={score:.4f}"}
 
 
+_BLOCKED_CODE_PATTERNS = (
+    (r"\bos\.system\s*\(", "os.system"),
+    (r"\bsubprocess\s*\.", "subprocess"),
+    (r"\bsocket\s*\.", "socket"),
+    (r"\beval\s*\(", "eval"),
+    (r"\bexec\s*\(", "exec"),
+    (r"\b__import__\s*\(", "__import__"),
+    (r"\bopen\s*\(", "open"),
+    (r"\binput\s*\(", "input"),
+    (r"\bcompile\s*\(", "compile"),
+)
+
+
+def _parse_code_tests(expected):
+    """Parse expected into a list of test dicts.
+
+    Accepted shapes:
+    - JSON array of {"func": str, "args": list, "kwargs": dict, "expected": any}
+    - JSON object {"func": str, "cases": [{"args": [...], "expected": ...}]}
+    - Plain string with assert statements (one per line).
+    """
+    if expected is None:
+        return [], "none"
+    if isinstance(expected, list):
+        return expected, "list"
+    if isinstance(expected, dict):
+        if isinstance(expected.get("cases"), list):
+            func = expected.get("func", "")
+            cases = []
+            for case in expected["cases"]:
+                if isinstance(case, dict):
+                    cases.append(
+                        {
+                            "func": case.get("func", func),
+                            "args": case.get("args", []),
+                            "kwargs": case.get("kwargs", {}),
+                            "expected": case.get("expected"),
+                        }
+                    )
+            return cases, "object"
+        return [expected], "object"
+    if isinstance(expected, str):
+        text = expected.strip()
+        if not text:
+            return [], "empty"
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+                return _parse_code_tests(parsed)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        return [{"assert": line} for line in lines], "asserts"
+    return [], "unknown"
+
+
+def _run_candidate_tests(code, tests, timeout=5):
+    """Run candidate code plus tests in an isolated subprocess.
+
+    Returns (passed, total, details). Never raises: failures are reported
+    as details entries.
+    """
+    harness_lines = ["import json", "_RESULTS = []"]
+    for index, test in enumerate(tests):
+        if "assert" in test:
+            stmt = test["assert"]
+            harness_lines.append("try:")
+            harness_lines.append(f"    {stmt}")
+            harness_lines.append(f"    _RESULTS.append({{'index': {index}, 'passed': True}})")
+            harness_lines.append("except AssertionError as exc:")
+            harness_lines.append(
+                f"    _RESULTS.append({{'index': {index}, 'passed': False, 'error': str(exc)[:200]}})"
+            )
+            harness_lines.append("except Exception as exc:")
+            harness_lines.append(
+                f"    _RESULTS.append({{'index': {index}, 'passed': False, 'error': type(exc).__name__ + ': ' + str(exc)[:200]}})"
+            )
+        else:
+            func = str(test.get("func", "")).strip()
+            args = test.get("args", [])
+            kwargs = test.get("kwargs", {})
+            if not func:
+                harness_lines.append(
+                    f"_RESULTS.append({{'index': {index}, 'passed': False, 'error': 'missing func'}})"
+                )
+                continue
+            try:
+                args_repr = repr(list(args) if isinstance(args, list) else args)
+                kwargs_repr = repr(dict(kwargs) if isinstance(kwargs, dict) else {})
+                expected_repr = repr(test.get("expected"))
+            except Exception:
+                harness_lines.append(
+                    f"_RESULTS.append({{'index': {index}, 'passed': False, 'error': 'bad test encoding'}})"
+                )
+                continue
+            harness_lines.append("try:")
+            harness_lines.append(f"    _CALL = {func}(*{args_repr}, **{kwargs_repr})")
+            harness_lines.append(f"    _EXP = {expected_repr}")
+            harness_lines.append("    _OK = (_CALL == _EXP)")
+            harness_lines.append(
+                f"    _RESULTS.append({{'index': {index}, 'passed': bool(_OK), 'got': repr(_CALL)[:200]}})"
+            )
+            harness_lines.append("except Exception as exc:")
+            harness_lines.append(
+                f"    _RESULTS.append({{'index': {index}, 'passed': False, 'error': type(exc).__name__ + ': ' + str(exc)[:200]}})"
+            )
+    harness_lines.append("print(json.dumps(_RESULTS))")
+    script = str(code) + "\n\n" + "\n".join(harness_lines) + "\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
+        handle.write(script)
+        path = handle.name
+    try:
+        completed = subprocess.run(
+            ["python3", "-I", "-u", path],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2,
+        )
+    except subprocess.TimeoutExpired:
+        return 0, len(tests), [f"timeout after {timeout}s"]
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    if completed.returncode != 0 and not completed.stdout.strip():
+        err = (completed.stderr or "").strip()[:500]
+        return 0, len(tests), [f"harness error: {err or 'exit ' + str(completed.returncode)}"]
+    try:
+        results = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, ValueError, IndexError):
+        out = (completed.stdout or "").strip()[:500]
+        return 0, len(tests), [f"unparseable harness output: {out}"]
+    passed = sum(1 for item in results if item.get("passed"))
+    details = []
+    for item in results:
+        if item.get("passed"):
+            details.append(f"case {item.get('index')}: PASS")
+        else:
+            info = item.get("error") or f"got {item.get('got')}"
+            details.append(f"case {item.get('index')}: FAIL ({info})")
+    return passed, len(tests), details
+
+
+def calculate_code_execution_pass(output, expected=None, timeout=5, **kwargs):
+    """Code execution pass rate: run candidate code against tests in a subprocess.
+
+    Unlike SyntaxValidation, CodeComplexity, and CodeBleu, this evaluator
+    executes the code. Each test case is isolated in one subprocess run with
+    a timeout, so infinite loops fail closed instead of hanging the worker.
+
+    Args:
+        output: Candidate Python code defining the function under test.
+        expected: Tests as JSON array, {"func", "cases"} object, or assert lines.
+        timeout: Per-run timeout in seconds (default 5, clamped to 1..30).
+
+    Returns:
+        dict: {"result": float passed/total, "reason": str}
+    """
+    code = str(output or "").strip()
+    if not code:
+        return {"result": 0.0, "reason": "Empty code: no tests executed"}
+    try:
+        timeout_value = int(float(kwargs.get("timeout", timeout)))
+    except (TypeError, ValueError):
+        timeout_value = 5
+    timeout_value = max(1, min(30, timeout_value))
+    try:
+        import ast as _ast
+
+        _ast.parse(code)
+    except SyntaxError as exc:
+        return {"result": 0.0, "reason": f"Syntax error, no tests executed: {exc}"}
+    tests, _shape = _parse_code_tests(
+        expected if expected is not None else kwargs.get("tests", kwargs.get("test_cases"))
+    )
+    if not tests:
+        return {"result": 0.0, "reason": "No test cases provided in expected"}
+    passed, total, details = _run_candidate_tests(code, tests, timeout=timeout_value)
+    score = passed / total if total else 0.0
+    return {
+        "result": float(score),
+        "reason": f"Code Execution Pass: {score:.4f} ({passed}/{total} passed, timeout={timeout_value}s) | "
+        + " || ".join(details),
+    }
+
+
+def calculate_code_safety(output, **kwargs):
+    """Static safety scan for risky patterns in candidate code.
+
+    Lightweight Bandit-style check with no extra dependencies. Flags
+    os.system, subprocess, socket, eval, exec, open, and raw imports.
+    Returns 1.0 when clean, decreasing per finding.
+    """
+    code = str(output or "")
+    if not code.strip():
+        return {"result": 0.0, "reason": "Empty code"}
+    findings = []
+    for pattern, label in _BLOCKED_CODE_PATTERNS:
+        if re.search(pattern, code):
+            findings.append(label)
+    if not findings:
+        return {"result": 1.0, "reason": "Code Safety: 1.0000 (no risky patterns)"}
+    score = max(0.0, 1.0 - 0.25 * len(findings))
+    return {
+        "result": float(score),
+        "reason": f"Code Safety: {score:.4f} (flagged: {', '.join(findings)})",
+    }
+
+
 """
 A dictionary containing the available operations and their corresponding functions.
 """
@@ -4098,4 +4308,6 @@ operations = {
     "IsRefusal": is_refusal,
     "LatencyCheck": latency_check,
     "FleissKappa": calculate_fleiss_kappa,
+    "CodeExecutionPass": calculate_code_execution_pass,
+    "CodeSafety": calculate_code_safety,
 }
