@@ -1,6 +1,5 @@
 import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { ApiError } from '../../lib/api-client';
 
 // Pinned from frontend/src/utils/axios.js (endpoints.develop.runPrompt):
 //   getNameChange     -> /model-hub/prompt-templates/{id}/save-name/
@@ -29,12 +28,12 @@ test('PROMPT-E2E-005: renaming and deleting a prompt from its row', {
     steps: ['seed two prompts',
             'open All Prompts',
             'rename the first from its row menu',
-            'try to give the second that same name and be refused',
+            'rename the second to that same name in the dialog and read the refusal',
             'delete the second from its row menu',
             'read the list'],
     backendChecks: [
       'save-name persists the new name on the PG row',
-      "save-name refuses a name already used by another template in the org, and the second prompt's name is unchanged",
+      "renaming to a name already used in the org is refused with a 400, the dialog surfaces the error and stays open, and the second prompt's name is unchanged in PG",
       'bulk-delete soft-deletes: the PG row survives with deleted=true',
       'the list endpoint no longer returns the deleted prompt but still returns the renamed one',
       'the list shows the renamed row and no row for the deleted prompt',
@@ -88,12 +87,29 @@ test('PROMPT-E2E-005: renaming and deleting a prompt from its row', {
     expect(rows[0].name).toBe(keeper);
   });
 
-  await test.step('API: a name already taken in the org is refused', async () => {
-    // views/prompt_template.py:3931-3942 rejects a duplicate with a 400 before
-    // touching the row; ApiClient turns any >=400 into ApiError.
-    const clash = actor.api.post(SAVE_NAME_PATH(second.root_template), { name: keeper });
-    await expect(clash).rejects.toThrow(ApiError);
-    await expect(clash).rejects.toMatchObject({ status: 400 });
+  await test.step('UI: renaming the second to the taken name is refused in the dialog', async () => {
+    const row = rowFor(second.root_template);
+    await expect(row).toHaveCount(1, { timeout: UI_READY });
+
+    // views/prompt_template.py:3931-3942 rejects the duplicate with a 400
+    // before touching the row.
+    const refused = page.waitForResponse(
+      (r) => r.url().includes(SAVE_NAME_PATH(second.root_template)) && r.status() === 400,
+      { timeout: UI_READY });
+    await row.getByRole('button').click();
+    await page.getByRole('menuitem', { name: 'Rename' }).click();
+    await page.getByRole('dialog').getByLabel('Name').fill(keeper);
+    await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
+    await refused;
+
+    // App.jsx:75-94 (MutationCache onError) surfaces the backend message as an
+    // error snackbar; the text is error_codes.py TEMPLATE_ALREADY_EXIST.
+    await expect(page.getByText('A template with this name already exists.'))
+      .toBeVisible({ timeout: UI_READY });
+    // RenameItem.jsx closes the dialog only onSuccess, so the refusal leaves it
+    // open with the rejected name still in the field.
+    await expect(page.getByRole('dialog').getByLabel('Name')).toHaveValue(keeper);
+    await page.keyboard.press('Escape');
 
     const rows = await probe.pg<{ name: string }>(
       'SELECT name FROM model_hub_prompttemplate WHERE id = $1',

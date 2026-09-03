@@ -201,7 +201,7 @@
 ### PROMPT-E2E-005 — renaming and deleting a prompt from its row
 
 **Goal:** A user renames a prompt from its row and deletes one they no longer want, and the list reflects both  
-**Spec:** `flows/prompts/rename-and-delete.spec.ts:24`  
+**Spec:** `flows/prompts/rename-and-delete.spec.ts:23`  
 **Tags:** —
 
 **User steps:**
@@ -209,14 +209,14 @@
 1. seed two prompts
 2. open All Prompts
 3. rename the first from its row menu
-4. try to give the second that same name and be refused
+4. rename the second to that same name in the dialog and read the refusal
 5. delete the second from its row menu
 6. read the list
 
 **Backend state verified:**
 
 - save-name persists the new name on the PG row
-- save-name refuses a name already used by another template in the org, and the second prompt's name is unchanged
+- renaming to a name already used in the org is refused with a 400, the dialog surfaces the error and stays open, and the second prompt's name is unchanged in PG
 - bulk-delete soft-deletes: the PG row survives with deleted=true
 - the list endpoint no longer returns the deleted prompt but still returns the renamed one
 - the list shows the renamed row and no row for the deleted prompt
