@@ -26,6 +26,7 @@ from simulate.services.hosted_harness_gateway import (
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
+    _provider_import_authoring_material,
     _resolved_egress_domains,
     _validate_resolved_egress_domains,
     attach_platform_simulator_secret_refs,
@@ -56,7 +57,9 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.delenv("ALK_HARNESS", raising=False)
     monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
-    monkeypatch.setenv("LIVEKIT_API_SECRET", "must-not-be-copied")
+    monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "platform-livekit-key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
 
     values, credential_bytes = _platform_simulator_material()
 
@@ -65,9 +68,11 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
         _SIMULATOR_VERTEX_CREDENTIALS_PATH
     )
     assert values["DEEPGRAM_API_KEY"] == "platform-deepgram-secret"
+    assert values["LIVEKIT_URL"] == "wss://platform-livekit.example"
+    assert values["LIVEKIT_API_KEY"] == "platform-livekit-key"
+    assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
     assert values["ALK_HARNESS"] == "vertex-gemini"
     assert credential_bytes == credentials.read_bytes()
-    assert not any(name.startswith("LIVEKIT_") for name in values)
 
 
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
@@ -105,6 +110,33 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
     }
 
 
+def test_provider_egress_includes_vapi_and_retell_call_hosts():
+    assert _provider_egress_domains({"VAPI_API_KEY": "opaque"}) == {
+        "api.vapi.ai",
+    }
+
+
+def test_provider_import_authoring_gets_only_the_matching_target_key():
+    job = SimpleNamespace()
+    payload = {"agent": {"connector": "retell", "mode": "provider_import"}}
+    with patch(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        return_value={
+            "RETELL_API_KEY": "retell-target-secret",
+            "UNRELATED_AGENT_SECRET": "must-not-travel",
+        },
+    ):
+        material, connector = _provider_import_authoring_material(job, payload)
+
+    assert connector == "retell"
+    assert material == {"RETELL_API_KEY": "retell-target-secret"}
+    assert _provider_egress_domains({"RETELL_API_KEY": "opaque"}) == {
+        "api.retellai.com",
+        "*.livekit.cloud",
+        "*.turn.livekit.cloud",
+    }
+
+
 def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
     settings, monkeypatch, tmp_path
 ):
@@ -124,6 +156,25 @@ def test_platform_simulator_secrets_are_namespaced_and_not_request_controlled(
     assert resolved == {
         "SIMULATOR_DEEPGRAM_API_KEY": "platform-deepgram",
         "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": '{"project_id":"futureagi"}',
+    }
+
+
+def test_platform_livekit_is_available_only_as_simulator_configuration(
+    settings, monkeypatch
+):
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {
+        "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
+        "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
+        "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
+    }
+    monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "platform-key")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-secret")
+
+    assert resolve_platform_simulator_secrets() == {
+        "SIMULATOR_LIVEKIT_URL": "wss://platform-livekit.example",
+        "SIMULATOR_LIVEKIT_API_KEY": "platform-key",
+        "SIMULATOR_LIVEKIT_API_SECRET": "platform-secret",
     }
 
 
@@ -499,6 +550,26 @@ def test_dispatch_payload_mirrors_only_livekit_url():
     assert "must-not-be-copied" not in json.dumps(dispatched)
 
 
+@pytest.mark.parametrize("connector", ["vapi", "retell"])
+def test_dispatch_payload_uses_platform_livekit_url_for_provider_voice(connector):
+    payload = {"agent": {"connector": connector, "config": {}}}
+
+    dispatched = prepare_dispatch_payload(
+        payload,
+        {"VAPI_API_KEY": "target-only"},
+        simulator_secrets={
+            "LIVEKIT_URL": "wss://platform-livekit.example",
+            "LIVEKIT_API_KEY": "must-not-be-copied",
+            "LIVEKIT_API_SECRET": "must-not-be-copied",
+        },
+    )
+
+    assert dispatched["agent"]["config"] == {
+        "livekit_url": "wss://platform-livekit.example"
+    }
+    assert "must-not-be-copied" not in json.dumps(dispatched)
+
+
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     organization, monkeypatch
@@ -682,6 +753,57 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "platform.example.com",
         "us-east5-aiplatform.googleapis.com",
     }
+
+
+@pytest.mark.django_db
+def test_unified_provider_import_authoring_receives_one_shot_target_key(
+    organization, settings, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    payload["agent"] = {
+        "connector": "retell",
+        "mode": "provider_import",
+        "config": {"agent_id": "source-retell-agent"},
+        "secret_refs": {"RETELL_API_KEY": {}},
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="unified-provider-import-authoring"
+    )
+    client = _Daytona()
+    gateway = object.__new__(DaytonaHostedGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.PlatformSecretResolver.resolve",
+        lambda _self, _job: {
+            "RETELL_API_KEY": "retell-target-secret",
+            "UNRELATED_AGENT_SECRET": "must-not-enter-authoring-file",
+        },
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: ({}, None),
+    )
+
+    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    one_shot_path = "/run/futureagi/authoring-target-secrets.json"
+    assert json.loads(client.sandbox.fs.uploads[one_shot_path]) == {
+        "RETELL_API_KEY": "retell-target-secret"
+    }
+    command = client.sandbox.process.session_request.command
+    assert f"--target-secrets {one_shot_path}" in command
+    assert "--provider-profile-cache /work/provider-import-profile.json" in command
+    assert "retell-target-secret" not in command
+    assert "must-not-enter-authoring-file" not in client.sandbox.fs.uploads[one_shot_path].decode()
+    assert one_shot_path in client.sandbox.process.exec_calls[0]
 
 
 @pytest.mark.django_db

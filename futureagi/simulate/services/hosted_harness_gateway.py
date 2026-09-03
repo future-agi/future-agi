@@ -24,6 +24,8 @@ import requests
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
+from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 from simulate.models import (
     HostedHarnessAttempt,
@@ -36,8 +38,6 @@ from simulate.services.hosted_harness import (
     register_attempt,
     request_cancellation,
 )
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 logger = logging.getLogger("simulate.hosted_harness_gateway")
 
@@ -133,6 +133,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_MODEL": model,
     }
     for name in (
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
@@ -747,6 +750,21 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
         or selected_llm_provider in {"gemini", "google", "google-ai"}
     ):
         domains.add("generativelanguage.googleapis.com")
+    if "VAPI_API_KEY" in aliases:
+        # Both repository-owned lifecycle commands and the direct websocket caller use Vapi's
+        # public API. Vapi's documented websocket URL is also hosted on api.vapi.ai.
+        domains.add("api.vapi.ai")
+    if "RETELL_API_KEY" in aliases:
+        # Retell web calls are created through its API, then bridged through Retell's managed
+        # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
+        # instead of asking customers to understand Daytona's network policy.
+        domains.update(
+            {
+                "api.retellai.com",
+                "*.livekit.cloud",
+                "*.turn.livekit.cloud",
+            }
+        )
     if aliases & {"DEEPGRAM_API_KEY"} and (
         not selected_audio_providers or "deepgram" in selected_audio_providers
     ):
@@ -1012,6 +1030,21 @@ class DaytonaHostedGateway:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
 
+        # An imported provider target is part of the agent source of truth. Give the isolated
+        # authoring control process only the one provider credential it needs to fetch a
+        # read-only, sanitized behavioral profile. It is uploaded as a one-shot file rather than
+        # put in the model environment, and the guest deletes it before any model/source process
+        # starts.
+        authoring_target_secrets, connector = _provider_import_authoring_material(
+            job, payload
+        )
+        logger.info(
+            "hosted authoring provider profile job=%s connector=%s credential=%s",
+            job.id,
+            connector or "none",
+            "available" if authoring_target_secrets else "unavailable",
+        )
+
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
@@ -1043,8 +1076,20 @@ class DaytonaHostedGateway:
                 )
             )
         )[:20]
+        if authoring_target_secrets:
+            provider_domain = {
+                "vapi": "api.vapi.ai",
+                "retell": "api.retellai.com",
+            }.get(connector)
+            if provider_domain and provider_domain not in allowed_domains:
+                allowed_domains = [provider_domain, *allowed_domains][:20]
         authoring_env = {
-            **simulator_env,
+            **{
+                name: value
+                for name, value in simulator_env.items()
+                if name
+                not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
+            },
             "CLAUDE_CODE_USE_VERTEX": "1",
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
@@ -1109,6 +1154,13 @@ class DaytonaHostedGateway:
                     simulator_vertex_credentials,
                     _SIMULATOR_VERTEX_CREDENTIALS_PATH,
                 )
+            authoring_secrets_arg = ""
+            if authoring_target_secrets:
+                authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
+                authoring_secrets_arg = (
+                    f" --target-secrets {authoring_secrets_path}"
+                    " --provider-profile-cache /work/provider-import-profile.json"
+                )
             prepared = sandbox.process.exec(
                 "tar -xzf /work/source.tar.gz -C /work && rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source",
@@ -1132,10 +1184,38 @@ class DaytonaHostedGateway:
             run_timeout = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 1500))
             detail = "authoring produced no scenarios"
             for _ in range(attempts):
+                if authoring_target_secrets:
+                    # The guest consumes and deletes this credential before invoking the model.
+                    # If inspection itself fails, authoring retries need a fresh one-shot copy.
+                    # Once the sanitized cache exists, never upload the credential again: this
+                    # keeps it out of subsequent model sessions and out of the frozen archive.
+                    cached_profile = sandbox.process.exec(
+                        "test -f /work/provider-import-profile.json", timeout=30
+                    )
+                    if cached_profile.exit_code:
+                        sandbox.fs.upload_file(
+                            json.dumps(
+                                authoring_target_secrets,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode(),
+                            authoring_secrets_path,
+                        )
+                        protected = sandbox.process.exec(
+                            f"chmod 600 {authoring_secrets_path}", timeout=30
+                        )
+                        if protected.exit_code:
+                            raise HostedHarnessError(
+                                "authoring_secret_prepare_failed",
+                                str(protected.result or "")[-500:],
+                                status_code=502,
+                                retryable=True,
+                            )
                 run = sandbox.process.exec(
                     "rm -rf /work/authoring && "
                     "python -m fi.alk.harness.authoring_entrypoint /work/job.json "
-                    "--source /work/source --output /work/authoring",
+                    "--source /work/source --output /work/authoring"
+                    + authoring_secrets_arg,
                     env=authoring_env,
                     timeout=run_timeout,
                 )
@@ -1202,7 +1282,8 @@ class DaytonaHostedGateway:
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "$(ls -d world.sqlite schema.sql store.json collections.json "
-                "contract.json environment.json scenarios.json simulator_prompt.md "
+                "contract.json environment.json provider-import-profile.json "
+                "scenarios.json simulator_prompt.md "
                 "scenarios handlers 2>/dev/null)",
                 timeout=180,
             )
@@ -1250,7 +1331,14 @@ class DaytonaHostedGateway:
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        dispatch_payload = prepare_dispatch_payload(payload, secrets_map)
+        authoring_target_secrets, _authoring_connector = (
+            _provider_import_authoring_material(job, payload)
+            if authoring_archive is None
+            else ({}, "")
+        )
+        dispatch_payload = prepare_dispatch_payload(
+            payload, secrets_map, simulator_secrets=simulator_env
+        )
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
             payload,
@@ -1357,6 +1445,20 @@ class DaytonaHostedGateway:
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
                 "/run/futureagi/secrets.json",
             )
+            authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
+            if authoring_target_secrets:
+                # Imported provider configuration is source material for authoring. Give the
+                # control process only the matching provider key in a one-shot file; ALK removes
+                # it before any model or source process starts. The normal target secret remains
+                # separately available to the eventual provider lifecycle process.
+                sandbox.fs.upload_file(
+                    json.dumps(
+                        authoring_target_secrets,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                    authoring_secrets_path,
+                )
             sandbox.fs.upload_file(
                 json.dumps(
                     simulator_env, sort_keys=True, separators=(",", ":")
@@ -1403,6 +1505,8 @@ class DaytonaHostedGateway:
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
                 "/run/futureagi/capabilities.json "
                 f"{_SIMULATOR_SECRETS_PATH} "
+                + (authoring_secrets_path if authoring_target_secrets else "")
+                + " "
                 + (
                     _SIMULATOR_VERTEX_CREDENTIALS_PATH
                     if simulator_vertex_credentials is not None
@@ -1439,6 +1543,12 @@ class DaytonaHostedGateway:
                 f"{name}={shlex.quote(value)}"
                 for name, value in sorted(authoring_exports.items())
             )
+            provider_profile_args = (
+                f"--target-secrets {authoring_secrets_path} "
+                "--provider-profile-cache /work/provider-import-profile.json "
+                if authoring_target_secrets
+                else ""
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SessionExecuteRequest(
@@ -1447,7 +1557,9 @@ class DaytonaHostedGateway:
                         + "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        f"--adjustments {_ADJUSTMENTS_PATH}; "
+                        f"--adjustments {_ADJUSTMENTS_PATH} "
+                        + provider_profile_args
+                        + "; "
                         "fi && "
                         "python -m fi.alk.harness.bundle_author_v2 "
                         "--job /work/job.json --source /work/source "
@@ -2299,8 +2411,30 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
     return resolved
 
 
+def _provider_import_authoring_material(
+    job: HostedHarnessJob, payload: dict[str, Any]
+) -> tuple[dict[str, str], str]:
+    """Resolve only the provider key needed for read-only imported-target inspection."""
+    agent = payload.get("agent") or {}
+    connector = str(agent.get("connector") or "").strip().lower()
+    if str(agent.get("mode") or "") != "provider_import":
+        return {}, connector
+    secret_name = {
+        "vapi": "VAPI_API_KEY",
+        "retell": "RETELL_API_KEY",
+    }.get(connector)
+    if not secret_name:
+        return {}, connector
+    resolved = PlatformSecretResolver().resolve(job)
+    value = str(resolved.get(secret_name) or "")
+    return ({secret_name: value} if value else {}), connector
+
+
 def prepare_dispatch_payload(
-    payload: dict[str, Any], secrets_map: dict[str, str]
+    payload: dict[str, Any],
+    secrets_map: dict[str, str],
+    *,
+    simulator_secrets: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Add non-secret connector configuration derived from run-scoped secrets.
 
@@ -2313,12 +2447,19 @@ def prepare_dispatch_payload(
     dispatched = dict(payload)
     agent = dict(dispatched.get("agent") or {})
     config = dict(agent.get("config") or {})
-    if (
-        str(agent.get("connector") or "").lower() == "livekit"
-        and not config.get("livekit_url")
-        and secrets_map.get("LIVEKIT_URL")
-    ):
-        config["livekit_url"] = secrets_map["LIVEKIT_URL"]
+    connector = str(agent.get("connector") or "").lower()
+    # LiveKit targets use the customer's signaling URL. Provider-hosted voice
+    # targets are dialed by our simulator and therefore use the platform-owned
+    # LiveKit URL from the isolated simulator channel.
+    livekit_url = (
+        secrets_map.get("LIVEKIT_URL")
+        if connector == "livekit"
+        else (simulator_secrets or {}).get("LIVEKIT_URL")
+    )
+    if connector in {"livekit", "vapi", "retell"} and not config.get(
+        "livekit_url"
+    ) and livekit_url:
+        config["livekit_url"] = livekit_url
         agent["config"] = config
         dispatched["agent"] = agent
     return dispatched

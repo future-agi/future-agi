@@ -193,11 +193,20 @@ def register_attempt(
         )
         job.current_attempt_number = attempt_number
         job.state = HostedHarnessJob.State.PROVISIONING
+        # A retry is a fresh active attempt. Do not keep presenting the previous
+        # attempt's terminal state while Daytona is launching (or even running)
+        # the replacement guest.
+        job.current_stage = "queued"
+        job.failure = None
+        job.terminal_at = None
         job.deadline_at = runnable_deadline
         job.save(
             update_fields=[
                 "current_attempt_number",
                 "state",
+                "current_stage",
+                "failure",
+                "terminal_at",
                 "deadline_at",
                 "updated_at",
             ]
@@ -218,6 +227,7 @@ def register_attempt(
             "results": f"{prefix}/results/",
             "artifacts": f"{prefix}/artifacts/",
             "scenarios": f"{prefix}/scenarios/",
+            "ingress": f"{prefix}/ingress/",
         },
     }
     return AttemptCapability(

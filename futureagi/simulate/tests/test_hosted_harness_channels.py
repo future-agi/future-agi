@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -387,14 +389,60 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
 def test_registering_attempt_supersedes_old_capability(organization):
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="attempt-key")
     first = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    job.current_stage = "failed"
+    job.failure = {"code": "sandbox_launch_failed"}
+    job.terminal_at = django_timezone.now()
+    job.save(update_fields=["current_stage", "failure", "terminal_at", "updated_at"])
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
 
     first.attempt.refresh_from_db()
     assert first.attempt.state == "superseded"
     assert second.attempt.attempt_number == 2
     assert second.document["endpoints"]["events"].endswith("/events/")
+    assert second.document["endpoints"]["ingress"].endswith("/ingress/")
     job.refresh_from_db()
     assert (second.attempt.expires_at - job.deadline_at).total_seconds() == 420
+    assert job.current_stage == "queued"
+    assert job.failure is None
+    assert job.terminal_at is None
+
+
+@pytest.mark.django_db
+def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="attempt-ingress-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    capability.attempt.provider_ref = "sandbox-provider-id"
+    capability.attempt.save(update_fields=["provider_ref", "updated_at"])
+
+    sandbox = MagicMock()
+    sandbox.create_signed_preview_url.return_value = SimpleNamespace(
+        url="https://signed-preview.example/provider-callback"
+    )
+    daytona_client = MagicMock()
+    daytona_client.get.return_value = sandbox
+    daytona_class = MagicMock(return_value=daytona_client)
+    fake_daytona = SimpleNamespace(
+        Daytona=daytona_class,
+        DaytonaConfig=MagicMock(return_value=object()),
+    )
+    settings.DAYTONA_API_KEY = "configured"
+
+    with patch.dict(sys.modules, {"daytona": fake_daytona}):
+        response = APIClient().post(
+            f"{BASE}/{capability.attempt.id}/ingress/",
+            {"port": 8080, "expires_in_seconds": 7200},
+            format="json",
+            **_headers(capability),
+        )
+
+    assert response.status_code == 200, response.content
+    assert response.json()["url"] == (
+        "https://signed-preview.example/provider-callback"
+    )
+    daytona_client.get.assert_called_once_with("sandbox-provider-id")
+    sandbox.create_signed_preview_url.assert_called_once()
 
 
 @pytest.mark.django_db
