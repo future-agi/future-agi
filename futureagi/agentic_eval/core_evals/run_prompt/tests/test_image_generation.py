@@ -187,17 +187,36 @@ class TestLiteLLMImageModelManager:
         assert len(image_models) > 0, "Image generation models should not be filtered out"
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_get_provider_for_dalle(self, mock_custom_model):
-        """Test getting provider for DALL-E model."""
+    def test_get_provider_for_dalle_rejects_deprecated_model(self, mock_custom_model):
+        """DALL-E is deprecated, so it is no longer resolvable from the catalog.
+
+        ``_remove_failed_models`` strips every ``dall-e-*`` entry (both OpenAI
+        and Azure) out of ``self.models``, so ``get_provider`` falls through to
+        the custom-model lookup and, finding nothing, reports the model as
+        unavailable. This asserts that deprecation path; before the models were
+        deprecated this test asserted ``provider == "openai"``.
+        """
         from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 
+        class _DoesNotExist(Exception):
+            """Stands in for CustomAIModel.DoesNotExist."""
+
+        class _MultipleObjectsReturned(Exception):
+            """Stands in for CustomAIModel.MultipleObjectsReturned."""
+
+        # The patched CustomAIModel is a MagicMock, so both exception
+        # attributes get_provider catches are plain mocks; `except <mock>`
+        # raises TypeError before the real branch is reached. Give both a
+        # real exception class.
         mock_custom_model.objects.filter.return_value.values.return_value = []
+        mock_custom_model.DoesNotExist = _DoesNotExist
+        mock_custom_model.MultipleObjectsReturned = _MultipleObjectsReturned
+        mock_custom_model.objects.get.side_effect = _DoesNotExist
 
-        # Note: The DALL-E model names have size/quality prefixes
         manager = LiteLLMModelManager(model_name="standard/1024-x-1024/dall-e-3")
-        provider = manager.get_provider("standard/1024-x-1024/dall-e-3")
 
-        assert provider == "openai"
+        with pytest.raises(ValueError, match="not available in the current model catalog"):
+            manager.get_provider("standard/1024-x-1024/dall-e-3")
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_provider_for_gpt_image(self, mock_custom_model):
