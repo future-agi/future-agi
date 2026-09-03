@@ -8634,6 +8634,34 @@ class EditAndRunUserEvalView(APIView):
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
 
+                # Validate a requested instance name before any operation that can
+                # write data. Returning from transaction.atomic() commits, so a
+                # validation failure later in this method could leave side effects.
+                new_name = None
+                if not save_as_template:
+                    requested_name = (request_data.get("name") or "").strip()
+                    if requested_name and requested_name != eval_metric.name:
+                        from model_hub.utils.eval_validators import validate_eval_name
+
+                        try:
+                            new_name = validate_eval_name(requested_name)
+                        except ValueError as e:
+                            return self._gm.bad_request(str(e))
+
+                        if (
+                            UserEvalMetric.objects.filter(
+                                name=new_name,
+                                organization=eval_metric.organization,
+                                dataset_id=eval_metric.dataset_id,
+                                deleted=False,
+                            )
+                            .exclude(id=eval_metric.id)
+                            .exists()
+                        ):
+                            return self._gm.bad_request(
+                                get_error_message("EVAL_NAME_EXISTS")
+                            )
+
                 if save_as_template:
                     template = eval_metric.template
 
@@ -8929,6 +8957,23 @@ class EditAndRunUserEvalView(APIView):
                             column__dataset=eval_metric.dataset,
                             deleted=False,
                         ).update(status=CellStatus.RUNNING.value)
+
+                if new_name:
+                    eval_metric.name = new_name
+
+                    if not experiment_id:
+                        Column.objects.filter(
+                            source=SourceChoices.EVALUATION.value,
+                            source_id=str(eval_metric.id),
+                            dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).update(name=new_name)
+                        Column.objects.filter(
+                            source=SourceChoices.EVALUATION_REASON.value,
+                            source_id__endswith=f"-sourceid-{eval_metric.id}",
+                            dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).update(name=f"{new_name}-reason")
 
                 eval_metric.save()
                 return self._gm.success_response(
