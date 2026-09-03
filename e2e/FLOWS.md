@@ -107,3 +107,37 @@
 
 - the metrics catalog scoped to each project returns that project's eval template and not its sibling's
 - the frontend requests the catalog with project_ids set to the project being viewed
+
+### OBS-E2E-010 — an unreachable recording shows an error, not an endless loader
+
+**Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever  
+**Spec:** `flows/observe/voice-recording-error.spec.ts:51`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a voice call whose recording URLs 404
+2. open Voice Observe
+3. open the call detail drawer
+4. see "Recording unavailable", with no retry offered
+
+**Backend state verified:**
+
+- the seeded conversation span is queryable in CH
+- voice_call_detail returns the recording URLs unchanged
+
+### OBS-E2E-011 — a voice call with no recording says so
+
+**Goal:** A user opens a voice call that has no recording at all and sees a plain explanation  
+**Spec:** `flows/observe/voice-recording-error.spec.ts:116`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a voice call with no recording attributes
+2. open the call detail drawer
+3. see "No recording found"
+
+**Backend state verified:**
+
+- voice_call_detail reports recording_available false

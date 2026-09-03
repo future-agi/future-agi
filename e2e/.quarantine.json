@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "id": "OBS-E2E-010",
+    "reason": "The voice-call grid only renders for a project whose tracer_project.source is 'simulator'; OTLP ingestion creates it as 'prototype', so the seeded project shows the trace grid and the call row is never clickable. Needs the harness to set source after seeding.",
+    "owner": "commitPirate",
+    "issue": "TH-7758",
+    "added": "2026-09-01",
+    "expires": "2026-10-01"
+  },
+  {
+    "id": "OBS-E2E-011",
+    "reason": "Same blocker as OBS-E2E-010 - the seeded project does not render the voice-call grid.",
+    "owner": "commitPirate",
+    "issue": "TH-7758",
+    "added": "2026-09-01",
+    "expires": "2026-10-01"
+  }
+]
