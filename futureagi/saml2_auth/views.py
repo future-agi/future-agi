@@ -22,6 +22,9 @@ from saml2.client import Saml2Client
 from saml2.config import Config as Saml2Config
 
 from accounts.authentication import generate_encrypted_message
+from accounts.gcp_marketplace_utils import encode_oauth_state
+from accounts.gcp_marketplace_utils import process_signup as marketplace_signup
+from accounts.gcp_marketplace_utils import read_oauth_state
 from accounts.models.auth_token import (
     AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
     AuthToken,
@@ -667,15 +670,20 @@ class Auth0LoginView(APIView):
         if not provider:
             return self._gm.bad_request("Provider is required")
 
+        onboarding_token = request.validated_query_data.get("onboarding_token") or ""
+
         if provider == "google":
-            auth_url = f"https://{AUTH0_DOMAIN}/auth?" + urllib.parse.urlencode(
-                {
-                    "response_type": "code",
-                    "client_id": AUTH0_CLIENT_ID,
-                    "redirect_uri": AUTH0_CALLBACK_URL,
-                    "scope": "openid profile email",
-                }
-            )
+            params = {
+                "response_type": "code",
+                "client_id": AUTH0_CLIENT_ID,
+                "redirect_uri": AUTH0_CALLBACK_URL,
+                "scope": "openid profile email",
+            }
+            # A Marketplace customer who picks Google over the sign-up form must
+            # still land in the organization the procurement account created.
+            if onboarding_token:
+                params["state"] = encode_oauth_state(onboarding_token)
+            auth_url = f"https://{AUTH0_DOMAIN}/auth?" + urllib.parse.urlencode(params)
             return self._gm.success_response({"url": auth_url})
         elif provider == "github":
             params = {
@@ -753,6 +761,9 @@ class Auth0CallbackView(APIView):
                 logger.info(f"DECODED: {decoded}")
 
                 user_email = decoded.get("email")
+                onboarding_token = read_oauth_state(
+                    request.validated_query_data.get("state")
+                )
 
                 name = decoded.get("name")
                 if not name:
@@ -778,6 +789,12 @@ class Auth0CallbackView(APIView):
                     if not user_model.is_active:
                         raise Exception("User is no longer active.")
 
+                    # Same rule as the sign-up form: an existing account cannot
+                    # absorb a Marketplace subscription, because it already
+                    # belongs to an organization with its own billing.
+                    if onboarding_token:
+                        raise Exception("An account with this email already exists")
+
                     next_url = default_next_url
 
                     properties = get_mixpanel_properties(
@@ -787,8 +804,21 @@ class Auth0CallbackView(APIView):
 
                 except User.DoesNotExist:
                     new_org = "true"
-                    data = {"full_name": name, "email": user_email}
-                    user_model = first_signup(data, mode=MixpanelModes.GOOGLE.value)
+                    if onboarding_token:
+                        # Owner of the organization the procurement account
+                        # already created, not a new one.
+                        user_model = marketplace_signup(
+                            onboarding_token, user_email, name
+                        )
+                        properties = get_mixpanel_properties(
+                            user=user_model, mode=MixpanelModes.GOOGLE.value
+                        )
+                        track_mixpanel_event(
+                            MixpanelEvents.SSO_SIGNUP.value, properties
+                        )
+                    else:
+                        data = {"full_name": name, "email": user_email}
+                        user_model = first_signup(data, mode=MixpanelModes.GOOGLE.value)
                     next_url = get_started_url
 
                 access_token = AuthToken.objects.create(
