@@ -5,6 +5,14 @@ import { ApiError } from '../../lib/api-client';
 import { allowed } from '../../lib/capabilities';
 import type { TestActor } from '../../lib/provisioning';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // The unentitled half of EVAL-E2E-024. Kept beside the flow rather than in
 // lib/ so both halves of the same product boundary read together.
 //
@@ -79,7 +87,7 @@ async function assertConnectorsDenied(actor: TestActor): Promise<void> {
 
 interface CreatedConnector { result: { id: string; name: string } }
 interface EvalDetailResponse {
-  result: { id: string; config: { tools?: Record<string, boolean>; agent_mode?: string } };
+  result: { id: string; eval_type: string; config: { tools?: Record<string, boolean>; agent_mode?: string } };
 }
 
 test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test it and publish', {
@@ -93,12 +101,15 @@ test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test 
             'pick a mock-routed model', 'write instructions with a template variable',
             'attach the connector from the model bar\'s Connectors picker',
             'test the draft against custom input and read the Pass verdict', 'save/publish the eval'],
-    backendChecks: ['a draft template is auto-created with eval_type "agent" (AGENTIC_EVAL unlocked by default '
-                      + 'in this self-hosted e2e stack)',
+    backendChecks: ['the published eval is stored with eval_type "agent"',
                     'the published eval\'s config.tools carries the connector id as a truthy key',
                     'the published eval\'s config.agent_mode is "quick"'],
   }),
 }, async ({ page, actor, capabilities }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(300_000);
   // OSS does not skip this flow — it asserts the other half of it. MCP
   // connectors sit behind `falcon_ai`, one of the four `oss_locked` features
   // (futureagi/tfc/capabilities/registry.py:81-83), so refusing to create one
@@ -132,15 +143,16 @@ test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test 
 
   await test.step('UI: a draft is auto-created, defaulting to Agent type (unlocked)', async () => {
     await page.goto('/dashboard/evaluations/create');
-    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: 15_000 });
+    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: UI_READY });
     draftId = page.url().split('/dashboard/evaluations/create/')[1];
     expect(draftId).toMatch(/.+/);
+    await testInfo.attach('draft-id', { body: draftId, contentType: 'text/plain' });
     // Agent-type renders InstructionEditor (Quill) with this exact
     // placeholder — a completely different component tree from the
     // LLM-as-judge default, so this is direct proof AGENTIC_EVAL resolved
     // unlocked and "agent" (not "llm") is the live default eval type.
     await expect(page.locator('.ql-editor')).toHaveAttribute(
-      'data-placeholder', 'You are a helpful assistant', { timeout: 10_000 },
+      'data-placeholder', 'You are a helpful assistant', { timeout: UI_READY },
     );
   });
 
@@ -183,14 +195,14 @@ test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test 
   await test.step('UI: test against custom input — Pass', async () => {
     await fillTestData(page, '{"output": "world"}');
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     await expect(page.getByText(`${verdict} saw world`)).toBeVisible();
   });
 
   await test.step('UI: publish, and API lane confirms the connector + mode persisted', async () => {
     await page.getByRole('button', { name: 'Save Evaluation' }).click();
-    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: UI_READY });
     // EvalDetailPage appends `?v=<version_number>` once it has loaded the
     // saved version (:417), so anchor on the id followed by end-of-string
     // OR the query string rather than end-of-string alone.
@@ -199,6 +211,7 @@ test('EVAL-E2E-024: author a new Agent eval, attach an external connector, test 
     const detail = await actor.api.get<EvalDetailResponse>(
       `/model-hub/eval-templates/${draftId}/detail/`,
     );
+    expect(detail.result.eval_type).toBe('agent');
     expect(detail.result.config.tools?.[connectorId]).toBe(true);
     // The wire field is `mode` (EvalCreatePage's update payload), but
     // separate_evals.py persists it under a different key:

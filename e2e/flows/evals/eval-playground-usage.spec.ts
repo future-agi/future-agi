@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Routes the judge model through the mock LLM behind the real gateway — same
 // setup as eval-task.spec.ts / eval-playground.spec.ts. The mock echoes back
 // the exact prompt text, so whatever JSON the instructions dictate is the
@@ -20,14 +28,15 @@ test('EVAL-E2E-011: filter usage logs by date range and drill into a single log'
             'switch the date-range preset to Yesterday and see the log disappear',
             'switch back to Today and see the log reappear',
             'open the log row and read its status and explanation in the detail side panel'],
-    backendChecks: ['the usage endpoint is called with start/end date params matching the selected preset',
+    backendChecks: ['the Yesterday preset calls the usage endpoint with a start/end window that closes '
+                      + 'before today began',
                     'a log created moments ago is excluded from a Yesterday-only window and included in Today',
                     'the detail panel renders the exact explanation text the eval produced for that run, '
                     + 'unwrapped from the usage row\'s cell_value wrapper'],
   }),
 }, async ({ page, actor }, testInfo) => {
   // The Today-preset wait below can span a minute boundary.
-  test.setTimeout(180_000);
+  test.setTimeout(420_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   // A non-system, user-authored template (owner !== "system") — i.e. a
   // "custom eval" in product terms — so date-range filtering is exercised
@@ -47,24 +56,39 @@ test('EVAL-E2E-011: filter usage logs by date range and drill into a single log'
     model: JUDGE_MODEL, output_type: 'pass_fail', pass_threshold: 0.5,
   });
   const templateId = template.result.id;
+  await testInfo.attach('template-id', { body: templateId, contentType: 'text/plain' });
 
   await test.step('UI: produce one usage log by testing the eval', async () => {
     await page.goto(`/dashboard/evaluations/${templateId}`);
     await fillTestData(page, '{"output": "world"}');
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText(`${verdict} saw world`)).toBeVisible();
   });
 
   await test.step('UI: the log is visible on the Usage tab under the default window', async () => {
     await page.getByRole('tab', { name: 'Usage' }).click();
-    await expect(page.getByText(/Runs:/)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(`${verdict} saw world`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/Runs:/)).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByText(`${verdict} saw world`)).toBeVisible({ timeout: UI_READY });
   });
 
   await test.step('UI: switching the date range to Yesterday excludes the just-created log', async () => {
+    // Capture the request the preset fires, not just its rendered outcome:
+    // an empty table proves nothing on its own, since a broken query returns
+    // empty too. useEvalUsage.js:159-160 sends startOfDay(yesterday) /
+    // endOfDay(yesterday), so the window must close before today began.
+    const usageCall = page.waitForRequest((r) =>
+      r.url().includes(`/model-hub/eval-templates/${templateId}/usage/`)
+      && new URL(r.url()).searchParams.has('start_date'), { timeout: UI_READY });
     await page.getByRole('button', { name: 'Yesterday', exact: true }).click();
-    await expect(page.getByText('No evaluation logs for this period')).toBeVisible({ timeout: 15_000 });
+    const params = new URL((await usageCall).url()).searchParams;
+    const start = new Date(params.get('start_date') as string).getTime();
+    const end = new Date(params.get('end_date') as string).getTime();
+    const startOfToday = new Date().setHours(0, 0, 0, 0);
+    expect(end).toBeLessThanOrEqual(startOfToday);
+    expect(end - start).toBeGreaterThan(23 * 60 * 60 * 1000);
+
+    await expect(page.getByText('No evaluation logs for this period')).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(`${verdict} saw world`)).not.toBeVisible();
   });
 

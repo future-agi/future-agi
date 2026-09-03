@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, selectJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Routes both child judges through the mock LLM behind the real gateway —
 // same setup as eval-composite.spec.ts. This flow is eval-composite.spec.ts's
 // twin with one deliberate swap: the Custom JSON tab is replaced by the
@@ -28,14 +36,18 @@ test('EVAL-E2E-030: test a composite eval against a real dataset row via the Dat
             'open the create-eval page and switch to Composite mode', 'name it and add both children',
             'switch the playground to the Dataset source tab', 'pick the seeded dataset from scratch',
             'map the union variable to the real column', 'test and read the aggregate PASS + per-child scores'],
-    backendChecks: ['DatasetTestMode dispatches to useExecuteCompositeEvalAdhoc (not the single-eval path) '
-                      + 'when isComposite is true',
+    backendChecks: ['the Dataset tab dispatches the run to composite/execute-adhoc, not the single-eval '
+                      + 'path, when the eval under test is composite',
                     'the union of both children\'s required_keys collapses to one mapped column, '
                       + 'since both children declare the same {{output}} variable',
                     'the aggregate score is avg(1.0, 0.0) = 0.5, identical math to the Custom-tab '
                       + 'composite flow, proving the source tab only changes how input is supplied'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(240_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   // Hyphens, not spaces: create-v2 rejects anything outside [a-z0-9_-] with
   // "Name can only contain lowercase letters, numbers, hyphens (-), or
@@ -75,6 +87,12 @@ test('EVAL-E2E-030: test a composite eval against a real dataset row via the Dat
   await actor.api.post(`/model-hub/develops/${datasetId}/update_cell_value/`, {
     column_id: column.id, row_id: row.row_id, new_value: `contains ${cellMarker} right here`,
   });
+  await testInfo.attach('seeded-ids', {
+    body: JSON.stringify({
+      passChildId: passChild.result.id, failChildId: failChild.result.id, datasetId,
+    }),
+    contentType: 'application/json',
+  });
 
   await page.goto('/dashboard/evaluations/create');
 
@@ -89,7 +107,7 @@ test('EVAL-E2E-030: test a composite eval against a real dataset row via the Dat
       const searchBox = page.getByPlaceholder('Search evaluations...');
       await searchBox.fill(childName);
       const row2 = page.locator('tr').filter({ hasText: childName });
-      await expect(row2).toBeVisible({ timeout: 15_000 });
+      await expect(row2).toBeVisible({ timeout: UI_READY });
       await row2.getByRole('button', { name: 'Add', exact: true }).click();
 
       // Inline add vs the "Configure Evaluation" step — same branch
@@ -116,7 +134,7 @@ test('EVAL-E2E-030: test a composite eval against a real dataset row via the Dat
     await page.getByRole('tab', { name: 'Dataset' }).click();
     await page.getByPlaceholder('Choose from dataset list').click();
     await page.getByRole('option', { name: datasetName }).click();
-    await expect(page.getByText(`"contains ${cellMarker} right here"`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`"contains ${cellMarker} right here"`)).toBeVisible({ timeout: UI_READY });
 
     // Same ColumnTreeSelect disambiguation as eval-testmode-dataset.spec.ts:
     // the row-detail table also renders the literal text "Column 1", so
@@ -128,8 +146,14 @@ test('EVAL-E2E-030: test a composite eval against a real dataset row via the Dat
   });
 
   await test.step('UI: test — aggregate PASS with both children\'s real scores', async () => {
+    // Which endpoint the tab picks is the claim; the rendered aggregate looks
+    // the same either way, so capture the request itself.
+    const compositeRun = page.waitForRequest((r) =>
+      r.url().includes('/model-hub/eval-templates/composite/execute-adhoc/') && r.method() === 'POST',
+      { timeout: EVAL_RUN });
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 45_000 });
+    await compositeRun;
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
 
     await expect(page.getByText('Aggregate Score (Weighted Average)')).toBeVisible();
     await expect(page.getByText('0.500', { exact: true })).toBeVisible();

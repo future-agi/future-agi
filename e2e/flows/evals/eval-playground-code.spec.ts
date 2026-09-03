@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, selectJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Why `code`-type, not `agent`-type, for this flow:
 //
 // frontend/src/sections/evals/components/EvalCreatePage.jsx gates the
@@ -36,6 +44,7 @@ import { JUDGE_MODEL, ensureJudgeModel, selectJudgeModel } from '../../lib/eval-
 // flakiness from a model in the loop.
 
 interface EvalListResponse { result: { items: { id: string; name: string }[]; total: number } }
+interface EvalDetailResponse { result: { id: string; eval_type: string; code: string | null } }
 
 test('EVAL-E2E-005: author a new Code eval from scratch, test it and publish', {
   tag: ['@flow'],
@@ -50,12 +59,18 @@ test('EVAL-E2E-005: author a new Code eval from scratch, test it and publish', {
             'test the draft against input containing the marker and read the Pass verdict',
             'edit the test input to omit the marker and read the Fail verdict',
             'save/publish the eval'],
-    backendChecks: ['a draft template is auto-created on page load (is_draft: true)',
-                    'the draft is saved with the entered code before each playground test runs',
-                    'the code runs in the sandboxed Python executor with no LLM/gateway call involved',
+    backendChecks: ['a template row is auto-created on page load and is fetchable at eval-templates/<id>/detail/',
+                    'the published template is stored as eval_type "code" carrying the evaluate() source '
+                      + 'whose marker came back in both verdicts',
+                    'the same source returns Pass and Fail on two different inputs, so the sandbox ran it '
+                      + 'rather than replaying a cached result',
                     'publishing sets it visible and searchable in the main eval list'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(300_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   // Sanitized to [a-z0-9_-] on input by the Eval Name field itself — no spaces/case.
   const evalName = `e2e-create-code-${suffix}`;
@@ -82,9 +97,14 @@ test('EVAL-E2E-005: author a new Code eval from scratch, test it and publish', {
 
   await test.step('UI: a draft is auto-created on page load', async () => {
     await page.goto('/dashboard/evaluations/create');
-    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: 15_000 });
+    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: UI_READY });
     draftId = page.url().split('/dashboard/evaluations/create/')[1];
     expect(draftId).toMatch(/.+/);
+    await testInfo.attach('draft-id', { body: draftId, contentType: 'text/plain' });
+    // The URL alone only proves the SPA routed somewhere. Fetching the id
+    // back is what proves a row was actually created behind it.
+    const draft = await actor.api.get<EvalDetailResponse>(`/model-hub/eval-templates/${draftId}/detail/`);
+    expect(draft.result.id).toBe(draftId);
   });
 
   await test.step('UI: name it, pick a model on the Agent tab, then switch to Code', async () => {
@@ -150,7 +170,7 @@ test('EVAL-E2E-005: author a new Code eval from scratch, test it and publish', {
       { delay: 10 },
     );
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     // `exact` is load-bearing: the reason string is also a literal inside the
     // evaluate() source sitting in the left Monaco editor, so a substring
@@ -169,14 +189,14 @@ test('EVAL-E2E-005: author a new Code eval from scratch, test it and publish', {
       { delay: 10 },
     );
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Fail', { exact: true })).toBeVisible();
     await expect(page.getByText(`${marker} missing from output`, { exact: true })).toBeVisible();
   });
 
   await test.step('UI: publish, and API lane confirms it is now visible and searchable', async () => {
     await page.getByRole('button', { name: 'Save Evaluation' }).click();
-    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: UI_READY });
     // EvalDetailPage appends `?v=<version_number>` once it has loaded the
     // saved version (:417), so anchor on the id followed by end-of-string
     // OR the query string rather than end-of-string alone.
@@ -184,5 +204,12 @@ test('EVAL-E2E-005: author a new Code eval from scratch, test it and publish', {
 
     const list = await actor.api.post<EvalListResponse>('/model-hub/eval-templates/list/', { search: evalName });
     expect(list.result.items.map((i) => i.id)).toEqual([draftId]);
+
+    // The stored source is the same function whose marker came back in both
+    // verdicts above, which is what ties the rendered result to the code the
+    // sandbox actually ran.
+    const detail = await actor.api.get<EvalDetailResponse>(`/model-hub/eval-templates/${draftId}/detail/`);
+    expect(detail.result.eval_type).toBe('code');
+    expect(detail.result.code).toContain(marker);
   });
 });

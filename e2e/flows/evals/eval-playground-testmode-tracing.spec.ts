@@ -6,6 +6,14 @@ import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Second flow of Group B — see eval-testmode-dataset.spec.ts for the full
 // scoping rationale (TestPlayground.test.jsx's delegation contract makes
 // eval type orthogonal to which source tab is active, so one eval type per
@@ -51,6 +59,7 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
   const seeded = await sendTrace(req, {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey, projectName,
   });
+  await testInfo.attach('seeded-trace', { body: JSON.stringify(seeded), contentType: 'application/json' });
   await expect.poll(async () => {
     const rows = await probe.ch<{ n: string }>(
       'SELECT count() AS n FROM spans FINAL WHERE trace_id = {t:String}', { t: seeded.traceId });
@@ -88,17 +97,21 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
   });
 
   await test.step('UI: map the variable to the span\'s name field', async () => {
+    // The readiness gate this flow claims: a loaded row alone is not enough,
+    // the variable has to be mapped before TracingTestMode reports ready.
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeDisabled();
     // TracingTestMode's mapping control is a real MUI Autocomplete (unlike
     // DatasetTestMode's custom ColumnTreeSelect), so a native option role
     // is available and unambiguous.
     await page.getByPlaceholder('Search column...').click();
     await page.getByPlaceholder('Search column...').fill('name');
     await page.getByRole('option', { name: 'name', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeEnabled({ timeout: UI_READY });
   });
 
   await test.step('UI: test — Pass, with the real span name proven in the reason', async () => {
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     await expect(page.getByText(/observed name=e2e\./)).toBeVisible();
   });

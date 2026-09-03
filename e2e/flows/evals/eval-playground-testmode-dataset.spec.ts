@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Group B of today's scenario list ("testing an eval after filtering by a
 // non-Custom source tab": Dataset / Tracing / Simulation x agent/llm/code)
 // collapses to one flow per source tab, not one per eval type. Grounded by
@@ -49,6 +57,10 @@ test('EVAL-E2E-007: test an existing eval against a real dataset row via the Dat
                       + 'with no model/gateway involved'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(180_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const datasetName = `e2e-testmode-dataset-${suffix}`;
   const evalName = `e2e-testmode-code-${suffix}`;
@@ -73,11 +85,13 @@ test('EVAL-E2E-007: test an existing eval against a real dataset row via the Dat
     model: JUDGE_MODEL, output_type: 'pass_fail', pass_threshold: 0.5,
   });
   const templateId = template.result.id;
+  await testInfo.attach('template-id', { body: templateId, contentType: 'text/plain' });
 
   const { dataset_id: datasetId } = (await actor.api.post<CreateDatasetResult>(
     '/model-hub/develops/create-dataset-manually/',
     { dataset_name: datasetName, model_type: 'GenerativeLLM', number_of_rows: 1, number_of_columns: 1 },
   )).result;
+  await testInfo.attach('dataset-id', { body: datasetId, contentType: 'text/plain' });
   const table = await actor.api.get<DatasetTableResult>(
     `/model-hub/develops/${datasetId}/get-dataset-table/`, { current_page_index: 0, page_size: 10 },
   );
@@ -93,21 +107,26 @@ test('EVAL-E2E-007: test an existing eval against a real dataset row via the Dat
     await page.getByRole('tab', { name: 'Dataset' }).click();
     await page.getByPlaceholder('Choose from dataset list').click();
     await page.getByRole('option', { name: datasetName }).click();
-    await expect(page.getByText(`"contains ${marker} right here"`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`"contains ${marker} right here"`)).toBeVisible({ timeout: UI_READY });
   });
 
   await test.step('UI: map the variable to the real column', async () => {
+    // The readiness gate this flow claims: a dataset alone is not enough,
+    // the variable has to be mapped before TestPlayground reports ready
+    // (onReadyChange -> EvalDetailPage's isPlaygroundReady).
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeDisabled();
     // Same ColumnTreeSelect disambiguation as EVAL-E2E-006 — the row-detail
     // table also shows the literal text "Column 1", so filter the dropdown's
     // own search box first and take the portal-mounted match.
     await page.getByPlaceholder('Select column').click();
     await page.getByPlaceholder('Search columns…').fill('Column 1');
     await page.getByText('Column 1', { exact: true }).last().click();
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeEnabled({ timeout: UI_READY });
   });
 
   await test.step('UI: test — Pass, with the real cell value proven in the reason', async () => {
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     // Exact: the reason string is also inside the code editor's Monaco buffer
     // (a `<span class="mtk20">` token), so a substring match resolves to both

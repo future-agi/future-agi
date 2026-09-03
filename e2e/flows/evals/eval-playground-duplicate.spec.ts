@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Routes the judge model through the mock LLM behind the real gateway — same
 // setup as eval-create.spec.ts / eval-playground.spec.ts.
 
@@ -60,6 +68,10 @@ test('EVAL-E2E-019: duplicate an eval from its detail page and verify the copy r
                     'the source eval\'s own name and id are unchanged after duplicating'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(360_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const evalName = `e2e-dup-source-${suffix}`;
   // Exists nowhere else, so finding it in the copy's test result proves the
@@ -78,12 +90,13 @@ test('EVAL-E2E-019: duplicate an eval from its detail page and verify the copy r
     model: JUDGE_MODEL, output_type: 'pass_fail', pass_threshold: 0.5,
   });
   const sourceId = source.result.id;
+  await testInfo.attach('source-id', { body: sourceId, contentType: 'text/plain' });
 
   let copyId = '';
 
   await test.step('UI: open the source eval and duplicate it from the "..." menu', async () => {
     await page.goto(`/dashboard/evaluations/${sourceId}`);
-    await expect(page.getByText(evalName)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(evalName)).toBeVisible({ timeout: UI_READY });
 
     const menuButton = page.locator('main button').filter({ hasNotText: /\S/ }).first();
     await menuButton.click();
@@ -96,7 +109,7 @@ test('EVAL-E2E-019: duplicate an eval from its detail page and verify the copy r
     // eval"> (:1282), and that title becomes the item's accessible name — so
     // `getByRole('menuitem', { name: 'Duplicate' })` matches nothing at all.
     await page.getByRole('menuitem').filter({ hasText: 'Duplicate' }).click();
-    await expect(page.getByText('Evaluation duplicated')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Evaluation duplicated')).toBeVisible({ timeout: UI_READY });
   });
 
   await test.step('UI: lands on the new copy\'s own detail page', async () => {
@@ -105,7 +118,7 @@ test('EVAL-E2E-019: duplicate an eval from its detail page and verify the copy r
     // change, not just for the route pattern to match.
     await page.waitForURL(
       (url) => /\/dashboard\/evaluations\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith(sourceId),
-      { timeout: 15_000 },
+      { timeout: UI_READY },
     );
     // Pathname, not the raw URL: EvalDetailPage appends `?v=<version>` after
     // it loads (:417), and whether that has landed yet is a race — so this
@@ -113,7 +126,7 @@ test('EVAL-E2E-019: duplicate an eval from its detail page and verify the copy r
     copyId = new URL(page.url()).pathname.split('/dashboard/evaluations/')[1];
     expect(copyId).toMatch(/.+/);
     expect(copyId).not.toBe(sourceId);
-    await expect(page.getByText(`${evalName}_copy_`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`${evalName}_copy_`)).toBeVisible({ timeout: UI_READY });
   });
 
   await test.step('API lane: the copy is a deep, independent clone', async () => {
@@ -130,7 +143,7 @@ test('EVAL-E2E-019: duplicate an eval from its detail page and verify the copy r
   await test.step('UI: test the copy against custom input — it runs on its own', async () => {
     await fillTestData(page, '{"output": "world"}');
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     await expect(page.getByText(`${verdict} saw world`)).toBeVisible();
   });

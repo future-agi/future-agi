@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData, selectJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Routes both child judges through the mock LLM behind the real gateway —
 // same setup as eval-create.spec.ts / eval-playground.spec.ts / eval-task.spec.ts.
 // The mock echoes back the exact (already-templated) prompt text, so whatever
@@ -58,6 +66,10 @@ test('EVAL-E2E-004: combine two evals into a composite, test the aggregate and p
                       + '/composite/execute/ endpoint, independent of the create-page UI'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(300_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   // Hyphens, not spaces: create-v2 rejects anything outside [a-z0-9_-] with
   // "Name can only contain lowercase letters, numbers, hyphens (-), or
@@ -90,6 +102,10 @@ test('EVAL-E2E-004: combine two evals into a composite, test the aggregate and p
     instructions: `Reply with exactly this JSON: {"result": "Fail", "explanation": "${failVerdict} saw {{output}}"}`,
     model: JUDGE_MODEL, output_type: 'pass_fail', pass_threshold: 0.5,
   });
+  await testInfo.attach('child-ids', {
+    body: JSON.stringify({ passChildId: passChild.result.id, failChildId: failChild.result.id }),
+    contentType: 'application/json',
+  });
 
   await page.goto('/dashboard/evaluations/create');
 
@@ -115,7 +131,7 @@ test('EVAL-E2E-004: combine two evals into a composite, test the aggregate and p
     const searchBox = page.getByPlaceholder('Search evaluations...');
     await searchBox.fill(childName);
     const row = page.locator('tr').filter({ hasText: childName });
-    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(row).toBeVisible({ timeout: UI_READY });
     await row.getByRole('button', { name: 'Add', exact: true }).click();
 
     // Two possible outcomes, decided by EvalPickerDrawer.handleSelectEval
@@ -175,7 +191,7 @@ test('EVAL-E2E-004: combine two evals into a composite, test the aggregate and p
     // declare {{output}}, so the union is exactly ["output"].
     await fillTestData(page, '{"output": "world"}');
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
 
     // Aggregate: CompositeResultView.jsx renders
     // "Aggregate Score (Average)" + aggregate_score.toFixed(3), a PASS/FAIL
@@ -197,8 +213,8 @@ test('EVAL-E2E-004: combine two evals into a composite, test the aggregate and p
   let compositeId = '';
   await test.step('UI: publish the composite', async () => {
     await page.getByRole('button', { name: 'Save Evaluation' }).click();
-    await expect(page.getByText('Composite evaluation created successfully')).toBeVisible({ timeout: 15_000 });
-    await page.waitForURL(/\/dashboard\/evaluations\/[^/]+$/, { timeout: 15_000 });
+    await expect(page.getByText('Composite evaluation created successfully')).toBeVisible({ timeout: UI_READY });
+    await page.waitForURL(/\/dashboard\/evaluations\/[^/]+$/, { timeout: UI_READY });
     // Read the id off the PATHNAME, not the raw URL. EvalDetailPage appends
     // `?v=<version_number>` once it loads the saved version (:417), and `?`
     // is not `/`, so the `[^/]+$` pattern above happily matches

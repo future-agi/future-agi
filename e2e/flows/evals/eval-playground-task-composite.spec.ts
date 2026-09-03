@@ -6,6 +6,11 @@ import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+
 // Same mock-LLM-behind-the-real-gateway setup as eval-task.spec.ts /
 // eval-composite.spec.ts — see those files for the full rationale.
 const MAPPED_ATTRIBUTE = 'fi.span.kind';
@@ -50,7 +55,7 @@ test('EVAL-E2E-017: a composite eval runs over ingested spans via a full async e
 
   // Same 270s Temporal+CDC floor as eval-task.spec.ts, plus headroom for two
   // child LLM calls per span instead of one.
-  test.setTimeout(360_000);
+  test.setTimeout(480_000);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `e2e-eval-composite-task-${suffix}`;
@@ -67,6 +72,7 @@ test('EVAL-E2E-017: a composite eval runs over ingested spans via a full async e
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey,
     secretKey: actor.secretKey, projectName,
   });
+  await testInfo.attach('seeded-trace', { body: JSON.stringify(seeded), contentType: 'application/json' });
   await expect.poll(async () => {
     const rows = await probe.ch<{ n: string }>(
       'SELECT count() AS n FROM spans FINAL WHERE trace_id = {t:String}', { t: seeded.traceId });
@@ -177,12 +183,12 @@ test('EVAL-E2E-017: a composite eval runs over ingested spans via a full async e
     // display (0.5 -> score 50), and EvalsTabView counts score >= 50 as
     // passed — the same ">=" boundary determine_pass_fail used server-side.
     await page.goto(`/dashboard/observe/${projectId}/llm-tracing?selectedTab=spans`);
-    await page.getByText('e2e.llm-call').first().click({ timeout: 30_000 });
+    await page.getByText('e2e.llm-call').first().click({ timeout: UI_READY });
     await page.getByRole('tab', { name: 'Evals' }).click();
-    await expect(page.getByText(configName)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(configName)).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText('1/1 passed')).toBeVisible();
     await page.getByText(configName).click();
-    await expect(page.getByText(passVerdict, { exact: false })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(passVerdict, { exact: false })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(failVerdict, { exact: false })).toBeVisible();
   });
 

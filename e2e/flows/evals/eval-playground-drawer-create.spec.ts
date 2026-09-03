@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, selectJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Group A of today's scenario list ("alternate eval-creation entry points":
 // datasets / Observe / Simulation, x agent/llm/code) collapses to ONE flow.
 // Grounded by reading the actual mechanism rather than assuming the 3x3 grid
@@ -70,16 +78,21 @@ test('EVAL-E2E-006: author a brand-new Code eval from the shared Add-Evaluation 
             'map the function\'s "output" parameter to the dataset\'s real column',
             'test it against the real row and read the Pass verdict',
             'save it, and confirm the dataset now carries this eval as a saved (not run) binding'],
-    backendChecks: ['a draft template is auto-created the moment the Create-New panel mounts (is_draft: true)',
+    backendChecks: ['the saved template is returned by the main eval list, which excludes drafts '
+                      + '(the create path stores visible_ui = not is_draft)',
                     'the dataset picked up by the drawer is the exact dataset the drawer was opened from '
                       + '(sourceId threads through EvaluationDrawer -> EvalPickerDrawer -> EvalPickerCreateNew '
                       + 'as DatasetTestMode\'s initialDatasetId, so no dataset picker is even shown)',
                     'the code runs in the sandboxed Python executor against the dataset\'s actual cell value',
-                    'saving publishes the draft (is_draft: false) and POSTs template_id to add-eval/{datasetId} '
-                      + 'with run:false — a save-only dataset binding, not an immediate run',
+                    'saving POSTs template_id to develops/<datasetId>/add_user_eval/ with run:false — '
+                      + 'a save-only dataset binding, not an immediate run',
                     'the dataset\'s own eval list (get_evals_list) now includes this eval by name'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(300_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const datasetName = `e2e-drawer-dataset-${suffix}`;
   const evalName = `e2e-drawer-code-${suffix}`;
@@ -93,6 +106,7 @@ test('EVAL-E2E-006: author a brand-new Code eval from the shared Add-Evaluation 
     '/model-hub/develops/create-dataset-manually/',
     { dataset_name: datasetName, model_type: 'GenerativeLLM', number_of_rows: 1, number_of_columns: 1 },
   )).result;
+  await testInfo.attach('dataset-id', { body: datasetId, contentType: 'text/plain' });
 
   // The view creates exactly one column named "Column {i+1}" per
   // ManuallyCreateDatasetView (model_hub/views/develop_dataset.py) — with
@@ -162,7 +176,7 @@ test('EVAL-E2E-006: author a brand-new Code eval from the shared Add-Evaluation 
   await test.step('UI: the dataset is already pre-selected — map the variable to the real column', async () => {
     // initialDatasetId hides DatasetTestMode's own dataset Autocomplete
     // entirely, so the row table for our dataset renders immediately.
-    await expect(page.getByText(`"contains ${marker} right here"`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(`"contains ${marker} right here"`)).toBeVisible({ timeout: UI_READY });
 
     // RISK: ColumnTreeSelect (frontend/src/sections/evals/components/
     // DatasetTestMode.jsx) is a custom dropdown, not a native <select> or MUI
@@ -181,7 +195,7 @@ test('EVAL-E2E-006: author a brand-new Code eval from the shared Add-Evaluation 
 
   await test.step('UI: test against the real row — Pass', async () => {
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     // Exact: the reason string is also a literal in the code editor's Monaco
     // buffer, so a substring match resolves to both it and the result <pre>.
@@ -189,7 +203,16 @@ test('EVAL-E2E-006: author a brand-new Code eval from the shared Add-Evaluation 
   });
 
   await test.step('UI: save as a dataset binding — the picker closes back to the drawer\'s saved-evals list', async () => {
+    // The binding request itself, not just its rendered aftermath: "save-only"
+    // is a property of the payload (run:false), and the drawer looks identical
+    // either way.
+    const addEvalPost = page.waitForRequest((r) =>
+      r.url().includes(`/model-hub/develops/${datasetId}/add_user_eval/`) && r.method() === 'POST',
+      { timeout: UI_READY });
     await page.getByRole('button', { name: 'Save & Add Evaluation' }).click();
+    const bound = (await addEvalPost).postDataJSON();
+    expect(bound.run).toBe(false);
+    expect(bound.template_id).toBeTruthy();
     // keepOpenAfterSave={module === "dataset"} only stops EvalPickerContent.
     // handleSaveEval from calling onClose itself; the host closes the picker
     // regardless. EvaluationDrawer's onEvalAdded awaits
@@ -197,10 +220,10 @@ test('EVAL-E2E-006: author a brand-new Code eval from the shared Add-Evaluation 
     // setVisibleSection("list"); })`, and handleRun's onSuccessFn invokes that
     // success callback on every successful add — so a saved eval always lands
     // back on the parent drawer's saved-evals list, not the picker's list step.
-    await expect(page.getByText('Select Evaluation')).toBeHidden({ timeout: 15_000 });
+    await expect(page.getByText('Select Evaluation')).toBeHidden({ timeout: UI_READY });
     await expect(
       page.getByText(evalName, { exact: true }).filter({ visible: true }),
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: UI_READY });
     // The mapping made above is what the binding carries — the saved-evals row
     // renders it as "<variable>\u2192<column>".
     await expect(

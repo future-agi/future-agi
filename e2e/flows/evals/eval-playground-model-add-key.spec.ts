@@ -2,6 +2,11 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { modelPill } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+
 // Every other eval-playground spec pre-creates its judge model via
 // POST /model-hub/custom_models/create/ before touching the UI — deliberate,
 // since config_json.api_base routes that model through the mock LLM for
@@ -57,11 +62,17 @@ test('EVAL-E2E-031: pick a keyless model, add its provider API key inline, then 
             'land in the Configure API keys drawer instead of selecting it',
             'add a key for that provider', 'close the drawer and the stale picker',
             're-open the picker and select the now-available model', 'save/publish the eval'],
-    backendChecks: ['models_list reports is_available false while the org holds no key for the provider',
-                    'the key is persisted via POST /model-hub/api-keys/',
+    backendChecks: ['a Claude model the org holds no key for routes into the keys drawer instead of '
+                      + 'being selected',
+                    'after the key is saved, the same model selects cleanly on a fresh page load, which '
+                      + 'only a persisted org key allows',
                     'the published eval is visible and searchable in the main eval list'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(360_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const evalName = `e2e-model-add-key-${suffix}`;
   const fakeKey = `e2e-fake-anthropic-key-${suffix}`;
@@ -70,9 +81,10 @@ test('EVAL-E2E-031: pick a keyless model, add its provider API key inline, then 
 
   await test.step('UI: a draft is auto-created on page load', async () => {
     await page.goto('/dashboard/evaluations/create');
-    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: 15_000 });
+    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: UI_READY });
     draftId = page.url().split('/dashboard/evaluations/create/')[1];
     expect(draftId).toMatch(/.+/);
+    await testInfo.attach('draft-id', { body: draftId, contentType: 'text/plain' });
   });
 
   const modelSearch = page.getByPlaceholder('Search models...');
@@ -90,10 +102,10 @@ test('EVAL-E2E-031: pick a keyless model, add its provider API key inline, then 
     await page.getByRole('tab', { name: 'LLM-As-A-Judge' }).click();
     await modelPill(page).first().click();
     await modelSearch.fill(MODEL_SEARCH);
-    await expect(firstClaudeRow).toBeVisible({ timeout: 15_000 });
+    await expect(firstClaudeRow).toBeVisible({ timeout: UI_READY });
     await firstClaudeRow.click();
 
-    await expect(page.getByText('Configure API keys')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Configure API keys')).toBeVisible({ timeout: UI_READY });
     // Nothing was selected, and the picker is still open underneath.
     await expect(modelPill(page).first()).toBeVisible();
     await expect(modelSearch).toBeVisible();
@@ -123,7 +135,7 @@ test('EVAL-E2E-031: pick a keyless model, add its provider API key inline, then 
     await page.locator('.MuiPopover-root .MuiBackdrop-root')
       .click({ position: { x: 5, y: 5 } });
     await drawer.getByRole('button', { name: 'save', exact: true }).first().click();
-    await expect(page.getByText('API Key created successfully')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('API Key created successfully')).toBeVisible({ timeout: UI_READY });
   });
 
   await test.step('UI: dismiss the drawer and the stale picker, then select the model', async () => {
@@ -150,7 +162,7 @@ test('EVAL-E2E-031: pick a keyless model, add its provider API key inline, then 
 
     await modelPill(page).first().click();
     await modelSearch.fill(MODEL_SEARCH);
-    await expect(firstClaudeRow).toBeVisible({ timeout: 15_000 });
+    await expect(firstClaudeRow).toBeVisible({ timeout: UI_READY });
     await firstClaudeRow.click();
 
     // Selected this time: the Popover closed and the pill took the model's
@@ -171,7 +183,7 @@ test('EVAL-E2E-031: pick a keyless model, add its provider API key inline, then 
     await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: 'Save Evaluation' }).click();
-    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: UI_READY });
     // EvalDetailPage appends `?v=<version_number>` once it has loaded the
     // saved version (:417), so anchor on the id followed by end-of-string
     // OR the query string rather than end-of-string alone.

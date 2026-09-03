@@ -2,6 +2,14 @@ import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData, selectJudgeModel } from '../../lib/eval-model';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+// One synchronous playground run: prompt -> gateway -> mock LLM -> parse ->
+// render, sized for the slowest case (a composite fanning out to children).
+const EVAL_RUN = 90_000;
+
 // Routes the judge model through the mock LLM behind the real gateway — same
 // setup as eval-create.spec.ts (EVAL-E2E-003) / eval-task.spec.ts.
 
@@ -84,6 +92,10 @@ test('EVAL-E2E-021: attach few-shot examples to an LLM-as-a-judge eval and publi
                       + 'expand_static_few_shot_examples without error'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(240_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const datasetName = `e2e-fewshot-ds-${suffix}`;
   // Sanitized to [a-z0-9_-] on input by the Eval Name field itself — no spaces/case.
@@ -132,9 +144,10 @@ test('EVAL-E2E-021: attach few-shot examples to an LLM-as-a-judge eval and publi
 
   await test.step('UI: a draft is auto-created on page load', async () => {
     await page.goto('/dashboard/evaluations/create');
-    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: 15_000 });
+    await page.waitForURL(/\/dashboard\/evaluations\/create\/.+/, { timeout: UI_READY });
     draftId = page.url().split('/dashboard/evaluations/create/')[1];
     expect(draftId).toMatch(/.+/);
+    await testInfo.attach('draft-id', { body: draftId, contentType: 'text/plain' });
   });
 
   await test.step('UI: name it and switch to LLM-as-a-Judge', async () => {
@@ -169,14 +182,14 @@ test('EVAL-E2E-021: attach few-shot examples to an LLM-as-a-judge eval and publi
   await test.step('UI: test the draft against custom input', async () => {
     await fillTestData(page, '{"output": "world"}');
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText('Pass', { exact: true })).toBeVisible();
     await expect(page.getByText(`${verdict} saw world`)).toBeVisible();
   });
 
   await test.step('UI: publish, and API lane confirms the few-shot selection persisted', async () => {
     await page.getByRole('button', { name: 'Save Evaluation' }).click();
-    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Evaluation saved successfully')).toBeVisible({ timeout: UI_READY });
     // EvalDetailPage appends `?v=<version_number>` once it has loaded the
     // saved version (:417), so anchor on the id followed by end-of-string
     // OR the query string rather than end-of-string alone.

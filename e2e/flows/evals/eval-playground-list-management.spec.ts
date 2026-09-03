@@ -1,6 +1,11 @@
 import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
 
+// Browser-side waits. The stack slows several-fold when specs run in parallel
+// (CI runs two workers), so these are sized off that rather than the 10s
+// expect default.
+const UI_READY = 60_000;
+
 // All four scenarios below land on the same page
 // (frontend/src/sections/evals/components/EvalsListView.jsx) and share one
 // piece of state (`filters`), so they're exercised as one flow rather than
@@ -39,6 +44,10 @@ test('EVAL-E2E-016: search, quick-filter, full-filter and bulk-delete on the eva
                       + '(POST /model-hub/eval-templates/bulk-delete/ soft-deletes it)'],
   }),
 }, async ({ page, actor }, testInfo) => {
+  // Every bounded wait in this spec, chained: past the config's 120s
+  // default, so a slow run ends on the assertion that ran out rather
+  // than a bare test timeout.
+  test.setTimeout(360_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const alphaName = `e2e-list-alpha-${suffix}`;
   const betaName = `e2e-list-beta-${suffix}`;
@@ -71,13 +80,19 @@ test('EVAL-E2E-016: search, quick-filter, full-filter and bulk-delete on the eva
       instructions: 'Reply Pass if {{output}} is on-topic, else Fail.',
       output_type: 'pass_fail', tags: ['AGENTS'],
     });
+    // Names, not ids: this flow anchors every assertion on them, and they are
+    // what makes the seeded rows re-queryable from the report alone.
+    await testInfo.attach('seeded-names', {
+      body: JSON.stringify({ alphaName, betaName, gammaName }),
+      contentType: 'application/json',
+    });
   });
 
   await page.goto('/dashboard/evaluations');
 
   await test.step('search matches on a partial substring of the name', async () => {
     await page.getByPlaceholder('Search').fill(partialSearch);
-    await expect(page.getByRole('row').filter({ hasText: alphaName })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('row').filter({ hasText: alphaName })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByRole('row').filter({ hasText: betaName })).not.toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: gammaName })).not.toBeVisible();
     await page.getByPlaceholder('Search').fill('');
@@ -90,14 +105,14 @@ test('EVAL-E2E-016: search, quick-filter, full-filter and bulk-delete on the eva
     // are tag chips rendered inside the result rows, which is what made the
     // bare getByText resolve to three elements once the list had matches.
     await page.getByRole('button', { name: 'Red Teaming', exact: true }).click();
-    await expect(page.getByRole('row').filter({ hasText: alphaName })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('row').filter({ hasText: alphaName })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByRole('row').filter({ hasText: betaName })).not.toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: gammaName })).not.toBeVisible();
 
     // Clicking the same (now active/filled) chip again removes its value
     // from filters.tags — EvalsListView's onClick branch for isActive===true.
     await page.getByRole('button', { name: 'Red Teaming', exact: true }).click();
-    await expect(page.getByRole('row').filter({ hasText: betaName })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('row').filter({ hasText: betaName })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByRole('row').filter({ hasText: gammaName })).toBeVisible();
   });
 
@@ -136,7 +151,7 @@ test('EVAL-E2E-016: search, quick-filter, full-filter and bulk-delete on the eva
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
 
-    await expect(page.getByRole('row').filter({ hasText: betaName })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('row').filter({ hasText: betaName })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByRole('row').filter({ hasText: alphaName })).not.toBeVisible();
     await expect(page.getByRole('row').filter({ hasText: gammaName })).not.toBeVisible();
   });
@@ -154,8 +169,8 @@ test('EVAL-E2E-016: search, quick-filter, full-filter and bulk-delete on the eva
     // Wait for the dialog to go first. While it is open every row is
     // `aria-hidden`, so the row assertion below would pass vacuously and hide
     // a delete that never happened.
-    await expect(dialog).toBeHidden({ timeout: 10_000 });
-    await expect(page.getByRole('row').filter({ hasText: betaName })).not.toBeVisible({ timeout: 10_000 });
+    await expect(dialog).toBeHidden({ timeout: UI_READY });
+    await expect(page.getByRole('row').filter({ hasText: betaName })).not.toBeVisible({ timeout: UI_READY });
   });
 
   await test.step('API lane: the deleted eval is gone from a fresh list call', async () => {

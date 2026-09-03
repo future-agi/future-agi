@@ -27,7 +27,7 @@
 ### EVAL-E2E-001 — eval task runs over ingested spans via the mock LLM
 
 **Goal:** A developer runs an LLM eval over ingested spans and reads the results  
-**Spec:** `flows/evals/eval-playground-task.spec.ts:32`  
+**Spec:** `flows/evals/eval-playground-task.spec.ts:37`  
 **Tags:** —
 
 **User steps:**
@@ -49,7 +49,7 @@
 ### EVAL-E2E-002 — search, test and edit an eval in the playground
 
 **Goal:** A developer finds an eval in the list, tests it against sample input, edits its config and re-tests  
-**Spec:** `flows/evals/eval-playground.spec.ts:12`  
+**Spec:** `flows/evals/eval-playground.spec.ts:20`  
 **Tags:** —
 
 **User steps:**
@@ -72,7 +72,7 @@
 ### EVAL-E2E-003 — author a new LLM eval from scratch, test it and publish
 
 **Goal:** A developer creates a new LLM-as-a-judge eval, picks a model, writes instructions, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-create.spec.ts:12`  
+**Spec:** `flows/evals/eval-playground-create.spec.ts:21`  
 **Tags:** —
 
 **User steps:**
@@ -88,14 +88,14 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created on page load (is_draft: true)
-- the draft is saved with the entered config before the playground test runs
+- a template row is auto-created on page load and is fetchable at eval-templates/<id>/detail/
+- the draft carries the typed instructions by the time the playground test has run
 - publishing sets it visible and searchable in the main eval list
 
 ### EVAL-E2E-004 — combine two evals into a composite, test the aggregate and publish
 
 **Goal:** A developer combines two existing evals into a composite under an aggregation method, tests the aggregate against custom input, reads the per-child and aggregate results, and publishes it  
-**Spec:** `flows/evals/eval-playground-composite.spec.ts:36`  
+**Spec:** `flows/evals/eval-playground-composite.spec.ts:44`  
 **Tags:** —
 
 **User steps:**
@@ -120,7 +120,7 @@
 ### EVAL-E2E-005 — author a new Code eval from scratch, test it and publish
 
 **Goal:** A developer creates a new Code-type eval, writes a Python evaluate() function, tests it against inputs that should Pass and Fail, and publishes it  
-**Spec:** `flows/evals/eval-playground-code.spec.ts:40`  
+**Spec:** `flows/evals/eval-playground-code.spec.ts:49`  
 **Tags:** —
 
 **User steps:**
@@ -136,15 +136,15 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created on page load (is_draft: true)
-- the draft is saved with the entered code before each playground test runs
-- the code runs in the sandboxed Python executor with no LLM/gateway call involved
+- a template row is auto-created on page load and is fetchable at eval-templates/<id>/detail/
+- the published template is stored as eval_type "code" carrying the evaluate() source whose marker came back in both verdicts
+- the same source returns Pass and Fail on two different inputs, so the sandbox ran it rather than replaying a cached result
 - publishing sets it visible and searchable in the main eval list
 
 ### EVAL-E2E-006 — author a brand-new Code eval from the shared Add-Evaluation drawer on a dataset
 
 **Goal:** A developer opens the shared eval-picker drawer from a dataset's "Evaluate" action, creates a brand-new Code eval inline (rather than the standalone create page), tests it against a real row of that same dataset, and saves it as a dataset binding  
-**Spec:** `flows/evals/eval-playground-drawer-create.spec.ts:60`  
+**Spec:** `flows/evals/eval-playground-drawer-create.spec.ts:68`  
 **Tags:** —
 
 **User steps:**
@@ -161,16 +161,16 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created the moment the Create-New panel mounts (is_draft: true)
+- the saved template is returned by the main eval list, which excludes drafts (the create path stores visible_ui = not is_draft)
 - the dataset picked up by the drawer is the exact dataset the drawer was opened from (sourceId threads through EvaluationDrawer -> EvalPickerDrawer -> EvalPickerCreateNew as DatasetTestMode's initialDatasetId, so no dataset picker is even shown)
 - the code runs in the sandboxed Python executor against the dataset's actual cell value
-- saving publishes the draft (is_draft: false) and POSTs template_id to add-eval/{datasetId} with run:false — a save-only dataset binding, not an immediate run
+- saving POSTs template_id to develops/<datasetId>/add_user_eval/ with run:false — a save-only dataset binding, not an immediate run
 - the dataset's own eval list (get_evals_list) now includes this eval by name
 
 ### EVAL-E2E-007 — test an existing eval against a real dataset row via the Dataset source tab
 
 **Goal:** A developer opens a saved eval, switches the playground to the Dataset source tab, picks a real dataset from scratch, maps the eval's variable to a real column, and runs the test  
-**Spec:** `flows/evals/eval-playground-testmode-dataset.spec.ts:34`  
+**Spec:** `flows/evals/eval-playground-testmode-dataset.spec.ts:42`  
 **Tags:** —
 
 **User steps:**
@@ -192,7 +192,7 @@
 ### EVAL-E2E-008 — test an existing eval against a real span via the Tracing source tab
 
 **Goal:** A developer opens a saved eval, switches the playground to the Tracing source tab, picks the project their trace landed in, maps the eval's variable to a real span field, and runs the test  
-**Spec:** `flows/evals/eval-playground-testmode-tracing.spec.ts:28`  
+**Spec:** `flows/evals/eval-playground-testmode-tracing.spec.ts:36`  
 **Tags:** —
 
 **User steps:**
@@ -214,7 +214,7 @@
 ### EVAL-E2E-011 — filter usage logs by date range and drill into a single log
 
 **Goal:** A developer viewing a custom eval's Usage tab filters its logs to a date range and opens a single log row to read the input, result and reasoning behind that run  
-**Spec:** `flows/evals/eval-playground-usage.spec.ts:12`  
+**Spec:** `flows/evals/eval-playground-usage.spec.ts:20`  
 **Tags:** —
 
 **User steps:**
@@ -227,14 +227,14 @@
 
 **Backend state verified:**
 
-- the usage endpoint is called with start/end date params matching the selected preset
+- the Yesterday preset calls the usage endpoint with a start/end window that closes before today began
 - a log created moments ago is excluded from a Yesterday-only window and included in Today
 - the detail panel renders the exact explanation text the eval produced for that run, unwrapped from the usage row's cell_value wrapper
 
 ### EVAL-E2E-012 — add feedback to a logged eval result from the Usage tab
 
 **Goal:** A developer reviews a usage log for a custom eval and submits human feedback ("Auto Learning") on the result  
-**Spec:** `flows/evals/eval-playground-feedback.spec.ts:31`  
+**Spec:** `flows/evals/eval-playground-feedback.spec.ts:39`  
 **Tags:** —
 
 **User steps:**
@@ -247,13 +247,13 @@
 
 **Backend state verified:**
 
-- a first-time Add Feedback submission always posts log_id + value + explanation + action_type to the eval-playground feedback endpoint, independent of the log's own source
+- a first-time Add Feedback submission on an eval-playground log posts log_id + value + explanation + action_type to the eval-playground feedback endpoint
 - the new feedback is retrievable from the feedback-list endpoint keyed by the eval template
 
 ### EVAL-E2E-016 — search, quick-filter, full-filter and bulk-delete on the evals list
 
 **Goal:** A developer narrows the evals list by a partial name search, a quick tag chip and the full filter panel, then bulk-deletes the eval the filters converged on  
-**Spec:** `flows/evals/eval-playground-list-management.spec.ts:25`  
+**Spec:** `flows/evals/eval-playground-list-management.spec.ts:30`  
 **Tags:** —
 
 **User steps:**
@@ -273,7 +273,7 @@
 ### EVAL-E2E-017 — a composite eval runs over ingested spans via a full async eval task
 
 **Goal:** A developer attaches a composite eval (two LLM-as-judge children under an aggregation function) to a project and runs it as a real async eval task over ingested spans — not the adhoc/playground composite test, and not a single eval  
-**Spec:** `flows/evals/eval-playground-task-composite.spec.ts:22`  
+**Spec:** `flows/evals/eval-playground-task-composite.spec.ts:27`  
 **Tags:** —
 
 **User steps:**
@@ -296,7 +296,7 @@
 ### EVAL-E2E-018 — author a new LLM eval in Jinja template format, test it and publish
 
 **Goal:** A developer creates an LLM-as-a-judge eval and switches its template format from the default Mustache to Jinja before writing instructions  
-**Spec:** `flows/evals/eval-playground-jinja-template.spec.ts:32`  
+**Spec:** `flows/evals/eval-playground-jinja-template.spec.ts:40`  
 **Tags:** —
 
 **User steps:**
@@ -319,7 +319,7 @@
 ### EVAL-E2E-019 — duplicate an eval from its detail page and verify the copy runs independently
 
 **Goal:** A developer duplicates an existing eval from its detail page to get an independent, editable copy with the same configuration  
-**Spec:** `flows/evals/eval-playground-duplicate.spec.ts:44`  
+**Spec:** `flows/evals/eval-playground-duplicate.spec.ts:52`  
 **Tags:** —
 
 **User steps:**
@@ -341,7 +341,7 @@
 ### EVAL-E2E-020 — save a new eval version from the detail page and confirm an eval task runs it
 
 **Goal:** A developer edits an existing eval's instructions on its detail page, saves a new version, then creates an eval task that runs against the project's ingested spans  
-**Spec:** `flows/evals/eval-playground-version-task.spec.ts:44`  
+**Spec:** `flows/evals/eval-playground-version-task.spec.ts:49`  
 **Tags:** —
 
 **User steps:**
@@ -366,7 +366,7 @@
 ### EVAL-E2E-021 — attach few-shot examples to an LLM-as-a-judge eval and publish it
 
 **Goal:** A developer creates an LLM-as-a-Judge eval, attaches a dataset of few-shot examples via the Few-shot Examples picker, tests the eval, and publishes it with the dataset selection persisted  
-**Spec:** `flows/evals/eval-playground-fewshot.spec.ts:68`  
+**Spec:** `flows/evals/eval-playground-fewshot.spec.ts:76`  
 **Tags:** —
 
 **User steps:**
@@ -391,7 +391,7 @@
 ### EVAL-E2E-024 — author a new Agent eval, attach an external connector, test it and publish
 
 **Goal:** A developer creates an Agent-type eval, attaches an external MCP connector as a tool the evaluator can use, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-agent-connectors.spec.ts:85`  
+**Spec:** `flows/evals/eval-playground-agent-connectors.spec.ts:93`  
 **Tags:** —
 
 **User steps:**
@@ -409,14 +409,14 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created with eval_type "agent" (AGENTIC_EVAL unlocked by default in this self-hosted e2e stack)
+- the published eval is stored with eval_type "agent"
 - the published eval's config.tools carries the connector id as a truthy key
 - the published eval's config.agent_mode is "quick"
 
 ### EVAL-E2E-025 — author a new Agent eval, attach a knowledge base, test it and publish
 
 **Goal:** A developer creates an Agent-type eval, attaches a knowledge base for the evaluator to draw context from, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-agent-knowledge-base.spec.ts:32`  
+**Spec:** `flows/evals/eval-playground-agent-knowledge-base.spec.ts:40`  
 **Tags:** —
 
 **User steps:**
@@ -434,14 +434,14 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created with eval_type "agent"
+- the published eval is stored with eval_type "agent"
 - the published eval's config.knowledge_bases carries the created KB id
 - the published eval's config.agent_mode is "quick"
 
 ### EVAL-E2E-026 — author a new Agent eval, turn on data injection, test it and publish
 
 **Goal:** A developer creates an Agent-type eval and configures full span context to be injected when it runs, tests it and publishes  
-**Spec:** `flows/evals/eval-playground-agent-data-injection.spec.ts:31`  
+**Spec:** `flows/evals/eval-playground-agent-data-injection.spec.ts:42`  
 **Tags:** —
 
 **User steps:**
@@ -458,14 +458,14 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created with eval_type "agent"
+- the published eval is stored with eval_type "agent"
 - the published eval's config.data_injection.span_context is true
 - the published eval's config.agent_mode is "quick"
 
 ### EVAL-E2E-027 — author a new Agent eval, configure a long then a custom summary, test it and publish
 
 **Goal:** A developer creates an Agent-type eval, tries the built-in "Long" summary preset, then switches to a saved custom summary template, testing after each change, and publishes  
-**Spec:** `flows/evals/eval-playground-agent-summary.spec.ts:32`  
+**Spec:** `flows/evals/eval-playground-agent-summary.spec.ts:40`  
 **Tags:** —
 
 **User steps:**
@@ -483,14 +483,14 @@
 
 **Backend state verified:**
 
-- a draft template is auto-created with eval_type "agent"
+- the published eval is stored with eval_type "agent"
 - the published eval's config.summary.type is "custom:<template id>"
 - the published eval's config.agent_mode is "quick"
 
 ### EVAL-E2E-030 — test a composite eval against a real dataset row via the Dataset source tab
 
 **Goal:** A developer combines two evals into a composite, switches the playground to the Dataset source tab, maps the union of child variables to a real dataset column, and reads the aggregate result from a real row instead of typed JSON  
-**Spec:** `flows/evals/eval-playground-composite-dataset.spec.ts:20`  
+**Spec:** `flows/evals/eval-playground-composite-dataset.spec.ts:28`  
 **Tags:** —
 
 **User steps:**
@@ -506,14 +506,14 @@
 
 **Backend state verified:**
 
-- DatasetTestMode dispatches to useExecuteCompositeEvalAdhoc (not the single-eval path) when isComposite is true
+- the Dataset tab dispatches the run to composite/execute-adhoc, not the single-eval path, when the eval under test is composite
 - the union of both children's required_keys collapses to one mapped column, since both children declare the same {{output}} variable
 - the aggregate score is avg(1.0, 0.0) = 0.5, identical math to the Custom-tab composite flow, proving the source tab only changes how input is supplied
 
 ### EVAL-E2E-031 — pick a keyless model, add its provider API key inline, then select it
 
 **Goal:** A developer whose org has no key for a provider tries to pick one of its models, is routed into the Configure API keys drawer, adds the key, and then picks the model  
-**Spec:** `flows/evals/eval-playground-model-add-key.spec.ts:49`  
+**Spec:** `flows/evals/eval-playground-model-add-key.spec.ts:54`  
 **Tags:** —
 
 **User steps:**
@@ -530,8 +530,8 @@
 
 **Backend state verified:**
 
-- models_list reports is_available false while the org holds no key for the provider
-- the key is persisted via POST /model-hub/api-keys/
+- a Claude model the org holds no key for routes into the keys drawer instead of being selected
+- after the key is saved, the same model selects cleanly on a fresh page load, which only a persisted org key allows
 - the published eval is visible and searchable in the main eval list
 
 ## observe
