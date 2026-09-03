@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
@@ -519,47 +521,209 @@ def attach_platform_simulator_secret_refs(
 _MAX_EGRESS_DOMAINS = 20
 # RFC 1918 / loopback / link-local prefixes that must never appear in egress.
 _PRIVATE_HOST_PATTERNS = re.compile(
-    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost$)"
+    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|"
+    r"169\.254\.|localhost$|.*\.localhost$|host\.docker\.internal$|"
+    r"host\.containers\.internal$)"
 )
 _GOOGLE_REGION = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
 
+def _normalize_egress_domains(domains: Iterable[str]) -> set[str]:
+    """Normalize, deduplicate, and wildcard-minimize an egress domain collection.
+
+    Daytona treats ``*.example.com`` as a domain policy for subdomains below the
+    apex, but not for the apex itself. Keep wildcard entries themselves intact
+    while removing only concrete hosts covered by one of those entries.
+    """
+    normalized = {
+        domain.strip().lower().rstrip(".")
+        for domain in domains
+        if isinstance(domain, str) and domain.strip().rstrip(".")
+    }
+    wildcard_suffixes = {
+        domain[2:]
+        for domain in normalized
+        if domain.startswith("*.") and len(domain) > 2
+    }
+    return {
+        domain
+        for domain in normalized
+        if domain.startswith("*.")
+        or not any(domain.endswith(f".{suffix}") for suffix in wildcard_suffixes)
+    }
+
+
+def _hostname_from_url(value: Any) -> str | None:
+    """Extract a normalized hostname from an URL or host-like value."""
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    # ``urlparse`` only fills ``hostname`` for a netloc. The ``//`` form lets
+    # us accept a host-like value while retaining normal URL parsing.
+    candidate = raw if "://" in raw or raw.startswith("//") else f"//{raw}"
+    try:
+        hostname = urlparse(candidate).hostname
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+    return hostname.strip().lower().rstrip(".") or None
+
+
+def _config_value(config: Mapping[str, Any], *names: str) -> str | None:
+    wanted = {name.lower() for name in names}
+    for key, value in config.items():
+        if str(key).lower() in wanted and isinstance(value, str):
+            candidate = value.strip()
+            if candidate:
+                return candidate
+    return None
+
+
+def _add_livekit_host(domains: set[str], host: str | None) -> None:
+    if not host:
+        return
+    domains.add(host)
+    if host.endswith(".livekit.cloud"):
+        domains.update({"*.livekit.cloud", "*.turn.livekit.cloud"})
+    elif host == "livekit-eu.futureagi.com":
+        domains.add("coturn.turn-eu.futureagi.com")
+
+
+def _connector_egress_domains(
+    payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
+) -> set[str]:
+    """Return connector infrastructure hosts implied by resolved run inputs.
+
+    Only static/configured endpoints are admitted here. In particular, Vapi's
+    websocket endpoint is returned by its create-call response and is therefore
+    intentionally not guessed.
+    """
+    agent = payload.get("agent") or {}
+    connector = str(agent.get("connector") or "auto").strip().lower()
+    config = agent.get("config") or {}
+    if not isinstance(config, Mapping):
+        config = {}
+    domains: set[str] = set()
+
+    if connector == "livekit":
+        livekit_url = None
+        for alias, value in secrets_map.items():
+            if str(alias).upper() == "LIVEKIT_URL" and isinstance(value, str):
+                if value.strip():
+                    livekit_url = value.strip()
+                    break
+        if livekit_url is None:
+            livekit_url = _config_value(config, "livekit_url", "LIVEKIT_URL")
+        _add_livekit_host(domains, _hostname_from_url(livekit_url))
+    elif connector == "vapi":
+        domains.add("api.vapi.ai")
+        for name in (
+            "api_base_url",
+            "VAPI_API_BASE_URL",
+            "api_url",
+            "vapi_api_url",
+            "websocket_url",
+            "websocket_call_url",
+            "websocketcallurl",
+            "websocketCallUrl",
+        ):
+            value = _config_value(config, name)
+            host = _hostname_from_url(value)
+            if host:
+                domains.add(host)
+    elif connector == "retell":
+        domains.add("api.retellai.com")
+        api_url = _config_value(
+            config, "api_url", "api_base_url", "retell_api_url", "RETELL_API_URL"
+        )
+        api_host = _hostname_from_url(api_url)
+        if api_host:
+            domains.add(api_host)
+        livekit_url = _config_value(
+            config,
+            "livekit_url",
+            "LIVEKIT_URL",
+            "retell_livekit_url",
+            "RETELL_LIVEKIT_URL",
+        )
+        if livekit_url is None:
+            livekit_url = getattr(
+                settings,
+                "RETELL_LIVEKIT_URL",
+                "wss://retell-ai-4ihahnq7.livekit.cloud",
+            )
+        _add_livekit_host(domains, _hostname_from_url(livekit_url))
+    return domains
+
+
+def _validate_egress_host(domain: str) -> None:
+    host = domain[2:] if domain.startswith("*.") else domain
+    if _PRIVATE_HOST_PATTERNS.match(host):
+        raise HostedHarnessError(
+            "egress_domain_private",
+            f"private/reserved host {domain!r} is not allowed in egress",
+            status_code=400,
+        )
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+        or address.is_reserved
+    ):
+        raise HostedHarnessError(
+            "egress_domain_private",
+            f"private/reserved host {domain!r} is not allowed in egress",
+            status_code=400,
+        )
+
+
 def _validate_egress_domains(domains: list[str]) -> None:
-    """Reject egress lists exceeding cap or containing private/invalid hosts."""
+    """Reject customer egress lists exceeding the input cap or private hosts."""
     if len(domains) > _MAX_EGRESS_DOMAINS:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             f"at most {_MAX_EGRESS_DOMAINS} egress domains allowed, got {len(domains)}",
             status_code=400,
         )
-    for domain in domains:
-        if _PRIVATE_HOST_PATTERNS.match(domain):
-            raise HostedHarnessError(
-                "egress_domain_private",
-                f"private/reserved host {domain!r} is not allowed in egress",
-                status_code=400,
-            )
+    for domain in _normalize_egress_domains(domains):
+        _validate_egress_host(domain)
 
 
-def _validate_resolved_egress_domains(domains: set[str]) -> None:
-    """Enforce Daytona's cap after platform, provider, and customer hosts are combined."""
-    if len(domains) > _MAX_EGRESS_DOMAINS:
+def _validate_resolved_egress_domains(domains: Iterable[str]) -> None:
+    """Enforce Daytona's cap after platform, provider, and customer hosts combine."""
+    normalized = _normalize_egress_domains(domains)
+    if len(normalized) > _MAX_EGRESS_DOMAINS:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             "resolved sandbox egress requires "
-            f"{len(domains)} domains; Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            f"{len(normalized)} domains after normalization; "
+            f"Daytona supports at most {_MAX_EGRESS_DOMAINS}",
             status_code=400,
         )
+    for domain in normalized:
+        _validate_egress_host(domain)
 
 
-def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
-    """Return the minimum provider hosts implied by run-scoped credentials.
-
-    These are platform-managed dependencies of the selected credential type, not customer
-    requested egress. In particular, Vertex service-account credentials cannot work unless the
-    OAuth token endpoint and regional Vertex endpoint are reachable.
-    """
-    aliases = {name.upper().removeprefix("SIMULATOR_") for name in secrets_map}
+def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
+    """Return provider hosts implied by credential aliases and provider selectors."""
+    aliases = {str(name).upper().removeprefix("SIMULATOR_") for name in secrets_map}
+    values = {str(name).upper(): value for name, value in secrets_map.items()}
+    selected_audio_providers = {
+        str(values.get(name) or "").strip().lower()
+        for name in ("SIMULATOR_STT_PROVIDER", "SIMULATOR_TTS_PROVIDER")
+        if str(values.get(name) or "").strip()
+    }
+    selected_llm_provider = str(
+        values.get("SIMULATOR_LLM_PROVIDER") or ""
+    ).strip().lower()
     domains: set[str] = set()
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -578,10 +742,13 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
             "SIMULATOR_GOOGLE_CLOUD_LOCATION",
             "SIMULATOR_CLOUD_ML_REGION",
         ):
-            region = str(secrets_map.get(name) or "").strip().lower()
+            region = str(values.get(name) or "").strip().lower()
             if _GOOGLE_REGION.fullmatch(region):
                 domains.add(f"{region}-aiplatform.googleapis.com")
-    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"}:
+    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"} and (
+        not selected_llm_provider
+        or selected_llm_provider in {"gemini", "google", "google-ai"}
+    ):
         domains.add("generativelanguage.googleapis.com")
     if "VAPI_API_KEY" in aliases:
         # Both repository-owned lifecycle commands and the direct websocket caller use Vapi's
@@ -598,7 +765,95 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
                 "*.turn.livekit.cloud",
             }
         )
+    if aliases & {"DEEPGRAM_API_KEY"} and (
+        not selected_audio_providers or "deepgram" in selected_audio_providers
+    ):
+        domains.add("api.deepgram.com")
+    if aliases & {"CARTESIA_API_KEY"} and (
+        not selected_audio_providers or "cartesia" in selected_audio_providers
+    ):
+        domains.add("api.cartesia.ai")
+    if aliases & {"OPENAI_API_KEY"} and (
+        not selected_llm_provider or selected_llm_provider == "openai"
+    ):
+        domains.add("api.openai.com")
+    if aliases & {"ANTHROPIC_API_KEY"} and (
+        not selected_llm_provider or selected_llm_provider == "anthropic"
+    ):
+        domains.add("api.anthropic.com")
     return domains
+
+
+def _resolved_egress_domains(
+    payload: Mapping[str, Any],
+    target_secrets: Mapping[str, Any] | None = None,
+    simulator_env: Mapping[str, Any] | None = None,
+    callback_host: str | None = None,
+) -> set[str]:
+    """Build Daytona's authoritative minimized domain union for one launch."""
+    target_secrets = target_secrets or {}
+    simulator_env = simulator_env or {}
+    security = payload.get("security") or {}
+    customer_domains = security.get("allowed_egress_domains") or []
+    base_domains = getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []) or []
+    if isinstance(base_domains, str):
+        base_domains = [base_domains]
+    if isinstance(customer_domains, str):
+        customer_domains = [customer_domains]
+    if callback_host:
+        callback_host = _hostname_from_url(callback_host)
+    values: list[str] = [
+        domain for domain in base_domains if isinstance(domain, str)
+    ]
+    values.extend(_provider_egress_domains(target_secrets))
+    values.extend(_provider_egress_domains(simulator_env))
+    values.extend(_connector_egress_domains(payload, target_secrets))
+    values.extend(domain for domain in customer_domains if isinstance(domain, str))
+    if callback_host:
+        values.append(callback_host)
+    return _normalize_egress_domains(values)
+
+
+_KNOWN_SIMULATOR_SECRET_ALIASES = (
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "CARTESIA_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+)
+_KNOWN_SIMULATOR_CONFIG_NAMES = (
+    "SIMULATOR_LLM_PROVIDER",
+    "SIMULATOR_STT_PROVIDER",
+    "SIMULATOR_TTS_PROVIDER",
+    "GOOGLE_CLOUD_LOCATION",
+    "CLOUD_ML_REGION",
+)
+
+
+def _known_simulator_egress_inputs() -> dict[str, str]:
+    """Read deployment env presence and non-secret selectors for admission checks."""
+    values: dict[str, str] = {}
+    configured = getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {}) or {}
+    for alias, env_name in configured.items():
+        raw = str(os.getenv(str(env_name), "") or "")
+        if raw:
+            upper_alias = str(alias).upper()
+            values[str(alias)] = (
+                raw
+                if "LOCATION" in upper_alias or "REGION" in upper_alias
+                else ""
+            )
+    for alias in _KNOWN_SIMULATOR_SECRET_ALIASES:
+        if os.getenv(alias):
+            values.setdefault(alias, "")
+    for name in _KNOWN_SIMULATOR_CONFIG_NAMES:
+        value = str(os.getenv(name) or "").strip()
+        if value:
+            values[name] = value
+    return values
 
 
 def _persist_bundle_stage_outputs(
@@ -1084,6 +1339,18 @@ class DaytonaHostedGateway:
         dispatch_payload = prepare_dispatch_payload(
             payload, secrets_map, simulator_secrets=simulator_env
         )
+        platform_host = _hostname_from_url(endpoint_base_url)
+        allowed_domains = _resolved_egress_domains(
+            payload,
+            secrets_map,
+            simulator_env,
+            platform_host,
+        )
+        # Validate customer inputs independently so their existing API-level cap and
+        # private-host protection remain fail-closed; the resolved cap is checked
+        # after wildcard minimization and provider/connector additions.
+        _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+        _validate_resolved_egress_domains(allowed_domains)
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
@@ -1116,16 +1383,6 @@ class DaytonaHostedGateway:
             authoring_seconds + payload["runtime"]["max_duration_seconds"] + 120,
         )
         ttl_minutes = max(1, (ttl_seconds + 59) // 60)
-        platform_host = urlparse(endpoint_base_url).hostname
-        allowed_domains = set(getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []))
-        allowed_domains.update(_provider_egress_domains(secrets_map))
-        allowed_domains.update(_provider_egress_domains(simulator_env))
-        allowed_domains.update(payload["security"]["allowed_egress_domains"])
-        if platform_host:
-            allowed_domains.add(platform_host)
-        # Egress union validation: cap at 20 user-supplied domains.
-        _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
         # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
         # domain-allowlist cannot express when media and signaling resolve to different IPs. When
         # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;

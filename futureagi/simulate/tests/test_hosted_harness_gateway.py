@@ -22,9 +22,12 @@ from simulate.services.hosted_harness_gateway import (
     DaytonaHostedGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
+    _connector_egress_domains,
+    _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
+    _resolved_egress_domains,
     _validate_resolved_egress_domains,
     attach_platform_simulator_secret_refs,
     pack_authoring_archive,
@@ -198,6 +201,168 @@ def test_resolved_egress_rejects_daytona_domain_overflow():
         _validate_resolved_egress_domains(
             {f"provider-{index}.example.com" for index in range(21)}
         )
+
+
+def test_normalize_egress_domains_wildcard_coverage_keeps_apex():
+    assert _normalize_egress_domains(
+        [
+            " Foo.Example.COM. ",
+            "foo.example.com",
+            "*.EXAMPLE.com.",
+            "example.com.",
+            "bar.other.test.",
+        ]
+    ) == {"*.example.com", "example.com", "bar.other.test"}
+
+
+@pytest.mark.parametrize(
+    ("alias", "domain"),
+    [
+        ("DEEPGRAM_API_KEY", "api.deepgram.com"),
+        ("SIMULATOR_DEEPGRAM_API_KEY", "api.deepgram.com"),
+        ("CARTESIA_API_KEY", "api.cartesia.ai"),
+        ("OPENAI_API_KEY", "api.openai.com"),
+        ("ANTHROPIC_API_KEY", "api.anthropic.com"),
+    ],
+)
+def test_provider_egress_includes_direct_and_simulator_aliases(alias, domain):
+    assert _provider_egress_domains({alias: "configured"}) == {domain}
+
+def test_provider_egress_uses_selected_simulator_audio_provider():
+    domains = _provider_egress_domains(
+        {
+            "SIMULATOR_DEEPGRAM_API_KEY": "configured",
+            "SIMULATOR_CARTESIA_API_KEY": "configured",
+            "SIMULATOR_STT_PROVIDER": "deepgram",
+            "SIMULATOR_TTS_PROVIDER": "deepgram",
+        }
+    )
+
+    assert domains == {"api.deepgram.com"}
+
+
+def test_provider_egress_uses_selected_simulator_llm_provider():
+    domains = _provider_egress_domains(
+        {
+            "SIMULATOR_GEMINI_API_KEY": "configured",
+            "SIMULATOR_OPENAI_API_KEY": "configured",
+            "SIMULATOR_LLM_PROVIDER": "openai",
+        }
+    )
+
+    assert domains == {"api.openai.com"}
+
+
+def test_livekit_cloud_connector_egress_is_wildcard_minimized(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = {
+        "agent": {
+            "connector": "livekit",
+            "config": {"livekit_url": "wss://FOO.livekit.cloud."},
+        },
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _resolved_egress_domains(payload, {}, {}, None) == {
+        "*.livekit.cloud",
+        "*.turn.livekit.cloud",
+    }
+
+
+def test_self_hosted_livekit_connector_only_adds_signal_host(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = {
+        "agent": {
+            "connector": "livekit",
+            "config": {"LIVEKIT_URL": "wss://voice.customer.example"},
+        },
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _connector_egress_domains(payload, {}) == {"voice.customer.example"}
+
+
+def test_livekit_secret_url_takes_precedence_over_configured_url():
+    payload = {
+        "agent": {
+            "connector": "livekit",
+            "config": {"livekit_url": "wss://config.example.test"},
+        },
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _connector_egress_domains(
+        payload, {"LIVEKIT_URL": "wss://resolved.example.test"}
+    ) == {"resolved.example.test"}
+
+
+def test_vapi_connector_adds_static_and_configured_endpoint_hosts():
+    payload = {
+        "agent": {
+            "connector": "vapi",
+            "config": {
+                "api_base_url": "https://proxy.example.test",
+                "websocketCallUrl": "wss://call.example.test/socket",
+            },
+        },
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _connector_egress_domains(payload, {}) == {
+        "api.vapi.ai",
+        "call.example.test",
+        "proxy.example.test",
+    }
+
+
+def test_livekit_futureagi_eu_connector_adds_coturn_host():
+    payload = {
+        "agent": {
+            "connector": "livekit",
+            "config": {"livekit_url": "wss://livekit-eu.futureagi.com"},
+        },
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _connector_egress_domains(payload, {}) == {
+        "coturn.turn-eu.futureagi.com",
+        "livekit-eu.futureagi.com",
+    }
+
+
+def test_retell_connector_includes_default_livekit_cloud_egress(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.RETELL_LIVEKIT_URL = "wss://retell-ai.example.livekit.cloud"
+    payload = {
+        "agent": {"connector": "retell", "config": {}},
+        "security": {"allowed_egress_domains": []},
+    }
+
+    assert _resolved_egress_domains(payload, {}, {}, None) == {
+        "*.livekit.cloud",
+        "*.turn.livekit.cloud",
+        "api.retellai.com",
+    }
+
+
+def test_resolved_egress_cap_applies_after_wildcard_minimization(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = {
+        "agent": {"connector": "auto", "config": {}},
+        "security": {
+            "allowed_egress_domains": [
+                "*.example.com",
+                "foo.example.com",
+                *[f"domain-{index}.example.test" for index in range(19)],
+            ]
+        },
+    }
+
+    domains = _resolved_egress_domains(payload, {}, {}, None)
+    assert "foo.example.com" not in domains
+    assert "example.com" not in domains
+    assert len(domains) == 20
+    _validate_resolved_egress_domains(domains)
 
 
 def _payload():
@@ -580,6 +745,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert set(client.params.domain_allow_list.split(",")) == {
         "aiplatform.googleapis.com",
         "agent.example.com",
+        "api.deepgram.com",
+        "api.vapi.ai",
         "global-aiplatform.googleapis.com",
         "ingest.example.com",
         "oauth2.googleapis.com",

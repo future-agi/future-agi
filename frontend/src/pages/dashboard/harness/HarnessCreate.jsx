@@ -44,7 +44,12 @@ import {
 } from "./credentialValues";
 import { errorMessage, readable, stages } from "./harnessShared";
 import { prepareSourceFolder } from "./sourceUpload";
-import { parseGitHubInput } from "./requestMapper";
+import {
+  deriveEgressDomains,
+  mergeEgressDomains,
+  parseEgressDomains,
+  parseGitHubInput,
+} from "./requestMapper";
 
 // Uploaded agent folders are often only a few KiB, and a fixed MiB unit rounds
 // every one of those to "0.0 MiB". Scale the unit to the actual size instead.
@@ -183,6 +188,7 @@ export default function HarnessCreate() {
   const [environmentValues, setEnvironmentValues] = useState({});
   const [environmentText, setEnvironmentText] = useState("");
   const [environmentError, setEnvironmentError] = useState("");
+  const [additionalEgressDomains, setAdditionalEgressDomains] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
@@ -308,7 +314,10 @@ export default function HarnessCreate() {
       read_only_source: true,
       allow_privileged: false,
       allow_host_runtime_control: false,
-      allowed_egress_domains: [],
+      allowed_egress_domains: mergeEgressDomains(
+        deriveEgressDomains(configurationValues, environmentValues),
+        parseEgressDomains(additionalEgressDomains),
+      ),
     },
     retry: {
       max_infrastructure_attempts: 2,
@@ -1083,7 +1092,8 @@ export default function HarnessCreate() {
                         sx={{ display: "none" }}
                       />
                     </Button>
-                    {Object.keys(environmentValues).length > 0 && (
+                    {(Object.keys(environmentValues).length > 0 ||
+                      additionalEgressDomains.trim()) && (
                       <Button
                         color="inherit"
                         onClick={() => {
@@ -1092,6 +1102,7 @@ export default function HarnessCreate() {
                           setSecretFileRefs({});
                           setSecretFileUploads({});
                           setEnvironmentText("");
+                          setAdditionalEgressDomains("");
                           setPreflightDirty(Boolean(preflight));
                         }}
                       >
@@ -1099,6 +1110,18 @@ export default function HarnessCreate() {
                       </Button>
                     )}
                   </Stack>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Additional egress domains"
+                    placeholder="api.example.com, turn.example.com"
+                    value={additionalEgressDomains}
+                    helperText="Comma/newline-separated public hostnames for hardcoded APIs/TURN endpoints. Daytona maximum is enforced server-side."
+                    onChange={(event) => {
+                      setAdditionalEgressDomains(event.target.value);
+                      setPreflightDirty(Boolean(preflight));
+                    }}
+                  />
                   {Object.keys(environmentValues).length > 0 && (
                     <Stack
                       direction="row"
