@@ -177,26 +177,6 @@ export const AlertConfigValidationSchema = z
       }
     }
 
-    // Eval metrics are 0-100 percentages (same scale as the Charts tab);
-    // a static threshold above 100 can never fire.
-    if (
-      data.metric_type === "evaluation_metrics" &&
-      threshold_type === "static"
-    ) {
-      [
-        ["critical_threshold_value", critical_threshold_value],
-        ["warning_threshold_value", warning_threshold_value],
-      ].forEach(([path, value]) => {
-        if (typeof value === "number" && (value < 0 || value > 100)) {
-          ctx.addIssue({
-            path: [path],
-            code: "custom",
-            message: "Evaluation thresholds are percentages (0-100)",
-          });
-        }
-      });
-    }
-
     // Time window required for percentage change
     if (
       threshold_type === "percentage_change" &&

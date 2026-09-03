@@ -143,24 +143,6 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                     "Critical threshold is required for percentage change and static threshold."
                 )
 
-            # Eval metrics are 0-100 percentages; a static threshold above 100
-            # can never fire (TH-7789).
-            if (
-                data.get("metric_type")
-                == MonitorMetricTypeChoices.EVALUATION_METRICS.value
-                and threshold_type == ThresholdCalculationMethodChoices.STATIC.value
-            ):
-                for field, value in (
-                    ("critical_threshold_value", critical_threshold_value),
-                    ("warning_threshold_value", warning_threshold_value),
-                ):
-                    if value is not None and not 0 <= value <= 100:
-                        raise serializers.ValidationError(
-                            {
-                                field: "Evaluation metric thresholds are percentages and must be between 0 and 100."
-                            }
-                        )
-
             if (
                 threshold_operator in ["greater_than", "less_than"]
                 and warning_threshold_value is not None

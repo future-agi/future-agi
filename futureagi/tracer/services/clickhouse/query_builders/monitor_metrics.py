@@ -347,12 +347,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
     def _build_eval_metric_value_query(
         self, params: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
-        """Build the eval metric value query against the configured eval-logger table.
-
-        Values are 0-100 percentages (x100, matching the Charts tab in
-        ``eval_metrics.py``) so user thresholds compare on the scale the
-        rest of the product displays.
-        """
+        """Build the eval metric value query against the configured eval-logger table."""
         if not self.eval_config_id:
             return "SELECT NULL AS value", params
 
@@ -362,7 +357,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
 
         if self.eval_output_type == "SCORE":
             query = f"""
-                SELECT ifNotFinite(avg(output_float) * 100, NULL) AS value
+                SELECT ifNotFinite(avg(output_float), NULL) AS value
                 FROM {eval_rows}
             """
         elif self.eval_output_type == "PASS_FAIL":
@@ -370,7 +365,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             params["output_bool_val"] = output_bool_val
             query = f"""
                 SELECT ifNotFinite(avg(
-                    CASE WHEN output_bool = %(output_bool_val)s THEN 100.0 ELSE 0.0 END
+                    CASE WHEN output_bool = %(output_bool_val)s THEN 1.0 ELSE 0.0 END
                 ), NULL) AS value
                 FROM {eval_rows}
             """
@@ -381,7 +376,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             choice_match = self._eval_choice_match_expr()
             query = f"""
                 SELECT ifNotFinite(avg(
-                    CASE WHEN {choice_match} THEN 100.0 ELSE 0.0 END
+                    CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END
                 ), NULL) AS value
                 FROM {eval_rows}
             """
@@ -554,12 +549,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
     def _build_eval_stats_query(
         self, params: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
-        """Build eval metric stats (mean/stddev) query.
-
-        Mean and stddev are on the same 0-100 percent scale as the value
-        query (stddev scales linearly), keeping percentage-change checks
-        scale-consistent.
-        """
+        """Build eval metric stats (mean/stddev) query."""
         if not self.eval_config_id:
             return "SELECT NULL AS mean, NULL AS stddev", params
 
@@ -569,8 +559,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         if self.eval_output_type == "SCORE":
             query = f"""
                 SELECT
-                    ifNotFinite(avg(output_float) * 100, NULL) AS mean,
-                    ifNotFinite(stddevPop(output_float) * 100, NULL) AS stddev
+                    ifNotFinite(avg(output_float), NULL) AS mean,
+                    ifNotFinite(stddevPop(output_float), NULL) AS stddev
                 FROM {eval_rows}
             """
         elif self.eval_output_type == "PASS_FAIL":
@@ -582,7 +572,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     ifNotFinite(stddevPop(pass_value), NULL) AS stddev
                 FROM (
                     SELECT
-                        CASE WHEN output_bool = %(output_bool_val)s THEN 100.0 ELSE 0.0 END AS pass_value
+                        CASE WHEN output_bool = %(output_bool_val)s THEN 1.0 ELSE 0.0 END AS pass_value
                     FROM {eval_rows}
                 )
             """
@@ -597,7 +587,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     ifNotFinite(stddevPop(choice_value), NULL) AS stddev
                 FROM (
                     SELECT
-                        CASE WHEN {choice_match} THEN 100.0 ELSE 0.0 END AS choice_value
+                        CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END AS choice_value
                     FROM {eval_rows}
                 )
             """
@@ -783,8 +773,6 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         timeline): a low score must chart when the activity happened, not
         when the eval was computed — and late-computed evals must not emit
         buckets past the requested window.
-
-        Bucket values are 0-100 percentages, same scale as the value query.
         """
         if not self.eval_config_id:
             return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
@@ -794,17 +782,19 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         bucket_expr = _EVAL_SPAN_BUCKET_EXPR
 
         if self.eval_output_type == "SCORE":
-            agg = "avg(output_float) * 100"
+            agg = "avg(output_float)"
         elif self.eval_output_type == "PASS_FAIL":
             output_bool_val = 1 if self.threshold_metric_value == "Passed" else 0
             params["output_bool_val"] = output_bool_val
-            agg = "avg(CASE WHEN output_bool = %(output_bool_val)s THEN 100.0 ELSE 0.0 END)"
+            agg = (
+                "avg(CASE WHEN output_bool = %(output_bool_val)s THEN 1.0 ELSE 0.0 END)"
+            )
         elif self.eval_output_type == "CHOICES":
             if not self.threshold_metric_value:
                 return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
             params["choice_val"] = self.threshold_metric_value
             choice_match = self._eval_choice_match_expr()
-            agg = f"avg(CASE WHEN {choice_match} THEN 100.0 ELSE 0.0 END)"
+            agg = f"avg(CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END)"
         else:
             return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
 
