@@ -7,6 +7,8 @@ import Iconify from "src/components/iconify";
 import useFalconStore from "../store/useFalconStore";
 import useSkillPlan from "../hooks/useSkillPlan";
 import { groupBlocks } from "../helpers/toolTrail";
+import { looksLikeReport } from "../helpers/falconReport";
+import downloadReportPdf from "../helpers/downloadReportPdf";
 import TextBlock from "./TextBlock";
 import ThinkingTrail from "./ThinkingTrail";
 import CompletionCard from "./CompletionCard";
@@ -33,6 +35,15 @@ export default function AssistantMessage({ message, onFeedback }) {
   // The flow belongs to the turn, so only the last trail reports progress.
   const lastTrailId = trails.length ? trails[trails.length - 1].id : null;
   const plan = useSkillPlan(message.id, runCalls);
+
+  const answer = useMemo(() => {
+    if (!hasBlocks) return message.content || "";
+    return grouped
+      .filter((b) => b.type === "text" && b.content)
+      .map((b) => b.content)
+      .join("\n\n");
+  }, [hasBlocks, grouped, message.content]);
+  const isReport = looksLikeReport(answer);
 
   return (
     <Box
@@ -194,6 +205,21 @@ export default function AssistantMessage({ message, onFeedback }) {
               transition: "opacity 0.15s ease",
             }}
           >
+            {isReport && (
+              <IconButton
+                size="small"
+                onClick={() => downloadReportPdf(answer)}
+                sx={{
+                  p: 0.4,
+                  color: "text.disabled",
+                  "&:hover": { color: "text.secondary" },
+                }}
+                title="Download as PDF"
+              >
+                <Iconify icon="mdi:file-pdf-box" width={15} />
+              </IconButton>
+            )}
+
             <IconButton
               size="small"
               onClick={() => {
