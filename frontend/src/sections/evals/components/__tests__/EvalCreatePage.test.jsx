@@ -534,7 +534,13 @@ describe("EvalCreatePage", () => {
         }
         if (url === COMPOSITE_CREATE_URL) {
           return Promise.reject({
-            response: { data: { result: "duplicate composite name" } },
+            // 400, not a bare rejection: getSafeActionErrorMessage only
+            // forwards a backend string on a validation status (400/404/
+            // 409/422) and falls back to the generic copy otherwise.
+            response: {
+              status: 400,
+              data: { result: "duplicate composite name" },
+            },
           });
         }
         return Promise.resolve({ data: { result: {} } });

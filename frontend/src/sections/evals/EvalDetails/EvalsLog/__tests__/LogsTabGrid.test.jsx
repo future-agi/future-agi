@@ -190,13 +190,27 @@ const columnConfig = [
   },
 ];
 
+// The grid reads each page through readEvalLogGridPage, which rejects any
+// page that is not provably exact and complete: it needs the full pagination
+// metadata, and every row needs both a row id and a log id. `PAGE_SIZE`
+// mirrors the block size MockAgGridReact requests below.
+const PAGE_SIZE = 25;
+
 function mockLogsResponse(table, total = table.length) {
   getMock.mockResolvedValue({
     data: {
       result: {
         column_config: columnConfig,
         table,
-        metadata: { total_rows: total },
+        metadata: {
+          total_rows: total,
+          total_pages: Math.ceil(total / PAGE_SIZE),
+          current_page_index: 0,
+          page_size: PAGE_SIZE,
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+        },
       },
     },
   });
@@ -211,6 +225,7 @@ describe("LogsTabGrid", () => {
     mockLogsResponse([
       {
         rowId: "r1",
+        logId: "log-r1",
         input: { cell_value: "What is 2+2?" },
         eval1: { cell_value: "4" },
       },
@@ -235,7 +250,9 @@ describe("LogsTabGrid", () => {
   });
 
   it("opens the logs drawer with the clicked row", async () => {
-    mockLogsResponse([{ rowId: "r1", input: { cell_value: "hello" }, eval1: {} }]);
+    mockLogsResponse([
+      { rowId: "r1", logId: "log-r1", input: { cell_value: "hello" }, eval1: {} },
+    ]);
 
     renderGrid();
 
@@ -246,7 +263,9 @@ describe("LogsTabGrid", () => {
   });
 
   it("requests the eval_playground source and shows the Playground Logs title", async () => {
-    mockLogsResponse([{ rowId: "r1", input: { cell_value: "hello" }, eval1: {} }]);
+    mockLogsResponse([
+      { rowId: "r1", logId: "log-r1", input: { cell_value: "hello" }, eval1: {} },
+    ]);
 
     renderGrid({ isEvalPlayGround: true });
 

@@ -230,15 +230,24 @@ describe("TestPlayground", () => {
   });
 
   it("surfaces a failed request instead of swallowing it", async () => {
+    // A transport failure carries no validation status, and
+    // getSafeActionErrorMessage only forwards a server string on 400/404/
+    // 409/422 — so what the user sees is the generic copy. What matters here
+    // is that the failure surfaces at all and reaches onTestResult.
     axiosPostMock.mockRejectedValueOnce(new Error("Network exploded"));
     const onTestResult = vi.fn();
     renderPlayground({ onTestResult });
 
     fireEvent.click(screen.getByRole("button", { name: "trigger run" }));
 
-    expect(await screen.findByText("Network exploded")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Failed to run evaluation. Please retry."),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(onTestResult).toHaveBeenCalledWith(false, "Network exploded"),
+      expect(onTestResult).toHaveBeenCalledWith(
+        false,
+        "Failed to run evaluation. Please retry.",
+      ),
     );
   });
 
@@ -309,7 +318,13 @@ describe("TestPlayground", () => {
     });
 
     it("switching tabs resets the previous result/error and notifies onSourceTabChange", async () => {
-      axiosPostMock.mockRejectedValueOnce(new Error("boom"));
+      // 400, so the backend's own message is what renders — this test is
+      // about the error being cleared on a tab switch, and an echoed server
+      // string makes that visible rather than a constant the page could
+      // render for any reason.
+      axiosPostMock.mockRejectedValueOnce({
+        response: { status: 400, data: { message: "boom" } },
+      });
       const onSourceTabChange = vi.fn();
       renderPlayground({ onSourceTabChange });
 

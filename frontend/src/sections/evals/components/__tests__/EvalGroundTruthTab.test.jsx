@@ -89,6 +89,7 @@ vi.mock("ag-grid-react", () => ({
   ),
 }));
 
+import { GROUND_TRUTH_DATASET_PAGE_SIZE } from "../ground_truth_dataset_pagination";
 import EvalGroundTruthTab, {
   shouldTriggerEmbed,
 } from "../EvalGroundTruthTab";
@@ -430,6 +431,9 @@ describe("EvalGroundTruthTab upload wizard", () => {
         { id: "2", name: "answer" },
       ],
     });
+    // The importer now reads the dataset one exact, bounded page at a time
+    // (ground_truth_dataset_pagination.js), so a page without `column_config`
+    // or `metadata` is rejected as unreadable rather than imported.
     axiosGetMock.mockResolvedValue({
       data: {
         result: {
@@ -440,6 +444,23 @@ describe("EvalGroundTruthTab upload wizard", () => {
               "2": { cell_value: "A1" },
             },
           ],
+          column_config: [
+            { id: "1", name: "question" },
+            { id: "2", name: "answer" },
+          ],
+          metadata: {
+            is_exact: true,
+            snapshot_bound: true,
+            error_messages: [],
+            current_page_index: 0,
+            page_size: GROUND_TRUTH_DATASET_PAGE_SIZE,
+            total_rows: 1,
+            total_pages: 1,
+            has_more: false,
+            next_page_index: null,
+            next_cursor: null,
+            dataset_name: "Orders",
+          },
         },
       },
     });
@@ -457,7 +478,10 @@ describe("EvalGroundTruthTab upload wizard", () => {
 
     expect(await screen.findByText("Dataset columns (2)")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByText("Import"));
+    // Load rows first: the button only offers Import once the paged read has
+    // covered every row, which is the guarantee the importer is built on.
+    await userEvent.click(await screen.findByText("Load rows"));
+    await userEvent.click(await screen.findByText("Import"));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(mutateAsync).toHaveBeenCalledWith({
@@ -480,7 +504,27 @@ describe("EvalGroundTruthTab upload wizard", () => {
       isLoading: false,
     });
     datasetColumnsHook.mockReturnValue({ data: [{ id: "1", name: "question" }] });
-    axiosGetMock.mockResolvedValue({ data: { result: { table: [] } } });
+    axiosGetMock.mockResolvedValue({
+      data: {
+        result: {
+          table: [],
+          column_config: [{ id: "1", name: "question" }],
+          metadata: {
+            is_exact: true,
+            snapshot_bound: true,
+            error_messages: [],
+            current_page_index: 0,
+            page_size: GROUND_TRUTH_DATASET_PAGE_SIZE,
+            total_rows: 0,
+            total_pages: 0,
+            has_more: false,
+            next_page_index: null,
+            next_cursor: null,
+            dataset_name: "Orders",
+          },
+        },
+      },
+    });
     const mutateAsync = vi.fn().mockResolvedValue({});
     uploadHook.mockReturnValue({ mutateAsync, isPending: false });
 
@@ -488,13 +532,18 @@ describe("EvalGroundTruthTab upload wizard", () => {
 
     await userEvent.click(screen.getByText("Choose from existing dataset"));
     await userEvent.click(await screen.findByText("Orders"));
-    await userEvent.click(await screen.findByText("Import"));
+    // The emptiness is discovered by the paged read itself, so the warning
+    // fires on Load rows and Import never becomes available.
+    await userEvent.click(await screen.findByText("Load rows"));
 
     await waitFor(() =>
       expect(enqueueSnackbarMock).toHaveBeenCalledWith("Dataset has no rows", {
         variant: "warning",
       }),
     );
+    // The read completes (there is nothing to page through), so the button
+    // does flip to Import — but stays disabled on a zero-row dataset.
+    expect(screen.getByRole("button", { name: "Import" })).toBeDisabled();
     expect(mutateAsync).not.toHaveBeenCalled();
     expect(screen.getByText("Configure Dataset")).toBeInTheDocument();
   });
