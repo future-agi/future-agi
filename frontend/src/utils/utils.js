@@ -600,6 +600,11 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+// Converts a Date object to a UTC ISO-8601 string for backend filter payloads.
+// Using Date.prototype.toISOString() guarantees the correct UTC instant regardless
+// of the user's local timezone — the old formatISO().split("+") approach relabelled
+// the local wall-clock time as UTC, shifting all filter windows by the UTC offset.
+// Fixes: https://github.com/future-agi/future-agi/issues/1338
 export const formatISOCustom = (date) => {
   return new Date(date).toISOString();
 };
