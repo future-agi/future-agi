@@ -633,6 +633,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             notification_emails=monitor.notification_emails,
             slack_webhook_url=monitor.slack_webhook_url,
             slack_notes=monitor.slack_notes,
+            webhook_url=monitor.webhook_url,
             is_mute=False,
             filters=monitor.filters,
             logs=[
