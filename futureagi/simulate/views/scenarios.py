@@ -307,11 +307,11 @@ class ScenariosListView(APIView):
             if selected_scenario_ids:
                 scenarios = scenarios.annotate(
                     _is_selected=Case(
-                        When(id__in=selected_scenario_ids, then=0),
-                        default=1,
-                        output_field=models.IntegerField(),
+                        When(id__in=selected_scenario_ids, then=True),
+                        default=False,
+                        output_field=models.BooleanField(),
                     )
-                ).order_by("_is_selected", "-created_at")
+                ).order_by("-_is_selected", "-created_at")
             else:
                 scenarios = scenarios.order_by("-created_at")
 

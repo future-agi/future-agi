@@ -26271,7 +26271,7 @@ page?: number;
  */
 limit?: number;
 /**
- * JSON array of scenario UUIDs to surface at the top of the list.
+ * JSON array of up to 100 scenario UUIDs to surface at the top of the list.
  */
 selected_scenarios?: string;
 };
@@ -26292,7 +26292,7 @@ page?: number;
  */
 limit?: number;
 /**
- * JSON array of scenario UUIDs to surface at the top of the list.
+ * JSON array of up to 100 scenario UUIDs to surface at the top of the list.
  */
 selected_scenarios?: string;
 };

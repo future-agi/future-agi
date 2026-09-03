@@ -33063,7 +33063,7 @@ export const SimulateScenariosListQueryParams = zod.object({
   "agent_type": zod.string().min(1).optional(),
   "page": zod.number().min(1).default(simulateScenariosListQueryPageDefault),
   "limit": zod.number().min(1).optional(),
-  "selected_scenarios": zod.string().default(simulateScenariosListQuerySelectedScenariosDefault).describe('JSON array of scenario UUIDs to surface at the top of the list.')
+  "selected_scenarios": zod.string().default(simulateScenariosListQuerySelectedScenariosDefault).describe('JSON array of up to 100 scenario UUIDs to surface at the top of the list.')
 })
 
 
@@ -33201,7 +33201,7 @@ export const SimulateScenariosGetColumnsListQueryParams = zod.object({
   "agent_type": zod.string().min(1).optional(),
   "page": zod.number().min(1).default(simulateScenariosGetColumnsListQueryPageDefault),
   "limit": zod.number().min(1).optional(),
-  "selected_scenarios": zod.string().default(simulateScenariosGetColumnsListQuerySelectedScenariosDefault).describe('JSON array of scenario UUIDs to surface at the top of the list.')
+  "selected_scenarios": zod.string().default(simulateScenariosGetColumnsListQuerySelectedScenariosDefault).describe('JSON array of up to 100 scenario UUIDs to surface at the top of the list.')
 })
 
 

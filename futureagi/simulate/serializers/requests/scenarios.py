@@ -30,7 +30,10 @@ class ColumnDefinitionSerializer(StrictInputSerializer):
         return value.strip()
 
 
-def _parse_uuid_list(value):
+MAX_SCENARIO_IDS = 100
+
+
+def _parse_uuid_list(value, max_items=MAX_SCENARIO_IDS):
     try:
         parsed = json.loads(value)
     except (json.JSONDecodeError, TypeError) as exc:
@@ -39,6 +42,10 @@ def _parse_uuid_list(value):
         ) from exc
     if not isinstance(parsed, list):
         raise serializers.ValidationError("Must be a JSON array.")
+    if len(parsed) > max_items:
+        raise serializers.ValidationError(
+            f"Cannot contain more than {max_items} scenario UUIDs."
+        )
     validated_ids = []
     for item in parsed:
         try:
@@ -60,7 +67,10 @@ class ScenarioFilterSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         default="",
-        help_text="JSON array of scenario UUIDs to surface at the top of the list.",
+        help_text=(
+            "JSON array of up to "
+            f"{MAX_SCENARIO_IDS} scenario UUIDs to surface at the top of the list."
+        ),
     )
 
     def validate_selected_scenarios(self, value):
@@ -76,7 +86,8 @@ class ScenarioMultiDatasetFilterSerializer(serializers.Serializer):
     """
 
     scenarios = serializers.CharField(
-        required=True, help_text="JSON array of scenario UUIDs"
+        required=True,
+        help_text=f"JSON array of up to {MAX_SCENARIO_IDS} scenario UUIDs",
     )
 
     def validate_scenarios(self, value):

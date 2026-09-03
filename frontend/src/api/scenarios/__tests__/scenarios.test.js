@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axios from "src/utils/axios";
-import { useGetScenarioList } from "../scenarios";
+import { MAX_PINNED_SCENARIOS, useGetScenarioList } from "../scenarios";
 
 vi.mock("src/utils/axios", async () => {
   const actual = await vi.importActual("src/utils/axios");
@@ -64,6 +64,24 @@ describe("useGetScenarioList", () => {
           selected_scenarios: JSON.stringify(["scenario-1", "scenario-2"]),
         }),
       }),
+    );
+  });
+
+  it("caps selected_scenarios at MAX_PINNED_SCENARIOS", async () => {
+    const pinnedScenarioIds = Array.from(
+      { length: MAX_PINNED_SCENARIOS + 10 },
+      (_, i) => `scenario-${i}`,
+    );
+
+    renderHook(() => useGetScenarioList("", { pinnedScenarioIds }), {
+      wrapper: createQueryWrapper(),
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
+
+    const [, config] = axios.get.mock.calls[0];
+    expect(JSON.parse(config.params.selected_scenarios)).toEqual(
+      pinnedScenarioIds.slice(0, MAX_PINNED_SCENARIOS),
     );
   });
 
