@@ -649,7 +649,7 @@ function NumericInput({ settings, value, onChange, inputRef }) {
       enqueueSnackbar(`Maximum value is ${max} only`, { variant: "warning" });
       return;
     }
-   
+
     if (/^-?0\d/.test(raw)) event.target.value = String(n);
     onChange(n);
   };

@@ -194,6 +194,22 @@ class GroundTruthService:
         }
 
     @staticmethod
+    def _active_gt_queryset(
+        *,
+        eval_template: EvalTemplate,
+        organization_id: TenantId,
+        workspace_id: TenantId,
+    ):
+        return EvalGroundTruth.objects.filter(
+            eval_template=eval_template,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            deleted=False,
+            is_active=True,
+            enabled=True,
+        )
+
+    @staticmethod
     def load_active_gt(
         *,
         eval_template: EvalTemplate,
@@ -203,14 +219,35 @@ class GroundTruthService:
         """Return the active, enabled GT row for ``(template, org, ws)`` or ``None``."""
         if not organization_id:
             return None
-        return EvalGroundTruth.objects.filter(
-            eval_template=eval_template,
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            deleted=False,
-            is_active=True,
-            enabled=True,
-        ).order_by("-created_at").first()
+        return (
+            GroundTruthService._active_gt_queryset(
+                eval_template=eval_template,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+    @staticmethod
+    def is_enabled_for_template(
+        *,
+        eval_template: EvalTemplate,
+        organization_id: TenantId,
+        workspace_id: TenantId,
+    ) -> bool:
+        """Whether GT is switched on and embedded for ``(template, org, ws)``."""
+        if not organization_id:
+            return False
+        return (
+            GroundTruthService._active_gt_queryset(
+                eval_template=eval_template,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+            .filter(embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED)
+            .exists()
+        )
 
     @staticmethod
     def inject_context(

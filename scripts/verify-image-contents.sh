@@ -60,6 +60,12 @@ image_python() {
     "$image" "$@"
 }
 
+image_available() {
+  local image="$1"
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    docker manifest inspect "$image" >/dev/null 2>&1
+}
+
 check_routes() {
   local image="$1"
   local expected="$2"
@@ -93,30 +99,31 @@ for path in paths:
 
 echo "=== Image availability ==="
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
-  check "OSS image is available" docker image inspect "$OSS_IMAGE"
+  check "OSS image is available" image_available "$OSS_IMAGE"
 fi
 if [[ "$FLAVOR" == ee || "$FLAVOR" == all ]]; then
-  check "Self-hosted EE image is available" docker image inspect "$EE_IMAGE"
+  check "Self-hosted EE image is available" image_available "$EE_IMAGE"
 fi
 if [[ "$FLAVOR" == cloud || "$FLAVOR" == all ]]; then
-  check "Cloud image is available" docker image inspect "$CLOUD_IMAGE"
+  check "Cloud image is available" image_available "$CLOUD_IMAGE"
 fi
 echo ""
 
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
 echo "=== OSS Image: ${OSS_IMAGE} ==="
-check "No ee path or symlink" image_test "$OSS_IMAGE" \
-  "test ! -e /app/backend/ee && test ! -L /app/backend/ee"
-check_absent "No cloud control-plane package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud/control_plane
-check "Django boots without EE" image_python "$OSS_IMAGE" -c "import django; django.setup()"
+check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
+check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
+check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
+  "from pathlib import Path; import nltk; [nltk.data.find(path) for path in ('corpora/stopwords', 'tokenizers/punkt', 'taggers/averaged_perceptron_tagger', 'taggers/averaged_perceptron_tagger_eng', 'corpora/wordnet.zip', 'corpora/omw-1.4.zip')]; assert any((Path(root) / 'tokenizers/punkt_tab').is_dir() for root in nltk.data.path)"
+check "Django boots without cloud-private code" image_python "$OSS_IMAGE" -c "import django; django.setup()"
 check "No cloud routes" check_routes "$OSS_IMAGE" absent \
   /v1/internal/licenses /v1/self-hosted/activations /v1/enterprise/heartbeats
-check "OSS remains the OSS image flavor with cloud env set" docker run --rm \
+check "CE base remains self-hosted with an invalid cloud secret" docker run --rm \
   --entrypoint python \
   -e DJANGO_SETTINGS_MODULE=tfc.settings.settings \
   -e CLOUD_DEPLOYMENT=DEV \
   -e CLOUD_DEPLOYMENT_SECRET="$CLOUD_DEPLOYMENT_SECRET" \
-  "$OSS_IMAGE" -c "import django; django.setup(); from tfc.capabilities import service; assert service.get_deployment_flavor().value == 'oss_image'"
+  "$OSS_IMAGE" -c "import django; django.setup(); from tfc.capabilities import service; assert service.get_deployment_flavor().value == 'self_hosted_ee_image'"
 echo ""
 fi
 

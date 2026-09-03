@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import {
   Box,
+  Button,
   Chip,
   IconButton,
   MenuItem,
@@ -22,16 +23,16 @@ import { useSettingsContext } from "src/components/settings/context";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 
 import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
-import { DATE_OPTION, DEFAULT_USAGE_PERIOD, USAGE_PERIOD } from "../constants";
+import { DATE_OPTION, DEFAULT_USAGE_PERIOD } from "../constants";
 import UsageChart from "src/sections/evals/components/UsageChart";
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import { classifyTaskError } from "src/sections/common/EvalsTasks/classifyTaskError";
-import PartialInputWarningDetails, {
-  PARTIAL_INPUT_WARNING_TYPE,
-} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { parsePythonReprIfNeeded } from "src/sections/develop-detail/DataTab/common";
 import { DATE_OPTION_TO_PERIOD } from "src/sections/evals/Helpers/evalUsageColumns";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -748,6 +749,16 @@ const DetailPanelContent = ({ row, isDark }) => {
                 }
               />
               <PartialInputWarningDetails warnings={warnings} />
+              {detail.detail_complete === false && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", py: 0.75, fontSize: "11px" }}
+                >
+                  Large span JSON and mapped input details are omitted from this
+                  bounded list response.
+                </Typography>
+              )}
               {detail.eval_name && (
                 <DetailRow label="Eval" value={detail.eval_name} />
               )}
@@ -892,36 +903,39 @@ const TaskUsageTab = ({ taskId }) => {
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || DEFAULT_USAGE_PERIOD;
   const apiEvalId = evalIdFilter === "all" ? undefined : evalIdFilter;
+  const explicitDateRange = [
+    DATE_OPTION.CUSTOM,
+    DATE_OPTION.TODAY,
+    DATE_OPTION.YESTERDAY,
+  ].includes(dateOption)
+    ? dateFilter
+    : undefined;
+  const customEndInclusive = dateOption === DATE_OPTION.CUSTOM;
 
-  // Only the Custom option carries an explicit range; every other option is
-  // expressed by `period` alone.
-  const customDateParams = useMemo(() => {
-    if (
-      dateOption !== DATE_OPTION.CUSTOM ||
-      !dateFilter?.[0] ||
-      !dateFilter?.[1]
-    )
-      return {};
-    return {
-      startDate: new Date(dateFilter[0]).toISOString(),
-      endDate: new Date(dateFilter[1]).toISOString(),
-    };
-  }, [dateOption, dateFilter]);
-
-  const { data: chartData, isLoading: chartLoading } = useTaskUsageChart(
-    taskId,
-    { period, evalId: apiEvalId, ...customDateParams },
-  );
+  const {
+    data: chartData,
+    isLoading: chartLoading,
+    isError: chartError,
+    refetch: retryChart,
+  } = useTaskUsageChart(taskId, {
+    period,
+    evalId: apiEvalId,
+    dateRange: explicitDateRange,
+    endInclusive: customEndInclusive,
+  });
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
+    isError: logsError,
+    refetch: retryLogs,
   } = useTaskUsageLogs(taskId, {
     page,
     pageSize,
     period,
     evalId: apiEvalId,
-    ...customDateParams,
+    dateRange: explicitDateRange,
+    endInclusive: customEndInclusive,
   });
 
   const stats = chartData?.stats || {};
@@ -929,13 +943,16 @@ const TaskUsageTab = ({ taskId }) => {
   const evalsList = chartData?.evals || [];
   const logItems = logsData?.results || [];
   const totalLogs = logsData?.count || 0;
-  // Backend may have widened the window to "all time" if the requested
-  // period excluded every run. Surface that to the user as a hint so
-  // they don't think the date filter is broken.
-  const periodFallback =
-    Boolean(chartData?.periodRequested) &&
-    chartData?.periodUsed === USAGE_PERIOD.ALL &&
-    chartData?.periodRequested !== USAGE_PERIOD.ALL;
+  const logsCountIsLowerBound = !!logsData?.count_is_lower_bound;
+  const summaryIsSampled = !!stats.runs_period_is_lower_bound;
+  const lowerBoundSuffix = summaryIsSampled ? "+" : "";
+  const hasMoreLogs = !!logsData?.has_more;
+  const pageLimitReached = !!logsData?.page_limit_reached;
+  const paginationTotal = pageLimitReached
+    ? (page + 1) * pageSize
+    : hasMoreLogs
+      ? Math.max(totalLogs, (page + 1) * pageSize + 1)
+      : totalLogs;
 
   // Pick the chart's output type. With the "all evals" filter we default
   // to pass_fail. With a specific eval selected, we use that eval's
@@ -1034,6 +1051,7 @@ const TaskUsageTab = ({ taskId }) => {
             }}
           >
             <DateTimeRangePicker
+              includeOneHour
               dateOption={dateOption}
               setDateOption={(opt) => {
                 setDateOption(opt);
@@ -1074,7 +1092,7 @@ const TaskUsageTab = ({ taskId }) => {
               </Select>
             )}
           </Box>
-          {!chartLoading && (
+          {!chartLoading && !chartError && (
             <Box
               sx={{
                 display: "flex",
@@ -1088,13 +1106,16 @@ const TaskUsageTab = ({ taskId }) => {
                 py: 0.5,
               }}
             >
-              <StatPill label="Runs" value={stats.runs_period ?? 0} />
+              <StatPill
+                label="Runs"
+                value={`${stats.runs_period ?? 0}${lowerBoundSuffix}`}
+              />
               <Box
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
                 label="Success"
-                value={stats.success_count ?? 0}
+                value={`${stats.success_count ?? 0}${lowerBoundSuffix}`}
                 color="success.main"
               />
               <Box
@@ -1102,85 +1123,24 @@ const TaskUsageTab = ({ taskId }) => {
               />
               <StatPill
                 label="Errors"
-                value={stats.error_count ?? 0}
+                value={`${stats.error_count ?? 0}${lowerBoundSuffix}`}
                 color="error.main"
               />
               <Box
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
-                label="Task Completion Rate"
+                label={
+                  summaryIsSampled
+                    ? "Sample completion rate"
+                    : "Task Completion Rate"
+                }
                 value={`${stats.pass_rate ?? 0}%`}
                 color="info.main"
               />
             </Box>
           )}
         </Box>
-
-        {/* Period fallback hint — backend widened to "all time" because
-            the user-selected window had no runs */}
-        {periodFallback && (
-          <Box
-            sx={(t) => ({
-              display: "flex",
-              alignItems: "center",
-              gap: 1.5,
-              px: 2,
-              py: 1.5,
-              mb: 1.5,
-              borderRadius: "10px",
-              border: "1px solid",
-              borderColor: alpha(t.palette.info.main, 0.32),
-              borderLeft: `4px solid ${t.palette.info.main}`,
-              bgcolor: alpha(
-                t.palette.info.main,
-                t.palette.mode === "dark" ? 0.16 : 0.1,
-              ),
-            })}
-          >
-            <Box
-              sx={(t) => ({
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 36,
-                height: 36,
-                borderRadius: "50%",
-                flexShrink: 0,
-                bgcolor: alpha(t.palette.info.main, 0.2),
-              })}
-            >
-              <Iconify
-                icon="solar:info-circle-bold"
-                width={22}
-                sx={{ color: "info.main" }}
-              />
-            </Box>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography
-                sx={{
-                  display: "block",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                  color: "info.main",
-                  lineHeight: 1.4,
-                }}
-              >
-                No runs in the selected window
-              </Typography>
-              <Typography
-                sx={{
-                  display: "block",
-                  fontSize: "12.5px",
-                  color: "text.secondary",
-                  lineHeight: 1.4,
-                }}
-              >
-                Showing all-time data instead.
-              </Typography>
-            </Box>
-          </Box>
-        )}
 
         {/* Chart */}
         <Box
@@ -1200,6 +1160,25 @@ const TaskUsageTab = ({ taskId }) => {
         >
           {chartLoading ? (
             <Skeleton variant="rounded" width="100%" height="100%" />
+          ) : chartError ? (
+            <Box
+              role="alert"
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 1,
+                height: "100%",
+              }}
+            >
+              <Typography variant="caption" color="warning.main">
+                {QUERY_FAILED_RETRY_MESSAGE}
+              </Typography>
+              <Button size="small" onClick={() => retryChart()}>
+                Retry
+              </Button>
+            </Box>
           ) : chart.length > 0 ? (
             <UsageChart data={chart} outputType={chartOutputType} />
           ) : (
@@ -1249,16 +1228,29 @@ const TaskUsageTab = ({ taskId }) => {
                 </Typography>
               )}
             </Typography>
-            {totalLogs > 0 && (
-              <Typography
-                variant="caption"
-                color="text.disabled"
-                sx={{ fontSize: "11px" }}
-              >
-                {totalLogs.toLocaleString()} total run
-                {totalLogs !== 1 ? "s" : ""}
-              </Typography>
-            )}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              {pageLimitReached && (
+                <Typography
+                  variant="caption"
+                  color="warning.main"
+                  sx={{ fontSize: "11px" }}
+                >
+                  Bounded {(100 * pageSize).toLocaleString()}-run browsing
+                  window
+                </Typography>
+              )}
+              {totalLogs > 0 && (
+                <Typography
+                  variant="caption"
+                  color="text.disabled"
+                  sx={{ fontSize: "11px" }}
+                >
+                  {totalLogs.toLocaleString()}
+                  {logsCountIsLowerBound ? "+" : ""} total run
+                  {totalLogs !== 1 ? "s" : ""}
+                </Typography>
+              )}
+            </Box>
           </Box>
           {/* `display: flex` is required here so the inner DataTable Box
               (which itself uses `flex: 1`) actually inherits a bounded
@@ -1272,14 +1264,36 @@ const TaskUsageTab = ({ taskId }) => {
               isLoading={logsLoading && !logsData}
               rowCount={totalLogs}
               onRowClick={handleRowClick}
-              emptyMessage="No evaluation runs for this period"
+              emptyMessage={
+                logsError
+                  ? QUERY_FAILED_RETRY_MESSAGE
+                  : "No evaluation runs for this period"
+              }
             />
           </Box>
+          {logsError && (
+            <Box
+              role="alert"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                color: "warning.main",
+                fontSize: 12,
+                py: 0.5,
+              }}
+            >
+              {QUERY_FAILED_RETRY_MESSAGE}
+              <Button size="small" onClick={() => retryLogs()}>
+                Retry
+              </Button>
+            </Box>
+          )}
           <Box sx={{ flexShrink: 0 }}>
             <DataTablePagination
               page={page}
               pageSize={pageSize}
-              total={totalLogs}
+              total={paginationTotal}
               onPageChange={setPage}
               onPageSizeChange={(s) => {
                 setPageSize(s);

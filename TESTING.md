@@ -65,7 +65,7 @@ bin/e2e down    # stop it (add -v to wipe volumes)
 
 Full-stack flows that drive a real browser against the production frontend image and assert both what the user sees **and** the backend state behind it (Postgres, ClickHouse, the CDC mirrors). The stack is the root `docker-compose.yml`, trimmed and moved onto its own ports (app 3100, API 8100, everything else 2xxxx), so it collides with neither your dev stack nor `futureagi-test`. The only mocked component is the LLM provider, behind the real gateway.
 
-A cold first boot takes about 8–9 minutes — most of it the backend's first-run migrations — and warm boots are far quicker. Covered flows are cataloged in [`e2e/FLOWS.md`](e2e/FLOWS.md), which is generated from the specs (`cd e2e && yarn catalog`). The authoring guide, the attach and local-code workflows, and the quarantine rules are in [`e2e/README.md`](e2e/README.md).
+A cold first boot takes about 8–9 minutes — most of it the backend's first-run migrations — and warm boots are far quicker. Covered flows are cataloged in [`e2e/FLOWS.md`](e2e/FLOWS.md), which is generated from the specs (`cd e2e && yarn catalog`). The authoring guide, the attach and local-code workflows, and the quarantine rules are in [`e2e/README.md`](e2e/README.md). Two agent skills ship with the repo: `writing-e2e-flows` authors a flow from the feature's ticket and design doc, and `reviewing-prs` reviews a PR against the coding standards with an E2E-coverage gate (`cd e2e && yarn coverage`).
 
 ---
 

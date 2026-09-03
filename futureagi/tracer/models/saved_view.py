@@ -86,3 +86,13 @@ class SavedView(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.tab_type})"
+
+    @classmethod
+    def scoped(cls, created_by, *, project, workspace, tab_type):
+        """Non-deleted views in one uniqueness/position bucket (mirrors Meta.constraints)."""
+        qs = cls.objects.filter(created_by=created_by, deleted=False)
+        if project is not None:
+            return qs.filter(project=project)
+        return qs.filter(
+            project__isnull=True, workspace=workspace, tab_type=tab_type
+        )

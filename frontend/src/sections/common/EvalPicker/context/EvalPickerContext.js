@@ -9,6 +9,8 @@ export const EvalPickerContext = createContext({
   source: "dataset", // "dataset" | "tracing" | "simulation" | "task" | "custom"
   sourceId: "", // ID of the current dataset/project/simulation
   sourceColumns: [], // Available columns/attributes for variable mapping
+  onSourceColumnSearchChange: undefined,
+  sourceColumnInventoryControls: null,
   extraColumns: [], // Virtual columns merged into the mapping dropdown alongside fetched dataset columns
 
   // When set, at least one mapping field must reference this column ID.
