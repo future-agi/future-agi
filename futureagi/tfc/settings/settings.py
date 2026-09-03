@@ -860,6 +860,9 @@ get_started_url = f"{_ssl}{APP_URL}/dashboard/get-started"
 default_error_next_url = f"{_ssl}{APP_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
 
+# APP_URL is a bare host; each region is its own deployment with its own value.
+APP_BASE_URL = f"{_ssl}{APP_URL}" if APP_URL else ""
+
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
 AUTH0_ALGORITHM = "RS256"

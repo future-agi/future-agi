@@ -107,3 +107,22 @@
 
 - the metrics catalog scoped to each project returns that project's eval template and not its sibling's
 - the frontend requests the catalog with project_ids set to the project being viewed
+
+### OBS-E2E-020 — duplicate saved-view names are rejected
+
+**Goal:** A user cannot silently overwrite an existing observability view by reusing its name  
+**Spec:** `flows/observe/saved-view-duplicate-name.spec.ts:14`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace so a project auto-creates
+2. create a project-scoped saved view via the API
+3. re-create the same name via the API
+4. open the observe tab bar and try to save the same name in the UI
+
+**Backend state verified:**
+
+- first create returns 200 and persists the view
+- second create with the same (project, user, name) returns 400, not a silent upsert
+- renaming another view onto the taken name returns 400
