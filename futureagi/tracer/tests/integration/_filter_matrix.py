@@ -832,6 +832,63 @@ def _session_aggregate_leaves():
     ]
 
 
+def _session_message_leaves():
+    # first_message / last_message are argMin / argMax(input, start_time) over a
+    # session's ROOT spans. in / not_in is the reported regression: the HAVING
+    # builder had no mapping for them and collapsed to `0 = 1`, so the multi-
+    # select value picker returned no sessions. sessions-only; aggregate over
+    # root spans (mirrors _session_aggregate_leaves' aggregate_predicate shape).
+    sess = {"only_targets": ("sessions",)}
+
+    def first_msg(g):
+        return min(g, key=lambda r: r.created_at).message
+
+    def last_msg(g):
+        return max(g, key=lambda r: r.created_at).message
+
+    dummy = lambda r: False  # noqa: E731 — aggregate cases use aggregate_predicate
+    # Seeded first_message ∈ {"first message session 0/1/2"}; last_message ∈
+    # {"last message session 0/1", "extra message session 2"} (see _seed.py).
+    leaves = [
+        (
+            "first_message",
+            "in",
+            ["first message session 1"],
+            lambda g: first_msg(g) in ("first message session 1",),
+        ),
+        (
+            "first_message",
+            "not_in",
+            ["first message session 0"],
+            lambda g: first_msg(g) not in ("first message session 0",),
+        ),
+        (
+            "last_message",
+            "in",
+            ["last message session 0"],
+            lambda g: last_msg(g) in ("last message session 0",),
+        ),
+        (
+            "last_message",
+            "not_in",
+            ["last message session 0"],
+            lambda g: last_msg(g) not in ("last message session 0",),
+        ),
+    ]
+    return [
+        (
+            "SYSTEM_METRIC",
+            "text",
+            op,
+            col,
+            val,
+            dummy,
+            {**sess, "aggregate_predicate": agg},
+        )
+        for col, op, val, agg in leaves
+    ]
+
+
 def _trace_aggregate_leaves():
     # Trace list shows the root span value; cost is ROOT_ONLY so the filter
     # restricts to root spans.
@@ -1255,6 +1312,7 @@ def _all_leaves(
         + _ann_annotator_leaves(label_id, annotator_user_id)
         + _global_annotator_leaves(annotator_user_id)
         + _session_aggregate_leaves()
+        + _session_message_leaves()
         + _trace_aggregate_leaves()
         + _meta_leaves()
         + _combo_leaves(eval_config_id, label_id, choice_eval_config_id)
