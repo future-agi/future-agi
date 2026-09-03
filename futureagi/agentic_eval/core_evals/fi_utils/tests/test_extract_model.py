@@ -46,3 +46,41 @@ class TestExtractModelName:
                 serialized, invocation_params={"model_name": "gpt-4-turbo"}
             )
         assert result == "gpt-4-turbo"
+
+    def test_azure_openai_deployment_name_and_version(self):
+        serialized = _azure_serialized("AzureOpenAI")
+        serialized["kwargs"] = {
+            "deployment_name": "gpt-4-deployment",
+            "deployment_version": "2023-05-15",
+        }
+        with (
+            patch(
+                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_key",
+                return_value=None,
+            ),
+            patch(
+                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_pattern",
+                return_value=None,
+            ),
+        ):
+            result = _extract_model_name(serialized)
+        assert result == "gpt-4-deployment-2023-05-15"
+
+    def test_azure_openai_deployment_name_only(self):
+        serialized = _azure_serialized("AzureOpenAI")
+        serialized["kwargs"] = {
+            "deployment_name": "gpt-35-turbo",
+        }
+        with (
+            patch(
+                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_key",
+                return_value=None,
+            ),
+            patch(
+                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_pattern",
+                return_value=None,
+            ),
+        ):
+            result = _extract_model_name(serialized)
+        assert result == "gpt-35-turbo"
+
