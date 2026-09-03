@@ -96402,6 +96402,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        min_score: {
+          title: "Min score",
+          type: "object",
+          "x-nullable": true,
+        },
+        max_score: {
+          title: "Max score",
+          type: "object",
+          "x-nullable": true,
+        },
+        median_score: {
+          title: "Median score",
+          type: "object",
+          "x-nullable": true,
+        },
         dataset_id: {
           title: "Dataset id",
           type: "string",
