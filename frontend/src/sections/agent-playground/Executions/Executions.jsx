@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Box,
   CircularProgress,
@@ -14,6 +14,10 @@ import ExecutionDetailView from "./ExecutionDetailView";
 export default function Executions() {
   const { agentId } = useParams();
   const [selectedExecutionId, setSelectedExecutionId] = useState(null);
+
+  useEffect(() => {
+    setSelectedExecutionId(null);
+  }, [agentId]);
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
     useGetExecutions(agentId);
