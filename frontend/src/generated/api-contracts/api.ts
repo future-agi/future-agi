@@ -1359,8 +1359,6 @@ import type {
   WebAuthnCredentialApi,
   WebhookIngestResponseApi,
   WebhookLogsRequestApi,
-  WebhookRequestApi,
-  WebhookResponseApi,
   WorkspaceCreateRequestApi,
   WorkspaceCreateResponseApi,
   WorkspaceDeleteResponseApi,
@@ -69690,57 +69688,6 @@ export const tracerV1HealthList = async ( options?: RequestInit): Promise<tracer
     method: 'GET'
 
 
-  }
-);}
-
-
-
-export type tracerWebhookCreateResponse200 = {
-  data: WebhookResponseApi
-  status: 200
-}
-
-export type tracerWebhookCreateResponse400 = {
-  data: ApiErrorResponseApi
-  status: 400
-}
-
-export type tracerWebhookCreateResponse500 = {
-  data: ApiErrorResponseApi
-  status: 500
-}
-
-export type tracerWebhookCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>
-}
-
-export type tracerWebhookCreateResponseSuccess = (tracerWebhookCreateResponse200) & {
-  headers: Headers;
-};
-export type tracerWebhookCreateResponseError = (tracerWebhookCreateResponse400 | tracerWebhookCreateResponse500 | tracerWebhookCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerWebhookCreateResponse = (tracerWebhookCreateResponseSuccess | tracerWebhookCreateResponseError)
-
-export const getTracerWebhookCreateUrl = () => {
-
-
-
-
-  return `/tracer/webhook/`
-}
-
-export const tracerWebhookCreate = async (webhookRequestApi: WebhookRequestApi, options?: RequestInit): Promise<tracerWebhookCreateResponse> => {
-
-  return apiMutator<tracerWebhookCreateResponse>(getTracerWebhookCreateUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      webhookRequestApi,)
   }
 );}
 

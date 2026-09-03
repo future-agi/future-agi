@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 998,
+  "endpointCount": 997,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -37213,31 +37213,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/webhook/": {
-      "post": {
-        "operationId": "tracer_webhook_create",
-        "runtimeRequestValidation": true,
-        "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/WebhookRequest"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/WebhookResponse"
-          },
-          "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
-          },
-          "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -76491,36 +76466,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "x-nullable": true
             }
           }
-        }
-      }
-    },
-    "WebhookRequest": {
-      "required": [
-        "call"
-      ],
-      "type": "object",
-      "properties": {
-        "call": {
-          "title": "Call",
-          "type": "object"
-        }
-      }
-    },
-    "WebhookResponse": {
-      "required": [
-        "result"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean",
-          "default": true
-        },
-        "result": {
-          "title": "Result",
-          "type": "string",
-          "minLength": 1
         }
       }
     },
