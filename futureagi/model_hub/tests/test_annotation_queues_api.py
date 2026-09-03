@@ -20,6 +20,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 
+from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
@@ -36,6 +37,7 @@ from model_hub.models.choices import (
     QueueItemStatus,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
+from model_hub.models.evals_metric import EvalTemplate
 from model_hub.views.annotation_queues import _related_count_subquery
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -44,6 +46,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -516,6 +519,204 @@ class TestCreateQueue:
         assert not AnnotationQueue.objects.filter(
             name="Cross Workspace Label Queue",
             workspace=workspace,
+        ).exists()
+
+    def test_create_rejects_cross_project_evaluator(
+        self, auth_client, organization, workspace, user
+    ):
+        project = Project.objects.create(
+            name="Queue Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        other_project = Project.objects.create(
+            name="Evaluator Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Project Queue Label")
+        eval_template = EvalTemplate.objects.create(
+            name=f"Queue Eval Template {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        custom_eval_config = CustomEvalConfig.objects.create(
+            name="Evaluator Project Config",
+            project=other_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Project Scoped Queue",
+                "project_id": str(project.id),
+                "label_ids": [str(label_id)],
+                "custom_eval_config": str(custom_eval_config.id),
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "project" in str(resp.data).lower()
+        assert not AnnotationQueue.objects.filter(
+            name="Project Scoped Queue",
+            organization=organization,
+        ).exists()
+
+    def test_create_rejects_cross_org_project_id(
+        self, auth_client, organization, workspace, user
+    ):
+        """``project_id`` pointing at another organization's project must be
+        rejected with a 400 — the queue's project write is org-scoped, so a
+        bare UUID from another tenant can never anchor the queue (or,
+        combined with a matching eval config, defeat the same-project
+        evaluator guard)."""
+        other_org = Organization.objects.create(
+            name=f"Other Org {uuid.uuid4().hex[:8]}"
+        )
+        other_project = Project.objects.create(
+            name="Foreign Project",
+            organization=other_org,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Cross Org Project Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Cross Org Project Queue",
+                "project_id": str(other_project.id),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AnnotationQueue.objects.filter(
+            name="Cross Org Project Queue",
+            organization=organization,
+        ).exists()
+
+    def test_create_rejects_unknown_project_id(
+        self, auth_client, organization, workspace, user
+    ):
+        """An unknown ``project_id`` must 400, not silently create a
+        project-less queue."""
+        label_id = create_label_for_queue(auth_client, name="Unknown Project Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Unknown Project Queue",
+                "project_id": str(uuid.uuid4()),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AnnotationQueue.objects.filter(
+            name="Unknown Project Queue",
+            organization=organization,
+        ).exists()
+
+    def test_create_with_project_in_org_succeeds(
+        self, auth_client, organization, workspace, user
+    ):
+        """The org-scoped resolution keeps the happy path working: a valid
+        same-org ``project_id`` creates the queue with that project."""
+        project = Project.objects.create(
+            name="Valid Queue Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Valid Project Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Valid Project Queue",
+                "project_id": str(project.id),
+                "label_ids": [str(label_id)],
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        queue = AnnotationQueue.objects.get(
+            name="Valid Project Queue", organization=organization
+        )
+        assert str(queue.project_id) == str(project.id)
+
+    def test_create_rejects_cross_org_evaluator_at_field_layer(
+        self, auth_client, organization, workspace, user
+    ):
+        """A CustomEvalConfig belonging to a *different* organization must be
+        rejected at the ``custom_eval_config`` field layer (the org-scoped
+        queryset in ``AnnotationQueueSerializer.get_fields``), not only by the
+        ``validate_custom_eval_config`` project check. This guards against an
+        org A user binding an org B evaluator by its UUID.
+        """
+        other_org = Organization.objects.create(
+            name=f"Other Org {uuid.uuid4().hex[:8]}"
+        )
+        other_project = Project.objects.create(
+            name="Other Org Project",
+            organization=other_org,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        eval_template = EvalTemplate.objects.create(
+            name=f"Other Org Eval Template {uuid.uuid4().hex[:8]}",
+            organization=other_org,
+            output_type_normalized="pass_fail",
+        )
+        cross_org_config = CustomEvalConfig.objects.create(
+            name="Other Org Config",
+            project=other_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+        project = Project.objects.create(
+            name="Queue Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Cross Org Label")
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Cross Org Eval Queue",
+                "project_id": str(project.id),
+                "label_ids": [str(label_id)],
+                "custom_eval_config": str(cross_org_config.id),
+            },
+            format="json",
+        )
+
+        # Rejected before the queue is persisted.
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AnnotationQueue.objects.filter(
+            name="Cross Org Eval Queue",
+            organization=organization,
         ).exists()
 
     def test_create_rejects_annotator_without_workspace_membership(

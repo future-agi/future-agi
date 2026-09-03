@@ -424,6 +424,7 @@ export default function AddToQueueDialog({
       <CreateQueueDrawer
         open={createDrawerOpen}
         onClose={() => setCreateDrawerOpen(false)}
+        projectId={projectId}
         onCreated={(queue) => {
           if (!queue?.id) return;
           const isFilterMode = selectionMode === "filter";

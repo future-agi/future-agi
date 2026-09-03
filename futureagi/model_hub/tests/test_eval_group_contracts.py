@@ -140,3 +140,15 @@ class TestEvalGroupMappingValues:
             )
 
         assert "hypothesis" in str(exc.value)
+
+    def test_none_mapping_returns_empty_without_crashing(self):
+        # A cleared/omitted mapping arrives as None from some call paths. The
+        # required-keys loop must not do ``key not in None``; it should return
+        # an empty mapping, mirroring the None early-return in
+        # ``CustomEvalConfigSerializer.validate_mapping``.
+        assert (
+            fetch_specific_mapping_for_specific_eval_template(
+                None, self._template(["hypothesis"], ["reference"])
+            )
+            == {}
+        )
