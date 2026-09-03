@@ -964,6 +964,12 @@ export const toBackendFilters = (filters) =>
     ...(registryId && !rest.property_id ? { property_id: registryId } : {}),
   }));
 
+// Filter rows carried by a link into the observe list. They seed extraFilters
+// rather than the primaryTraceFilter URL state because extraFilters is what the
+// filter panel renders — a scope arriving through this channel is visible and
+// removable, not silently applied.
+export const OBSERVE_LINK_FILTER_PARAM = "observeLinkFilter";
+
 export const FILTER_FOR_ERRORS = {
   column_id: "status",
   filter_config: {
