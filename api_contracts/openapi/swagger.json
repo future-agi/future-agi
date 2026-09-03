@@ -1686,6 +1686,138 @@
             },
             "parameters": []
         },
+        "/accounts/gcp-marketplace/signup/": {
+            "post": {
+                "operationId": "accounts_gcp-marketplace_signup_create",
+                "description": "Complete sign-up for a GCP Marketplace customer.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GCPMarketplaceSignupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GCPMarketplaceSignupResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "accounts"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/accounts/gcp-marketplace/verify-token/": {
+            "post": {
+                "operationId": "accounts_gcp-marketplace_verify-token_create",
+                "summary": "Landing endpoint for the Producer Portal Sign up URL.",
+                "description": "Google posts the signed marketplace token here as form data and expects a\nredirect. Registered in Producer Portal, not called by our own frontend.",
+                "parameters": [
+                    {
+                        "name": "x-gcp-marketplace-token",
+                        "in": "formData",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": ""
+                    },
+                    "302": {
+                        "description": "Redirects to the Future AGI frontend."
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "tags": [
+                    "accounts"
+                ]
+            },
+            "parameters": []
+        },
         "/accounts/get-user-profile-details/": {
             "get": {
                 "operationId": "accounts_get-user-profile-details_list",
@@ -46031,6 +46163,12 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46065,6 +46203,12 @@
                 "parameters": [
                     {
                         "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "state",
                         "in": "query",
                         "required": false,
                         "type": "string"
@@ -46112,6 +46256,12 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46146,6 +46296,12 @@
                 "parameters": [
                     {
                         "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "state",
                         "in": "query",
                         "required": false,
                         "type": "string"
@@ -46525,6 +46681,12 @@
                             "github",
                             "microsoft"
                         ]
+                    },
+                    {
+                        "name": "onboarding_token",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46570,6 +46732,12 @@
                             "github",
                             "microsoft"
                         ]
+                    },
+                    {
+                        "name": "onboarding_token",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46617,6 +46785,12 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
                     }
                 ],
                 "responses": {
@@ -46651,6 +46825,12 @@
                 "parameters": [
                     {
                         "name": "code",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "state",
                         "in": "query",
                         "required": false,
                         "type": "string"
@@ -74200,6 +74380,68 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UserChecksResult"
+                }
+            }
+        },
+        "GCPMarketplaceSignupRequest": {
+            "required": [
+                "onboarding_token",
+                "email",
+                "full_name"
+            ],
+            "type": "object",
+            "properties": {
+                "onboarding_token": {
+                    "title": "Onboarding token",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "full_name": {
+                    "title": "Full name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "GCPMarketplaceSignupResult": {
+            "required": [
+                "message",
+                "user_email"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "user_email": {
+                    "title": "User email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                }
+            }
+        },
+        "GCPMarketplaceSignupResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GCPMarketplaceSignupResult"
                 }
             }
         },

@@ -36,6 +36,7 @@ import type {
   AccountsDirectMessageResponseApi,
   AccountsEmptyRequestApi,
   AccountsErrorResponseApi,
+  AccountsGcpMarketplaceVerifyTokenCreateBody,
   AccountsMessageResponseApi,
   AccountsOrganizationMembersListParams,
   AccountsPaginatedUserResponseApi,
@@ -503,6 +504,8 @@ import type {
   FetchAssistantRequestApi,
   FetchAssistantResponseApi,
   FileUploadResponseApi,
+  GCPMarketplaceSignupRequestApi,
+  GCPMarketplaceSignupResponseApi,
   GatewayBatchCancelResponseApi,
   GatewayBatchDetailResponseApi,
   GatewayBatchRequestApi,
@@ -3048,6 +3051,155 @@ export const accountsFirstChecksList = async ( options?: RequestInit): Promise<a
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type accountsGcpMarketplaceSignupCreateResponse200 = {
+  data: GCPMarketplaceSignupResponseApi
+  status: 200
+}
+
+export type accountsGcpMarketplaceSignupCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsGcpMarketplaceSignupCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsGcpMarketplaceSignupCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsGcpMarketplaceSignupCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsGcpMarketplaceSignupCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsGcpMarketplaceSignupCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsGcpMarketplaceSignupCreateResponseSuccess = (accountsGcpMarketplaceSignupCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsGcpMarketplaceSignupCreateResponseError = (accountsGcpMarketplaceSignupCreateResponse400 | accountsGcpMarketplaceSignupCreateResponse401 | accountsGcpMarketplaceSignupCreateResponse403 | accountsGcpMarketplaceSignupCreateResponse404 | accountsGcpMarketplaceSignupCreateResponse500 | accountsGcpMarketplaceSignupCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsGcpMarketplaceSignupCreateResponse = (accountsGcpMarketplaceSignupCreateResponseSuccess | accountsGcpMarketplaceSignupCreateResponseError)
+
+export const getAccountsGcpMarketplaceSignupCreateUrl = () => {
+
+
+
+
+  return `/accounts/gcp-marketplace/signup/`
+}
+
+/**
+ * Complete sign-up for a GCP Marketplace customer.
+ */
+export const accountsGcpMarketplaceSignupCreate = async (gCPMarketplaceSignupRequestApi: GCPMarketplaceSignupRequestApi, options?: RequestInit): Promise<accountsGcpMarketplaceSignupCreateResponse> => {
+
+  return apiMutator<accountsGcpMarketplaceSignupCreateResponse>(getAccountsGcpMarketplaceSignupCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      gCPMarketplaceSignupRequestApi,)
+  }
+);}
+
+
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse201 = {
+  data: void
+  status: 201
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse302 = {
+  data: void
+  status: 302
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201 | 302 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponseSuccess = (accountsGcpMarketplaceVerifyTokenCreateResponse201) & {
+  headers: Headers;
+};
+export type accountsGcpMarketplaceVerifyTokenCreateResponseError = (accountsGcpMarketplaceVerifyTokenCreateResponse302 | accountsGcpMarketplaceVerifyTokenCreateResponse400 | accountsGcpMarketplaceVerifyTokenCreateResponse401 | accountsGcpMarketplaceVerifyTokenCreateResponse403 | accountsGcpMarketplaceVerifyTokenCreateResponse404 | accountsGcpMarketplaceVerifyTokenCreateResponse500 | accountsGcpMarketplaceVerifyTokenCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsGcpMarketplaceVerifyTokenCreateResponse = (accountsGcpMarketplaceVerifyTokenCreateResponseSuccess | accountsGcpMarketplaceVerifyTokenCreateResponseError)
+
+export const getAccountsGcpMarketplaceVerifyTokenCreateUrl = () => {
+
+
+
+
+  return `/accounts/gcp-marketplace/verify-token/`
+}
+
+/**
+ * Google posts the signed marketplace token here as form data and expects a
+redirect. Registered in Producer Portal, not called by our own frontend.
+ * @summary Landing endpoint for the Producer Portal Sign up URL.
+ */
+export const accountsGcpMarketplaceVerifyTokenCreate = async (accountsGcpMarketplaceVerifyTokenCreateBody?: AccountsGcpMarketplaceVerifyTokenCreateBody, options?: RequestInit): Promise<accountsGcpMarketplaceVerifyTokenCreateResponse> => {
+    const formUrlEncoded = new URLSearchParams();
+if(accountsGcpMarketplaceVerifyTokenCreateBody?.['x-gcp-marketplace-token'] !== undefined) {
+ formUrlEncoded.append(`x-gcp-marketplace-token`, accountsGcpMarketplaceVerifyTokenCreateBody['x-gcp-marketplace-token']);
+ }
+
+  return apiMutator<accountsGcpMarketplaceVerifyTokenCreateResponse>(getAccountsGcpMarketplaceVerifyTokenCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...options?.headers },
+    body:
+      formUrlEncoded,
   }
 );}
 
