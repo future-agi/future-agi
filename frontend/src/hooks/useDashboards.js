@@ -348,6 +348,31 @@ export function useDashboardDetail(id) {
     queryFn: () => axios.get(endpoints.dashboard.detail(id)),
     select: (res) => res.data?.result || null,
     enabled: Boolean(id),
+    // A 404 here means the dashboard isn't in the current workspace (or
+    // doesn't exist) — retrying just delays the cross-workspace recovery.
+    // Only give transient failures (network errors, 5xx) one extra attempt.
+    retry: (failureCount, error) => {
+      const status = error?.statusCode;
+      const transient = status == null || status >= 500;
+      return transient && failureCount < 1;
+    },
+    // The dashboards views render their own inline not-found state and
+    // auto-recover across workspaces; keep the global query error toast
+    // (app.jsx) out of the way.
+    meta: { errorHandled: true },
+  });
+}
+
+export function useResolveDashboardWorkspace(id) {
+  return useQuery({
+    queryKey: [...DASHBOARD_KEYS.all, "resolveWorkspace", id],
+    queryFn: () => axios.get(endpoints.dashboard.resolveWorkspace(id)),
+    select: (res) => res.data?.result || null,
+    enabled: false,
+    retry: false,
+    // The recovery flow renders its own inline error state; don't also fire
+    // the global query error toast (app.jsx) for the same failure.
+    meta: { errorHandled: true },
   });
 }
 

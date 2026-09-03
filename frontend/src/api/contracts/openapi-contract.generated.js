@@ -31487,6 +31487,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/dashboard/{id}/resolve-workspace/": {
+      "get": {
+        "operationId": "tracer_dashboard_resolve_workspace",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "boolean"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "workspace_id": {
+                    "type": "string"
+                  },
+                  "workspace_name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/tracer/dataset/": {
       get: {
         operationId: "tracer_dataset_list",

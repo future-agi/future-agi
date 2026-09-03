@@ -43,6 +43,7 @@ import {
   useDuplicateWidget,
   useCreateWidget,
 } from "src/hooks/useDashboards";
+import { useCrossWorkspaceRecovery } from "src/hooks/use_cross_workspace_recovery";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
 import {
@@ -738,7 +739,23 @@ export default function DashboardDetailView() {
 
   const { canUpdate, isReadOnly } = useCanEditDashboard();
 
-  const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
+  const {
+    data: dashboard,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useDashboardDetail(dashboardId);
+
+  // Auto-resolve and switch workspace when a dashboard 404s because it
+  // belongs to a different workspace than the one the user is currently in.
+  const { isResolving, isSwitching, resolveAttempted } =
+    useCrossWorkspaceRecovery({
+      dashboardId,
+      isError,
+      error,
+      isLoading,
+    });
   const updateDashboard = useUpdateDashboard();
   const updateWidget = useUpdateWidget();
   const deleteWidget = useDeleteWidget();
@@ -1210,7 +1227,55 @@ export default function DashboardDetailView() {
     return <LoadingScreen sx={{ height: "60vh" }} />;
   }
 
+  // Looking for the dashboard in another workspace that the user belongs to.
+  // isSwitching keeps this up through the workspace-switch POST until the
+  // hard reload — otherwise "not found" flashes for the round-trip.
+  if (isResolving || isSwitching) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "60vh",
+          gap: 2,
+        }}
+      >
+        <CircularProgress />
+        <Typography color="text.secondary">
+          Looking for this dashboard…
+        </Typography>
+      </Box>
+    );
+  }
+
+  // A definite 404 (after the cross-workspace resolve has run) is the only
+  // case rendered as "not found". Transient failures (network / 5xx) must
+  // not masquerade as a missing dashboard — they surface through the global
+  // error toast and a retry via refetch.
   if (!dashboard) {
+    if (isError && error?.statusCode !== 404) {
+      return (
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "60vh",
+            gap: 2,
+          }}
+        >
+          <Typography color="text.secondary">
+            Something went wrong while loading this dashboard.
+          </Typography>
+          <Button variant="outlined" size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </Box>
+      );
+    }
     return (
       <Box
         sx={{
@@ -1220,7 +1285,11 @@ export default function DashboardDetailView() {
           height: "60vh",
         }}
       >
-        <Typography color="text.secondary">Dashboard not found</Typography>
+        <Typography color="text.secondary">
+          {resolveAttempted
+            ? "Dashboard not found or you may not have access to this workspace."
+            : "Dashboard not found"}
+        </Typography>
       </Box>
     );
   }

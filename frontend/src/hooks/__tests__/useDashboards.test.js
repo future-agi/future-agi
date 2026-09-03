@@ -22,6 +22,8 @@ vi.mock("src/utils/axios", () => ({
   endpoints: {
     dashboard: {
       list: "/tracer/dashboard/",
+      detail: (id) => `/tracer/dashboard/${id}/`,
+      resolveWorkspace: (id) => `/tracer/dashboard/${id}/resolve-workspace/`,
       query: "/tracer/dashboard/query/",
       metrics: "/tracer/dashboard/metrics/",
       filterValues: "/tracer/dashboard/filter_values/",
@@ -46,6 +48,8 @@ import {
   useDeleteWidget,
   useReorderWidgets,
   useDuplicateWidget,
+  useDashboardDetail,
+  useResolveDashboardWorkspace,
   useDashboardQuery,
   useDashboardMetricsPaginated,
   usePropertyCatalog,
@@ -241,6 +245,54 @@ describe("useDashboards widget mutations", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: DASHBOARD_LIST_KEY,
     });
+  });
+});
+
+describe("useDashboardDetail retry policy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not retry a 404 so cross-workspace recovery starts immediately", async () => {
+    mocks.get.mockRejectedValue({ statusCode: 404, result: "not found" });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: 1, // global default would retry once
+          retryDelay: 0, // don't let TanStack's backoff leak into other tests
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useDashboardDetail("dash-1"), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // One attempt — the per-query retry fn declines to retry definite 404s.
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient failures once", async () => {
+    mocks.get
+      .mockRejectedValueOnce({ statusCode: 503 })
+      .mockRejectedValueOnce({ statusCode: 503 });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: 1, retryDelay: 0 },
+      },
+    });
+
+    const { result } = renderHook(() => useDashboardDetail("dash-1"), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(mocks.get).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1823,6 +1875,53 @@ describe("useDatasetColumnValues exact failure semantics", () => {
     vi.clearAllMocks();
   });
 
+describe("useResolveDashboardWorkspace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not auto-fetch (enabled: false) and returns null data by default", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const { result } = renderHook(
+      () => useResolveDashboardWorkspace("dash-1"),
+      { wrapper: createQueryWrapper(queryClient) },
+    );
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isFetching).toBe(false);
+  });
+
+  it("resolves workspace when refetch is called", async () => {
+    mocks.get.mockResolvedValueOnce({
+      data: { result: { workspace_id: "ws-1", workspace_name: "Test WS" } },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const { result } = renderHook(
+      () => useResolveDashboardWorkspace("dash-1"),
+      { wrapper: createQueryWrapper(queryClient) },
+    );
+
+    result.current.refetch();
+
+    await waitFor(() => expect(result.current.isFetching).toBe(false));
+
+    expect(mocks.get).toHaveBeenCalledWith(
+      "/tracer/dashboard/dash-1/resolve-workspace/",
+    );
+    expect(result.current.data).toEqual({
+      workspace_id: "ws-1",
+      workspace_name: "Test WS",
+    });
+});
+
+});
   it("sends the stable dataset-column identity and normalizes exact options", async () => {
     mocks.get.mockResolvedValue({
       data: {

@@ -56743,6 +56743,54 @@
                 }
             ]
         },
+        "/tracer/dashboard/{id}/resolve-workspace/": {
+            "get": {
+                "operationId": "tracer_dashboard_resolve_workspace",
+                "description": "Return the workspace that owns this dashboard if the user has access.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "status": {
+                                    "type": "boolean"
+                                },
+                                "result": {
+                                    "type": "object",
+                                    "properties": {
+                                        "workspace_id": {
+                                            "type": "string"
+                                        },
+                                        "workspace_name": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/dataset/": {
             "get": {
                 "operationId": "tracer_dataset_list",

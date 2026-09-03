@@ -6638,6 +6638,73 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response({"agents": result})
 
+    @action(detail=True, methods=["get"], url_path="resolve-workspace")
+    def resolve_workspace(self, request, pk=None):
+        """Return the workspace that owns this dashboard, if the user has access.
+
+        Used by the frontend when a dashboard 404s in the current workspace
+        so it can auto-switch to the correct workspace instead of showing
+        "Dashboard not found".
+        """
+        try:
+            dashboard = Dashboard.no_workspace_objects.select_related(
+                "workspace",
+            ).get(pk=pk, deleted=False)
+        except Dashboard.DoesNotExist:
+            return self._gm.not_found("Dashboard not found")
+
+        workspace = dashboard.workspace
+
+        # Verify the requesting user belongs to the same organization.
+        # A user in org A should not be able to probe dashboards in org B.
+        # Fall back to the user's own organization when the request-scoped
+        # attribute is missing so the boundary is always enforced.
+        from accounts.utils import get_request_organization
+
+        org = getattr(request, "organization", None) or get_request_organization(
+            request
+        )
+        if org and workspace.organization_id != org.id:
+            return self._gm.not_found("Dashboard not found")
+
+        # Check if user has access to this workspace (membership or global role).
+        from accounts.models.workspace import WorkspaceMembership
+
+        has_access = WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace,
+            user=request.user,
+            is_active=True,
+        ).exists()
+
+        if not has_access:
+            try:
+                from accounts.utils import resolve_org_role
+                from tfc.constants.roles import RolePermissions
+
+                org_role = resolve_org_role(request.user, workspace.organization)
+                has_access = bool(
+                    org_role and org_role in RolePermissions.GLOBAL_ACCESS_ROLES
+                )
+            except Exception as exc:
+                logger.warning(
+                    "resolve_workspace_role_check_failed",
+                    dashboard_id=str(pk),
+                    workspace_id=str(workspace.id),
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
+                has_access = False
+
+        if not has_access:
+            return self._gm.not_found("Dashboard not found")
+
+        return self._gm.success_response(
+            {
+                "workspace_id": str(workspace.id),
+                "workspace_name": workspace.display_name or workspace.name,
+            }
+        )
+
 
 class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()

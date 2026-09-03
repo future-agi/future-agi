@@ -57,6 +57,7 @@ import {
   usePropertyCatalog,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
+import { useCrossWorkspaceRecovery } from "src/hooks/use_cross_workspace_recovery";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import Iconify from "src/components/iconify";
@@ -2148,8 +2149,22 @@ export default function WidgetEditorView() {
     data: dashboard,
     isLoading: isDashboardLoading,
     isError: isDashboardError,
+    error: dashboardError,
     refetch: refetchDashboard,
   } = useDashboardDetail(dashboardId);
+
+  // Auto-resolve and switch workspace when a dashboard 404s because it
+  // belongs to a different workspace than the one the user is currently in.
+  const {
+    isResolving: isResolvingWorkspace,
+    isSwitching: isSwitchingWorkspace,
+    resolveAttempted: resolveAttemptedWorkspace,
+  } = useCrossWorkspaceRecovery({
+    dashboardId,
+    isError: isDashboardError,
+    error: dashboardError,
+    isLoading: isDashboardLoading,
+  });
   const createMutation = useCreateWidget();
   const updateMutation = useUpdateWidget();
   const deleteMutation = useDeleteWidget();
@@ -4124,6 +4139,57 @@ export default function WidgetEditorView() {
       if (cleanupDragRef.current) cleanupDragRef.current();
     };
   }, []);
+
+  // Show a loading indicator while the dashboard is resolving across workspaces.
+  // (The initial fetch, the resolve stage, and the workspace-switch POST are
+  // all covered here — isSwitchingWorkspace holds the state until the reload.)
+  if (isDashboardLoading || isResolvingWorkspace || isSwitchingWorkspace) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "60vh",
+          gap: 2,
+        }}
+      >
+        <CircularProgress />
+        {isResolvingWorkspace && (
+          <Typography color="text.secondary">
+            Looking for this dashboard…
+          </Typography>
+        )}
+      </Box>
+    );
+  }
+
+  // A definite 404 (after the cross-workspace resolve has run) is the only
+  // case rendered as "not found" here. Transient failures (network / 5xx)
+  // must fall through to the editorLoadState error branch below, which shows
+  // the retry UI instead of claiming the dashboard is missing.
+  if (
+    !dashboard &&
+    (isDashboardError ? dashboardError?.statusCode === 404 : resolveAttemptedWorkspace)
+  ) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "60vh",
+        }}
+      >
+        <Typography color="text.secondary">
+          {resolveAttemptedWorkspace
+            ? "Dashboard not found or you may not have access to this workspace."
+            : "Dashboard not found"}
+        </Typography>
+      </Box>
+    );
+  }
 
   const editorLoadState = getWidgetEditorLoadState({
     isEditing: isRouteEditing,
