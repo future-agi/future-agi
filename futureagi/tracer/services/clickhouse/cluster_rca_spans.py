@@ -149,7 +149,7 @@ def spans_for_trace(project_id: str, trace_id: str) -> list[dict[str, Any]]:
 
 def read_span(project_id: str, span_id: str) -> dict[str, Any] | None:
     """One span by id, or None if absent / CH unavailable. Delegates to the
-    canonical CHSpanReader (v2, FINAL-deduped, project-scoped)."""
+    canonical CHSpanReader (v2, version-deduped, project-scoped)."""
     if not span_id:
         return None
     try:
