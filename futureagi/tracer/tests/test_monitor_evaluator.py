@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any, List, Optional
+from typing import Any, List
 from unittest import mock
 
 import pytest
@@ -31,9 +31,11 @@ from tracer.utils.monitor import (
 pytestmark = pytest.mark.django_db
 
 
-def _fake_eval_config(output_value: Optional[str]) -> SimpleNamespace:
+def _fake_eval_config(
+    output_value: str | None, choices: list | None = None
+) -> SimpleNamespace:
     return SimpleNamespace(
-        eval_template=SimpleNamespace(config={"output": output_value})
+        eval_template=SimpleNamespace(config={"output": output_value}, choices=choices)
     )
 
 
@@ -55,6 +57,41 @@ def test_eval_output_type_normalized_to_builder_key(
     ):
         builder = build_monitor_ch_builder(user_alert_monitor)
     assert builder.eval_output_type == expected
+
+
+@pytest.mark.parametrize(
+    "stored,choices,threshold_value,expected",
+    [
+        # TH-7788: score template with choice labels + a selected label -> CHOICES
+        ("score", ["Complete", "Partial", "Incomplete"], "Incomplete", "CHOICES"),
+        # no label selected -> plain score average
+        ("score", ["Complete", "Partial", "Incomplete"], None, "SCORE"),
+        # selected value is not one of the template's labels -> plain score
+        ("score", ["Complete", "Partial"], "Bogus", "SCORE"),
+        # score template without labels -> unchanged
+        ("score", None, "Incomplete", "SCORE"),
+        # Pass/Fail uses threshold_metric_value for Passed/Failed -> untouched
+        ("Pass/Fail", ["Passed", "Failed"], "Passed", "PASS_FAIL"),
+    ],
+)
+def test_score_template_with_selected_choice_label_evaluates_as_choices(
+    user_alert_monitor,
+    stored: str,
+    choices: list | None,
+    threshold_value: str | None,
+    expected: str,
+) -> None:
+    user_alert_monitor.metric_type = "evaluation_metrics"
+    user_alert_monitor.metric = "22222222-2222-2222-2222-222222222222"
+    user_alert_monitor.threshold_metric_value = threshold_value
+    with mock.patch.object(
+        monitor_mod.CustomEvalConfig.objects,
+        "get",
+        return_value=_fake_eval_config(stored, choices),
+    ):
+        builder = build_monitor_ch_builder(user_alert_monitor)
+    assert builder.eval_output_type == expected
+    assert builder.threshold_metric_value == threshold_value
 
 
 def test_missing_eval_config_raises_config_error_at_builder(
