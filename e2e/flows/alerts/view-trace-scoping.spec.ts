@@ -132,10 +132,18 @@ test(
         // organization/workspace/created_by injected server-side by
         // tracer/views/monitor.py:536; values mirror a monitor created through
         // the UI. `filters` is the same JSON the alert filter panel stores.
+        //
+        // metric_type is deliberately NOT count_of_errors: that metric type
+        // makes buildAlertTraceLink append a status=ERROR row (see
+        // monitorFiltersToTraceRows.js's METRIC_EXTRA_ROWS), and sendTrace's
+        // seeded spans carry OTLP status code 1 (OK). span_response_time adds
+        // no such row, so this flow's own node_type filter is what is under
+        // test, not the metric-predicate behaviour (covered separately by
+        // monitor-filters-to-trace-rows.test.js).
         await actor.api.post(MONITOR_PATH, {
           name: monitorName,
           project: projectId,
-          metric_type: 'count_of_errors',
+          metric_type: 'span_response_time',
           threshold_type: 'static',
           threshold_operator: 'greater_than',
           critical_threshold_value: 1,
@@ -323,13 +331,17 @@ test(
 
       const spanning = linkWindow();
       expect(spanning).not.toBeNull();
+      // buildAlertTraceLink formats with date-fns "yyyy-MM-dd HH:mm:ss" — whole
+      // seconds, no milliseconds — so round the fire bounds the same way before
+      // comparing rather than tripping on sub-second truncation.
+      const toSecond = (ms: number) => Math.floor(ms / 1000) * 1000;
       // Starts no later than the earlier fire and ends no earlier than the later
       // one — the union, not either fire's own window.
       expect(new Date(spanning![0]).getTime()).toBeLessThanOrEqual(
-        fireEmptyStart.getTime(),
+        toSecond(fireEmptyStart.getTime()),
       );
       expect(new Date(spanning![1]).getTime()).toBeGreaterThanOrEqual(
-        fireMatchEnd.getTime(),
+        toSecond(fireMatchEnd.getTime()),
       );
       await expect(traceNames()).toHaveText([ROOT_SPAN], { timeout: UI_READY });
     });
