@@ -31,7 +31,7 @@ ACTIVATION_CONTROL_TABLE = "property_catalog_activation_control_events"
 ACTIVATION_CONTROL_MAX_EVENTS = 4096
 ACTIVATION_CONTROL_MAX_QUALIFIED_BUILDS = RUNTIME_LIMITS.max_lineage_revisions * 8
 
-_CONTROL_COLUMNS = (
+ACTIVATION_CONTROL_COLUMNS = (
     "organization_id",
     "workspace_id",
     "catalog_epoch",
@@ -619,7 +619,7 @@ class ClickHouseActivationControlStore:
         self._client.insert(
             f"`{self._database}`.`{ACTIVATION_CONTROL_TABLE}`",
             (row,),
-            columns=_CONTROL_COLUMNS,
+            columns=ACTIVATION_CONTROL_COLUMNS,
             timeout_ms=self._timeout_ms,
             deduplication_token=(
                 "property-catalog-activation-control-v1:"
@@ -714,7 +714,7 @@ def activation_control_selector_for_deployment(
 
 def activation_control_event_sql(database: str) -> str:
     checked = validate_property_catalog_database(database, deployment="prod")
-    columns = ", ".join(_CONTROL_COLUMNS)
+    columns = ", ".join(ACTIVATION_CONTROL_COLUMNS)
     return f"""\
 SELECT {columns}
 FROM `{checked}`.`{ACTIVATION_CONTROL_TABLE}`
@@ -1112,6 +1112,7 @@ def _require_utc(value: datetime, *, field: str) -> None:
 
 
 __all__ = [
+    "ACTIVATION_CONTROL_COLUMNS",
     "ACTIVATION_CONTROL_MAX_EVENTS",
     "ACTIVATION_CONTROL_TABLE",
     "ActivationControlAction",

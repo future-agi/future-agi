@@ -13,11 +13,10 @@ import (
 )
 
 const (
-	revisionFenceFormat     = "futureagi.property-catalog-revision-fence"
-	revisionFenceVersion    = uint16(2)
-	maxRevisionFenceBytes   = 1 << 20
-	maxRevisionFenceEntries = 256
-	maxRevisionProjects     = 256
+	revisionFenceFormat   = "futureagi.property-catalog-revision-fence"
+	revisionFenceVersion  = uint16(2)
+	maxRevisionFenceBytes = 64 << 20
+	maxRevisionProjects   = 256
 	// Keep this hard safety bound aligned with
 	// PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS. Extended initial backfills
 	// may use up to the setting's supported 60-minute maximum while preserving
@@ -170,7 +169,7 @@ func (p *FileRevisionProvider) CurrentRevisions(ctx context.Context) ([]Revision
 		return nil, errors.New("propertycatalog: revision fence is not canonical JSON")
 	}
 	if document.Format != revisionFenceFormat || document.Version != revisionFenceVersion ||
-		len(document.Fences) == 0 || len(document.Fences) > maxRevisionFenceEntries {
+		len(document.Fences) == 0 {
 		return nil, errors.New("propertycatalog: revision fence format/version/count is invalid")
 	}
 	if !sort.SliceIsSorted(document.Fences, func(i, j int) bool {
@@ -260,7 +259,7 @@ func validateRevisionFence(fence RevisionFence, now time.Time) error {
 // EncodeRevisionFenceFile is intentionally pure and used by the control plane
 // handoff/tests to produce the exact atomic-file payload expected above.
 func EncodeRevisionFenceFile(fences []RevisionFence) ([]byte, error) {
-	if len(fences) == 0 || len(fences) > maxRevisionFenceEntries {
+	if len(fences) == 0 {
 		return nil, errors.New("propertycatalog: revision fence count is invalid")
 	}
 	cloned := make([]RevisionFence, len(fences))

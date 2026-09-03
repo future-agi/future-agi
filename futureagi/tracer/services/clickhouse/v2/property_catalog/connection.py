@@ -93,6 +93,11 @@ class PropertyCatalogConnectionConfig:
             prod_workspace_allowlist=getattr(
                 source, "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST", None
             ),
+            prod_workspace_scope_mode=getattr(
+                source,
+                "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
+                "allowlist",
+            ),
         )
         if deployment is None:
             raise ValueError("property catalog reads are disabled")
@@ -142,6 +147,7 @@ def get_property_catalog_read_client(
                 send_timeout=PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
                 receive_timeout=PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS,
                 pool_size=PROPERTY_CATALOG_READ_POOL_SIZE,
+                allow_query_settings_with_server_readonly=True,
             )
             _client_config = config
         return _client

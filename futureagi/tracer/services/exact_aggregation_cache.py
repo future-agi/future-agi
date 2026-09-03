@@ -28,7 +28,7 @@ logger = structlog.get_logger(__name__)
 # Bump whenever a release changes exact-query semantics. Cache keys are shared
 # across deployments and snapshots live for up to 30 days, so reusing the old
 # namespace could otherwise serve results computed by pre-deploy code.
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 _DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60
 EXACT_AGGREGATION_ACTIVITY_TIMEOUT_SECONDS = 60 * 60
 EXACT_AGGREGATION_SCHEDULE_TO_START_TIMEOUT_SECONDS = 12 * 60 * 60
@@ -1451,6 +1451,7 @@ def read_or_schedule_exact_snapshot(
     *,
     refresh: bool,
     pending_payload: Any,
+    schedule_on_miss: bool = True,
 ) -> Any:
     """Serve an exact snapshot immediately and run slow refreshes out of band.
 
@@ -1482,6 +1483,15 @@ def read_or_schedule_exact_snapshot(
         return _decorate_refresh_state(previous, state)
     if previous is None and state == "failed" and not refresh:
         return _decorate_refresh_state(pending_payload, state)
+    if not schedule_on_miss:
+        # Interactive readers use this cache-only probe before attempting the
+        # direct ClickHouse path.  A running refresh must suppress duplicate
+        # foreground work, while a true cold miss must remain free to run
+        # synchronously instead of being queued pre-emptively.
+        return _decorate_refresh_state(
+            previous if previous is not None else pending_payload,
+            state,
+        )
 
     task_queue = _configured_exact_aggregation_task_queue()
     if task_queue is None:
@@ -1530,6 +1540,7 @@ def read_or_schedule_exact_snapshot(
     if token is not None:
         try:
             from temporalio.common import WorkflowIDConflictPolicy
+
             from tracer.tasks.exact_aggregation import (
                 refresh_exact_aggregation_snapshot,
             )

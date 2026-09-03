@@ -156,7 +156,7 @@ def test_text_and_numeric_positive_witnesses_keep_only_safe_index_companions(
     assert map_column in plan.raw_witness_predicate
 
 
-def test_ascii_filter_does_not_make_unicode_stored_values_ascii_safe() -> None:
+def test_ascii_filter_keeps_unicode_semantics_with_exhaustive_legacy_witness() -> None:
     stored = "\N{KELVIN SIGN}"
     assert not stored.isascii()
     assert stored.lower() == "k"
@@ -171,8 +171,8 @@ def test_ascii_filter_does_not_make_unicode_stored_values_ascii_safe() -> None:
     assert plan.params["latest_filter_param_0"] == "k"
     assert "lowerUTF8(toString(span_attr_str[" in plan.seed_predicate
     assert "lowerUTF8(toString(span_attr_str[" in plan.raw_witness_predicate
-    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in plan.seed_predicate
-    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in (
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" in plan.seed_predicate
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" in (
         plan.raw_witness_predicate or ""
     )
     assert "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))" in (
@@ -180,6 +180,30 @@ def test_ascii_filter_does_not_make_unicode_stored_values_ascii_safe() -> None:
     )
     assert "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))" in (
         plan.raw_witness_predicate or ""
+    )
+    assert {
+        value
+        for key, value in plan.params.items()
+        if key.startswith("latest_filter_legacy_index_0_")
+    } == {"k", stored}
+
+
+def test_non_ascii_filter_declines_legacy_ascii_bloom_witness() -> None:
+    plan = _plan(
+        compile_span_filter_plans,
+        filter_type="text",
+        operation="equals",
+        value="İstanbul",
+    )
+
+    assert "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))" in (
+        plan.seed_predicate or ""
+    )
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in (
+        plan.seed_predicate or ""
+    )
+    assert not any(
+        key.startswith("latest_filter_legacy_index_0_") for key in plan.params
     )
 
 

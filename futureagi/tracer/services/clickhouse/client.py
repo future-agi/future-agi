@@ -277,6 +277,7 @@ class ClickHouseClient:
         receive_timeout: float | None = None,
         pool_size: int | None = None,
         read_timeout_ceiling_ms: int | None = None,
+        allow_query_settings_with_server_readonly: bool = False,
     ):
         """
         Initialize ClickHouse client with connection settings.
@@ -298,6 +299,11 @@ class ClickHouseClient:
             bool(ch_settings.get("CH_SERVER_ENFORCED_READONLY", False))
             if server_enforced_readonly is None
             else bool(server_enforced_readonly)
+        )
+        if type(allow_query_settings_with_server_readonly) is not bool:
+            raise ValueError("allow_query_settings_with_server_readonly must be a bool")
+        self.allow_query_settings_with_server_readonly = (
+            allow_query_settings_with_server_readonly
         )
 
         # Connection settings
@@ -574,6 +580,13 @@ class ClickHouseClient:
         )
         query_settings: dict[str, Any] | None
         if self.server_enforced_readonly:
+            query = without_query_settings(query)
+            ensure_read_statement(query)
+
+        if (
+            self.server_enforced_readonly
+            and not self.allow_query_settings_with_server_readonly
+        ):
             # A ClickHouse profile locked at readonly=1 rejects *all* client
             # setting changes, including an otherwise harmless readonly=2 or
             # max_execution_time override.  The SOS/read-replica lane relies on
@@ -581,8 +594,6 @@ class ClickHouseClient:
             # connection or query scope.  Production's ordinary application
             # role keeps the existing per-query guardrails below.
             query_settings = None
-            query = without_query_settings(query)
-            ensure_read_statement(query)
             logger.debug(
                 "Using server-enforced ClickHouse read settings",
                 requested_setting_keys=sorted((settings or {}).keys()),
@@ -615,7 +626,12 @@ class ClickHouseClient:
                 "max_result_bytes", _APPLICATION_READ_MAX_RESULT_BYTES
             )
             query_settings["result_overflow_mode"] = "throw"
-            query_settings["readonly"] = 2
+            if self.server_enforced_readonly:
+                # Preserve the server-owned readonly value while allowing this
+                # dedicated connection to request lower resource ceilings.
+                query_settings.pop("readonly", None)
+            else:
+                query_settings["readonly"] = 2
             # max_execution_time is in seconds.
             query_settings["max_execution_time"] = timeout_ms / 1000.0
 

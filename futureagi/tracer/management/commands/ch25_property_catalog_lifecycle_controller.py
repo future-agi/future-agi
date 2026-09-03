@@ -33,6 +33,8 @@ from tracer.services.clickhouse.v2.property_catalog.codec import (
     canonical_uuid,
 )
 from tracer.services.clickhouse.v2.property_catalog.dev_rollout import (
+    DEV_INITIAL_BACKFILL_MAX_WALL_MS,
+    DEV_STANDARD_MAX_WALL_MS,
     DevRolloutError,
     run_workspace_reconcile,
 )
@@ -62,8 +64,8 @@ from tracer.services.clickhouse.v2.property_catalog.revision_fence_registry impo
 
 logger = logging.getLogger(__name__)
 
-_MAX_WORKSPACES = 256
 _MAX_PROJECTS_PER_WORKSPACE = 256
+_WORKSPACE_SCOPE_MODES = frozenset({"all", "allowlist"})
 _HEALTH_FORMAT = "futureagi.property-catalog-lifecycle-health"
 _HEALTH_VERSION = 1
 
@@ -77,6 +79,7 @@ class ControllerConfig:
     cloud_deployment: str
     source_database: str
     target_database: str
+    workspace_scope_mode: str
     workspace_ids: tuple[str, ...]
     poll_seconds: int
     failure_backoff_seconds: int
@@ -172,7 +175,7 @@ class CycleResult:
 class Command(BaseCommand):
     help = (
         "Continuously advance the existing production unified property catalog "
-        "for an exact workspace allowlist."
+        "for the configured active-workspace scope."
     )
 
     def add_arguments(self, parser: Any) -> None:
@@ -186,18 +189,37 @@ class Command(BaseCommand):
             action="store_true",
             help="Verify schema, identities, tenancy, and active state without writes.",
         )
+        parser.add_argument(
+            "--initial-backfill-wall-ms",
+            type=int,
+            help=(
+                "Run a one-shot initial bootstrap with this explicit bounded wall. "
+                "Requires --once and the separate production bootstrap gate."
+            ),
+        )
 
     def handle(self, *args: Any, **options: Any) -> str | None:
         once = bool(options.get("once"))
         status_only = bool(options.get("status_only"))
+        initial_backfill_wall_ms = options.get("initial_backfill_wall_ms")
         stop = threading.Event()
         previous_handlers = _install_signal_handlers(stop)
         try:
             config = controller_config(settings_object=settings)
+            _validate_initial_backfill_mode(
+                once=once,
+                status_only=status_only,
+                bootstrap_enabled=config.bootstrap_enabled,
+                initial_backfill_wall_ms=initial_backfill_wall_ms,
+            )
             while not stop.is_set():
                 observed_at = datetime.now(UTC)
                 try:
-                    scopes, skipped = discover_workspace_scopes(config.workspace_ids)
+                    scopes, skipped = discover_workspace_scopes(
+                        config.workspace_ids
+                        if config.workspace_scope_mode == "allowlist"
+                        else None
+                    )
                     result = run_cycle(
                         scopes=scopes,
                         skipped=skipped,
@@ -205,6 +227,7 @@ class Command(BaseCommand):
                         config=config,
                         now=observed_at,
                         status_only=status_only,
+                        initial_backfill_wall_ms=initial_backfill_wall_ms,
                         stop=stop,
                         on_error=lambda workspace_id, exc: self.stderr.write(
                             self.style.ERROR(
@@ -288,6 +311,22 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
         raise ProductionLifecycleControllerError(
             "source and production catalog databases must be distinct"
         )
+    workspace_scope_mode = (
+        str(
+            getattr(
+                settings_object,
+                "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE",
+                "allowlist",
+            )
+        )
+        .strip()
+        .lower()
+    )
+    if workspace_scope_mode not in _WORKSPACE_SCOPE_MODES:
+        raise ProductionLifecycleControllerError(
+            "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE must equal "
+            "allowlist or all"
+        )
     workspaces = tuple(
         sorted(
             canonical_uuid(value, field="workspace_id")
@@ -298,13 +337,16 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
             )
         )
     )
-    if (
-        not workspaces
-        or len(workspaces) > _MAX_WORKSPACES
-        or len(set(workspaces)) != len(workspaces)
+    if workspace_scope_mode == "all" and workspaces:
+        raise ProductionLifecycleControllerError(
+            "all lifecycle workspace scope requires an empty workspace allowlist"
+        )
+    if workspace_scope_mode == "allowlist" and (
+        not workspaces or len(set(workspaces)) != len(workspaces)
     ):
         raise ProductionLifecycleControllerError(
-            "production lifecycle requires 1..256 unique allowlisted workspaces"
+            "allowlist lifecycle workspace scope requires a non-empty unique "
+            "workspace allowlist"
         )
     runtime_directory = _existing_directory(
         getattr(settings_object, "PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY", ""),
@@ -328,6 +370,7 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
         cloud_deployment=cloud,
         source_database=source,
         target_database=target,
+        workspace_scope_mode=workspace_scope_mode,
         workspace_ids=workspaces,
         poll_seconds=_bounded_int_setting(
             settings_object, "PROPERTY_CATALOG_LIFECYCLE_POLL_SECONDS", 5, 3_600
@@ -370,44 +413,89 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
 
 
 def discover_workspace_scopes(
-    workspace_ids: tuple[str, ...],
+    workspace_ids: tuple[str, ...] | None,
 ) -> tuple[tuple[WorkspaceScope, ...], tuple[str, ...]]:
+    workspaces = Workspace.no_workspace_objects.filter(is_active=True)
+    if workspace_ids is not None:
+        workspaces = workspaces.filter(id__in=workspace_ids)
     rows = list(
-        Workspace.no_workspace_objects.filter(id__in=workspace_ids, is_active=True)
-        .order_by("organization_id", "id")
-        .values_list("id", "organization_id", "is_default")
-    )
-    observed = {canonical_uuid(row[0], field="workspace_id") for row in rows}
-    missing = tuple(sorted(set(workspace_ids) - observed))
-    if missing:
-        raise ProductionLifecycleControllerError(
-            "allowlisted production workspaces are missing or inactive: "
-            + ", ".join(missing)
+        workspaces.order_by("organization_id", "id").values_list(
+            "id", "organization_id", "is_default"
         )
+    )
+    if workspace_ids is not None:
+        observed = {canonical_uuid(row[0], field="workspace_id") for row in rows}
+        missing = tuple(sorted(set(workspace_ids) - observed))
+        if missing:
+            raise ProductionLifecycleControllerError(
+                "allowlisted production workspaces are missing or inactive: "
+                + ", ".join(missing)
+            )
+    workspace_organizations = {
+        canonical_uuid(workspace_raw, field="workspace_id"): canonical_uuid(
+            organization_raw,
+            field="organization_id",
+        )
+        for workspace_raw, organization_raw, _is_default in rows
+    }
+    default_workspaces = {
+        canonical_uuid(organization_raw, field="organization_id"): canonical_uuid(
+            workspace_raw,
+            field="workspace_id",
+        )
+        for workspace_raw, organization_raw, is_default in rows
+        if bool(is_default)
+    }
+    selected_workspace_ids = tuple(workspace_organizations)
+    project_filter = Q(workspace_id__in=selected_workspace_ids)
+    if default_workspaces:
+        project_filter |= Q(
+            organization_id__in=tuple(default_workspaces),
+            workspace_id__isnull=True,
+        )
+    project_rows = list(
+        Project.no_workspace_objects.filter(project_filter)
+        .order_by("organization_id", "workspace_id", "id")
+        .values_list("id", "organization_id", "workspace_id")
+    )
+    projects_by_workspace: dict[str, list[str]] = {
+        workspace_id: [] for workspace_id in selected_workspace_ids
+    }
+    legacy_by_workspace: dict[str, list[str]] = {
+        workspace_id: [] for workspace_id in selected_workspace_ids
+    }
+    for project_raw, organization_raw, bound_workspace_raw in project_rows:
+        organization_id = canonical_uuid(
+            organization_raw,
+            field="organization_id",
+        )
+        if bound_workspace_raw is None:
+            bound_workspace_id = default_workspaces.get(organization_id)
+            if bound_workspace_id is None:
+                continue
+            legacy_by_workspace[bound_workspace_id].append(str(project_raw))
+        else:
+            bound_workspace_id = canonical_uuid(
+                bound_workspace_raw,
+                field="project workspace_id",
+            )
+            if workspace_organizations.get(bound_workspace_id) != organization_id:
+                continue
+        workspace_projects = projects_by_workspace.get(bound_workspace_id)
+        if workspace_projects is None:
+            continue
+        workspace_projects.append(str(project_raw))
+        if len(workspace_projects) > _MAX_PROJECTS_PER_WORKSPACE:
+            raise ProductionLifecycleControllerError(
+                f"workspace {bound_workspace_id} exceeds the 256-project bound"
+            )
     scopes: list[WorkspaceScope] = []
     skipped: list[str] = []
     for workspace_raw, organization_raw, is_default_raw in rows:
         workspace_id = canonical_uuid(workspace_raw, field="workspace_id")
         organization_id = canonical_uuid(organization_raw, field="organization_id")
-        project_filter = Q(
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-        )
-        if bool(is_default_raw):
-            project_filter |= Q(
-                organization_id=organization_id,
-                workspace_id__isnull=True,
-            )
-        project_rows = list(
-            Project.no_workspace_objects.filter(project_filter)
-            .order_by("id")
-            .values_list("id", "workspace_id")[: _MAX_PROJECTS_PER_WORKSPACE + 1]
-        )
-        if len(project_rows) > _MAX_PROJECTS_PER_WORKSPACE:
-            raise ProductionLifecycleControllerError(
-                f"workspace {workspace_id} exceeds the 256-project bound"
-            )
-        if not project_rows:
+        project_ids = tuple(projects_by_workspace[workspace_id])
+        if not project_ids:
             skipped.append(workspace_id)
             continue
         scopes.append(
@@ -415,12 +503,8 @@ def discover_workspace_scopes(
                 organization_id=organization_id,
                 workspace_id=workspace_id,
                 is_default=bool(is_default_raw),
-                project_ids=tuple(str(row[0]) for row in project_rows),
-                legacy_project_ids=tuple(
-                    str(project_id)
-                    for project_id, bound_workspace_id in project_rows
-                    if bound_workspace_id is None
-                ),
+                project_ids=project_ids,
+                legacy_project_ids=tuple(legacy_by_workspace[workspace_id]),
             )
         )
     return tuple(scopes), tuple(sorted(skipped))
@@ -436,11 +520,15 @@ def run_cycle(
     status_only: bool,
     stop: threading.Event,
     on_error: Callable[[str, Exception], None],
+    initial_backfill_wall_ms: int | None = None,
 ) -> CycleResult:
     authorized_workspaces = tuple(
         sorted((*skipped, *(scope.workspace_id for scope in scopes)))
     )
-    if authorized_workspaces != config.workspace_ids:
+    if (
+        config.workspace_scope_mode == "allowlist"
+        and authorized_workspaces != config.workspace_ids
+    ):
         raise ProductionLifecycleControllerError(
             "cycle workspace scope inventory does not match the exact allowlist"
         )
@@ -461,6 +549,7 @@ def run_cycle(
                 config=config,
                 now=now,
                 status_only=status_only,
+                initial_backfill_wall_ms=initial_backfill_wall_ms,
                 stop=stop,
             )
         except Exception as exc:
@@ -483,6 +572,7 @@ def run_workspace(
     config: ControllerConfig,
     now: datetime,
     status_only: bool,
+    initial_backfill_wall_ms: int | None = None,
     stop: threading.Event | None = None,
 ) -> Mapping[str, Any]:
     cancellation_probe = stop.is_set if stop is not None else lambda: False
@@ -516,6 +606,11 @@ def run_workspace(
     if status_only:
         return evidence
     if evidence.get("active") is True:
+        # A bootstrap retry must be idempotent for workspaces that completed in
+        # an earlier partial cycle.  Do not turn the retry into an incremental
+        # revision merely because that workspace is already active.
+        if initial_backfill_wall_ms is not None:
+            return evidence
         request = rollout_request(
             scope=scope,
             proxy=proxy,
@@ -537,7 +632,12 @@ def run_workspace(
         raise ProductionLifecycleControllerError(
             "workspace has no active catalog revision and production bootstrap is disabled"
         )
-    request = rollout_request(scope=scope, proxy=proxy, config=config)
+    request = rollout_request(
+        scope=scope,
+        proxy=proxy,
+        config=config,
+        initial_backfill_wall_ms=initial_backfill_wall_ms,
+    )
     with managed_runtime(
         request=request,
         proxy=proxy,
@@ -670,6 +770,7 @@ def rollout_request(
     proxy: SettingsOverlay,
     config: ControllerConfig,
     status: bool = False,
+    initial_backfill_wall_ms: int | None = None,
     scheduled_reconcile_wall_ms: int | None = None,
 ) -> ProductionRolloutRequest:
     return configured_production_rollout_request(
@@ -678,11 +779,41 @@ def rollout_request(
         settings_object=proxy,
         execute=not status,
         status=status,
+        initial_backfill_wall_ms=initial_backfill_wall_ms,
         scheduled_reconcile_wall_ms=scheduled_reconcile_wall_ms,
         repair_expired_incomplete=(
             config.repair_expired_incomplete if not status else False
         ),
     )
+
+
+def _validate_initial_backfill_mode(
+    *,
+    once: bool,
+    status_only: bool,
+    bootstrap_enabled: bool,
+    initial_backfill_wall_ms: Any,
+) -> None:
+    if initial_backfill_wall_ms is None:
+        return
+    if not once or status_only:
+        raise ProductionLifecycleControllerError(
+            "explicit initial backfill requires --once without --status-only"
+        )
+    if not bootstrap_enabled:
+        raise ProductionLifecycleControllerError(
+            "explicit initial backfill requires the separate production bootstrap gate"
+        )
+    if type(initial_backfill_wall_ms) is not int or not (
+        DEV_STANDARD_MAX_WALL_MS
+        < initial_backfill_wall_ms
+        <= DEV_INITIAL_BACKFILL_MAX_WALL_MS
+    ):
+        raise ProductionLifecycleControllerError(
+            "explicit initial backfill wall must be in "
+            f"[{DEV_STANDARD_MAX_WALL_MS + 1}, "
+            f"{DEV_INITIAL_BACKFILL_MAX_WALL_MS}] ms"
+        )
 
 
 def _write_health(

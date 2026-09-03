@@ -28,6 +28,7 @@ def _enable_catalog_reads(settings):
     settings.PROPERTY_CATALOG_DATABASE = "property_catalog_dev_clean"
     settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
     settings.PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = ()
+    settings.PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE = "allowlist"
 
 
 def _request(**validated_overrides):
@@ -458,6 +459,53 @@ def test_metrics_cursor_mode_fails_closed_before_reader_when_not_allowlisted(set
     assert response.status_code == 503
     assert response.data["code"] == "property_catalog_not_ready"
     reader.assert_not_called()
+
+
+def test_metrics_cursor_mode_admits_authenticated_workspace_in_global_prod_scope(
+    settings,
+):
+    _enable_catalog_reads(settings)
+    settings.PROPERTY_CATALOG_READ_DEPLOYMENT = "prod"
+    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = ()
+    settings.PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE = "all"
+    reader = Mock()
+    reader.read_page.return_value = SimpleNamespace(
+        metrics=(),
+        has_more=False,
+        next_cursor=None,
+        catalog_epoch=1,
+        catalog_revision=3,
+        activation_fingerprint="a" * 64,
+        category_counts={
+            "all": 0,
+            "system_metric": 0,
+            "eval_metric": 0,
+            "annotation_metric": 0,
+            "custom_attribute": 0,
+            "custom_column": 0,
+        },
+        category_counts_exact=True,
+    )
+
+    with (
+        patch(
+            "tracer.views.dashboard.resolve_property_catalog_project_scope",
+            return_value=[PROJECT_ID],
+        ),
+        patch(
+            "tracer.views.dashboard.resolve_property_catalog_agent_scope",
+            return_value=None,
+        ),
+        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
+        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
+        patch("tracer.views.dashboard.activation_control_selector_for_deployment"),
+    ):
+        response = inspect.unwrap(DashboardViewSet.metrics)(
+            DashboardViewSet(), _request()
+        )
+
+    assert response.status_code == 200
+    reader.read_page.assert_called_once()
 
 
 def test_metrics_cursor_error_is_sanitized_400(settings):

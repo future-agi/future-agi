@@ -336,6 +336,20 @@ def _snapshot_window(
     return analyzed.start, analyzed.end, analyzed.empty
 
 
+def _effective_graph_interval(
+    interval: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> str:
+    """Use bounded weekly output for windows longer than three months."""
+
+    if end_date - start_date > timedelta(
+        days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS
+    ):
+        return "week"
+    return interval
+
+
 def _annotation_label_ids_for_filters(
     project_id: str,
     filters: list[dict[str, Any]],
@@ -836,7 +850,15 @@ def _enumerate_authoritative_anchor_trace_ids(
         "build_exact_graph_latest_root_partition",
         None,
     )
-    if callable(root_partition_builder):
+    # A finite candidate set is cheaper to verify through the existing
+    # trace-id bloom than by enumerating every root in the request window.
+    # One verifier batch has a separately enforced 512-ID ceiling; larger
+    # populations retain the partitioned root cursor that avoids replaying
+    # retained history once per candidate batch.
+    if (
+        callable(root_partition_builder)
+        and len(candidate_trace_ids) > EXACT_GRAPH_TRACE_ROOT_VERIFY_BATCH_SIZE
+    ):
 
         def scan_root_partition(
             partition_start: datetime,
@@ -1256,6 +1278,34 @@ def _enumerate_exact_trace_ids(
         "build_exact_graph_candidate_witness_probe",
         None,
     )
+    candidate_replays_global_membership = getattr(
+        builder,
+        "exact_graph_candidate_witness_replays_global_membership",
+        None,
+    )
+    candidate_has_deployed_value_index = getattr(
+        builder,
+        "exact_graph_candidate_witness_has_deployed_value_index",
+        None,
+    )
+    if (
+        request_end - request_start < EXACT_GRAPH_TRACE_ANCHOR_MIN_REQUEST_WIDTH
+        and callable(candidate_replays_global_membership)
+        and bool(candidate_replays_global_membership())
+        and not (
+            callable(candidate_has_deployed_value_index)
+            and bool(candidate_has_deployed_value_index())
+        )
+    ):
+        # The typed-Map candidate probe scans all retained child history. For a
+        # short root window that can consume the entire request wall before its
+        # resource-bounded first page falls back to the cheaper request-window
+        # root cursor. A compiler-proven deployed value index is the measured
+        # exception: its complete retained-history candidate pass is cheaper
+        # even for dense one-day and seven-day root windows. Relational
+        # candidates are already request-window scoped; long windows retain
+        # the global candidate/anchor routes unchanged.
+        candidate_probe = None
     if callable(candidate_probe):
         candidate_after_trace_id: str | None = None
         candidate_before_start_time: datetime | None = None
@@ -1775,6 +1825,7 @@ def read_exact_system_graph(
 ) -> dict[str, Any]:
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = TimeSeriesQueryBuilder(
             project_id=str(project_id),
@@ -1957,6 +2008,7 @@ def read_exact_all_system_metrics(
 ) -> dict[str, Any]:
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = TimeSeriesQueryBuilder(
             project_id=str(project_id),
@@ -2150,6 +2202,7 @@ def read_exact_eval_graph(
         deleted=False,
     )
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     output_type = req_data_config.get("eval_output_type") or req_data_config.get(
         "output_type"
     )
@@ -2463,6 +2516,7 @@ def read_exact_annotation_graph(
     output_type = str(output_type).lower()
     selected = req_data_config.get("value")
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         return _finalize_exact_graph_payload(
             {
@@ -3946,6 +4000,7 @@ def read_exact_user_system_graph(
 
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         builder = UserTimeSeriesQueryBuilderV2(
             project_id=str(project_id),
@@ -4044,6 +4099,7 @@ def read_exact_session_system_graph(
 ) -> dict[str, Any]:
     started = monotonic()
     start_date, end_date, empty = _snapshot_window(filters)
+    interval = _effective_graph_interval(interval, start_date, end_date)
     if empty:
         return _finalize_exact_graph_payload(
             {

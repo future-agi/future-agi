@@ -233,7 +233,12 @@ import {
   useUpdateSavedView,
   useCreateSavedView,
   useUpdateWorkspaceSavedView,
+  useGetSavedViews,
+  DEFAULT_VIEW_NAME,
+  findOwnDefaultView,
+  tabTypeForSelectedTab,
 } from "src/api/project/saved-views";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -714,7 +719,7 @@ const slotKeyFromColumnState = (columnState, fallbackSlotKey) => {
 const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
-  const { role } = useAuthContext();
+  const { role, user } = useAuthContext();
   const navigate = useNavigate();
   const [selectedGraph, setSelectedGraph] = useUrlState(
     "selectedGraph",
@@ -2688,6 +2693,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: createSavedView } = useCreateSavedView(observeId);
+  // Shares the tab bar's query cache (same key) — no extra fetch.
+  const { data: savedViewsData } = useGetSavedViews(observeId);
   // Workspace-scoped update for user_detail mode — only invoked when isUserMode.
   const { mutate: updateWorkspaceSavedView } =
     useUpdateWorkspaceSavedView(USER_DETAIL_TAB_TYPE);
@@ -2928,38 +2935,80 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleSetDefaultView = useCallback(() => {
     const configPayload = buildViewConfig();
+    const onDone = {
+      onSuccess: () =>
+        enqueueSnackbar("View set as default for everyone", {
+          variant: "success",
+        }),
+      onError: (err) =>
+        enqueueSnackbar(
+          getRequestErrorMessage(err, "Failed to set view as default"),
+          { variant: "error" },
+        ),
+    };
 
     if (activeViewTabId) {
       updateSavedView(
         { id: activeViewTabId, visibility: "project", config: configPayload },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
+        onDone,
       );
-    } else {
-      createSavedView(
+      return;
+    }
+
+    const tabType = tabTypeForSelectedTab(selectedTab);
+
+    // Adopt the user's own default for THIS tab_type (a blind create would 400
+    // on the name). Scoped to the current user so we never overwrite a
+    // teammate's shared default, and to tab_type so a spans click can't PATCH
+    // the traces default with spans-shaped config.
+    const existingDefault = findOwnDefaultView(savedViewsData?.custom_views, {
+      tabType,
+      userId: user?.id,
+    });
+    if (existingDefault) {
+      updateSavedView(
         {
-          project_id: observeId,
-          name: "Default View",
-          tab_type: selectedTab === "trace" ? "traces" : "spans",
+          id: existingDefault.id,
           visibility: "project",
           config: configPayload,
         },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
+        onDone,
       );
+      return;
     }
+
+    createSavedView(
+      {
+        project_id: observeId,
+        name: DEFAULT_VIEW_NAME,
+        tab_type: tabType,
+        visibility: "project",
+        config: configPayload,
+      },
+      {
+        ...onDone,
+        onSuccess: (res) => {
+          // Adopt the created view as the active tab so subsequent clicks
+          // take the update-by-id branch.
+          const newId = res?.data?.result?.id;
+          if (newId && !isUserMode) {
+            navigate(
+              `/dashboard/observe/${observeId}/llm-tracing?tab=view-${newId}&selectedTab=${selectedTab}`,
+              { replace: true },
+            );
+          }
+          onDone.onSuccess();
+        },
+      },
+    );
   }, [
     activeViewTabId,
     selectedTab,
     observeId,
+    isUserMode,
+    navigate,
+    savedViewsData,
+    user,
     buildViewConfig,
     updateSavedView,
     createSavedView,

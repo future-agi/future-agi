@@ -48,6 +48,7 @@ def _client(
     *,
     server_enforced_readonly: bool,
     read_timeout_ceiling_ms: int | None = None,
+    allow_query_settings_with_server_readonly: bool = False,
 ) -> ClickHouseClient:
     return ClickHouseClient(
         host="clickhouse.invalid",
@@ -57,6 +58,9 @@ def _client(
         database="futureagi",
         server_enforced_readonly=server_enforced_readonly,
         read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+        allow_query_settings_with_server_readonly=(
+            allow_query_settings_with_server_readonly
+        ),
     )
 
 
@@ -138,6 +142,42 @@ def test_server_locked_read_sends_no_query_setting_overrides(monkeypatch):
     assert columns == [("value", "String")]
     assert native.execute.call_args.kwargs["settings"] is None
     assert native.execute.call_args.args[0] == "SELECT 'ok' AS value"
+
+
+def test_server_locked_read_can_send_bounded_query_settings(monkeypatch):
+    native = Mock()
+    native.execute.return_value = ([("ok",)], [("value", "String")])
+    client = _client(
+        server_enforced_readonly=True,
+        allow_query_settings_with_server_readonly=True,
+    )
+    monkeypatch.setattr(client, "_get_client", Mock(return_value=native))
+    monkeypatch.setattr(client, "_return_client", Mock())
+
+    rows, columns, _ = client.execute_read(
+        "SELECT 'ok' AS value\nSETTINGS max_threads = 8",
+        timeout_ms=250,
+        settings={
+            "readonly": 1,
+            "max_threads": 1,
+            "max_memory_usage": 1024,
+            "max_result_rows": 2,
+            "max_result_bytes": 4096,
+        },
+    )
+
+    assert rows == [("ok",)]
+    assert columns == [("value", "String")]
+    assert native.execute.call_args.args[0] == "SELECT 'ok' AS value"
+    assert native.execute.call_args.kwargs["settings"] == {
+        "max_threads": 1,
+        "max_memory_usage": 1024,
+        "max_result_rows": 2,
+        "max_result_bytes": 4096,
+        "max_bytes_to_read": django_settings.CLICKHOUSE_APPLICATION_READ_MAX_BYTES,
+        "result_overflow_mode": "throw",
+        "max_execution_time": 0.25,
+    }
 
 
 def test_regular_read_keeps_client_side_guardrails(monkeypatch):

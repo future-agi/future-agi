@@ -3,6 +3,7 @@ package propertycatalog
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,35 @@ func TestRevisionFenceV2MatchesCanonicalPythonAssignmentBytes(t *testing.T) {
 	if err != nil || got.FenceSHA256 != "9883a4f8a4f4032931ab9e4b31d73ec41e3e9f8587ea2c06c4d4db35c6174d0e" ||
 		got.FenceSHA256 != RevisionFenceSHA256(got) {
 		t.Fatalf("Python v2 assignment fence=%+v err=%v", got, err)
+	}
+}
+
+func TestRevisionFenceHasNoFixedWorkspaceCountCap(t *testing.T) {
+	fences := make([]RevisionFence, 300)
+	for index := range fences {
+		fence := testRevisionFence(uint64(index+1), "building")
+		fence.WorkspaceID = fmt.Sprintf("00000000-0000-4000-8000-%012x", index+1)
+		fences[index] = fence
+	}
+	raw, err := EncodeRevisionFenceFile(fences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "fence.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := NewFileRevisionProvider(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.now = func() time.Time {
+		value, _ := time.Parse(dateTime64Layout, "2026-08-14 12:00:00.000000")
+		return value
+	}
+	got, err := provider.CurrentRevisions(context.Background())
+	if err != nil || len(got) != len(fences) {
+		t.Fatalf("fences=%d err=%v", len(got), err)
 	}
 }
 

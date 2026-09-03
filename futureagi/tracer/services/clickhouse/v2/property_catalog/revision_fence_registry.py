@@ -23,8 +23,7 @@ from .coordinator import ProducerRevisionAssignment
 
 REVISION_FENCE_FORMAT = "futureagi.property-catalog-revision-fence"
 REVISION_FENCE_VERSION = 2
-MAX_REVISION_FENCE_ENTRIES = 256
-MAX_REVISION_FENCE_BYTES = 1 << 20
+MAX_REVISION_FENCE_BYTES = 64 << 20
 MAX_REVISION_FENCE_PROJECTS = 256
 
 _FENCE_SHA_DOMAIN = "futureagi.property-catalog.revision-fence.v2"
@@ -428,9 +427,9 @@ def _encode_documents(
     now: datetime,
     allow_expired: bool = False,
 ) -> bytes:
-    if not 1 <= len(documents) <= MAX_REVISION_FENCE_ENTRIES:
+    if not documents:
         raise RevisionFenceRegistryError(
-            "revision fence registry must contain 1..256 entries"
+            "revision fence registry must contain at least one entry"
         )
     validated = tuple(
         sorted(
@@ -461,7 +460,7 @@ def _encode_documents(
     )
     if len(raw) > MAX_REVISION_FENCE_BYTES:
         raise RevisionFenceRegistryError(
-            "revision fence registry exceeds the 1MiB byte limit"
+            "revision fence registry exceeds its byte limit"
         )
     return raw
 
@@ -637,9 +636,8 @@ def _validated_workspace_inventory(values: Sequence[str]) -> frozenset[str]:
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise TypeError("authorized workspace inventory must be a sequence")
     # The authorization inventory is a membership filter and is never encoded
-    # into the fence document.  Keep the persisted registry's 256-entry bound
-    # in ``_encode_documents`` without incorrectly limiting the installation's
-    # complete workspace inventory to the same size.
+    # into the fence document. Its size follows the active workspace inventory;
+    # the canonical registry remains protected by its independent byte bound.
     canonical_values: list[str] = []
     for value in values:
         if type(value) is not str:
@@ -707,7 +705,6 @@ def _reject_json_constant(value: str) -> Any:
 __all__ = [
     "AtomicMultiTenantFenceFile",
     "MAX_REVISION_FENCE_BYTES",
-    "MAX_REVISION_FENCE_ENTRIES",
     "REVISION_FENCE_FORMAT",
     "REVISION_FENCE_VERSION",
     "RevisionFenceRegistryError",

@@ -40,6 +40,9 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     _coerce_strict_bool,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    _legacy_ascii_lower_bloom_predicate,
+)
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 
 # ─── Simple column-name renames ───────────────────────────────────────────────
@@ -464,12 +467,7 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         normalized_value: Any,
         case_insensitive: bool = False,
     ) -> str | None:
-        # The deployed text-value bloom uses ASCII-only ``lower()`` while the
-        # public text contract below uses Unicode-aware ``lowerUTF8()``. A
-        # stored non-ASCII value can fold to an ASCII filter value (for example
-        # Kelvin sign -> ``k``), so the bloom expression is not a semantic
-        # superset and must not constrain exact filter results.
-        return super()._span_attr_inner(
+        predicate = super()._span_attr_inner(
             map_column,
             attribute_key,
             exists_predicate,
@@ -477,6 +475,34 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
             normalized_value,
             case_insensitive,
         )
+        if (
+            predicate is None
+            or map_column not in {"span_attr_str", cols.ATTRS_STRING}
+            or not case_insensitive
+            or filter_op not in {"equals", "in"}
+        ):
+            return predicate
+
+        raw_values = (
+            tuple(normalized_value)
+            if isinstance(normalized_value, (list, tuple))
+            else (normalized_value,)
+        )
+        normalized_values = tuple(
+            value.lower() if isinstance(value, str) else value for value in raw_values
+        )
+        bloom_predicate = _legacy_ascii_lower_bloom_predicate(
+            normalized_values=normalized_values,
+            params=self._params,
+            index=self._param_counter,
+        )
+        if not bloom_predicate:
+            return predicate
+        # Keep lowerUTF8(keyed-value) as the authoritative public comparison.
+        # The exhaustive lower(mapValues(...)) witness only enables the
+        # expression-identical deployed bloom index; it cannot remove a valid
+        # Unicode match.
+        return f"({predicate}) AND ({bloom_predicate})"
 
     def _span_membership_date_filter(self) -> str:
         # The CH25 spans table is partitioned by toDate(start_time) with

@@ -22,12 +22,10 @@ from .models import SourceAdapter
 from .proof_limits import (
     MAX_DELIVERIES_PER_REVISION,
     MAX_PROOF_BYTES,
-    MAX_PROOFS,
 )
 from .qualification import CatalogCheckpoint, CheckpointStatus
 
 _MAX_PROOF_BYTES = MAX_PROOF_BYTES
-_MAX_PROOFS = MAX_PROOFS
 _MAX_DELIVERIES = MAX_DELIVERIES_PER_REVISION
 _ZERO_SHA256 = "0" * 64
 _EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -585,7 +583,6 @@ def parse_producer_drain_proof(raw: bytes) -> tuple[ProducerDrainProof, ...]:
         or document["format"] != "futureagi.property-catalog-drain-proof"
         or document["version"] != 2
         or not isinstance(document["proofs"], list)
-        or len(document["proofs"]) > _MAX_PROOFS
         or json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()
         != raw[:-1]
     ):

@@ -70,7 +70,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
             ("MAX_PROJECTS", 64, 1, 256),
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
-            ("QUERY_WALL_MS", 2_000, 100, 30_000),
+            ("QUERY_WALL_MS", 10_000, 100, 30_000),
             ("DEV_STANDARD_MAX_WALL_MS", 100_000, 100, 1_740_000),
             ("DEV_INITIAL_BACKFILL_MAX_WALL_MS", 1_740_000, 100, 3_600_000),
             ("DEV_SCHEDULED_RECONCILE_MAX_WALL_MS", 1_740_000, 100, 3_600_000),
@@ -107,7 +107,7 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
             ("POSTGRES_MAX_TOTAL_ROWS", 100_000, 1, 1_000_000),
             ("PUBLISHER_WALL_MS", 8_500, 100, 60_000),
             ("DEADLINE_MAX_WALL_MS", 7_200_000, 100, 24 * 60 * 60 * 1_000),
-            ("DRAIN_PROOF_MAX_BYTES", 1024**2, 64 * 1024, 16 * 1024**2),
+            ("DRAIN_PROOF_MAX_BYTES", 64 * 1024**2, 64 * 1024, 64 * 1024**2),
             ("DRAIN_POLL_INTERVAL_MS", 50, 1, 1_000),
             ("DRAIN_POLL_CAP_MS", 1_000, 1, 5_000),
             ("VISIBILITY_RETRY_CAP_MS", 250, 1, 5_000),
@@ -137,13 +137,13 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
             ("RECONCILE_MAX_ENVELOPE_ROWS", 1000, 1, 10_000),
             ("RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES", 1024**2, 64 * 1024, 2 * 1024**2),
             ("RECONCILE_MAX_ENVELOPE_BYTES", 2 * 1024**2, 64 * 1024, 8 * 1024**2),
-            ("PRODUCER_RETIREMENT_MAX_BYTES", 8 * 1024**2, 64 * 1024, 64 * 1024**2),
+            ("PRODUCER_RETIREMENT_MAX_BYTES", 64 * 1024**2, 64 * 1024, 64 * 1024**2),
         ),
         prefix="PROPERTY_CATALOG_",
     ),
     **_specs(
         (
-            ("READ_TRANSPORT_TIMEOUT_SECONDS", 2.0, 0.1, 30.0),
+            ("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),
             ("SOURCE_ADAPTER_WALL_SECONDS", 8.5, 0.1, 540.0),
             (
                 "SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
@@ -265,6 +265,8 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ),
             ("DASHBOARD_FILTER_VALUE_WALL_MS", 30_000, 100, 60_000),
             ("DASHBOARD_TRACE_READ_MAX_THREADS", 4, 1, 16),
+            ("DASHBOARD_TRACE_REPLICA_SHARD_COUNT", 3, 1, 16),
+            ("DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS", 90, 1, 3_660),
             (
                 "DASHBOARD_TRACE_READ_MAX_BYTES",
                 1024**4,
@@ -332,10 +334,10 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 128 * 1024**3,
             ),
             ("OBSERVABILITY_LIST_MAX_RESULT_ROWS", 5_001, 1, 100_000),
-            ("CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS", 120_000, 100, 120_000),
+            ("CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS", 180_000, 100, 180_000),
             ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", 6_000, 100, 60_000),
             ("MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS", 1_000, 100, 10_000),
-            ("GRAPH_BACKGROUND_WALL_MS", 120_000, 1_000, 120_000),
+            ("GRAPH_BACKGROUND_WALL_MS", 180_000, 1_000, 180_000),
             ("GRAPH_EVENT_LIMIT", 2_000, 1, 100_000),
             ("GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT", 40, 1, 4_096),
             ("GRAPH_SPAN_METRIC_BATCH_SIZE", 1_024, 1, 4_096),
@@ -368,7 +370,10 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT", 50_000, 1, 1_000_000),
             ("VOICE_CONTENT_MAX_QUERY_ATTEMPTS", 64, 1, 1_024),
             ("VOICE_CONTENT_MAX_BATCH_SIZE", 200, 1, 5_000),
-            ("VOICE_CONTENT_MIN_REMAINING_MS", 1_500, 1, 60_000),
+            # Page hydration is part of the same request-owned 30-second wall.
+            # Do not impose a smaller per-statement cap: wide but finite voice
+            # rows can legitimately need more than 1.5 seconds to hydrate.
+            ("VOICE_CONTENT_MIN_REMAINING_MS", 30_000, 1, 60_000),
             ("VOICE_LIST_DEFAULT_PAGE_SIZE", 10, 1, 5_000),
             ("VOICE_FILTER_CLASSIFY_FALLBACK_BATCH_SIZE", 50, 1, 5_000),
             ("VOICE_FILTER_EXPENSIVE_CLASSIFIER_CHUNKS", 4, 1, 64),

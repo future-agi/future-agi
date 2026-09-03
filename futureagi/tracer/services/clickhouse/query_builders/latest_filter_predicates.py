@@ -26,6 +26,60 @@ from tracer.utils.filter_operators import (
 )
 
 _MAX_ATTRIBUTE_KEY_UTF8_BYTES = 4096
+_MAX_LEGACY_ASCII_BLOOM_VARIANTS = 256
+
+
+def _legacy_ascii_lower_bloom_predicate(
+    *,
+    normalized_values: tuple[object, ...],
+    params: dict[str, Any],
+    index: int,
+) -> str | None:
+    """Return an exhaustive witness for the deployed ASCII value bloom.
+
+    Production still has ``idx_attrs_str_values`` on ``lower()`` while public
+    text equality uses ``lowerUTF8()``. For an ASCII result, Unicode simple
+    lowercase has one non-ASCII inverse: U+212A KELVIN SIGN maps to ``k``.
+    Enumerating every Kelvin-sign substitution therefore makes the legacy
+    expression a necessary condition without changing the authoritative
+    Unicode comparison. Non-ASCII values and pathological variant counts
+    decline the optimization and keep the Unicode-only path.
+    """
+
+    variants: set[str] = set()
+    for raw_value in normalized_values:
+        if not isinstance(raw_value, str) or not raw_value.isascii():
+            return None
+        value_variants = [""]
+        for character in raw_value:
+            replacements = (
+                (character, "\N{KELVIN SIGN}") if character == "k" else (character,)
+            )
+            if (
+                len(value_variants) * len(replacements)
+                > _MAX_LEGACY_ASCII_BLOOM_VARIANTS
+            ):
+                return None
+            value_variants = [
+                prefix + replacement
+                for prefix in value_variants
+                for replacement in replacements
+            ]
+        variants.update(value_variants)
+        if len(variants) > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
+            return None
+
+    placeholders: list[str] = []
+    for value_index, value in enumerate(sorted(variants)):
+        param = f"latest_filter_legacy_index_{index}_{value_index}"
+        params[param] = value
+        placeholders.append(f"%({param})s")
+    if not placeholders:
+        return None
+    return (
+        "hasAny(arrayMap(x -> lower(x), mapValues(span_attr_str)), "
+        f"[{', '.join(placeholders)}])"
+    )
 
 
 def _validate_attribute_key(key: str) -> str:
@@ -507,10 +561,9 @@ def _attribute_plan(
     if seed_params != params:
         raise AssertionError("latest and seed predicates must share bound values")
     # Preserve the semantic raw-row comparison before adding optional physical
-    # index companions. The legacy string-value bloom is built with ASCII-only
-    # ``lower()`` and must never participate in an exhaustive witness because
-    # public equality uses ``lowerUTF8()``. Schema 028 adds an expression-identical
-    # Unicode value bloom, so its companion is both selective and exhaustive.
+    # index companions. Public text equality remains ``lowerUTF8()``. The
+    # deployed string-value bloom uses ASCII-only ``lower()``, so it may only
+    # join an exhaustive witness through the Unicode-safe variant helper below.
     params[key_param] = key
     if map_column in {"span_attr_str", "span_attr_num"} and operation in {
         "equals",
@@ -522,25 +575,32 @@ def _attribute_plan(
         )
         # Keep the exact key/value comparison as the semantic predicate and add
         # an implied expression solely so ClickHouse can prune value-absent
-        # parts. The string expression must stay byte-identical to schema 028.
+        # parts on clusters that carry the expression-identical UTF-8 index.
         indexed_values = (
             "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))"
             if map_column == "span_attr_str"
             else "mapValues(span_attr_num)"
         )
         if operation == "equals":
-            index_predicate = (
-                f"has({indexed_values}, %(latest_filter_param_{index})s)"
-            )
+            index_predicate = f"has({indexed_values}, %(latest_filter_param_{index})s)"
         else:
             placeholders = []
             for value_index, item_value in enumerate(normalized_values):
                 index_param = f"latest_filter_index_{index}_{value_index}"
                 params[index_param] = item_value
                 placeholders.append(f"%({index_param})s")
-            index_predicate = (
-                f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
+            index_predicate = f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
+        if map_column == "span_attr_str":
+            legacy_predicate = _legacy_ascii_lower_bloom_predicate(
+                normalized_values=normalized_values,
+                params=params,
+                index=index,
             )
+            if legacy_predicate:
+                # Keep the UTF-8 predicate as the public semantic contract.
+                # The legacy companion is only a redundant exhaustive witness
+                # for the deployed ASCII-value bloom.
+                index_predicate = f"({index_predicate}) AND ({legacy_predicate})"
         seed_predicate = f"({seed_predicate}) AND {index_predicate}"
 
     key_witness_predicate = (

@@ -20,7 +20,6 @@ from tracer.services.clickhouse.v2.property_catalog.coordinator import (
 )
 from tracer.services.clickhouse.v2.property_catalog.revision_fence_registry import (
     MAX_REVISION_FENCE_BYTES,
-    MAX_REVISION_FENCE_ENTRIES,
     AtomicMultiTenantFenceFile,
     RevisionFenceRegistryError,
     decode_revision_fence_registry,
@@ -447,51 +446,44 @@ def test_scope_reconciliation_accepts_authorization_inventory_larger_than_regist
     registry.publish(deauthorized)
     authorized = (
         retained.workspace_id,
-        *(
-            _uuid(50_000 + index)
-            for index in range(MAX_REVISION_FENCE_ENTRIES + 1)
-        ),
+        *(_uuid(50_000 + index) for index in range(300)),
     )
 
-    assert len(authorized) > MAX_REVISION_FENCE_ENTRIES
+    assert len(authorized) > 256
     assert registry.reconcile_authorized_workspaces(authorized) == 1
     assert decode_revision_fence_registry(path.read_bytes(), now=NOW) == (
         retained.document,
     )
 
 
-def test_entry_and_byte_limits_fail_without_replacing_registry(
+def test_registry_accepts_more_than_256_entries_and_retains_byte_guard(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "revision-fence.json"
-    assignments = tuple(
-        _assignment(index) for index in range(1, MAX_REVISION_FENCE_ENTRIES + 1)
-    )
+    assignments = tuple(_assignment(index) for index in range(1, 301))
     original = encode_revision_fence_registry(assignments, now=NOW)
     path.write_bytes(original)
     path.chmod(0o600)
     registry = AtomicMultiTenantFenceFile(path, now=lambda: NOW)
 
-    with pytest.raises(RevisionFenceRegistryError, match="1..256"):
-        registry.publish(_assignment(MAX_REVISION_FENCE_ENTRIES + 1))
-    assert path.read_bytes() == original
+    registry.publish(_assignment(301))
+    assert len(decode_revision_fence_registry(path.read_bytes(), now=NOW)) == 301
 
     assert (
-        registry.reconcile_authorized_workspaces((assignments[0].workspace_id,))
-        == MAX_REVISION_FENCE_ENTRIES - 1
+        registry.reconcile_authorized_workspaces((assignments[0].workspace_id,)) == 300
     )
-    reclaimed = _assignment(MAX_REVISION_FENCE_ENTRIES + 1)
+    reclaimed = _assignment(302)
     registry.publish(reclaimed)
     assert len(decode_revision_fence_registry(path.read_bytes(), now=NOW)) == 2
 
+    monkeypatch.setattr(registry_module, "MAX_REVISION_FENCE_BYTES", 4 * 1024)
     projects = tuple(_uuid(100_000 + index) for index in range(256))
-    oversized = tuple(
-        _assignment(index, project_ids=projects) for index in range(1, 111)
-    )
-    with pytest.raises(RevisionFenceRegistryError, match="1MiB"):
+    oversized = (_assignment(1, project_ids=projects),)
+    with pytest.raises(RevisionFenceRegistryError, match="byte limit"):
         encode_revision_fence_registry(oversized, now=NOW)
 
-    oversized_bytes = b"x" * (MAX_REVISION_FENCE_BYTES + 1)
+    oversized_bytes = b"x" * (registry_module.MAX_REVISION_FENCE_BYTES + 1)
     path.write_bytes(oversized_bytes)
     path.chmod(0o600)
     with pytest.raises(RevisionFenceRegistryError, match="size"):

@@ -24,7 +24,6 @@ PRODUCER_RETIREMENT_FILE_NAME = "producer-state-retirements-v1.json"
 PRODUCER_RETIREMENT_SHA_DOMAIN = (
     "futureagi.property-catalog.producer-state-retirement.v1"
 )
-MAX_PRODUCER_RETIREMENTS = 256
 MAX_PRODUCER_RETIREMENT_BYTES = RUNTIME_LIMITS.producer_retirement_max_bytes
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 _ZERO_SHA256 = "0" * 64
@@ -324,11 +323,9 @@ def encode_producer_retirements(
     values: Sequence[ProducerStateRetirement],
 ) -> bytes:
     ordered = tuple(sorted(values, key=lambda value: value.tenant_key))
-    if not 1 <= len(ordered) <= MAX_PRODUCER_RETIREMENTS or len(
-        {value.tenant_key for value in ordered}
-    ) != len(ordered):
+    if not ordered or len({value.tenant_key for value in ordered}) != len(ordered):
         raise ProducerRetirementError(
-            "retirement document requires unique bounded tenant records"
+            "retirement document requires unique tenant records"
         )
     document = {
         "format": PRODUCER_RETIREMENT_FORMAT,
@@ -370,7 +367,7 @@ def decode_producer_retirements(raw: bytes) -> tuple[ProducerStateRetirement, ..
         decoded["format"] != PRODUCER_RETIREMENT_FORMAT
         or decoded["version"] != PRODUCER_RETIREMENT_VERSION
         or not isinstance(records, list)
-        or not 1 <= len(records) <= MAX_PRODUCER_RETIREMENTS
+        or not records
     ):
         raise ProducerRetirementError("retirement document format/count is invalid")
     values: list[ProducerStateRetirement] = []
@@ -550,7 +547,6 @@ def _activation_identity(value: ProducerStateRetirement) -> ProducerStateRetirem
 __all__ = [
     "AtomicProducerStateRetirementFile",
     "MAX_PRODUCER_RETIREMENT_BYTES",
-    "MAX_PRODUCER_RETIREMENTS",
     "PRODUCER_RETIREMENT_FILE_NAME",
     "PRODUCER_RETIREMENT_FORMAT",
     "PRODUCER_RETIREMENT_SHA_DOMAIN",

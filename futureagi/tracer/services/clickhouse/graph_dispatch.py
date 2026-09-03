@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
-from datetime import UTC, date, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 from time import monotonic
 from typing import Any
 from uuid import UUID
@@ -26,10 +26,10 @@ from tracer.services.clickhouse.bounded_graph_reads import (
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.exact_graph_reads import (
     ExactGraphReadError,
+    _annotation_label_ids_for_filters,
     read_exact_all_system_metrics,
     read_exact_annotation_graph,
     read_exact_eval_graph,
-    read_exact_system_graph,
     read_exact_user_system_graph,
 )
 from tracer.services.clickhouse.query_builders import (
@@ -79,6 +79,18 @@ _TRACE_ROLLUP_RESULT_COLUMNS = frozenset(
         "error_rate",
     }
 )
+# Optional raw trace-ID pruning is worthwhile only for genuinely selective
+# positive scalar witnesses. EXPLAIN ESTIMATE is metadata-only and bounded so
+# a missing/old ClickHouse capability simply retains the ordinary one-pass
+# graph query. The thresholds are intentionally conservative: the production
+# Colly benchmark completed below four seconds at 1.6M estimated rows / 259
+# marks, while a 106M-row / 14.6K-mark string witness was slower than one-pass.
+_GRAPH_SEED_ESTIMATE_WALL_MS = 2_500
+_GRAPH_SEED_ESTIMATE_QUERY_MS = 1_500
+_GRAPH_SEED_ESTIMATE_MAX_CANDIDATES = 10
+_GRAPH_SEED_MAX_ESTIMATED_ROWS = 10_000_000
+_GRAPH_SEED_MAX_ESTIMATED_MARKS = 4_096
+_GRAPH_SEED_SCALAR_FILTER_TYPES = frozenset({"boolean", "number", "string", "text"})
 _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
     # interactive scan parallel without leaving concurrency unbounded on the
@@ -109,6 +121,14 @@ SpanIdentity = tuple[str, str, int]
 SpanEntityIdentity = tuple[str, str]
 
 
+@dataclass(frozen=True)
+class _GraphRawTraceCandidate:
+    predicate: str
+    params: dict[str, Any]
+    rank: int
+    filter_index: int
+
+
 def _validated_project_id(project_id: Any) -> str:
     try:
         if project_id in (None, ""):
@@ -126,6 +146,147 @@ def _active_filters(filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
         not in {"created_at", "start_time"}
         or BaseQueryBuilder.is_datetime_complement_filter(item)
     ]
+
+
+def _raw_trace_seed_candidates(
+    filters: list[dict[str, Any]],
+) -> list[_GraphRawTraceCandidate]:
+    """Compile generic exhaustive scalar witnesses for optional trace pruning."""
+
+    # Lazy imports avoid pulling the v1/v2 filter cycle into module startup.
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        UnsupportedFilterShapeError,
+        compile_span_filter_plans,
+    )
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        rewrite_v1_sql_to_v2,
+    )
+
+    candidates: list[_GraphRawTraceCandidate] = []
+    for filter_index, item in enumerate(filters or []):
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        if not isinstance(config, dict):
+            continue
+        col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+        filter_type = str(
+            config.get("filter_type") or config.get("filterType") or ""
+        ).lower()
+        if (
+            col_type != "SPAN_ATTRIBUTE"
+            or filter_type not in _GRAPH_SEED_SCALAR_FILTER_TYPES
+        ):
+            continue
+        try:
+            plans = compile_span_filter_plans([item])
+        except (UnsupportedFilterShapeError, ValueError):
+            continue
+        if len(plans) != 1:
+            continue
+        plan = plans[0]
+        predicate = rewrite_v1_sql_to_v2(
+            str(plan.raw_graph_value_witness_predicate or "")
+        ).strip()
+        if not predicate or plan.exclude_group_matches:
+            continue
+
+        namespaced_params: dict[str, Any] = {}
+        for old_name in sorted(plan.params, key=len, reverse=True):
+            new_name = f"graph_seed_{filter_index}_{old_name}"
+            predicate = predicate.replace(
+                f"%({old_name})s",
+                f"%({new_name})s",
+            )
+            namespaced_params[new_name] = plan.params[old_name]
+        candidates.append(
+            _GraphRawTraceCandidate(
+                predicate=predicate,
+                params=namespaced_params,
+                rank=(
+                    int(plan.raw_witness_rank)
+                    if plan.raw_witness_rank is not None
+                    else 10_000
+                ),
+                filter_index=filter_index,
+            )
+        )
+    return sorted(candidates, key=lambda item: (item.rank, item.filter_index))
+
+
+def _select_raw_trace_seed_candidate(
+    *,
+    analytics: Any,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    start_date: datetime,
+    end_date: datetime,
+    timeout_ms: int,
+) -> tuple[_GraphRawTraceCandidate | None, int]:
+    """Use bounded ClickHouse estimates to reject dense witness subqueries."""
+
+    candidates = _raw_trace_seed_candidates(filters)
+    total_budget_ms = min(
+        _GRAPH_SEED_ESTIMATE_WALL_MS,
+        max(0, int(timeout_ms) - 25),
+    )
+    if not candidates or total_budget_ms < 100:
+        return None, 0
+
+    estimate_started = monotonic()
+    probe_count = 0
+    for candidate in candidates[:_GRAPH_SEED_ESTIMATE_MAX_CANDIDATES]:
+        elapsed_ms = int((monotonic() - estimate_started) * 1000)
+        remaining_ms = total_budget_ms - elapsed_ms
+        if remaining_ms < 100:
+            break
+        estimate_params = {
+            "graph_seed_project_id": project_id,
+            "graph_seed_start_date": start_date - timedelta(days=1),
+            "graph_seed_end_date": end_date + timedelta(days=1),
+            **candidate.params,
+        }
+        estimate_query = f"""
+        EXPLAIN ESTIMATE
+        SELECT trace_id
+        FROM spans
+        PREWHERE project_id = toUUID(%(graph_seed_project_id)s)
+          AND start_time >= %(graph_seed_start_date)s
+          AND start_time < %(graph_seed_end_date)s
+        WHERE is_deleted = 0
+          AND ({candidate.predicate})
+        GROUP BY trace_id
+        """
+        probe_count += 1
+        try:
+            result = analytics.execute_ch_query(
+                estimate_query,
+                estimate_params,
+                timeout_ms=min(_GRAPH_SEED_ESTIMATE_QUERY_MS, remaining_ms),
+                settings={
+                    **GRAPH_READ_SETTINGS,
+                    "max_threads": 1,
+                    "max_result_rows": 32,
+                    "max_result_bytes": 64 * 1024,
+                },
+            )
+        except Exception as exc:
+            if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
+                raise
+            continue
+
+        estimate_rows = list(result.data or [])
+        if not estimate_rows or any(not isinstance(row, dict) for row in estimate_rows):
+            continue
+        try:
+            rows = sum(max(0, int(row["rows"])) for row in estimate_rows)
+            marks = sum(max(0, int(row["marks"])) for row in estimate_rows)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (
+            rows <= _GRAPH_SEED_MAX_ESTIMATED_ROWS
+            and marks <= _GRAPH_SEED_MAX_ESTIMATED_MARKS
+        ):
+            return candidate, probe_count
+    return None, probe_count
 
 
 def degraded_graph_response(
@@ -211,7 +372,11 @@ def _bounded_interactive_read_settings(
 class _DeadlineBoundGraphAnalytics:
     """Clamp discovery and decoration to one request-owned wall deadline."""
 
-    def __init__(self, delegate: Any, deadline: ReadDeadline) -> None:
+    def __init__(
+        self,
+        delegate: Any,
+        deadline: ReadDeadline,
+    ) -> None:
         self._delegate = delegate
         self._deadline = deadline
         self.supports_per_query_read_settings = bool(
@@ -225,10 +390,7 @@ class _DeadlineBoundGraphAnalytics:
         timeout_ms: int = GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
         settings: dict[str, Any] | None = None,
     ) -> Any:
-        requested_timeout_ms = min(
-            int(timeout_ms),
-            GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
-        )
+        requested_timeout_ms = min(int(timeout_ms), GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS)
         return self._delegate.execute_ch_query(
             query,
             params or {},
@@ -521,6 +683,7 @@ def _read_or_refresh_exact_graph(
     pending_payload: Any,
     organization_id: str | None = None,
     workspace_id: str | None = None,
+    schedule_on_miss: bool = True,
 ) -> Any:
     """Return immediately while a deduplicated exact refresh runs out of band."""
 
@@ -533,6 +696,7 @@ def _read_or_refresh_exact_graph(
         identity,
         refresh=refresh,
         pending_payload=pending_payload,
+        schedule_on_miss=schedule_on_miss,
     )
 
 
@@ -999,6 +1163,13 @@ def _fetch_rollup_system_metric_graph(
     # only emit the ``spans_hourly_rollup`` query and can never fall back to a
     # raw ``spans`` scan.
     start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
+    if (
+        start_date is not None
+        and end_date is not None
+        and end_date - start_date
+        > timedelta(days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS)
+    ):
+        interval = "week"
     builder = TimeSeriesQueryBuilder(
         project_id=project_id,
         filters=[],
@@ -1055,6 +1226,112 @@ def _fetch_rollup_system_metric_graph(
     return enforce_exact_graph_data_contract(response)
 
 
+def _fetch_direct_raw_system_metric_graph(
+    *,
+    analytics: Any,
+    project_id: str,
+    filters: list[dict[str, Any]],
+    interval: str,
+    metric_id: str,
+    observe_type: str,
+    timeout_ms: int,
+) -> dict[str, Any]:
+    """Run one complete append-only filtered graph statement."""
+
+    started = monotonic()
+    start_date, end_date = BaseQueryBuilder.parse_time_range(filters, strict=True)
+    if start_date is None or end_date is None:
+        raise ValueError("filtered graph requires a bounded time range")
+    if end_date - start_date > timedelta(
+        days=settings.DASHBOARD_WEEKLY_AGGREGATION_AFTER_DAYS
+    ):
+        interval = "week"
+    _ensure_point_budget(
+        start_date=start_date,
+        end_date=end_date,
+        interval=interval,
+    )
+    seed_candidate: _GraphRawTraceCandidate | None = None
+    seed_probe_count = 0
+    if (
+        start_date < end_date
+        and observe_type == "trace"
+        and settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER
+    ):
+        seed_candidate, seed_probe_count = _select_raw_trace_seed_candidate(
+            analytics=analytics,
+            project_id=project_id,
+            filters=filters,
+            start_date=start_date,
+            end_date=end_date,
+            timeout_ms=timeout_ms,
+        )
+    builder = TimeSeriesQueryBuilder(
+        project_id=project_id,
+        filters=filters,
+        interval=interval,
+        exact_snapshot=True,
+        resolve_span_versions=False,
+        raw_replica_shard_cluster=settings.DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER,
+        raw_replica_shard_count=settings.DASHBOARD_TRACE_REPLICA_SHARD_COUNT,
+        observe_type=observe_type,
+        start_date=start_date,
+        end_date=end_date,
+        annotation_label_ids=_annotation_label_ids_for_filters(project_id, filters),
+        raw_trace_candidate_predicate=(
+            seed_candidate.predicate if seed_candidate is not None else ""
+        ),
+        raw_trace_candidate_params=(
+            seed_candidate.params if seed_candidate is not None else None
+        ),
+    )
+    empty_window = start_date >= end_date
+    if empty_window:
+        rows: list[Any] = []
+        columns: list[str] = []
+        query_count = 0
+    else:
+        query, params = builder.build()
+        elapsed_ms = int((monotonic() - started) * 1000)
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=max(1, int(timeout_ms) - elapsed_ms),
+            settings=GRAPH_READ_SETTINGS,
+        )
+        rows = list(result.data or [])
+        columns = list(result.columns or [])
+        _require_rollup_result_shape(
+            rows,
+            columns,
+            expected_columns=_TRACE_ROLLUP_RESULT_COLUMNS,
+        )
+        query_count = seed_probe_count + 1
+    response = format_system_metric_graph(
+        builder.format_result(rows, columns),
+        metric_id,
+    )
+    response.update(
+        _complete_metadata(
+            started=started,
+            query_count=query_count,
+            rows_returned=len(rows),
+        )
+    )
+    response.update(
+        {
+            # The full bounded window is read without sampling, but physical
+            # ReplacingMergeTree versions are intentionally not collapsed on
+            # this latency-critical path.
+            "query_provenance": (
+                "exact_snapshot" if empty_window else "bounded_candidates"
+            ),
+            "query_exact": empty_window,
+        }
+    )
+    return enforce_exact_graph_data_contract(response)
+
+
 def fetch_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -1091,12 +1368,70 @@ def fetch_system_metric_graph_ch(
             observe_type=normalized_observe_type,
             timeout_ms=timeout_ms,
         )
-    # Observe charts are interactive. Filtered aggregation runs synchronously
-    # against ClickHouse under one request-owned deadline; it must not enqueue
-    # Temporal work or publish a sampled prefix that the default exact client
-    # will reject. The exact reader keeps the reviewed memory/byte/result
-    # guards and withholds partial results if any required statement fails.
-    del refresh, organization_id, workspace_id
+    bounded_time_range = BaseQueryBuilder.analyze_bounded_datetime_filters(
+        filters,
+        strict=True,
+    )
+    if bounded_time_range.empty:
+        return _fetch_direct_raw_system_metric_graph(
+            analytics=analytics,
+            project_id=project_id,
+            filters=filters,
+            interval=interval,
+            metric_id=str(metric_id or ""),
+            observe_type=normalized_observe_type,
+            timeout_ms=timeout_ms,
+        )
+    # Observe charts are interactive. Compile all filters into one raw physical
+    # spans scan and fold trace membership in ClickHouse, instead of running the
+    # serial candidate/classifier/replay reader. A cache-only probe prevents a
+    # running heavy refresh from being duplicated by every browser poll. True
+    # cold misses still try the direct path first; only a proven read-budget
+    # failure is handed to the existing deduplicated background worker.
+    identity = {
+        "project_id": project_id,
+        "filters": filters,
+        "interval": interval,
+        "metric_id": str(metric_id or ""),
+        "observe_type": normalized_observe_type,
+    }
+    pending_payload = _pending_graph_payload(str(metric_id or ""))
+    cached = _read_or_refresh_exact_graph(
+        namespace="observe-system-graph",
+        identity=dict(identity),
+        refresh=False,
+        pending_payload=pending_payload,
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        schedule_on_miss=False,
+    )
+    if (
+        isinstance(cached, dict)
+        and cached.get("query_status") == "complete"
+        and graph_payload_is_publishable(cached, allow_sampled=False)
+    ):
+        if refresh and organization_id:
+            return _read_or_refresh_exact_graph(
+                namespace="observe-system-graph",
+                identity=dict(identity),
+                refresh=True,
+                pending_payload=pending_payload,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+        return cached
+    if isinstance(cached, dict) and cached.get("query_refreshing") is True:
+        return cached
+    if refresh and organization_id:
+        return _read_or_refresh_exact_graph(
+            namespace="observe-system-graph",
+            identity=dict(identity),
+            refresh=True,
+            pending_payload=pending_payload,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+
     interactive_deadline_ms = min(
         int(timeout_ms),
         GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS,
@@ -1108,37 +1443,41 @@ def fetch_system_metric_graph_ch(
         ReadDeadline.start(interactive_deadline_ms),
     )
     try:
-        response = read_exact_system_graph(
+        response = _fetch_direct_raw_system_metric_graph(
             analytics=bounded_analytics,
             project_id=project_id,
             filters=filters,
             interval=interval,
             metric_id=str(metric_id or ""),
             observe_type=normalized_observe_type,
+            timeout_ms=interactive_deadline_ms,
         )
-        response.update(
-            {
-                # Keep the public response on the established OpenAPI enum.
-                # This is still a request-time exact snapshot; exposing the
-                # internal execution route as a new provenance value makes
-                # generated clients reject an otherwise successful response.
-                "query_provenance": "exact_snapshot",
-                "query_exact": True,
-            }
-        )
-        return enforce_exact_graph_data_contract(response)
+        return response
     except ExactGraphReadError as exc:
-        return degraded_graph_response(
-            str(metric_id or ""), exc, provenance="exact_snapshot"
+        degraded = degraded_graph_response(
+            str(metric_id or ""), exc, provenance="bounded_candidates"
         )
     except Exception as exc:
         if not (is_read_budget_error(exc) or is_clickhouse_query_error(exc)):
             raise
-        return degraded_graph_response(
-            str(metric_id or ""),
-            exc,
-            provenance="exact_snapshot",
+        degraded = degraded_graph_response(
+            str(metric_id or ""), exc, provenance="bounded_candidates"
         )
+    if organization_id:
+        try:
+            return _read_or_refresh_exact_graph(
+                namespace="observe-system-graph",
+                identity=dict(identity),
+                refresh=True,
+                pending_payload=pending_payload,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+            )
+        except Exception:
+            # The direct failure is already sanitized. Cache/worker transport
+            # availability must not turn it into a raw API exception.
+            return degraded
+    return degraded
 
 
 def fetch_agent_graph_ch(

@@ -427,6 +427,24 @@ def test_v2_parser_is_canonical_and_rejects_ready_flag_drift() -> None:
         )
 
 
+def test_v2_parser_has_no_fixed_workspace_count_cap() -> None:
+    proofs = tuple(
+        replace(
+            _proof(ready=True),
+            workspace_id=str(uuid.UUID(int=index, version=4)),
+        )
+        for index in range(1, 301)
+    )
+    document = {
+        "format": "futureagi.property-catalog-drain-proof",
+        "version": 2,
+        "proofs": [asdict(proof) for proof in proofs],
+    }
+    raw = json.dumps(document, separators=(",", ":")).encode() + b"\n"
+
+    assert len(parse_producer_drain_proof(raw)) == 300
+
+
 def test_v2_assignment_binds_exact_project_and_half_open_source_scope() -> None:
     assignment = _assignment(2)
     raw = encode_producer_assignment(assignment)

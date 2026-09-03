@@ -167,12 +167,14 @@ func TestRuntimeConfigRejectsUnknownModeWithoutNormalizingToEnabled(t *testing.T
 	}
 }
 
-func TestRuntimeConfigReportsReviewedWorkspaceAllowlistLimit(t *testing.T) {
-	workspaces := make([]string, maxWorkspaceAllowlist+1)
+func TestRuntimeConfigHasNoFixedWorkspaceAllowlistLimit(t *testing.T) {
+	workspaces := make([]string, 300)
+	for index := range workspaces {
+		workspaces[index] = fmt.Sprintf("00000000-0000-4000-8000-%012x", index+1)
+	}
 	cfg := validRuntimeConfig(t, workspaces...)
-	want := fmt.Sprintf("1..%d allowlisted workspaces", maxWorkspaceAllowlist)
 
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("error=%v, want substring %q", err, want)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("large workspace scope was rejected: %v", err)
 	}
 }

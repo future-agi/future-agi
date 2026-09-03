@@ -214,17 +214,21 @@ def test_filtered_cold_miss_keeps_exact_refresh_pending(monkeypatch):
 
 
 @pytest.mark.unit
-def test_exhausted_public_deadline_never_dispatches_an_exact_refresh(monkeypatch):
+def test_exhausted_direct_read_dispatches_one_background_refresh(monkeypatch):
     class _ExpiredDeadline:
         def remaining_ms(self, *_args, **_kwargs):
             raise ReadDeadlineExceeded("deadline")
 
+    calls = []
+
+    def _schedule(*args, **kwargs):
+        calls.append((args, kwargs))
+        return kwargs["pending_payload"]
+
     monkeypatch.setattr(
         dashboard_view,
         "read_or_schedule_exact_snapshot",
-        lambda *args, **kwargs: pytest.fail(
-            "an exhausted request must not start cache or Temporal work"
-        ),
+        _schedule,
     )
 
     result = _read_public_dashboard_query(
@@ -235,5 +239,7 @@ def test_exhausted_public_deadline_never_dispatches_an_exact_refresh(monkeypatch
         try_rollup=False,
     )
 
-    assert result["query_status"] == "degraded"
-    assert result["query_error_code"] == "read_budget_exceeded"
+    assert result["query_status"] == "pending"
+    assert len(calls) == 1
+    assert calls[0][0][0] == "dashboard-query"
+    assert calls[0][1]["refresh"] is False

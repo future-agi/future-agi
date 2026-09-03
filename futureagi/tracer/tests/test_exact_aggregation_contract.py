@@ -569,6 +569,36 @@ def test_cold_miss_is_pending_poll_dedupes_then_exact_publish_becomes_visible():
 
 
 @pytest.mark.unit
+def test_cache_only_probe_does_not_enqueue_a_true_cold_miss():
+    cache.clear()
+    identity = {"project": "p", "metric": "latency"}
+    pending = {
+        "metric_name": "latency",
+        "data": [],
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+    }
+
+    with patch(
+        "tracer.tasks.exact_aggregation.refresh_exact_aggregation_snapshot.apply_async"
+    ) as enqueue:
+        result = read_or_schedule_exact_snapshot(
+            "test-cache-probe",
+            identity,
+            refresh=False,
+            pending_payload=pending,
+            schedule_on_miss=False,
+        )
+
+    assert result["query_status"] == "pending"
+    assert result["query_refreshing"] is False
+    assert result["query_refresh_failed"] is False
+    enqueue.assert_not_called()
+    assert exact_refresh_state("test-cache-probe", identity) is None
+
+
+@pytest.mark.unit
 def test_observe_snapshot_survives_temporal_json_round_trip_and_poll_with_rows():
     """The worker's JSON identity must address the caller's original key.
 
@@ -2535,7 +2565,7 @@ def test_snapshot_key_changes_when_exact_query_contract_version_changes(monkeypa
     monkeypatch.setattr(cache_module, "_CACHE_VERSION", 1)
     legacy_key = cache_module.snapshot_cache_key("observe-system-graph", identity)
 
-    assert current_key.startswith("exact-aggregation:v2:")
+    assert current_key.startswith("exact-aggregation:v3:")
     assert legacy_key.startswith("exact-aggregation:v1:")
     assert current_key != legacy_key
 
@@ -6189,7 +6219,7 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
 
 
 @pytest.mark.unit
-def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_scheduling():
+def test_public_filtered_graph_runs_direct_raw_reader_inline_without_scheduling():
     from tracer.services.clickhouse import graph_dispatch
 
     cache.clear()
@@ -6198,7 +6228,7 @@ def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_schedul
     end = datetime(2026, 8, 8, 0, 0)
     exact_calls = []
 
-    def exact_read(**kwargs):
+    def direct_read(**kwargs):
         exact_calls.append(kwargs)
         return {
             "metric_name": "traffic",
@@ -6206,12 +6236,14 @@ def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_schedul
             "query_complete": True,
             "query_status": "complete",
             "query_sampled": False,
+            "query_exact": False,
+            "query_provenance": "bounded_candidates",
         }
 
     with patch.object(
         graph_dispatch,
-        "read_exact_system_graph",
-        side_effect=exact_read,
+        "_fetch_direct_raw_system_metric_graph",
+        side_effect=direct_read,
     ):
         result = graph_dispatch.fetch_system_metric_graph_ch(
             analytics=object(),
@@ -6226,10 +6258,8 @@ def test_public_filtered_graph_runs_exact_snapshot_reader_inline_without_schedul
     assert result["query_status"] == "complete"
     assert result["query_complete"] is True
     assert result["query_sampled"] is False
-    assert result["query_exact"] is True
-    # exact_snapshot is the established public enum; the patched reader above
-    # proves execution is still request-time and never scheduled.
-    assert result["query_provenance"] == "exact_snapshot"
+    assert result["query_exact"] is False
+    assert result["query_provenance"] == "bounded_candidates"
     assert exact_calls[0]["filters"] == _exact_multi_filters(start, end)
 
 
@@ -6867,6 +6897,24 @@ def test_exact_session_message_filters_match_session_list_having_semantics(
         assert "session_having_1" not in params
     else:
         assert params["session_having_1"] == expected_param
+
+
+@pytest.mark.unit
+def test_exact_session_graph_uses_weekly_buckets_beyond_three_months():
+    analytics = _ExactEntityAnalytics()
+    start = datetime(2026, 1, 1)
+    end = datetime(2026, 5, 1)
+
+    read_exact_session_system_graph(
+        analytics=analytics,
+        project_id="22222222-2222-4222-8222-222222222222",
+        filters=[_time_filter(start, end)],
+        interval="day",
+        metric_id="session_count",
+    )
+
+    query, _params, _settings = analytics.main_calls[0]
+    assert "toMonday(session_start) AS time_bucket" in query
 
 
 class _SessionContextAnalytics(_ExactEntityAnalytics):
