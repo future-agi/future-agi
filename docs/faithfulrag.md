@@ -52,19 +52,8 @@ As a result, RAG systems can fabricate citations and produce plausible but ungro
 
 FaithfulRAG solves this with deterministic stepwise natural language inference (NLI) plus embedding-aware citation attribution. The goal is auditable math that any engineer can read and reproduce on a laptop.
 
-```mermaid
-flowchart LR
-    A[Chain-of-thought + Context] --> B[Split into steps]
-    B --> C{Entailed?}
-    C -->|substring / token-subset / Jaccard / embedding| D[Score = entailed / total]
-    E[Answer + citations + chunks] --> F[Extract claim window]
-    F --> G[Check chunk support]
-    G --> H[Precision and Recall]
-```
-
 | Problem | Before (LLM judge or exact match) | After (FaithfulRAG) |
 | :--- | :--- | :--- |
-| --- | --- | --- |
 | Hallucinated chain-of-thought | Final answer only, misses stepwise errors | Stepwise NLI: substring, token-subset, Jaccard, optional embedding |
 | Citation fraud | Exact string-set overlap, no `[n]` span check | Claim-window attribution per citation index |
 | Cost and reproducibility | About $2.00 per 100 calls, flaky, needs API key | $0.00, deterministic, under 0.05 ms per call on 2 CPUs |

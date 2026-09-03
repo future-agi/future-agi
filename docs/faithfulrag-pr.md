@@ -22,15 +22,6 @@ This PR introduces FaithfulRAG, a replacement for opaque LLM-as-judge scoring on
 
 It closes the gap where RAG systems can fabricate citations and produce plausible but ungrounded chains-of-thought while still passing `factual_accuracy`, `groundedness`, and `NonLlmContextPrecision`.
 
-```mermaid
-flowchart LR
-    A[CoT + Context] --> B[Split steps]
-    B --> C[Substring / subset / Jaccard / embedding]
-    C --> D[Faithfulness score]
-    E[Answer + citations] --> F[Claim window]
-    F --> G[Precision and Recall]
-```
-
 | Problem | Before | After (this PR) |
 | :--- | :---: | :---: |
 | Hallucinated chain-of-thought | Final answer only | ** stepwise NLI per step** |
