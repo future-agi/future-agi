@@ -10,7 +10,8 @@ import {
   pairNodesByName,
   pickBaselineVersion,
 } from "../saveAgentDiff";
-import { VERSION_STATUS } from "../constants";
+import { buildVersionPayload } from "../versionPayloadUtils";
+import { NODE_TYPES, VERSION_STATUS } from "../constants";
 
 function node(id, name, extra = {}) {
   return {
@@ -131,6 +132,79 @@ describe("classifySaveChanges", () => {
       previousSnapshot: previous,
       currentSnapshot: current,
     });
+    expect(result.entries[0].status).toBe(CHANGE_STATUS.UNCHANGED);
+  });
+
+  it("treats an unedited prompt node as unchanged across GET vs payload shapes", () => {
+    const previous = snapshot(
+      [
+        {
+          id: "old-prompt",
+          name: "Prompt node",
+          type: "atomic",
+          node_template_id: "tpl-prompt",
+          prompt_template: {
+            model: "gpt-4",
+            messages: [
+              { role: "system", content: "You are a helpful assistant" },
+            ],
+            template_format: "f-string",
+            variable_names: [],
+            metadata: {},
+            is_draft: false,
+            template_version: 1,
+            response_schema: null,
+            response_format: "text",
+          },
+        },
+      ],
+      [],
+    );
+    const currentPayload = buildVersionPayload(
+      [
+        {
+          id: "new-prompt",
+          type: NODE_TYPES.LLM_PROMPT,
+          position: { x: 0, y: 0 },
+          data: {
+            label: "Prompt node",
+            node_template_id: "tpl-prompt",
+            config: {
+              modelConfig: {
+                model: "gpt-4",
+                modelDetail: {
+                  modelName: "GPT-4",
+                  logoUrl: "",
+                  providers: "openai",
+                  isAvailable: true,
+                },
+                responseFormat: "text",
+                toolChoice: "auto",
+                tools: [],
+              },
+              messages: [
+                {
+                  id: "msg-0",
+                  role: "system",
+                  content: [
+                    { type: "text", text: "You are a helpful assistant" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ],
+      [],
+    );
+    const result = classifySaveChanges({
+      previousSnapshot: previous,
+      currentSnapshot: {
+        nodes: currentPayload.nodes,
+        connections: currentPayload.node_connections,
+      },
+    });
+    expect(result.entries).toHaveLength(1);
     expect(result.entries[0].status).toBe(CHANGE_STATUS.UNCHANGED);
   });
 

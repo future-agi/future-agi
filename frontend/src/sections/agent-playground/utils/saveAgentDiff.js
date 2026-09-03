@@ -1,5 +1,9 @@
 import { diffLines } from "diff";
 import { VERSION_STATUS } from "./constants";
+import {
+  buildVersionPayload,
+  parseVersionResponse,
+} from "./versionPayloadUtils";
 
 export const CHANGE_STATUS = {
   CREATED: "created",
@@ -54,6 +58,55 @@ function targetId(connection) {
   return connection?.target_node_id || connection?.targetNodeId;
 }
 
+function normalizeMessageContent(content) {
+  if (typeof content === "string") {
+    return [{ type: "text", text: content }];
+  }
+  if (Array.isArray(content)) {
+    return content.map((part) => {
+      if (typeof part === "string") {
+        return { type: "text", text: part };
+      }
+      return {
+        type: part?.type || "text",
+        text: part?.text || "",
+      };
+    });
+  }
+  if (content == null) return [{ type: "text", text: "" }];
+  return [{ type: "text", text: String(content) }];
+}
+
+/**
+ * Drop GET-serializer-only fields and flatten message content so a NodeRead
+ * prompt_template can be compared with buildVersionPayload output.
+ */
+export function canonicalPromptTemplate(prompt) {
+  if (!prompt) return null;
+  return {
+    model: prompt.model || null,
+    messages: (prompt.messages || []).map((message) => ({
+      role: message.role,
+      content: normalizeMessageContent(message.content),
+    })),
+    response_format: prompt.response_format || prompt.responseFormat || "text",
+    temperature: prompt.temperature ?? null,
+    max_tokens: prompt.max_tokens ?? null,
+    top_p: prompt.top_p ?? null,
+    tools: prompt.tools || [],
+    tool_choice: prompt.tool_choice || prompt.toolChoice || "",
+  };
+}
+
+function canonicalPorts(ports = []) {
+  return ports.map((port) => ({
+    key: port.key,
+    display_name: port.display_name || port.displayName,
+    direction: port.direction,
+    data_schema: port.data_schema || port.dataSchema || {},
+  }));
+}
+
 /**
  * Strip identity/layout so a remapped draft can be compared with the last save.
  */
@@ -65,9 +118,9 @@ export function canonicalNodeBody(node = {}) {
   const templateId = node.node_template_id ?? node.nodeTemplateId;
   if (templateId != null) body.node_template_id = templateId;
   const prompt = node.prompt_template || node.promptTemplate;
-  if (prompt) body.prompt_template = prompt;
+  if (prompt) body.prompt_template = canonicalPromptTemplate(prompt);
   if (Array.isArray(node.ports) && node.ports.length > 0) {
-    body.ports = node.ports;
+    body.ports = canonicalPorts(node.ports);
   }
   const refVersion = node.ref_graph_version_id ?? node.refGraphVersionId;
   if (refVersion) body.ref_graph_version_id = refVersion;
@@ -75,17 +128,43 @@ export function canonicalNodeBody(node = {}) {
   if (Array.isArray(mappings) && mappings.length > 0) {
     body.input_mappings = mappings;
   }
-  if (node.config && Object.keys(node.config).length > 0) {
-    body.config = node.config;
-  }
   return body;
 }
 
 export function toGraphSnapshot(source = {}) {
   return {
     nodes: source.nodes || [],
-    connections: source.node_connections || source.nodeConnections || [],
+    connections:
+      source.node_connections ||
+      source.nodeConnections ||
+      source.connections ||
+      [],
   };
+}
+
+/**
+ * Put GET version-detail, store canvas, and payload snapshots on the same
+ * buildVersionPayload shape before comparing.
+ */
+export function toComparableSnapshot(source = {}) {
+  const nodes = source.nodes || [];
+  const edges = source.edges || [];
+  const connections =
+    source.connections ||
+    source.node_connections ||
+    source.nodeConnections ||
+    [];
+  if (!nodes.length && !edges.length && !connections.length) {
+    return { nodes: [], connections: [] };
+  }
+  if (nodes.some((node) => node?.data != null) || edges.length > 0) {
+    return toGraphSnapshot(buildVersionPayload(nodes, edges));
+  }
+  const parsed = parseVersionResponse({
+    nodes,
+    node_connections: connections,
+  });
+  return toGraphSnapshot(buildVersionPayload(parsed.nodes, parsed.edges));
 }
 
 function idToNameMap(nodes = []) {
@@ -379,14 +458,8 @@ export function classifySaveChanges({
   currentSnapshot = { nodes: [], connections: [] },
   occurredAt = {},
 } = {}) {
-  const previous = {
-    nodes: previousSnapshot.nodes || [],
-    connections: previousSnapshot.connections || [],
-  };
-  const current = {
-    nodes: currentSnapshot.nodes || [],
-    connections: currentSnapshot.connections || [],
-  };
+  const previous = toComparableSnapshot(previousSnapshot);
+  const current = toComparableSnapshot(currentSnapshot);
 
   const { pairs, created, deleted } = pairNodesByName(
     previous.nodes,

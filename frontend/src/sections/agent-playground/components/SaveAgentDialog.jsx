@@ -26,7 +26,7 @@ import {
   classifySaveChanges,
   flattenGraphVersions,
   pickBaselineVersion,
-  toGraphSnapshot,
+  toComparableSnapshot,
 } from "../utils/saveAgentDiff";
 
 const formSchema = z.object({
@@ -120,9 +120,9 @@ export default function SaveAgentDialog() {
   );
 
   const saveDiff = useMemo(() => {
-    const currentSnapshot = toGraphSnapshot(buildVersionPayload(nodes, edges));
+    const currentSnapshot = toComparableSnapshot({ nodes, edges });
     const previousSnapshot = baselineDetail
-      ? toGraphSnapshot(baselineDetail)
+      ? toComparableSnapshot(baselineDetail)
       : { nodes: [], connections: [] };
     return classifySaveChanges({
       previousSnapshot,
