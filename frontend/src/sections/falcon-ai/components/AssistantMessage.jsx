@@ -30,9 +30,7 @@ export default function AssistantMessage({ message, onFeedback }) {
   );
   const trails = grouped.filter((b) => b.type === "trail");
   const runCalls = hasBlocks ? trails.flatMap((b) => b.toolCalls) : toolCalls;
-  // Narration between tool calls splits one run into several trails. The
-  // declared flow belongs to the turn, so only the trail the run is currently
-  // in reports progress against it.
+  // The flow belongs to the turn, so only the last trail reports progress.
   const lastTrailId = trails.length ? trails[trails.length - 1].id : null;
   const plan = useSkillPlan(message.id, runCalls);
 
@@ -145,9 +143,7 @@ export default function AssistantMessage({ message, onFeedback }) {
           <CompletionCard card={message.completion_card} />
         )}
 
-        {/* Persistent loading indicator while streaming — shows between tool
-            calls and during LLM thinking. The trail carries its own live line,
-            so the dots stay out of the way while a tool is running. */}
+        {/* The trail carries its own live line while a tool is running. */}
         {isThisStreaming && !isEmpty && !hasRunningTool && (
           <Box
             sx={{
