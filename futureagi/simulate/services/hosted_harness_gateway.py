@@ -145,6 +145,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
         "SIMULATOR_TTS_PROVIDER",
+        # The caller's surroundings. Without these a hosted call is always heard in the clear,
+        # whatever the scenario asked for, because the simulator reads them from its environment.
+        "ALK_BACKGROUND_NOISE",
+        "ALK_BACKGROUND_NOISE_CATALOG",
+        "HARNESS_BACKGROUND_NOISE_VOLUME",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
