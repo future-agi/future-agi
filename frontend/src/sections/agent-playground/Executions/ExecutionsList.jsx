@@ -48,13 +48,16 @@ const ExecutionsList = ({
 
   const scrollContainerRef = useScrollEnd(fetchNext, [fetchNext]);
 
-  // Auto-select top execution whenever the newest item changes
+  // Auto-select the newest execution only until the user picks one.
+  // A user-selected run must survive list refreshes (e.g. a new arrival
+  // or returning to the tab); with nothing chosen the newest is still
+  // selected automatically on first open.
   const firstExecutionId = executions[0]?.id;
   useEffect(() => {
-    if (firstExecutionId) {
+    if (firstExecutionId && selectedExecutionId == null) {
       onExecutionChange(firstExecutionId);
     }
-  }, [firstExecutionId, onExecutionChange]);
+  }, [firstExecutionId, selectedExecutionId, onExecutionChange]);
 
   return (
     <Box
