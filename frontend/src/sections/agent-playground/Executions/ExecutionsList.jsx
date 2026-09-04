@@ -11,6 +11,7 @@ const STATUS_COLORS = {
   [EXECUTION_STATUS.PENDING]: "warning.main",
   [EXECUTION_STATUS.ERROR]: "error.main",
   [EXECUTION_STATUS.FAILED]: "error.main",
+  [EXECUTION_STATUS.SKIPPED]: "error.main",
 };
 
 const STATUS_LABELS = {
@@ -19,6 +20,7 @@ const STATUS_LABELS = {
   [EXECUTION_STATUS.PENDING]: "Pending",
   [EXECUTION_STATUS.ERROR]: "Error",
   [EXECUTION_STATUS.FAILED]: "Failed",
+  [EXECUTION_STATUS.SKIPPED]: "Skipped",
 };
 
 const ExecutionSkeleton = () => (
@@ -146,3 +148,5 @@ ExecutionsList.propTypes = {
 };
 
 export default ExecutionsList;
+
+export { STATUS_LABELS, STATUS_COLORS };
