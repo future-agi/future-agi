@@ -439,6 +439,134 @@ func TestCheckpointLoaderRestartReconstructsSameTerminalRevision(t *testing.T) {
 	}
 }
 
+func physicalSnapshotProof(t *testing.T, sequence uint64) (checkpointInventoryJSON, checkpointStreamProofJSON) {
+	t.Helper()
+	row := validCheckpointInventory(t, true)[1]
+	row.StreamLastSequence, row.StreamMaxContiguousSequence = sequence, sequence
+	row.StreamLastIssuedSequence, row.StreamFencedSequence = sequence, sequence
+	row.CheckpointLastSequence, row.CheckpointLastIssuedSequence, row.CheckpointFencedSequence = sequence, sequence, sequence
+	proof := validCheckpointProof(row, true)
+	proof.SequenceRows, proof.LastSequence, proof.DistinctSequences = sequence, sequence, sequence
+	proof.TerminalSequence, proof.PhysicalSnapshotSequences = sequence, sequence
+	proof.TailEnvelopeFormat = physicalSnapshotEnvelopeFormat
+	return row, proof
+}
+
+func TestCheckpointRecoveryAcceptsOnlyCompletedPhysicalSnapshots(t *testing.T) {
+	for _, sequence := range []uint64{1, 2} {
+		row, proof := physicalSnapshotProof(t, sequence)
+		checkpoint, err := validateCheckpointStreamProof(row, proof)
+		if err != nil || !checkpoint.Terminal || checkpoint.Sequence != sequence || checkpoint.PayloadSHA256 != proof.TailPayloadSHA256 {
+			t.Fatalf("physical snapshot sequence=%d checkpoint=%+v err=%v", sequence, checkpoint, err)
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*checkpointInventoryJSON, *checkpointStreamProofJSON)
+	}{
+		{"mixed formats", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.PhysicalSnapshotSequences = 1 }},
+		{"native tail on snapshot", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailEnvelopeFormat = EnvelopeFormat }},
+		{"unknown format", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) {
+			p.TailEnvelopeFormat = "futureagi.unknown"
+		}},
+		{"unknown version", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailEnvelopeVersion = 2 }},
+		{"broken chain", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.ChainBreaks = 1 }},
+		{"invalid transport or wire", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.InvalidWireSequences = 1 }},
+		{"conflicting replay", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.ConflictSequences = 1 }},
+		{"projection conflict", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.ProjectionVersions = 2 }},
+		{"wrong projection", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailProjectionVersion++ }},
+		{"gap", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.GapSequences = 1 }},
+		{"terminal carries data", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.InvalidTerminalSequences = 1 }},
+		{"early terminal", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TerminalSequence = 1 }},
+		{"multiple terminals", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TerminalSequences = 2 }},
+		{"open reservation", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.ReservationStatus = "open" }},
+		{"open stream", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.StreamStatus = "open" }},
+		{"missing checkpoint", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.CheckpointEvidenceRows = 0 }},
+		{"running checkpoint", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.CheckpointStatus = "running" }},
+		{"missing terminal", func(_ *checkpointInventoryJSON, p *checkpointStreamProofJSON) { p.TailTerminal = 0 }},
+		{"wrong terminal hash", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) {
+			r.StreamTerminalPayloadSHA256 = ZeroSHA256
+		}},
+		{"wrong checkpoint hash", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) {
+			r.CheckpointTerminalPayloadSHA256 = ZeroSHA256
+		}},
+		{"wrong checkpoint fence", func(r *checkpointInventoryJSON, _ *checkpointStreamProofJSON) { r.CheckpointFencedSequence++ }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row, proof := physicalSnapshotProof(t, 2)
+			test.mutate(&row, &proof)
+			if checkpoint, err := validateCheckpointStreamProof(row, proof); err == nil {
+				t.Fatalf("invalid physical snapshot accepted: %+v", checkpoint)
+			}
+		})
+	}
+}
+
+func TestPhysicalSnapshotRecoveryUsesBoundedReadOnlyLoader(t *testing.T) {
+	inventory := validCheckpointInventory(t, true)
+	values := make([]any, len(inventory))
+	proofs := make(map[string]string)
+	for index, row := range inventory {
+		if row.StreamEnvelopeVersion == EnvelopeVersion {
+			row.StreamLastSequence, row.StreamMaxContiguousSequence = 2, 2
+			row.StreamLastIssuedSequence, row.StreamFencedSequence = 2, 2
+			row.CheckpointLastSequence, row.CheckpointLastIssuedSequence, row.CheckpointFencedSequence = 2, 2, 2
+			proof := validCheckpointProof(row, true)
+			proof.SequenceRows, proof.LastSequence, proof.DistinctSequences = 2, 2, 2
+			proof.TerminalSequence, proof.PhysicalSnapshotSequences = 2, 2
+			proof.TailEnvelopeFormat = physicalSnapshotEnvelopeFormat
+			proofs[row.StreamProducerStreamID] = checkpointBody(t, proof)
+		}
+		values[index] = row
+	}
+	loader := checkpointLoaderForTransport(t, func(request *http.Request) (*http.Response, error) {
+		query := checkpointRequestStatement(t, request)
+		if !strings.HasPrefix(query, "SELECT") && !strings.HasPrefix(query, "WITH") {
+			t.Fatalf("recovery attempted a non-SELECT operation: %s", query)
+		}
+		if strings.Contains(query, "newest_reservation_revisions") {
+			return checkpointHTTPResponse(checkpointBody(t, values...)), nil
+		}
+		for _, fragment := range []string{
+			"envelope_format NOT IN ({envelope_format:String}, {physical_snapshot_format:String})",
+			"invalid_snapshot_transports != 0", "delivery.kafka_partition != -1",
+			"delivery.kafka_offset != -1", "toString(delivery.transport) != 'reconcile'",
+		} {
+			if !strings.Contains(query, fragment) {
+				t.Fatalf("missing snapshot transport guard: %s", fragment)
+			}
+		}
+		if request.URL.Query().Get("param_physical_snapshot_format") != physicalSnapshotEnvelopeFormat {
+			t.Fatal("physical snapshot format was not explicitly bound")
+		}
+		return checkpointHTTPResponse(proofs[request.URL.Query().Get("param_producer_stream_id")]), nil
+	})
+	checkpoints, err := loader.LoadCheckpoints(context.Background())
+	if err != nil || len(checkpoints) != 10 {
+		t.Fatalf("checkpoints=%+v err=%v", checkpoints, err)
+	}
+	for _, checkpoint := range checkpoints {
+		if !checkpoint.Terminal || checkpoint.Sequence != 2 {
+			t.Fatalf("invalid recovered tail: %+v", checkpoint)
+		}
+	}
+}
+
+func TestPhysicalSnapshotIsNeverAcceptedAsKafkaWireFormat(t *testing.T) {
+	envelope := mustEnvelope(t, testEnvelopeInput(t, 1, ZeroSHA256, 1))
+	raw, err := envelope.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseWireEnvelope(raw); err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(EnvelopeFormat), []byte(physicalSnapshotEnvelopeFormat), 1)
+	if _, err := ParseWireEnvelope(raw); err == nil {
+		t.Fatal("physical snapshot accepted as live Kafka envelope")
+	}
+}
+
 func TestCheckpointLoaderRejectsConflictCrowdingAndBrokenAggregateProofs(t *testing.T) {
 	row := validCheckpointInventory(t, false)[1]
 	valid := validCheckpointProof(row, false)
