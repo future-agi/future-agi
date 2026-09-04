@@ -364,6 +364,12 @@ port_holder() {
   elif command -v ss >/dev/null 2>&1; then
     out=$(ss -ltn 2>/dev/null)
     [[ -n "$out" ]] && awk -v p=":$port\$" '$4 ~ p {print $0; exit}' <<<"$out"
+  elif command -v netstat >/dev/null 2>&1; then
+    # Windows netstat is available in MSYS2 and Git Bash, where lsof/ss are
+    # commonly absent. Keep only TCP listeners for the requested port.
+    out=$(netstat -ano 2>/dev/null | awk -v p=":$port$" \
+      '$1 ~ /^TCP/ && $2 ~ p && $4 == "LISTENING" {print; exit}')
+    [[ -n "$out" ]] && printf '%s\n' "$out"
   fi
   set -eE
   return 0
