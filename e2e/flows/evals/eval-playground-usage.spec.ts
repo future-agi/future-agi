@@ -1,4 +1,5 @@
 import { test, expect } from '../../lib/fixtures';
+import { POLL } from '../../lib/state-probe';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { JUDGE_MODEL, ensureJudgeModel, fillTestData } from '../../lib/eval-model';
 
@@ -34,7 +35,7 @@ test('EVAL-E2E-011: filter usage logs by date range and drill into a single log'
                     'the detail panel renders the exact explanation text the eval produced for that run, '
                     + 'unwrapped from the usage row\'s cell_value wrapper'],
   }),
-}, async ({ page, actor }, testInfo) => {
+}, async ({ page, actor, probe }, testInfo) => {
   // The Today-preset wait below can span a minute boundary.
   test.setTimeout(420_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
@@ -64,6 +65,24 @@ test('EVAL-E2E-011: filter usage logs by date range and drill into a single log'
     await page.getByRole('button', { name: 'Test Evaluation' }).click();
     await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeVisible({ timeout: EVAL_RUN });
     await expect(page.getByText(`${verdict} saw world`)).toBeVisible();
+  });
+
+  // The Usage tab reads usage_apicalllog, a PeerDB CDC mirror, through the
+  // exact-aggregation snapshot cache. Opening the tab before CDC has delivered
+  // the row schedules a snapshot that reads an empty table, and that empty
+  // result is cached for the identity (30-day TTL) and never rescheduled
+  // without an explicit refresh, so the tab stays empty for the rest of the
+  // run no matter how long the browser waits. Measured CDC lag on this table
+  // is 1-10s. Wait for the row here so the first snapshot the tab schedules
+  // reads it.
+  await test.step('CDC: the usage log reaches ClickHouse before the tab reads it', async () => {
+    await expect.poll(async () => {
+      const rows = await probe.ch<{ n: string }>(
+        `SELECT count() AS n FROM usage_apicalllog
+         WHERE source = 'eval_playground' AND source_id = {t:String} AND _peerdb_is_deleted = 0`,
+        { t: templateId });
+      return Number(rows[0]?.n ?? 0);
+    }, POLL.CDC_VISIBLE).toBeGreaterThan(0);
   });
 
   await test.step('UI: the log is visible on the Usage tab under the default window', async () => {

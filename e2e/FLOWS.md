@@ -214,7 +214,7 @@
 ### EVAL-E2E-011 — filter usage logs by date range and drill into a single log
 
 **Goal:** A developer viewing a custom eval's Usage tab filters its logs to a date range and opens a single log row to read the input, result and reasoning behind that run  
-**Spec:** `flows/evals/eval-playground-usage.spec.ts:20`  
+**Spec:** `flows/evals/eval-playground-usage.spec.ts:21`  
 **Tags:** —
 
 **User steps:**
@@ -234,7 +234,7 @@
 ### EVAL-E2E-012 — add feedback to a logged eval result from the Usage tab
 
 **Goal:** A developer reviews a usage log for a custom eval and submits human feedback ("Auto Learning") on the result  
-**Spec:** `flows/evals/eval-playground-feedback.spec.ts:39`  
+**Spec:** `flows/evals/eval-playground-feedback.spec.ts:40`  
 **Tags:** —
 
 **User steps:**
