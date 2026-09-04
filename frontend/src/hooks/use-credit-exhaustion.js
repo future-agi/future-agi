@@ -16,8 +16,9 @@ const CREDIT_ERROR_CODES = [
  */
 export function isCreditExhaustionError(error) {
   if (!error) return false;
+  const errorCode = error.errorCode || error.code;
   return (
-    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(error.errorCode)
+    error.statusCode === 402 || CREDIT_ERROR_CODES.includes(errorCode)
   );
 }
 
@@ -47,9 +48,10 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
     (error) => {
       if (isCreditExhaustionError(error)) {
         setExhaustionError(error);
+        const errorCode = error.errorCode || error.code;
         trackPostHogEvent("credits_nudge_shown", {
           feature,
-          error_code: error.errorCode,
+          error_code: errorCode,
           dimension: error.dimension,
           current_usage: error.currentUsage,
           limit: error.limit,
@@ -65,9 +67,10 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
     // The pricing route is a frontend concern; don't accept a URL from the
     // server — it can rot when routes move, and would be an open-redirect
     // if an attacker-controlled string ever landed in the payload.
+    const errorCode = exhaustionError?.errorCode || exhaustionError?.code;
     trackPostHogEvent("credits_upgrade_clicked", {
       feature,
-      error_code: exhaustionError?.errorCode,
+      error_code: errorCode,
       target_plan: exhaustionError?.upgradeCta?.plan,
     });
     navigate(paths.dashboard.settings.pricing);
@@ -75,9 +78,10 @@ export function useCreditExhaustion({ feature = "unknown" } = {}) {
   }, [exhaustionError, feature, navigate]);
 
   const handleDismiss = useCallback(() => {
+    const errorCode = exhaustionError?.errorCode || exhaustionError?.code;
     trackPostHogEvent("credits_nudge_dismissed", {
       feature,
-      error_code: exhaustionError?.errorCode,
+      error_code: errorCode,
     });
     setExhaustionError(null);
   }, [exhaustionError, feature]);
