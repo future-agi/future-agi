@@ -18,6 +18,8 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  getVisibleIndices,
+  resolveWidgetAxisPlan,
   groupPieSeries,
   resolveSavedSelection,
   seriesHasDataPoints,
@@ -532,6 +534,15 @@ export default function WidgetChart({
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
+  // chartSeries[i] came from series[chartSeriesIndices[i]]. series_axis is keyed
+  // by that original index, so the dual-axis branch must map through this.
+  const chartSeriesIndices = useMemo(
+    () => getVisibleIndices(series, visibleSeries),
+    [series, visibleSeries],
+  );
+
+  // A missing aggregate bucket is not a zero: line and area charts drop the
+  // null points so Apex connects the neighbouring observed ones.
   const plottedChartSeries = useMemo(
     () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
     [chartSeries, connectsAcrossMissingBuckets],
@@ -1313,20 +1324,27 @@ export default function WidgetChart({
     yaxis: (() => {
       const leftCfg = axisConfig?.leftY || {};
       const rightCfg = axisConfig?.rightY || {};
-      const sa = axisConfig?.seriesAxis || {};
-      const hasRightAxis =
-        rightCfg.visible && Object.values(sa).some((s) => s === "right");
+      // Shared with WidgetEditorView so the saved widget and the editor preview
+      // cannot scale differently — see resolveWidgetAxisPlan.
+      const { hasRightAxis, sideOf, bounds } = resolveWidgetAxisPlan(
+        chartSeries,
+        chartSeriesIndices,
+        axisConfig,
+        { stacked: isStacked },
+      );
       if (!hasRightAxis) {
         const hideOOB = leftCfg.outOfBounds === "hidden";
+        const { min, max } = bounds.left;
         return {
           show: leftCfg.visible !== false,
           tickAmount: 5,
           forceNiceScale: !hideOOB,
           logarithmic: leftCfg.scale === "logarithmic",
-          ...(leftCfg.min !== undefined &&
-            leftCfg.min !== "" && { min: Number(leftCfg.min) }),
-          ...(leftCfg.max !== undefined &&
-            leftCfg.max !== "" && { max: Number(leftCfg.max) }),
+          // Never emit null: apexcharts 3.49.1 reads `min !== null` when
+          // deciding whether an explicit max was given (Scales.js:33), so a
+          // null min silently discards both bounds.
+          ...(min != null && { min }),
+          ...(max != null && { max }),
           ...(leftCfg.label && {
             title: {
               text: leftCfg.label,
@@ -1339,24 +1357,25 @@ export default function WidgetChart({
           },
         };
       }
+      // Bounds are resolved once per side and written to every entry on that
+      // side. ApexCharts binds yaxis[i] to series[i] and scales each entry on
+      // its own, so without this a small series sharing an axis is stretched
+      // to fill the plot and cannot be read off the axis beside it.
       return chartSeries.map((_, i) => {
-        const side = sa[i] || "left";
+        const side = sideOf(i);
         const cfg = side === "right" ? rightCfg : leftCfg;
+        const { min, max } = bounds[side];
         return {
           show:
             i === 0 ||
             (side === "right" &&
-              !chartSeries
-                .slice(0, i)
-                .some((__, j) => (sa[j] || "left") === "right")),
+              !chartSeries.slice(0, i).some((__, j) => sideOf(j) === "right")),
           opposite: side === "right",
           tickAmount: 5,
           forceNiceScale: cfg.outOfBounds !== "hidden",
           logarithmic: cfg.scale === "logarithmic",
-          ...(cfg.min !== undefined &&
-            cfg.min !== "" && { min: Number(cfg.min) }),
-          ...(cfg.max !== undefined &&
-            cfg.max !== "" && { max: Number(cfg.max) }),
+          ...(min != null && { min }),
+          ...(max != null && { max }),
           ...(cfg.label && {
             title: {
               text: cfg.label,

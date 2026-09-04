@@ -107,6 +107,9 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  getVisibleIndices,
+  resolveWidgetAxisPlan,
+  makeSeriesKey,
   shouldConnectAcrossMissingBuckets,
   resolveSavedSelection,
   toAxisConfigPayload,
@@ -3498,6 +3501,12 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
+  // See WidgetChart.jsx: series_axis is keyed by the unfiltered index.
+  const chartSeriesIndices = useMemo(
+    () => getVisibleIndices(previewSeries, visibleSeries),
+    [previewSeries, visibleSeries],
+  );
+
   // Match the saved-dashboard renderer: null means an absent aggregate
   // bucket, not zero, so line previews connect the neighbouring exact points.
   const plottedChartSeries = useMemo(
@@ -3816,21 +3825,23 @@ export default function WidgetEditorView() {
             },
           },
       yaxis: (() => {
-        const hasRightAxis =
-          axisConfig.rightY.visible &&
-          Object.values(axisConfig.seriesAxis).some((s) => s === "right");
+        // Shared with WidgetChart.jsx so the preview matches the saved widget.
+        const { hasRightAxis, sideOf, bounds } = resolveWidgetAxisPlan(
+          chartSeries,
+          chartSeriesIndices,
+          axisConfig,
+          { stacked: isStacked },
+        );
         if (!hasRightAxis) {
+          const { min, max } = bounds.left;
           return {
             show: axisConfig.leftY.visible,
             tickAmount: 5,
             forceNiceScale: axisConfig.leftY.outOfBounds !== "hidden",
             logarithmic: axisConfig.leftY.scale === "logarithmic",
-            ...(axisConfig.leftY.min !== "" && {
-              min: Number(axisConfig.leftY.min),
-            }),
-            ...(axisConfig.leftY.max !== "" && {
-              max: Number(axisConfig.leftY.max),
-            }),
+            // Never emit null — see the note in WidgetChart.jsx.
+            ...(min != null && { min }),
+            ...(max != null && { max }),
             ...(axisConfig.leftY.label && {
               title: {
                 text: axisConfig.leftY.label,
@@ -3846,29 +3857,24 @@ export default function WidgetEditorView() {
             },
           };
         }
-        // Dual axis
+        // Dual axis: one shared {min,max} per side — see WidgetChart.jsx.
         return chartSeries.map((_, i) => {
-          const origIdx = visibleSeries === null ? i : [...visibleSeries][i];
-          const side = axisConfig.seriesAxis[origIdx] || "left";
+          const side = sideOf(i);
           const cfg = side === "right" ? axisConfig.rightY : axisConfig.leftY;
+          const { min, max } = bounds[side];
           return {
             show:
               i === 0 ||
               (side === "right" &&
                 !chartSeries
                   .slice(0, i)
-                  .some(
-                    (__, j) =>
-                      (axisConfig.seriesAxis[
-                        visibleSeries === null ? j : [...visibleSeries][j]
-                      ] || "left") === "right",
-                  )),
+                  .some((__, j) => sideOf(j) === "right")),
             opposite: side === "right",
             tickAmount: 5,
             forceNiceScale: cfg.outOfBounds !== "hidden",
             logarithmic: cfg.scale === "logarithmic",
-            ...(cfg.min !== "" && { min: Number(cfg.min) }),
-            ...(cfg.max !== "" && { max: Number(cfg.max) }),
+            ...(min != null && { min }),
+            ...(max != null && { max }),
             ...(cfg.label && {
               title: {
                 text: cfg.label,
@@ -3992,13 +3998,13 @@ export default function WidgetEditorView() {
     isStacked,
     isHorizontal,
     chartSeries,
+    chartSeriesIndices,
     chartColors,
     theme,
     axisConfig,
     autoDecimals,
     isDark,
     leftAxisFormatConfig,
-    visibleSeries,
   ]);
 
   // Horizontal bar: aggregate each series into one bar
