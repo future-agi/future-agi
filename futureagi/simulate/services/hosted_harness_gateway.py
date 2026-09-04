@@ -150,8 +150,6 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "ALK_BACKGROUND_NOISE",
         "ALK_BACKGROUND_NOISE_CATALOG",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
-        # Whether a suite is written by several writers at once rather than one scenario at a time.
-        "HARNESS_PARALLEL_SCENARIOS",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
