@@ -1,0 +1,19 @@
+<!--
+  Cache ceilings sized for the e2e stack's 3 GiB ClickHouse (docker-compose.e2e.yml
+  sets mem_limit: 3g so CH is not the first OOM-kill victim on a 16 GB runner).
+
+  Stock ClickHouse sizes these against the host, not the cgroup: 5 GiB of mark
+  cache, 8 GiB uncompressed, 5 GiB index marks — each larger than the whole
+  container. Real usage here is trivial (the e2e `spans` table is ~150 rows),
+  but CH grows into the ceilings it is told it has, and once resident memory
+  reaches max_server_memory_usage (2.70 GiB, 90% of the limit) the next query
+  that allocates dies with "Code: 241 ... memory limit exceeded" mid-aggregation
+  — as EVAL-E2E-020 did, on a `SELECT count() ... WHERE trace_id = ...` over
+  152 rows. Capping the caches keeps steady-state RSS far below the ceiling so
+  a suite-length run cannot creep into it.
+-->
+<clickhouse>
+    <mark_cache_size>268435456</mark_cache_size>
+    <index_mark_cache_size>134217728</index_mark_cache_size>
+    <uncompressed_cache_size>134217728</uncompressed_cache_size>
+</clickhouse>
