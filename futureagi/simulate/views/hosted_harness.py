@@ -105,7 +105,6 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
         receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
         """
         from django.conf import settings
-        from daytona import Daytona, DaytonaConfig
 
         attempt = self._attempt
         if not attempt.provider_ref:
@@ -118,6 +117,10 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
         remaining = max(60, int((attempt.expires_at - timezone.now()).total_seconds()))
         expires_in_seconds = min(requested_ttl, remaining, 86400)
         try:
+            # Inside the guard: a backend image without the SDK must surface as the typed
+            # 502 below, not as an unhandled 500 the guest reports as spawn_failed.
+            from daytona import Daytona, DaytonaConfig
+
             client = Daytona(
                 DaytonaConfig(
                     api_key=getattr(settings, "DAYTONA_API_KEY", ""),

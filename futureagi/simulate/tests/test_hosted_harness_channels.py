@@ -446,6 +446,29 @@ def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
 
 
 @pytest.mark.django_db
+def test_ingress_without_daytona_sdk_is_a_typed_502(organization, settings):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="attempt-ingress-no-sdk-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    capability.attempt.provider_ref = "sandbox-provider-id"
+    capability.attempt.save(update_fields=["provider_ref", "updated_at"])
+    settings.DAYTONA_API_KEY = "configured"
+
+    with patch.dict(sys.modules, {"daytona": None}):
+        response = APIClient().post(
+            f"{BASE}/{capability.attempt.id}/ingress/",
+            {"port": 8080, "expires_in_seconds": 7200},
+            format="json",
+            **_headers(capability),
+        )
+
+    assert response.status_code == 502, response.content
+    assert response.json()["error"] == "ingress_unavailable"
+    assert response.json()["retryable"] is True
+
+
+@pytest.mark.django_db
 def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="receipt-rerun-key"
