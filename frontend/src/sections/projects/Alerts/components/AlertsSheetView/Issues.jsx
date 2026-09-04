@@ -398,6 +398,18 @@ export default function Issues() {
             warningThresholdValue: data?.result?.warning_threshold_value,
             notificationEmails: data?.result?.notification_emails,
             isMute: data?.result?.is_mute,
+            // getDefaultAlertConfigValues reads camelCase, but the spread
+            // above is the API's snake_case — so a multi-word field only
+            // hydrates if it is translated here. Without these the edit form
+            // silently fell back to its defaults (threshold_type -> "static",
+            // alert_frequency -> 5), and saving wrote those defaults back
+            // over the stored config.
+            thresholdType: data?.result?.threshold_type,
+            thresholdMetricValue: data?.result?.threshold_metric_value,
+            alertFrequency: data?.result?.alert_frequency,
+            autoThresholdTimeWindow: data?.result?.auto_threshold_time_window,
+            slackWebhookUrl: data?.result?.slack_webhook_url,
+            slackNotes: data?.result?.slack_notes,
           });
 
           if (data?.result?.project) {

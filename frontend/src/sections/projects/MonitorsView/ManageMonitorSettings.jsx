@@ -456,15 +456,17 @@ const ManageMonitorSettings = ({
                   <FormTextFieldV2
                     size="small"
                     label={
-                      selectedMetric?.output_type === "system_metric"
-                        ? "Value"
-                        : "Fraction (0-1)"
+                      selectedMetric?.output_type !== "system_metric" &&
+                      thresholdType === "manual"
+                        ? "Fraction (0-1)"
+                        : "Value"
                     }
                     fieldName="thresholdValue"
                     placeholder={
-                      selectedMetric?.output_type === "system_metric"
-                        ? "Enter value"
-                        : "Enter fraction, e.g. 0.095 for 9.5%"
+                      selectedMetric?.output_type !== "system_metric" &&
+                      thresholdType === "manual"
+                        ? "Enter fraction, e.g. 0.095 for 9.5%"
+                        : "Enter value"
                     }
                     control={control}
                     sx={{ minWidth: "162px", flex: 1 }}
