@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -646,6 +647,52 @@ def test_value_reader_pins_first_page_to_activation_time_coverage(settings):
     value_params = executor.calls[-1]["params"]
     assert value_params["catalog_window_start_us"] == WINDOW_START_US
     assert value_params["catalog_window_end_us"] == WINDOW_END_US
+
+
+@pytest.mark.parametrize("projection_version", [3, 4])
+def test_revision4_backfill_requires_the_retained_revision3_projection(
+    settings, projection_version
+):
+    settings.SECRET_KEY = "property-value-reader-secret"
+    rows = sorted(
+        [
+            _value_row(False),
+            _value_row(42),
+            _value_row("Straße / customer"),
+            _value_row("member", attribute_type="array"),
+        ],
+        key=lambda row: (row["attribute_type_rank"], row["value_fingerprint"]),
+    )
+    executor = FakeExecutor(
+        [
+            [
+                _activation_row(
+                    catalog_epoch=1,
+                    catalog_revision=4,
+                    projection_version=projection_version,
+                    lineage_anchor_revision=3,
+                    anchor_projection_version=3,
+                )
+            ],
+            [_definition_row(attribute_types=("array", "boolean", "number", "string"))],
+            [{"value_conflicts": 0}],
+            rows,
+        ]
+    )
+    if projection_version != 3:
+        with pytest.raises(PropertyCatalogValueUnavailable) as exc_info:
+            _read(_reader(executor), page_size=10)
+        assert exc_info.value.reason == "activation_lineage_scope_invalid"
+        assert len(executor.calls) == 1
+        return
+
+    page = _read(_reader(executor), page_size=10)
+    assert page.catalog_epoch == 1
+    assert page.catalog_revision == 4
+    assert [(value.attribute_type, value.value) for value in page.values] == [
+        (row["attribute_type"], json.loads(row["value_json"])) for row in rows
+    ]
+    assert executor.calls[-1]["params"]["catalog_lineage_anchor_revision"] == 3
 
 
 def test_value_reader_retains_anchor_window_across_incremental_lineage(settings):

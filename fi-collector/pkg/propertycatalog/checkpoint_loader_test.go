@@ -453,11 +453,23 @@ func physicalSnapshotProof(t *testing.T, sequence uint64) (checkpointInventoryJS
 }
 
 func TestCheckpointRecoveryAcceptsOnlyCompletedPhysicalSnapshots(t *testing.T) {
-	for _, sequence := range []uint64{1, 2} {
-		row, proof := physicalSnapshotProof(t, sequence)
-		checkpoint, err := validateCheckpointStreamProof(row, proof)
-		if err != nil || !checkpoint.Terminal || checkpoint.Sequence != sequence || checkpoint.PayloadSHA256 != proof.TailPayloadSHA256 {
-			t.Fatalf("physical snapshot sequence=%d checkpoint=%+v err=%v", sequence, checkpoint, err)
+	for _, lineage := range []struct {
+		epoch      uint16
+		revision   uint64
+		projection uint16
+	}{{3, 17, 1}, {1, 3, 3}, {1, 4, 3}} {
+		for _, sequence := range []uint64{1, 2} {
+			row, proof := physicalSnapshotProof(t, sequence)
+			row.CatalogEpoch, row.CatalogRevision = lineage.epoch, lineage.revision
+			row.ReservationProjectionVersion = lineage.projection
+			row.StreamProjectionVersion = lineage.projection
+			row.CheckpointProjectionVersion = lineage.projection
+			row.ActivationProjectionVersion = lineage.projection
+			proof.TailProjectionVersion = lineage.projection
+			checkpoint, err := validateCheckpointStreamProof(row, proof)
+			if err != nil || !checkpoint.Terminal || checkpoint.Sequence != sequence || checkpoint.PayloadSHA256 != proof.TailPayloadSHA256 {
+				t.Fatalf("physical snapshot lineage=%+v sequence=%d checkpoint=%+v err=%v", lineage, sequence, checkpoint, err)
+			}
 		}
 	}
 	for _, test := range []struct {
