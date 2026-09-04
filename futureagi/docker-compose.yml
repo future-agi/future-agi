@@ -142,7 +142,12 @@ services:
       context: ./code-executor
       dockerfile: Dockerfile
     ports:
-      - "8060:8060"
+      # Loopback-only: the /execute endpoint is authenticated with
+      # INTERNAL_API_SECRET; don't expose it on the host network.
+      - "127.0.0.1:8060:8060"
+    environment:
+      # Must match the value the backend service gets (from .env via env_file).
+      - INTERNAL_API_SECRET=${INTERNAL_API_SECRET:-}
     # Privileged needed for nsjail namespace creation
     privileged: true
     restart: unless-stopped

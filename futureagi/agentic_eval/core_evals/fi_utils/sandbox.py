@@ -31,6 +31,7 @@ import time
 from typing import Any
 
 import structlog
+import urllib.error
 import urllib.request
 
 logger = structlog.get_logger(__name__)
@@ -452,7 +453,13 @@ def _set_resource_limits():
 # Public API
 # ---------------------------------------------------------------------------
 def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict | None:
-    """Call the nsjail code-executor service via HTTP. Returns None if unavailable."""
+    """Call the nsjail code-executor service via HTTP.
+
+    Returns None only for transient unreachability (caller falls back to the
+    local Tier-2 sandbox, logged at WARNING). A 401/503 from the executor is a
+    deliberate refusal and FAILS CLOSED — the request is never silently
+    downgraded to the weaker in-process sandbox.
+    """
     try:
         # default=str so non-JSON-native types coming through trace/span column
         # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize
@@ -465,18 +472,26 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
             "timeout": timeout,
         }, default=str).encode("utf-8")
 
+        headers = {"Content-Type": "application/json"}
+        internal_secret = os.getenv("INTERNAL_API_SECRET", "")
+        if internal_secret:
+            headers["Authorization"] = f"Bearer {internal_secret}"
+
         req = urllib.request.Request(
             f"{CODE_EXECUTOR_URL}/execute",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
             result = json.loads(resp.read().decode("utf-8"))
             logger.info("code_executor_service_used", language=language, status=result.get("status"))
             return result
+    except urllib.error.HTTPError as e:
+        logger.error("code_executor_refused", language=language, status=e.code)
+        return {"status": "error", "data": f"Code executor refused request (HTTP {e.code})"}
     except Exception as e:
-        logger.debug("code_executor_service_unavailable", error=str(e))
+        logger.warning("code_executor_service_unavailable", error=str(e))
         return None  # Fall back to local sandbox
 
 
