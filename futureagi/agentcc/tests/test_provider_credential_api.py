@@ -5,9 +5,9 @@ import pytest
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from agentcc.models.provider_credential import AgentccProviderCredential
 from conftest import WorkspaceAwareAPIClient
 from integrations.services.credentials import CredentialManager
-from agentcc.models.provider_credential import AgentccProviderCredential
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 
@@ -187,9 +187,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             api_format="openai",
         )
 
-        response = secondary_org_client.get(
-            f"/agentcc/provider-credentials/{cred.id}/"
-        )
+        response = secondary_org_client.get(f"/agentcc/provider-credentials/{cred.id}/")
 
         assert response.status_code == 200, response.json()
         data = response.json()["result"]
@@ -215,9 +213,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             api_format="openai",
         )
 
-        response = secondary_org_client.get(
-            f"/agentcc/provider-credentials/{cred.id}/"
-        )
+        response = secondary_org_client.get(f"/agentcc/provider-credentials/{cred.id}/")
         assert response.status_code == 404
 
     def test_update_writes_safe_fields_and_pushes_config(
@@ -228,7 +224,9 @@ class TestAgentccProviderCredentialOrganizationIsolation:
             organization=org_b,
             provider_name="openai",
             display_name="Old Display",
-            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-untouched"}),
+            encrypted_credentials=CredentialManager.encrypt(
+                {"api_key": "sk-untouched"}
+            ),
             api_format="openai",
             models_list=["gpt-4o-mini"],
         )
@@ -250,20 +248,18 @@ class TestAgentccProviderCredentialOrganizationIsolation:
 
         assert response.status_code == 200, response.json()
         body = response.json()
-        # PUT falls through to DRF's default UpdateModelMixin (no override in
-        # the view) so the payload comes back raw; PATCH is overridden to
-        # wrap via _gm.success_response. Accept both shapes.
+        # PUT now routes through update() -> partial_update(), which wraps the
+        # response via _gm.success_response and pushes config to the gateway.
         data = body.get("result", body)
         assert data["display_name"] == "New Display"
+        assert data["gateway_synced"] is True
 
         cred.refresh_from_db()
         assert cred.display_name == "New Display"
         assert cred.models_list == ["gpt-4o"]
-        # Current behavior: PUT does not push to the gateway because the
-        # view only overrides create/partial_update/destroy/rotate. PATCH
-        # (below) is the client path that fans out to the gateway. If PUT
-        # is ever overridden to push, this assertion should flip.
-        assert mock_push.call_count == 0
+        # Regression for #2282: PUT must push config to the gateway so the
+        # gateway does not stay on stale provider config.
+        assert mock_push.call_count == 1
 
     def test_patch_updates_single_field_leaving_others_intact(
         self, secondary_org_context, secondary_org_client
