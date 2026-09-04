@@ -327,6 +327,7 @@ def test_livekit_futureagi_eu_connector_adds_coturn_host():
     assert _connector_egress_domains(payload, {}) == {
         "coturn.turn-eu.futureagi.com",
         "livekit-eu.futureagi.com",
+        "turn-eu.futureagi.com",
     }
 
 
@@ -342,6 +343,25 @@ def test_retell_connector_includes_default_livekit_cloud_egress(settings):
         "*.livekit.cloud",
         "*.turn.livekit.cloud",
         "api.retellai.com",
+    }
+
+
+def test_retell_job_allowlists_platform_simulator_livekit_signaling_and_turn(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.RETELL_LIVEKIT_URL = "wss://retell-ai.example.livekit.cloud"
+    payload = {
+        "agent": {"connector": "retell", "config": {}},
+        "security": {"allowed_egress_domains": []},
+    }
+    simulator_env = {"LIVEKIT_URL": "wss://livekit-eu.futureagi.com"}
+
+    assert _resolved_egress_domains(payload, {}, simulator_env, None) == {
+        "*.livekit.cloud",
+        "*.turn.livekit.cloud",
+        "api.retellai.com",
+        "livekit-eu.futureagi.com",
+        "coturn.turn-eu.futureagi.com",
+        "turn-eu.futureagi.com",
     }
 
 

@@ -589,7 +589,8 @@ def _add_livekit_host(domains: set[str], host: str | None) -> None:
     if host.endswith(".livekit.cloud"):
         domains.update({"*.livekit.cloud", "*.turn.livekit.cloud"})
     elif host == "livekit-eu.futureagi.com":
-        domains.add("coturn.turn-eu.futureagi.com")
+        # Self-hosted server: rtc.turn_servers (coturn) plus the built-in TURN domain.
+        domains.update({"coturn.turn-eu.futureagi.com", "turn-eu.futureagi.com"})
 
 
 def _connector_egress_domains(
@@ -820,6 +821,17 @@ def _resolved_egress_domains(
     ]
     values.extend(_provider_egress_domains(target_secrets))
     values.extend(_provider_egress_domains(simulator_env))
+    # The simulated caller rides the platform LiveKit server whenever the target connector does
+    # not supply its own (Vapi/Retell); its signaling and TURN hosts are platform config, never
+    # derivable from customer input.
+    simulator_livekit: set[str] = set()
+    _add_livekit_host(
+        simulator_livekit,
+        _hostname_from_url(
+            {str(k).upper(): v for k, v in simulator_env.items()}.get("LIVEKIT_URL")
+        ),
+    )
+    values.extend(simulator_livekit)
     values.extend(_connector_egress_domains(payload, target_secrets))
     values.extend(domain for domain in customer_domains if isinstance(domain, str))
     if callback_host:
