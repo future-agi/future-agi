@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.serializers.provider_credential import (
@@ -15,6 +14,7 @@ from agentcc.serializers.provider_credential import (
 )
 from agentcc.services.config_push import push_org_config
 from agentcc.services.url_safety import build_ssrf_safe_session, ensure_public_http_url
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -308,8 +308,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
-            url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
+            base = (base_url or "https://generativelanguage.googleapis.com").rstrip("/")
+            url = (
+                f"{base}/models"
+                if base.endswith("/v1beta")
+                else f"{base}/v1beta/models"
+            )
             resp = http.get(
                 url,
                 params={"key": api_key},
