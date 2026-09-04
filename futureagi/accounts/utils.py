@@ -377,6 +377,25 @@ def persist_pending_org_invite(
     )
 
 
+def refresh_pending_invite_expiration(organization, email):
+    """Reset the expiry of the matching PENDING OrganizationInvite for this
+    email, if one exists (#2437).
+
+    Every place that resends an invitation email must call this, or the
+    invite still reads as expired anywhere OrganizationInvite.is_expired is
+    checked (e.g. the members list), even though a fresh email went out.
+    A no-op when there's no matching invite row — not every legacy invitee
+    has one, and that's fine; resending still just re-sends their email.
+    """
+    invite = OrganizationInvite.objects.filter(
+        organization=organization,
+        target_email__iexact=email,
+        status=InviteStatus.PENDING,
+    ).first()
+    if invite:
+        invite.refresh_expiration()
+
+
 def build_invite_accept_link(user):
     """Build the accept-invite link for an inactive invited user.
 
