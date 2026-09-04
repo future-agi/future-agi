@@ -1,4 +1,5 @@
-"""``dedup_via_limit_by`` must reproduce ``spans FINAL`` exactly (TH-7226).
+"""The LIMIT 1 BY dedup (``dedup_via_limit_by`` opt-ins, and always-on for
+``get()``) must reproduce ``spans FINAL`` exactly (TH-7226).
 
 Three rules, each silent when broken: is_deleted filtered AFTER the dedup (else
 deleted rows resurrect), the full sorting key as the dedup key, and every column
@@ -44,7 +45,7 @@ def _reader_with(client) -> CHSpanReader:
 
 
 def _dedup_reads():
-    """(label, callable) for each annotation-path read that opts in."""
+    """(label, callable) for each read resolved via LIMIT 1 BY."""
     return [
         (
             "roots_by_trace_ids",
@@ -58,6 +59,9 @@ def _dedup_reads():
                 ["s1", "s2"], include_heavy=True, dedup_via_limit_by=True
             ),
         ),
+        # Always non-FINAL: a FINAL point-read's cost tracks the partition's
+        # part count, not the one target row (see CHSpanReader.get).
+        ("get", lambda r: r.get("s1", project_id="p1")),
     ]
 
 
@@ -121,6 +125,28 @@ def test_every_column_is_named_for_the_outer_projection(label, call):
         assert name in projection, f"{label}: {name} missing from the projection"
     # No bare '' stubs: the lean select's unnamed stubs cannot be projected.
     assert ", ''," not in projection
+
+
+def test_get_is_single_row_and_scoped():
+    """get() keeps its point-read contract: one row, id + tenant predicates."""
+    client = _RecordingClient()
+    _reader_with(client).get("s1", project_id="p1")
+    assert client.sql.rstrip().endswith("LIMIT 1")
+    assert "id = %(span_id)s" in client.sql
+    assert "project_id = %(pid)s" in client.sql
+    # Heavy columns stay real — eval mapping reads attributes_extra.
+    assert "'' AS attributes_extra" not in client.sql
+
+
+def test_get_unscoped_stays_non_final():
+    """get(span_id) without a tenant: one predicate, still the dedup shape."""
+    client = _RecordingClient()
+    _reader_with(client).get("s1")
+    assert "FINAL" not in client.sql
+    assert "id = %(span_id)s" in client.sql
+    assert "project_id = %(pid)s" not in client.sql
+    assert "WHERE id = %(span_id)s ORDER BY" in client.sql  # no dangling AND
+    assert client.sql.rstrip().endswith("LIMIT 1")
 
 
 # ── the constant vs the live table ─────────────────────────────────────────────

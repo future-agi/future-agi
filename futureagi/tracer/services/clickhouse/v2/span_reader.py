@@ -22,7 +22,7 @@ Design goals:
     authoritative store; the read path is meant to be pure).
   • Single small query per call (no N+1 joins). The CH schema denormalizes
     trace_session_id / org_id / project_version_id onto each span row, so
-    most eval reads need exactly one row from `spans FINAL`.
+    most eval reads need exactly one row from `spans`.
 
 CRITICAL non-goal: write back. Eval results (EvalLogger rows) still go to
 PG until that's also migrated to CH (separate task). This reader is
@@ -491,7 +491,8 @@ def _row_to_chspan(row: tuple) -> CHSpan:
 
 
 class CHSpanReader:
-    """Read-only span fetcher backed by ClickHouse `spans FINAL`.
+    """Read-only span fetcher over the ClickHouse `spans` ReplacingMergeTree
+    (resolved via FINAL or, per read, the non-FINAL `_dedup_sql` LIMIT 1 BY).
 
     Thread-safe. Holds a clickhouse-connect HTTP client; safe to share between
     threads but each `query` call holds the connection briefly. For concurrent
@@ -602,23 +603,20 @@ class CHSpanReader:
 
         ``project_id`` (optional) scopes to one tenant; omit for prior behavior.
 
-        ``id`` is below the primary-key prefix, so a bare ``id =`` read prunes
-        only via the ``idx_id`` bloom — which CH 25.3 disables under FINAL by
-        default. Without it a point-read does a full in-order merge over every
-        part and the fat ``attributes_extra`` granule buffers blow the memory
-        limit on a wide (voice) span. Re-enable skip indexes; ``id`` is stable
-        across a row's ReplacingMergeTree versions, so the bloom is safe."""
-        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        Non-FINAL: a FINAL point-read merge-reads every active part covering
+        the project's key range, so its cost tracks the partition's part count,
+        not the one target row — ~90 unmerged parts turned this lookup into a
+        multi-GiB code-241 OOM. ``_dedup_sql`` resolves the ReplacingMergeTree
+        via ``LIMIT 1 BY`` instead; without FINAL the ``idx_id`` bloom skip
+        index prunes unaided."""
         where = ["id = %(span_id)s"]
         params: dict[str, Any] = {"span_id": span_id}
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            f"WHERE {' AND '.join(where)} LIMIT 1",
+            _dedup_sql(" AND ".join(where), "LIMIT 1", include_heavy=True),
             parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if not rows:
             return None
