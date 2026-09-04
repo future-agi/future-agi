@@ -750,10 +750,19 @@ def _voice_simulator_config(
         default_tts_provider, default_tts_model = "deepgram", "aura-2-andromeda-en"
     else:
         default_tts_provider, default_tts_model = "gemini", "gemini-3.1-flash-tts-preview"
-    tts = {
-        "provider": _voice_setting("SIMULATOR_TTS_PROVIDER") or default_tts_provider,
-        "model": _voice_setting("SIMULATOR_TTS_MODEL") or default_tts_model,
-    }
+    # Provider and model have to be decided together. Overriding only the provider used to leave
+    # the model on the language branch's default, so a deepgram override on a persona whose
+    # language did not resolve sent a Gemini model name to Deepgram's socket, which answers 400
+    # and takes the call down before its first turn.
+    tts_provider = _voice_setting("SIMULATOR_TTS_PROVIDER") or default_tts_provider
+    tts_model = _voice_setting("SIMULATOR_TTS_MODEL")
+    if not tts_model:
+        tts_model = (
+            default_tts_model
+            if tts_provider == default_tts_provider
+            else _TTS_MODEL_BY_PROVIDER.get(tts_provider, default_tts_model)
+        )
+    tts = {"provider": tts_provider, "model": tts_model}
 
     return {
         "llm": {
@@ -767,6 +776,17 @@ def _voice_simulator_config(
         "stt": stt,
         "tts": tts,
     }
+
+
+# The model each TTS provider is addressed by, so an override that names only the provider still
+# gets a model that provider recognises.
+_TTS_MODEL_BY_PROVIDER = {
+    "deepgram": "aura-2-andromeda-en",
+    "gemini": "gemini-3.1-flash-tts-preview",
+    "openai": "gpt-4o-mini-tts",
+    "elevenlabs": "eleven_flash_v2_5",
+    "cartesia": "sonic-3",
+}
 
 
 def _is_english_language(language: str | None) -> bool:
