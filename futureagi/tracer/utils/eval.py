@@ -2107,9 +2107,13 @@ def evaluate_observation_span(
         return False
 
     except Exception as e:
+        # Same handling as the ValueError branch above: an unevaluated span
+        # with no eval row at all is invisible to retry/reconcile, unlike a
+        # recorded failure (see #2334).
         logger.exception(
             f"Exception during evaluation in evaluate_observation_span: {e}"
         )
+        _create_error_eval_logger(observation_span, custom_eval_config, None, str(e))
         return False
 
 
@@ -2300,9 +2304,12 @@ def evaluate_observation_span_observe(
 
         return False
     except Exception as e:
+        # Same gap as evaluate_observation_span (#2334): the sibling
+        # ValueError branch above records a failed-eval row, this one didn't.
         logger.exception(
             f"Exception during evaluation in evaluate_observation_span_observe: {e}"
         )
+        _create_error_eval_logger(observation_span, custom_eval_config, eval_task_id, e)
         return False
 
 
