@@ -74,6 +74,10 @@ export const normalizeAlertDetail = (detail = {}) => ({
   warningThresholdValue:
     detail?.warningThresholdValue ?? detail?.warning_threshold_value,
   alertFrequency: detail?.alertFrequency ?? detail?.alert_frequency,
+  // The span across every fire, aggregated server-side before the issue grid's
+  // type filter and pagination — so it stays put whichever slice is loaded.
+  windowStart: detail?.windowStart ?? detail?.window_start,
+  windowEnd: detail?.windowEnd ?? detail?.window_end,
   autoThresholdTimeWindow:
     detail?.autoThresholdTimeWindow ?? detail?.auto_threshold_time_window,
   notificationEmails: detail?.notificationEmails ?? detail?.notification_emails,
