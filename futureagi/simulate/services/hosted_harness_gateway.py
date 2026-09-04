@@ -1199,7 +1199,15 @@ class DaytonaHostedGateway:
             attempts = max(
                 1, int(getattr(settings, "ALK_HOSTED_AUTHORING_ATTEMPTS", 3))
             )
-            run_timeout = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 1500))
+            # Settings owns this and derives it from the authoring budget. The old inline default
+            # was shorter than that budget, so it, not the budget, decided when a suite died.
+            run_timeout = int(
+                getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 0)
+                or int(
+                    getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600)
+                )
+                + 300
+            )
             detail = "authoring produced no scenarios"
             for _ in range(attempts):
                 if authoring_target_secrets:

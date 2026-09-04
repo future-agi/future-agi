@@ -713,6 +713,15 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "3600")
 )
+# How long the authoring command itself may run. Read here rather than defaulted at the call site,
+# where it was never defined and therefore always fell back to a value shorter than the authoring
+# budget above: a large suite was killed by the shorter of two limits that were meant to be one.
+# Derived from that budget so the two cannot disagree, with a margin for the sandbox to pack its
+# result once the work is done.
+ALK_HOSTED_AUTHORING_TIMEOUT = int(
+    os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
+    or ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS + 300
+)
 # Daytona sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime
 # limit must never shorten fresh authoring; two hours is the hosted default/minimum.
 ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
