@@ -6,6 +6,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Collapse from "@mui/material/Collapse";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { RETRIED } from "../helpers/toolTrail";
 import TextBlock from "./TextBlock";
 
 function StatusIcon({ status }) {
@@ -25,6 +26,11 @@ function StatusIcon({ status }) {
   }
   if (status === "error") {
     return <Iconify icon="mdi:close" width={14} sx={{ color: "error.main" }} />;
+  }
+  if (status === RETRIED) {
+    return (
+      <Iconify icon="mdi:refresh" width={14} sx={{ color: "text.disabled" }} />
+    );
   }
   return null;
 }
@@ -51,7 +57,9 @@ export default function ToolCallCard({ toolCall }) {
 
   const isRunning = status === "running";
   const isError = status === "error";
-  const isCompleted = status === "completed";
+  // A step recovered on a later call: real, readable, not a failure.
+  const isRetried = status === RETRIED;
+  const isCompleted = status === "completed" || isRetried;
 
   return (
     <Box
