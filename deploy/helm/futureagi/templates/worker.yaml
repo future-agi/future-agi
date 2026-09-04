@@ -1,0 +1,66 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.fullname" . }}-worker
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.componentLabels" (dict "root" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" (dict "root" . "component" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      securityContext: {{ toYaml .Values.worker.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.backend.image) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext: {{ toYaml .Values.worker.containerSecurityContext | nindent 12 }}
+          envFrom: [{configMapRef: {name: {{ include "futureagi.fullname" . }}-env}}]
+          env:
+            - {name: SERVICE_TYPE, value: temporal-worker}
+            - {name: TEMPORAL_ALL_QUEUES, value: {{ .Values.worker.allQueues | quote }}}
+            - {name: TEMPORAL_EXCLUDED_QUEUES, value: {{ .Values.worker.excludedQueues | quote }}}
+            - {name: TEMPORAL_MAX_CONCURRENT_ACTIVITIES, value: {{ .Values.worker.maxConcurrentActivities | quote }}}
+            - {name: TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS, value: {{ .Values.worker.maxConcurrentWorkflowTasks | quote }}}
+            - {name: REGISTER_TEMPORAL_SCHEDULES, value: "false"}
+            - name: SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: django-secret-key}}
+            - name: INTEGRATION_ENCRYPTION_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: integration-encryption-key}}
+            - name: AGENTCC_INTERNAL_API_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: agentcc-internal-api-key}}
+            - name: AGENTCC_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: agentcc-admin-token}}
+            - name: PG_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: postgresql-password}}
+            - name: CH_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: clickhouse-password}}
+            - name: RABBITMQ_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: rabbitmq-password}}
+            - name: S3_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-access-key}}
+            - name: S3_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-secret-key}}
+            - name: GCS_HMAC_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-access-key}}
+            - name: GCS_HMAC_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: object-storage-secret-key}}
+            - name: CELERY_BROKER_URL
+              value: {{ printf "amqp://%s:$(RABBITMQ_PASSWORD)@%s:%v//" (ternary .Values.rabbitmq.username .Values.rabbitmq.external.username .Values.rabbitmq.enabled) (include "futureagi.rabbitmqHost" .) (ternary 5672 .Values.rabbitmq.external.port .Values.rabbitmq.enabled) | quote }}
+            {{- with .Values.config.providerEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+            {{- with .Values.config.extraEnv }}{{ toYaml . | nindent 12 }}{{- end }}
+          resources: {{ toYaml .Values.worker.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+{{- end }}
