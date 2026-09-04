@@ -150,6 +150,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "ALK_BACKGROUND_NOISE",
         "ALK_BACKGROUND_NOISE_CATALOG",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
+        # Whether this agent places calls or answers them. Voice only; chat is always inbound.
+        "ALK_CALL_DIRECTION",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
