@@ -458,13 +458,13 @@ const ManageMonitorSettings = ({
                     label={
                       selectedMetric?.output_type === "system_metric"
                         ? "Value"
-                        : "Percentage"
+                        : "Fraction (0-1)"
                     }
                     fieldName="thresholdValue"
                     placeholder={
                       selectedMetric?.output_type === "system_metric"
                         ? "Enter value"
-                        : "Enter percentage"
+                        : "Enter fraction, e.g. 0.095 for 9.5%"
                     }
                     control={control}
                     sx={{ minWidth: "162px", flex: 1 }}

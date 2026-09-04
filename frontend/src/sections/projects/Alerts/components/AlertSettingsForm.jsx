@@ -639,13 +639,6 @@ export default function AlertSettingsForm({
                             color={"text.primary"}
                             fontWeight={"fontWeightRegular"}
                           >
-                            %
-                          </Typography>
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
                             of
                           </Typography>
                         </Stack>
@@ -694,7 +687,16 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          metricType === "evaluation_metrics"
+                            ? "Value (0-1)"
+                            : "Value"
+                        }
+                        helperText={
+                          metricType === "evaluation_metrics"
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -751,13 +753,6 @@ export default function AlertSettingsForm({
                             color={"text.primary"}
                             fontWeight={"fontWeightRegular"}
                           >
-                            %
-                          </Typography>
-                          <Typography
-                            variant="s1"
-                            color={"text.primary"}
-                            fontWeight={"fontWeightRegular"}
-                          >
                             of
                           </Typography>
                         </Stack>
@@ -807,7 +802,16 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label="Value"
+                        label={
+                          metricType === "evaluation_metrics"
+                            ? "Value (0-1)"
+                            : "Value"
+                        }
+                        helperText={
+                          metricType === "evaluation_metrics"
+                            ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
+                            : undefined
+                        }
                         size="small"
                         fullWidth
                         fieldType="number"
@@ -912,13 +916,6 @@ export default function AlertSettingsForm({
                                 maxWidth: "400px",
                               }}
                             />
-                            <Typography
-                              variant="s1"
-                              color={"text.primary"}
-                              fontWeight={"fontWeightRegular"}
-                            >
-                              %
-                            </Typography>
                             <Typography
                               variant="s1"
                               color={"text.primary"}

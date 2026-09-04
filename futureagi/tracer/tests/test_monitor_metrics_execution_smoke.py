@@ -206,21 +206,56 @@ def seeded():
 
     s1, s2, s3, s4, s5 = (f"smoke-span-{uuid.uuid4().hex[:12]}" for _ in range(5))
     spans = [
-        _span(s1, observation_type="llm", status="OK", start_time=t(2),
-              latency_ms=100, total_tokens=100, provider="openai",
-              trace_session_id=sess_a),
-        _span(s2, observation_type="tool", status="ERROR", start_time=t(7),
-              latency_ms=50, total_tokens=0, provider="openai",
-              trace_session_id=sess_a),
-        _span(s3, observation_type="llm", status="OK", start_time=t(12),
-              latency_ms=300, total_tokens=200, provider="anthropic",
-              trace_session_id=strad_old),
-        _span(s4, observation_type="agent", status="OK", start_time=t(17),
-              latency_ms=10, total_tokens=0, provider="",
-              trace_session_id=strad_new),
-        _span(s5, observation_type="llm", status="ERROR", start_time=t(22),
-              latency_ms=400, total_tokens=50, provider="anthropic",
-              trace_session_id=None),
+        _span(
+            s1,
+            observation_type="llm",
+            status="OK",
+            start_time=t(2),
+            latency_ms=100,
+            total_tokens=100,
+            provider="openai",
+            trace_session_id=sess_a,
+        ),
+        _span(
+            s2,
+            observation_type="tool",
+            status="ERROR",
+            start_time=t(7),
+            latency_ms=50,
+            total_tokens=0,
+            provider="openai",
+            trace_session_id=sess_a,
+        ),
+        _span(
+            s3,
+            observation_type="llm",
+            status="OK",
+            start_time=t(12),
+            latency_ms=300,
+            total_tokens=200,
+            provider="anthropic",
+            trace_session_id=strad_old,
+        ),
+        _span(
+            s4,
+            observation_type="agent",
+            status="OK",
+            start_time=t(17),
+            latency_ms=10,
+            total_tokens=0,
+            provider="",
+            trace_session_id=strad_new,
+        ),
+        _span(
+            s5,
+            observation_type="llm",
+            status="ERROR",
+            start_time=t(22),
+            latency_ms=400,
+            total_tokens=50,
+            provider="anthropic",
+            trace_session_id=None,
+        ),
     ]
     seed_ch_spans(spans, client=client)
 
@@ -342,9 +377,7 @@ class TestMonitorMetricsExecutionSmoke:
     ):
         sql, params = _make_builder(
             eval_output_type, threshold
-        ).build_historical_stats_query(
-            "evaluation_metrics", WINDOW_START, WINDOW_END
-        )
+        ).build_historical_stats_query("evaluation_metrics", WINDOW_START, WINDOW_END)
         result = _execute(sql, params)
         assert result.row_count == 1
         row = result.data[0]
