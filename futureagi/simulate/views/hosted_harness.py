@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -15,6 +16,8 @@ from simulate.serializers.hosted_harness import (
     HarnessEventBatchResponseSerializer,
     HarnessEventBatchSerializer,
     HarnessManifestSerializer,
+    HarnessIngressRequestSerializer,
+    HarnessIngressResponseSerializer,
     HarnessResultReceiptSerializer,
     HarnessScenarioOperationResponseSerializer,
     HarnessScenarioOperationSerializer,
@@ -88,6 +91,61 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
         else:
             result = begin_scenarios(self._attempt, payload)
         return Response(result)
+
+    @validated_request(
+        request_serializer=HarnessIngressRequestSerializer,
+        responses={200: HarnessIngressResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def ingress(self, request, pk=None):
+        """Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+
+        The attempt capability authenticates the trusted ALK guest. Customer processes never
+        receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
+        """
+        from django.conf import settings
+        from daytona import Daytona, DaytonaConfig
+
+        attempt = self._attempt
+        if not attempt.provider_ref:
+            raise HostedHarnessError(
+                "sandbox_not_ready",
+                "the hosted sandbox has not been created",
+                status_code=409,
+            )
+        requested_ttl = request.validated_data["expires_in_seconds"]
+        remaining = max(60, int((attempt.expires_at - timezone.now()).total_seconds()))
+        expires_in_seconds = min(requested_ttl, remaining, 86400)
+        try:
+            client = Daytona(
+                DaytonaConfig(
+                    api_key=getattr(settings, "DAYTONA_API_KEY", ""),
+                    api_url=getattr(settings, "DAYTONA_API_URL", None),
+                    target=getattr(settings, "DAYTONA_TARGET", None),
+                    organization_id=getattr(
+                        settings, "DAYTONA_ORGANIZATION_ID", None
+                    ),
+                )
+            )
+            sandbox = client.get(str(attempt.provider_ref))
+            preview = sandbox.create_signed_preview_url(
+                request.validated_data["port"],
+                expires_in_seconds=expires_in_seconds,
+            )
+            preview_url = str(getattr(preview, "url", "") or "")
+            if not preview_url.startswith("https://"):
+                raise ValueError("signed preview URL is missing or not HTTPS")
+        except Exception as exc:
+            raise HostedHarnessError(
+                "ingress_unavailable",
+                "the hosted callback URL could not be created; retry the run",
+                status_code=502,
+                retryable=True,
+            ) from exc
+        return Response(
+            {"url": preview_url, "expires_in_seconds": expires_in_seconds}
+        )
 
     @validated_request(
         request_serializer=HarnessManifestSerializer,

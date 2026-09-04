@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ import tarfile
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,8 @@ import requests
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
+from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 from simulate.models import (
     HostedHarnessAttempt,
@@ -34,8 +38,6 @@ from simulate.services.hosted_harness import (
     register_attempt,
     request_cancellation,
 )
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 logger = logging.getLogger("simulate.hosted_harness_gateway")
 
@@ -140,6 +142,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_URL",
         "OPENAI_API_KEY",
         "SIMULATOR_STT_MODEL",
         "SIMULATOR_STT_PROVIDER",
@@ -521,47 +526,222 @@ def attach_platform_simulator_secret_refs(
 _MAX_EGRESS_DOMAINS = 20
 # RFC 1918 / loopback / link-local prefixes that must never appear in egress.
 _PRIVATE_HOST_PATTERNS = re.compile(
-    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost$)"
+    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|"
+    r"169\.254\.|localhost$|.*\.localhost$|host\.docker\.internal$|"
+    r"host\.containers\.internal$)"
 )
 _GOOGLE_REGION = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
 
+def _normalize_egress_domains(domains: Iterable[str]) -> set[str]:
+    """Normalize, deduplicate, and wildcard-minimize an egress domain collection.
+
+    Daytona treats ``*.example.com`` as a domain policy for subdomains below the
+    apex, but not for the apex itself. Keep wildcard entries themselves intact
+    while removing only concrete hosts covered by one of those entries.
+    """
+    normalized = {
+        domain.strip().lower().rstrip(".")
+        for domain in domains
+        if isinstance(domain, str) and domain.strip().rstrip(".")
+    }
+    wildcard_suffixes = {
+        domain[2:]
+        for domain in normalized
+        if domain.startswith("*.") and len(domain) > 2
+    }
+    return {
+        domain
+        for domain in normalized
+        if domain.startswith("*.")
+        or not any(domain.endswith(f".{suffix}") for suffix in wildcard_suffixes)
+    }
+
+
+def _hostname_from_url(value: Any) -> str | None:
+    """Extract a normalized hostname from an URL or host-like value."""
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    # ``urlparse`` only fills ``hostname`` for a netloc. The ``//`` form lets
+    # us accept a host-like value while retaining normal URL parsing.
+    candidate = raw if "://" in raw or raw.startswith("//") else f"//{raw}"
+    try:
+        hostname = urlparse(candidate).hostname
+    except ValueError:
+        return None
+    if not hostname:
+        return None
+    return hostname.strip().lower().rstrip(".") or None
+
+
+def _config_value(config: Mapping[str, Any], *names: str) -> str | None:
+    wanted = {name.lower() for name in names}
+    for key, value in config.items():
+        if str(key).lower() in wanted and isinstance(value, str):
+            candidate = value.strip()
+            if candidate:
+                return candidate
+    return None
+
+
+def _add_livekit_host(domains: set[str], host: str | None) -> None:
+    if not host:
+        return
+    domains.add(host)
+    if host.endswith(".livekit.cloud"):
+        domains.update({"*.livekit.cloud", "*.turn.livekit.cloud"})
+    elif host == "livekit-eu.futureagi.com":
+        domains.add("coturn.turn-eu.futureagi.com")
+
+
+def _connector_egress_domains(
+    payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
+) -> set[str]:
+    """Return connector infrastructure hosts implied by resolved run inputs.
+
+    Only static/configured endpoints are admitted here. In particular, Vapi's
+    websocket endpoint is returned by its create-call response and is therefore
+    intentionally not guessed.
+    """
+    agent = payload.get("agent") or {}
+    connector = str(agent.get("connector") or "auto").strip().lower()
+    config = agent.get("config") or {}
+    if not isinstance(config, Mapping):
+        config = {}
+    domains: set[str] = set()
+
+    # Resolve 'auto' from the creds present so LiveKit TURN/media edges are allowlisted.
+    if connector == "auto":
+        aliases = {str(name).upper() for name in secrets_map}
+        has_livekit = "LIVEKIT_URL" in aliases or bool(
+            _config_value(config, "livekit_url", "LIVEKIT_URL")
+        )
+        if has_livekit:
+            connector = "livekit"
+        elif "VAPI_API_KEY" in aliases:
+            connector = "vapi"
+        elif "RETELL_API_KEY" in aliases:
+            connector = "retell"
+
+    if connector == "livekit":
+        livekit_url = None
+        for alias, value in secrets_map.items():
+            if str(alias).upper() == "LIVEKIT_URL" and isinstance(value, str):
+                if value.strip():
+                    livekit_url = value.strip()
+                    break
+        if livekit_url is None:
+            livekit_url = _config_value(config, "livekit_url", "LIVEKIT_URL")
+        _add_livekit_host(domains, _hostname_from_url(livekit_url))
+    elif connector == "vapi":
+        domains.add("api.vapi.ai")
+        for name in (
+            "api_base_url",
+            "VAPI_API_BASE_URL",
+            "api_url",
+            "vapi_api_url",
+            "websocket_url",
+            "websocket_call_url",
+            "websocketcallurl",
+            "websocketCallUrl",
+        ):
+            value = _config_value(config, name)
+            host = _hostname_from_url(value)
+            if host:
+                domains.add(host)
+    elif connector == "retell":
+        domains.add("api.retellai.com")
+        api_url = _config_value(
+            config, "api_url", "api_base_url", "retell_api_url", "RETELL_API_URL"
+        )
+        api_host = _hostname_from_url(api_url)
+        if api_host:
+            domains.add(api_host)
+        livekit_url = _config_value(
+            config,
+            "livekit_url",
+            "LIVEKIT_URL",
+            "retell_livekit_url",
+            "RETELL_LIVEKIT_URL",
+        )
+        if livekit_url is None:
+            livekit_url = getattr(
+                settings,
+                "RETELL_LIVEKIT_URL",
+                "wss://retell-ai-4ihahnq7.livekit.cloud",
+            )
+        _add_livekit_host(domains, _hostname_from_url(livekit_url))
+    return domains
+
+
+def _validate_egress_host(domain: str) -> None:
+    host = domain[2:] if domain.startswith("*.") else domain
+    if _PRIVATE_HOST_PATTERNS.match(host):
+        raise HostedHarnessError(
+            "egress_domain_private",
+            f"private/reserved host {domain!r} is not allowed in egress",
+            status_code=400,
+        )
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_unspecified
+        or address.is_reserved
+    ):
+        raise HostedHarnessError(
+            "egress_domain_private",
+            f"private/reserved host {domain!r} is not allowed in egress",
+            status_code=400,
+        )
+
+
 def _validate_egress_domains(domains: list[str]) -> None:
-    """Reject egress lists exceeding cap or containing private/invalid hosts."""
+    """Reject customer egress lists exceeding the input cap or private hosts."""
     if len(domains) > _MAX_EGRESS_DOMAINS:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             f"at most {_MAX_EGRESS_DOMAINS} egress domains allowed, got {len(domains)}",
             status_code=400,
         )
-    for domain in domains:
-        if _PRIVATE_HOST_PATTERNS.match(domain):
-            raise HostedHarnessError(
-                "egress_domain_private",
-                f"private/reserved host {domain!r} is not allowed in egress",
-                status_code=400,
-            )
+    for domain in _normalize_egress_domains(domains):
+        _validate_egress_host(domain)
 
 
-def _validate_resolved_egress_domains(domains: set[str]) -> None:
-    """Enforce Daytona's cap after platform, provider, and customer hosts are combined."""
-    if len(domains) > _MAX_EGRESS_DOMAINS:
+def _validate_resolved_egress_domains(domains: Iterable[str]) -> None:
+    """Enforce Daytona's cap after platform, provider, and customer hosts combine."""
+    normalized = _normalize_egress_domains(domains)
+    if len(normalized) > _MAX_EGRESS_DOMAINS:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             "resolved sandbox egress requires "
-            f"{len(domains)} domains; Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            f"{len(normalized)} domains after normalization; "
+            f"Daytona supports at most {_MAX_EGRESS_DOMAINS}",
             status_code=400,
         )
+    for domain in normalized:
+        _validate_egress_host(domain)
 
 
-def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
-    """Return the minimum provider hosts implied by run-scoped credentials.
-
-    These are platform-managed dependencies of the selected credential type, not customer
-    requested egress. In particular, Vertex service-account credentials cannot work unless the
-    OAuth token endpoint and regional Vertex endpoint are reachable.
-    """
-    aliases = {name.upper().removeprefix("SIMULATOR_") for name in secrets_map}
+def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
+    """Return provider hosts implied by credential aliases and provider selectors."""
+    aliases = {str(name).upper().removeprefix("SIMULATOR_") for name in secrets_map}
+    values = {str(name).upper(): value for name, value in secrets_map.items()}
+    selected_audio_providers = {
+        str(values.get(name) or "").strip().lower()
+        for name in ("SIMULATOR_STT_PROVIDER", "SIMULATOR_TTS_PROVIDER")
+        if str(values.get(name) or "").strip()
+    }
+    selected_llm_provider = str(
+        values.get("SIMULATOR_LLM_PROVIDER") or ""
+    ).strip().lower()
     domains: set[str] = set()
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -580,12 +760,118 @@ def _provider_egress_domains(secrets_map: dict[str, str]) -> set[str]:
             "SIMULATOR_GOOGLE_CLOUD_LOCATION",
             "SIMULATOR_CLOUD_ML_REGION",
         ):
-            region = str(secrets_map.get(name) or "").strip().lower()
+            region = str(values.get(name) or "").strip().lower()
             if _GOOGLE_REGION.fullmatch(region):
                 domains.add(f"{region}-aiplatform.googleapis.com")
-    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"}:
+    if aliases & {"GEMINI_API_KEY", "GOOGLE_API_KEY"} and (
+        not selected_llm_provider
+        or selected_llm_provider in {"gemini", "google", "google-ai"}
+    ):
         domains.add("generativelanguage.googleapis.com")
+    if "VAPI_API_KEY" in aliases:
+        # Both repository-owned lifecycle commands and the direct websocket caller use Vapi's
+        # public API. Vapi's documented websocket URL is also hosted on api.vapi.ai.
+        domains.add("api.vapi.ai")
+    if "RETELL_API_KEY" in aliases:
+        # Retell web calls are created through its API, then bridged through Retell's managed
+        # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
+        # instead of asking customers to understand Daytona's network policy.
+        domains.update(
+            {
+                "api.retellai.com",
+                "*.livekit.cloud",
+                "*.turn.livekit.cloud",
+            }
+        )
+    if aliases & {"DEEPGRAM_API_KEY"} and (
+        not selected_audio_providers or "deepgram" in selected_audio_providers
+    ):
+        domains.add("api.deepgram.com")
+    if aliases & {"CARTESIA_API_KEY"} and (
+        not selected_audio_providers or "cartesia" in selected_audio_providers
+    ):
+        domains.add("api.cartesia.ai")
+    if aliases & {"OPENAI_API_KEY"} and (
+        not selected_llm_provider or selected_llm_provider == "openai"
+    ):
+        domains.add("api.openai.com")
+    if aliases & {"ANTHROPIC_API_KEY"} and (
+        not selected_llm_provider or selected_llm_provider == "anthropic"
+    ):
+        domains.add("api.anthropic.com")
     return domains
+
+
+def _resolved_egress_domains(
+    payload: Mapping[str, Any],
+    target_secrets: Mapping[str, Any] | None = None,
+    simulator_env: Mapping[str, Any] | None = None,
+    callback_host: str | None = None,
+) -> set[str]:
+    """Build Daytona's authoritative minimized domain union for one launch."""
+    target_secrets = target_secrets or {}
+    simulator_env = simulator_env or {}
+    security = payload.get("security") or {}
+    customer_domains = security.get("allowed_egress_domains") or []
+    base_domains = getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []) or []
+    if isinstance(base_domains, str):
+        base_domains = [base_domains]
+    if isinstance(customer_domains, str):
+        customer_domains = [customer_domains]
+    if callback_host:
+        callback_host = _hostname_from_url(callback_host)
+    values: list[str] = [
+        domain for domain in base_domains if isinstance(domain, str)
+    ]
+    values.extend(_provider_egress_domains(target_secrets))
+    values.extend(_provider_egress_domains(simulator_env))
+    values.extend(_connector_egress_domains(payload, target_secrets))
+    values.extend(domain for domain in customer_domains if isinstance(domain, str))
+    if callback_host:
+        values.append(callback_host)
+    return _normalize_egress_domains(values)
+
+
+_KNOWN_SIMULATOR_SECRET_ALIASES = (
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPGRAM_API_KEY",
+    "CARTESIA_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+)
+_KNOWN_SIMULATOR_CONFIG_NAMES = (
+    "SIMULATOR_LLM_PROVIDER",
+    "SIMULATOR_STT_PROVIDER",
+    "SIMULATOR_TTS_PROVIDER",
+    "GOOGLE_CLOUD_LOCATION",
+    "CLOUD_ML_REGION",
+)
+
+
+def _known_simulator_egress_inputs() -> dict[str, str]:
+    """Read deployment env presence and non-secret selectors for admission checks."""
+    values: dict[str, str] = {}
+    configured = getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {}) or {}
+    for alias, env_name in configured.items():
+        raw = str(os.getenv(str(env_name), "") or "")
+        if raw:
+            upper_alias = str(alias).upper()
+            values[str(alias)] = (
+                raw
+                if "LOCATION" in upper_alias or "REGION" in upper_alias
+                else ""
+            )
+    for alias in _KNOWN_SIMULATOR_SECRET_ALIASES:
+        if os.getenv(alias):
+            values.setdefault(alias, "")
+    for name in _KNOWN_SIMULATOR_CONFIG_NAMES:
+        value = str(os.getenv(name) or "").strip()
+        if value:
+            values[name] = value
+    return values
 
 
 def _persist_bundle_stage_outputs(
@@ -762,6 +1048,21 @@ class DaytonaHostedGateway:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
 
+        # An imported provider target is part of the agent source of truth. Give the isolated
+        # authoring control process only the one provider credential it needs to fetch a
+        # read-only, sanitized behavioral profile. It is uploaded as a one-shot file rather than
+        # put in the model environment, and the guest deletes it before any model/source process
+        # starts.
+        authoring_target_secrets, connector = _provider_import_authoring_material(
+            job, payload
+        )
+        logger.info(
+            "hosted authoring provider profile job=%s connector=%s credential=%s",
+            job.id,
+            connector or "none",
+            "available" if authoring_target_secrets else "unavailable",
+        )
+
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
@@ -793,8 +1094,20 @@ class DaytonaHostedGateway:
                 )
             )
         )[:20]
+        if authoring_target_secrets:
+            provider_domain = {
+                "vapi": "api.vapi.ai",
+                "retell": "api.retellai.com",
+            }.get(connector)
+            if provider_domain and provider_domain not in allowed_domains:
+                allowed_domains = [provider_domain, *allowed_domains][:20]
         authoring_env = {
-            **simulator_env,
+            **{
+                name: value
+                for name, value in simulator_env.items()
+                if name
+                not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
+            },
             "CLAUDE_CODE_USE_VERTEX": "1",
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
@@ -859,6 +1172,13 @@ class DaytonaHostedGateway:
                     simulator_vertex_credentials,
                     _SIMULATOR_VERTEX_CREDENTIALS_PATH,
                 )
+            authoring_secrets_arg = ""
+            if authoring_target_secrets:
+                authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
+                authoring_secrets_arg = (
+                    f" --target-secrets {authoring_secrets_path}"
+                    " --provider-profile-cache /work/provider-import-profile.json"
+                )
             prepared = sandbox.process.exec(
                 "tar -xzf /work/source.tar.gz -C /work && rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source",
@@ -882,10 +1202,38 @@ class DaytonaHostedGateway:
             run_timeout = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 1500))
             detail = "authoring produced no scenarios"
             for _ in range(attempts):
+                if authoring_target_secrets:
+                    # The guest consumes and deletes this credential before invoking the model.
+                    # If inspection itself fails, authoring retries need a fresh one-shot copy.
+                    # Once the sanitized cache exists, never upload the credential again: this
+                    # keeps it out of subsequent model sessions and out of the frozen archive.
+                    cached_profile = sandbox.process.exec(
+                        "test -f /work/provider-import-profile.json", timeout=30
+                    )
+                    if cached_profile.exit_code:
+                        sandbox.fs.upload_file(
+                            json.dumps(
+                                authoring_target_secrets,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode(),
+                            authoring_secrets_path,
+                        )
+                        protected = sandbox.process.exec(
+                            f"chmod 600 {authoring_secrets_path}", timeout=30
+                        )
+                        if protected.exit_code:
+                            raise HostedHarnessError(
+                                "authoring_secret_prepare_failed",
+                                str(protected.result or "")[-500:],
+                                status_code=502,
+                                retryable=True,
+                            )
                 run = sandbox.process.exec(
                     "rm -rf /work/authoring && "
                     "python -m fi.alk.harness.authoring_entrypoint /work/job.json "
-                    "--source /work/source --output /work/authoring",
+                    "--source /work/source --output /work/authoring"
+                    + authoring_secrets_arg,
                     env=authoring_env,
                     timeout=run_timeout,
                 )
@@ -952,7 +1300,8 @@ class DaytonaHostedGateway:
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "$(ls -d world.sqlite schema.sql store.json collections.json "
-                "contract.json environment.json scenarios.json simulator_prompt.md "
+                "contract.json environment.json provider-import-profile.json "
+                "scenarios.json simulator_prompt.md "
                 "scenarios handlers 2>/dev/null)",
                 timeout=180,
             )
@@ -1000,7 +1349,26 @@ class DaytonaHostedGateway:
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
-        dispatch_payload = prepare_dispatch_payload(payload, secrets_map)
+        authoring_target_secrets, _authoring_connector = (
+            _provider_import_authoring_material(job, payload)
+            if authoring_archive is None
+            else ({}, "")
+        )
+        dispatch_payload = prepare_dispatch_payload(
+            payload, secrets_map, simulator_secrets=simulator_env
+        )
+        platform_host = _hostname_from_url(endpoint_base_url)
+        allowed_domains = _resolved_egress_domains(
+            payload,
+            secrets_map,
+            simulator_env,
+            platform_host,
+        )
+        # Validate customer inputs independently so their existing API-level cap and
+        # private-host protection remain fail-closed; the resolved cap is checked
+        # after wildcard minimization and provider/connector additions.
+        _validate_egress_domains(payload["security"]["allowed_egress_domains"])
+        _validate_resolved_egress_domains(allowed_domains)
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
@@ -1033,16 +1401,6 @@ class DaytonaHostedGateway:
             authoring_seconds + payload["runtime"]["max_duration_seconds"] + 120,
         )
         ttl_minutes = max(1, (ttl_seconds + 59) // 60)
-        platform_host = urlparse(endpoint_base_url).hostname
-        allowed_domains = set(getattr(settings, "ALK_HOSTED_BASE_EGRESS_DOMAINS", []))
-        allowed_domains.update(_provider_egress_domains(secrets_map))
-        allowed_domains.update(_provider_egress_domains(simulator_env))
-        allowed_domains.update(payload["security"]["allowed_egress_domains"])
-        if platform_host:
-            allowed_domains.add(platform_host)
-        # Egress union validation: cap at 20 user-supplied domains.
-        _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
         # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
         # domain-allowlist cannot express when media and signaling resolve to different IPs. When
         # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
@@ -1105,6 +1463,20 @@ class DaytonaHostedGateway:
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
                 "/run/futureagi/secrets.json",
             )
+            authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
+            if authoring_target_secrets:
+                # Imported provider configuration is source material for authoring. Give the
+                # control process only the matching provider key in a one-shot file; ALK removes
+                # it before any model or source process starts. The normal target secret remains
+                # separately available to the eventual provider lifecycle process.
+                sandbox.fs.upload_file(
+                    json.dumps(
+                        authoring_target_secrets,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                    authoring_secrets_path,
+                )
             sandbox.fs.upload_file(
                 json.dumps(
                     simulator_env, sort_keys=True, separators=(",", ":")
@@ -1151,6 +1523,8 @@ class DaytonaHostedGateway:
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
                 "/run/futureagi/capabilities.json "
                 f"{_SIMULATOR_SECRETS_PATH} "
+                + (authoring_secrets_path if authoring_target_secrets else "")
+                + " "
                 + (
                     _SIMULATOR_VERTEX_CREDENTIALS_PATH
                     if simulator_vertex_credentials is not None
@@ -1187,6 +1561,12 @@ class DaytonaHostedGateway:
                 f"{name}={shlex.quote(value)}"
                 for name, value in sorted(authoring_exports.items())
             )
+            provider_profile_args = (
+                f"--target-secrets {authoring_secrets_path} "
+                "--provider-profile-cache /work/provider-import-profile.json "
+                if authoring_target_secrets
+                else ""
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SessionExecuteRequest(
@@ -1195,7 +1575,9 @@ class DaytonaHostedGateway:
                         + "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        f"--adjustments {_ADJUSTMENTS_PATH}; "
+                        f"--adjustments {_ADJUSTMENTS_PATH} "
+                        + provider_profile_args
+                        + "; "
                         "fi && "
                         "python -m fi.alk.harness.bundle_author_v2 "
                         "--job /work/job.json --source /work/source "
@@ -2086,8 +2468,30 @@ def resolve_authored_connector(payload: dict[str, Any], body: bytes) -> dict[str
     return resolved
 
 
+def _provider_import_authoring_material(
+    job: HostedHarnessJob, payload: dict[str, Any]
+) -> tuple[dict[str, str], str]:
+    """Resolve only the provider key needed for read-only imported-target inspection."""
+    agent = payload.get("agent") or {}
+    connector = str(agent.get("connector") or "").strip().lower()
+    if str(agent.get("mode") or "") != "provider_import":
+        return {}, connector
+    secret_name = {
+        "vapi": "VAPI_API_KEY",
+        "retell": "RETELL_API_KEY",
+    }.get(connector)
+    if not secret_name:
+        return {}, connector
+    resolved = PlatformSecretResolver().resolve(job)
+    value = str(resolved.get(secret_name) or "")
+    return ({secret_name: value} if value else {}), connector
+
+
 def prepare_dispatch_payload(
-    payload: dict[str, Any], secrets_map: dict[str, str]
+    payload: dict[str, Any],
+    secrets_map: dict[str, str],
+    *,
+    simulator_secrets: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Add non-secret connector configuration derived from run-scoped secrets.
 
@@ -2100,12 +2504,19 @@ def prepare_dispatch_payload(
     dispatched = dict(payload)
     agent = dict(dispatched.get("agent") or {})
     config = dict(agent.get("config") or {})
-    if (
-        str(agent.get("connector") or "").lower() == "livekit"
-        and not config.get("livekit_url")
-        and secrets_map.get("LIVEKIT_URL")
-    ):
-        config["livekit_url"] = secrets_map["LIVEKIT_URL"]
+    connector = str(agent.get("connector") or "").lower()
+    # LiveKit targets use the customer's signaling URL. Provider-hosted voice
+    # targets are dialed by our simulator and therefore use the platform-owned
+    # LiveKit URL from the isolated simulator channel.
+    livekit_url = (
+        secrets_map.get("LIVEKIT_URL")
+        if connector == "livekit"
+        else (simulator_secrets or {}).get("LIVEKIT_URL")
+    )
+    if connector in {"livekit", "vapi", "retell"} and not config.get(
+        "livekit_url"
+    ) and livekit_url:
+        config["livekit_url"] = livekit_url
         agent["config"] = config
         dispatched["agent"] = agent
     return dispatched

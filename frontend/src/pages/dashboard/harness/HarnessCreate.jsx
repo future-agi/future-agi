@@ -44,7 +44,12 @@ import {
 } from "./credentialValues";
 import { errorMessage, readable, stages } from "./harnessShared";
 import { prepareSourceFolder } from "./sourceUpload";
-import { parseGitHubInput } from "./requestMapper";
+import {
+  deriveEgressDomains,
+  mergeEgressDomains,
+  parseEgressDomains,
+  parseGitHubInput,
+} from "./requestMapper";
 
 // Uploaded agent folders are often only a few KiB, and a fixed MiB unit rounds
 // every one of those to "0.0 MiB". Scale the unit to the actual size instead.
@@ -164,6 +169,9 @@ export default function HarnessCreate() {
   const [githubRepository, setGithubRepository] = useState("");
   const [githubVisibility, setGithubVisibility] = useState("public");
   const [githubInstallationId, setGithubInstallationId] = useState("");
+  const [connector, setConnector] = useState("auto");
+  const [providerMode, setProviderMode] = useState("environment_backed");
+  const [providerTargetId, setProviderTargetId] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
   const [preflight, setPreflight] = useState(null);
   // A changed input does not invalidate what preflight already told us — it just means the
@@ -180,6 +188,7 @@ export default function HarnessCreate() {
   const [environmentValues, setEnvironmentValues] = useState({});
   const [environmentText, setEnvironmentText] = useState("");
   const [environmentError, setEnvironmentError] = useState("");
+  const [additionalEgressDomains, setAdditionalEgressDomains] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
@@ -261,46 +270,33 @@ export default function HarnessCreate() {
       ]),
     );
 
-  // Derive the per-job egress allowlist from any URL-valued env/config the user supplied
-  // (e.g. LIVEKIT_URL -> its media host). Platform-common hosts (TURN, provider APIs) are
-  // added by the backend base egress; this only carries agent-declared, publicly-routable hosts.
-  const deriveEgressDomains = (...maps) => {
-    const hosts = new Set();
-    for (const map of maps) {
-      for (const value of Object.values(map || {})) {
-        if (typeof value !== "string") continue;
-        const trimmed = value.trim();
-        if (!/^(wss?|https?):\/\//i.test(trimmed)) continue;
-        let host = "";
-        try {
-          host = new URL(trimmed).hostname;
-        } catch {
-          continue;
-        }
-        if (
-          !host ||
-          host === "localhost" ||
-          host === "host.docker.internal" ||
-          host === "::1" ||
-          host.startsWith("127.") ||
-          host.startsWith("10.") ||
-          host.startsWith("192.168.") ||
-          host.startsWith("169.254.") ||
-          /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-        )
-          continue;
-        hosts.add(host);
-      }
-    }
-    return Array.from(hosts);
-  };
-
   const hostedPayload = (secretRefs = {}) => ({
     schema_version: "futureagi.harness-job.v1",
     source: sourcePayload(),
     agent: {
-      connector: "auto",
-      config: configurationValues,
+      connector,
+      ...(connector === "vapi" || connector === "retell"
+        ? { mode: providerMode }
+        : {}),
+      config: {
+        ...configurationValues,
+        ...(connector === "vapi" && providerMode === "connect_only"
+          ? { assistant_id: providerTargetId.trim() }
+          : {}),
+        ...(connector === "vapi" && providerMode === "provider_import"
+          ? { assistant_id: providerTargetId.trim() }
+          : {}),
+        ...(connector === "retell" && providerMode === "connect_only"
+          ? { agent_id: providerTargetId.trim() }
+          : {}),
+        ...(connector === "retell" && providerMode === "provider_import"
+          ? { agent_id: providerTargetId.trim() }
+          : {}),
+        ...(providerMode === "environment_backed" &&
+        (connector === "vapi" || connector === "retell")
+          ? { lifecycle_manifest: "alk.yaml" }
+          : {}),
+      },
       secret_refs: { ...secretFileRefs, ...secretRefs },
     },
     scenario_count: Number(scenarioCount),
@@ -318,7 +314,10 @@ export default function HarnessCreate() {
       read_only_source: true,
       allow_privileged: false,
       allow_host_runtime_control: false,
-      allowed_egress_domains: deriveEgressDomains(configurationValues, environmentValues),
+      allowed_egress_domains: mergeEgressDomains(
+        deriveEgressDomains(configurationValues, environmentValues),
+        parseEgressDomains(additionalEgressDomains),
+      ),
     },
     retry: {
       max_infrastructure_attempts: 2,
@@ -488,6 +487,20 @@ export default function HarnessCreate() {
   const detectedRequirements = requirements.filter(
     (item) => item.status !== "missing",
   );
+  const providerApiKeyName =
+    connector === "vapi"
+      ? "VAPI_API_KEY"
+      : connector === "retell"
+        ? "RETELL_API_KEY"
+        : null;
+  const providerApiKeyConfigured =
+    !providerApiKeyName ||
+    Boolean(String(environmentValues[providerApiKeyName] || "").trim());
+  const providerTargetConfigured =
+    !["connect_only", "provider_import"].includes(providerMode) ||
+    Boolean(providerTargetId.trim());
+  const providerConnectionReady =
+    providerApiKeyConfigured && providerTargetConfigured;
   const toggleSecret = (name) =>
     setRevealedSecrets((current) => {
       const next = new Set(current);
@@ -1079,7 +1092,8 @@ export default function HarnessCreate() {
                         sx={{ display: "none" }}
                       />
                     </Button>
-                    {Object.keys(environmentValues).length > 0 && (
+                    {(Object.keys(environmentValues).length > 0 ||
+                      additionalEgressDomains.trim()) && (
                       <Button
                         color="inherit"
                         onClick={() => {
@@ -1088,6 +1102,7 @@ export default function HarnessCreate() {
                           setSecretFileRefs({});
                           setSecretFileUploads({});
                           setEnvironmentText("");
+                          setAdditionalEgressDomains("");
                           setPreflightDirty(Boolean(preflight));
                         }}
                       >
@@ -1095,6 +1110,18 @@ export default function HarnessCreate() {
                       </Button>
                     )}
                   </Stack>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Additional egress domains"
+                    placeholder="api.example.com, turn.example.com"
+                    value={additionalEgressDomains}
+                    helperText="Comma/newline-separated public hostnames for hardcoded APIs/TURN endpoints. Daytona maximum is enforced server-side."
+                    onChange={(event) => {
+                      setAdditionalEgressDomains(event.target.value);
+                      setPreflightDirty(Boolean(preflight));
+                    }}
+                  />
                   {Object.keys(environmentValues).length > 0 && (
                     <Stack
                       direction="row"
@@ -1122,6 +1149,108 @@ export default function HarnessCreate() {
                     <Alert severity="error" variant="outlined">
                       {environmentError}
                     </Alert>
+                  )}
+                </Stack>
+              </Section>
+
+              <Section
+                title="Agent connection"
+                description="Let ALK detect the runtime, or explicitly test an agent hosted by Vapi or Retell."
+              >
+                <Stack spacing={1.5}>
+                  <TextField
+                    select
+                    size="small"
+                    label="Agent platform"
+                    value={connector}
+                    onChange={(event) => {
+                      setConnector(event.target.value);
+                      setPreflightDirty(Boolean(preflight));
+                    }}
+                    sx={{ maxWidth: 320 }}
+                  >
+                    <MenuItem value="auto">Detect from repository</MenuItem>
+                    <MenuItem value="livekit">LiveKit</MenuItem>
+                    <MenuItem value="vapi">Vapi</MenuItem>
+                    <MenuItem value="retell">Retell</MenuItem>
+                  </TextField>
+
+                  {(connector === "vapi" || connector === "retell") && (
+                    <>
+                      <Box
+                        role="radiogroup"
+                        aria-label="Provider target setup"
+                        sx={{
+                          display: "grid",
+                          gap: 1.5,
+                          gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                        }}
+                      >
+                        <SourceTile
+                          icon="solar:code-square-linear"
+                          title="Create from repository code"
+                          description="Run alk.yaml to create an isolated temporary agent and remove it after testing."
+                          selected={providerMode === "environment_backed"}
+                          onSelect={() => {
+                            setProviderMode("environment_backed");
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                        />
+                        <SourceTile
+                          icon="solar:copy-linear"
+                          title="Clone and rewire agent ID"
+                          description="Copy the provider definition, point its HTTP tools at this isolated environment, then delete the copy."
+                          selected={providerMode === "provider_import"}
+                          onSelect={() => {
+                            setProviderMode("provider_import");
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                        />
+                        <SourceTile
+                          icon="solar:link-circle-linear"
+                          title="Use existing agent ID"
+                          description="Connect to the existing provider agent without changing or cloning it."
+                          selected={providerMode === "connect_only"}
+                          onSelect={() => {
+                            setProviderMode("connect_only");
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                        />
+                      </Box>
+                      {["connect_only", "provider_import"].includes(providerMode) ? (
+                        <TextField
+                          size="small"
+                          label={
+                            connector === "vapi"
+                              ? "Vapi assistant ID"
+                              : "Retell agent ID"
+                          }
+                          value={providerTargetId}
+                          onChange={(event) => {
+                            setProviderTargetId(event.target.value);
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                          helperText={
+                            providerMode === "provider_import"
+                              ? `ALK clones this target, rewires custom HTTP tools to the uploaded repository environment, and cleans up the clone. Supply the matching ${connector === "vapi" ? "VAPI_API_KEY" : "RETELL_API_KEY"} below.`
+                              : `The matching ${connector === "vapi" ? "VAPI_API_KEY" : "RETELL_API_KEY"} must be supplied below.`
+                          }
+                        />
+                      ) : (
+                        <Alert severity="info" variant="outlined">
+                          The repository must include alk.yaml with explicit provision and
+                          destroy commands. ALK supplies world URLs and the provider API key;
+                          your code owns the complete agent definition.
+                        </Alert>
+                      )}
+                      {!providerApiKeyConfigured && (
+                        <Alert severity="warning" variant="outlined">
+                          Add {providerApiKeyName} in Environment values and click
+                          Use values before starting. ALK stores it as a run-scoped
+                          secret and never writes it into the job or bundle.
+                        </Alert>
+                      )}
+                    </>
                   )}
                 </Stack>
               </Section>
@@ -1167,7 +1296,7 @@ export default function HarnessCreate() {
                       submitting,
                       checking,
                       uploadingSecretFile,
-                    })
+                    }) || !providerConnectionReady
                   }
                   onClick={run}
                   startIcon={

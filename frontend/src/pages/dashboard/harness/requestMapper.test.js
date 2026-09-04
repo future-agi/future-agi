@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildJobPayload,
+  deriveEgressDomains,
   MAX_SCENARIO_COUNT,
+  mergeEgressDomains,
+  parseEgressDomains,
   parseGitHubInput,
   unsupportedCredentialWarnings,
 } from "./requestMapper";
@@ -64,6 +67,62 @@ describe("parseGitHubInput", () => {
   it("returns null for unparseable input", () => {
     expect(parseGitHubInput("not-a-url")).toBeNull();
     expect(parseGitHubInput("https://gitlab.com/owner/repo")).toBeNull();
+  });
+});
+
+describe("deriveEgressDomains", () => {
+  it("derives the exact hostname from a LiveKit signaling URL", () => {
+    expect(
+      deriveEgressDomains({
+        LIVEKIT_URL: "wss://Project.LiveKit.Cloud/rtc",
+      }),
+    ).toEqual(["project.livekit.cloud"]);
+  });
+
+  it("rejects localhost, private, loopback, and link-local URL hosts", () => {
+    expect(
+      deriveEgressDomains({
+        PUBLIC_URL: "https://api.example.com",
+        LOCALHOST_URL: "http://localhost:8080",
+        DOCKER_URL: "http://host.docker.internal:8080",
+        LOOPBACK_URL: "http://127.0.0.1:8080",
+        RFC1918_10_URL: "http://10.0.0.4",
+        RFC1918_172_URL: "http://172.16.0.4",
+        RFC1918_192_URL: "http://192.168.0.4",
+        LINK_LOCAL_URL: "http://169.254.10.4",
+        IPV6_LOOPBACK_URL: "http://[::1]",
+        IPV6_LINK_LOCAL_URL: "http://[fe80::1]",
+      }),
+    ).toEqual(["api.example.com"]);
+  });
+});
+
+describe("parseEgressDomains", () => {
+  it("parses, normalizes, and exact-deduplicates comma/newline input", () => {
+    expect(
+      parseEgressDomains(
+        " API.Example.com. ,\nturn.example.com\napi.example.com\n\n",
+      ),
+    ).toEqual(["api.example.com", "turn.example.com"]);
+  });
+
+  it("ignores schemes, paths, and malformed entries", () => {
+    expect(
+      parseEgressDomains(
+        "https://api.example.com/path, turn.example.com/path, *.example.com, not a host, api.example.com",
+      ),
+    ).toEqual(["api.example.com"]);
+  });
+});
+
+describe("mergeEgressDomains", () => {
+  it("merges derived and explicit domains into a stable exact-host list", () => {
+    expect(
+      mergeEgressDomains(
+        ["media.example.com", "API.Example.com"],
+        parseEgressDomains("api.example.com\nturn.example.com."),
+      ),
+    ).toEqual(["api.example.com", "media.example.com", "turn.example.com"]);
   });
 });
 
