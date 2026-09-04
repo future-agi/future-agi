@@ -65,6 +65,11 @@ services:
       # torch-loaded thread, so the default reserves memory nothing uses.
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: "5"
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: "5"
+  worker-exact-aggregation:
+    restart: "no"
+    # Root compose pins this one to a single activity slot, so it carries far
+    # less in flight than the generic worker above and needs less headroom.
+    mem_limit: 1200m
   postgres:
     # ~0.97 GiB of this cgroup is reclaimable page cache, so the limit shrinks
     # the footprint rather than risking a kill.

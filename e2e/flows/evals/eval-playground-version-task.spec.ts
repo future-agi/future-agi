@@ -21,7 +21,7 @@ interface CreatedId { result: { id: string } }
 interface EvalVersionsResponse { result: { versions: { id: string; version_number: number; is_default: boolean }[] } }
 interface EvalResultRow {
   status: string;
-  output_bool: number | null;
+  output_bool: boolean | number | null;
   eval_explanation: string | null;
   output_metadata: string;
 }
@@ -187,7 +187,7 @@ test('EVAL-E2E-020: save a new eval version from the detail page and confirm an 
     }, POLL.CDC_VISIBLE).toBe('completed');
 
     // V1 said Fail; only V2 says Pass — this is the whole point of the flow.
-    expect(row?.output_bool).toBe(1);
+    expect([true, 1]).toContain(row?.output_bool);
     expect(row?.eval_explanation).toBe(`${verdict} v2 saw llm`);
     const metadata = JSON.parse(row?.output_metadata ?? '{}') as { usage?: Record<string, number> };
     expect(metadata.usage).toEqual(MOCK_USAGE);

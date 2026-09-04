@@ -12,6 +12,12 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # separately in `up` (compose --wait treats an exiting service as a failure).
 SERVICES=(frontend backend worker postgres clickhouse redis rabbitmq minio
   temporal agentcc-gateway fi-collector mock-llm
+  # The ALL_QUEUES worker above deliberately skips exact_aggregation
+  # (_DEDICATED_TASK_QUEUES in start_temporal_worker.py), so this dedicated one
+  # is the only thing that runs it. Without it every exact analytics read (eval
+  # usage, dashboards, observe) schedules a workflow nothing polls, and the UI
+  # sits on "Still preparing exact results" forever.
+  worker-exact-aggregation
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
   # nothing depends_on peerdb-minio, but the CH peer validates by writing to
   # it and every mirror sync stages through it — without it ch_dest is never
