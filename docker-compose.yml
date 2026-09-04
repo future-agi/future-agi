@@ -72,7 +72,6 @@ x-backend-env: &backend-env
   # Read by the gateway from its own process env, so it has to reach whichever service
   # provisions the sandbox rather than just the simulation worker.
   HARNESS_PARALLEL_SCENARIOS: ${HARNESS_PARALLEL_SCENARIOS:-}
-  ALK_CALL_DIRECTION: ${ALK_CALL_DIRECTION:-}
   ALK_DAYTONA_SNAPSHOT_DIGEST: ${ALK_DAYTONA_SNAPSHOT_DIGEST:-}
 
   # LLM gateway + code sandbox + embedding service
