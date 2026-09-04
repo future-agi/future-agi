@@ -7,7 +7,6 @@ import requests
 # from accounts.models.user_permissions import UserPermission
 import structlog
 from django.core.cache import cache
-from django.db.models import Q
 from django.http import HttpResponse, HttpResponseRedirect
 from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode
@@ -27,6 +26,7 @@ from accounts.models.auth_token import (
     AuthToken,
     AuthTokenType,
 )
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.utils import first_signup, get_request_organization, is_work_email
 from analytics.utils import (
@@ -49,6 +49,7 @@ from saml2_auth.serializers import (
     SAMLUrlResponseSerializer,
 )
 from tfc.middleware.workspace_context import get_current_organization
+from tfc.permissions.rbac import IsOrganizationAdmin
 
 # from user.permissions_manager import PermissionManager
 # from authentications.programatic_authentication import IsAuthenticated
@@ -151,8 +152,7 @@ except Exception:
     import urllib.parse
 
 
-def _get_metadata(alias):
-    saml_metadata_model = SAMLMetadataModel.objects.filter(identity_type=alias).first()
+def _get_metadata(saml_metadata_model):
     meta_dir = os.path.join(
         BASE_DIR,
         "metadata",
@@ -167,8 +167,8 @@ def _get_metadata(alias):
     return {"local": [meta_file_path]}, saml_metadata_model.identity_type
 
 
-def _get_saml_client(alias, acs_url):
-    metadata, identity_type = _get_metadata(alias)
+def _get_saml_client(saml_metadata_model, acs_url):
+    metadata, identity_type = _get_metadata(saml_metadata_model)
     saml_settings = {
         "metadata": metadata,
         "service": {
@@ -248,13 +248,11 @@ class ACSView(APIView):
         try:
             resp = request.POST.get("SAMLResponse", None)
             relay_state = request.POST.get("RelayState", "None Provided")
-            saml_obj = SAMLMetadataModel.objects.get(relay_state=relay_state)
-            if not saml_obj:
-                raise Exception("RelayState No Valid")
-
-            saml_client, identity_type = _get_saml_client(
-                saml_obj.identity_type, get_assertion_url
+            saml_obj = SAMLMetadataModel.objects.get(
+                relay_state=relay_state, deleted=False, is_enabled=True
             )
+
+            saml_client, identity_type = _get_saml_client(saml_obj, get_assertion_url)
 
             if not resp:
                 raise Exception("Unauthorised")
@@ -314,13 +312,19 @@ class ACSView(APIView):
 
             # user_name = authn_response.get_subject().text
 
-            user_model = User.objects.filter(email=user_email).get()
+            user_model = User.objects.get(email=user_email)
 
             if not user_model.is_active:
                 raise Exception("User is no longer active.")
 
-            user_model.organization = saml_obj.organization
-            user_model.save()
+            if not OrganizationMembership.no_workspace_objects.filter(
+                user=user_model,
+                organization=saml_obj.organization,
+                is_active=True,
+                deleted=False,
+            ).exists():
+                raise Exception("User does not belong to this organization.")
+
             access_token = AuthToken.objects.create(
                 user=user_model,
                 auth_type=AuthTokenType.ACCESS.value,
@@ -392,16 +396,15 @@ class IDPLoginView(APIView):
                 logger.info("User Not Found")
                 return self._gm.bad_request(msg)
 
-            org_name = (get_current_organization() or user.organization).name
+            organization = get_current_organization() or user.organization
             saml_data = SAMLMetadataModel.objects.filter(
-                Q(relay_state__istartswith=f"{org_name}")
+                organization=organization, deleted=False, is_enabled=True
             ).first()
 
             if not saml_data:
                 logger.info("Saml Data does not Exist")
                 return self._gm.bad_request(msg)
 
-            alias = saml_data.identity_type
             next_url = request.GET.get("next", default_next_url)
 
             try:
@@ -413,7 +416,9 @@ class IDPLoginView(APIView):
                 next_url = request.GET.get("next", default_next_url)
             request.session["login_next_url"] = next_url
 
-            saml_client, identity_type = _get_saml_client(alias, get_assertion_url)
+            saml_client, identity_type = _get_saml_client(
+                saml_data, get_assertion_url
+            )
             _, info = saml_client.prepare_for_authenticate()
 
             redirect_url = None
@@ -467,13 +472,20 @@ class IDPUploadViews(viewsets.ModelViewSet):
     _gm = GeneralMethods()
     parser_classes = (FormParser, MultiPartParser)
     # authentication_classes = (ProgrammaticAuthentication,)
-    permission_classes = (IsAuthenticated,)
-    # rbac = 'idp'
+    permission_classes = (IsAuthenticated, IsOrganizationAdmin)
     queryset = SAMLMetadataModel.objects.filter(deleted=False)
     lookup_field = "id"
     lookup_url_kwarg = "id"
     http_method_names = ["get", "post", "head", "delete", "options", "put"]
     parser_classes = (FormParser, MultiPartParser)
+
+    def get_queryset(self):
+        organization = get_request_organization(self.request)
+        if organization is None:
+            return SAMLMetadataModel.objects.none()
+        return SAMLMetadataModel.objects.filter(
+            deleted=False, organization=organization
+        )
 
     def get_serializer_class(self):
         if self.request.method == "GET":
@@ -521,31 +533,17 @@ class IDPUploadViews(viewsets.ModelViewSet):
         }
     )
     def retrieve(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            data = {}
-            existing_saml_metadata_model = SAMLMetadataModel.objects.get(
-                id=uuid, deleted=False
-            )
-            if existing_saml_metadata_model:
-                data["is_enabled"] = existing_saml_metadata_model.is_enabled
-                data["identity_type"] = existing_saml_metadata_model.identity_type
-                name = existing_saml_metadata_model.name
-                if (
-                    not existing_saml_metadata_model.name
-                    or existing_saml_metadata_model.name == "null"
-                ):
-                    name = existing_saml_metadata_model.get_identity_type
-                data["name"] = name
-                data["acs_url"] = get_assertion_url
-                data["audience_url"] = get_entity_id
-            return self._gm.success_response(data)
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            logger.error(e)
-            traceback.print_exc()
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        existing_saml_metadata_model = self.get_object()
+        data = {
+            "is_enabled": existing_saml_metadata_model.is_enabled,
+            "identity_type": existing_saml_metadata_model.identity_type,
+            "name": existing_saml_metadata_model.name,
+            "acs_url": get_assertion_url,
+            "audience_url": get_entity_id,
+        }
+        if not data["name"] or data["name"] == "null":
+            data["name"] = existing_saml_metadata_model.get_identity_type
+        return self._gm.success_response(data)
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -592,18 +590,11 @@ class IDPUploadViews(viewsets.ModelViewSet):
         }
     )
     def destroy(self, request, *args, **kwargs):
-        try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
-            obj = SAMLMetadataModel.objects.get(id=uuid)
-            obj.deleted = True
-            obj.deleted_at = datetime.datetime.now()
-            obj.save()
-            return self._gm.success_response("Success")
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
-        except Exception as e:
-            logger.error(e)
-            return self._gm.internal_server_error_response(get_error_message("US25"))
+        obj = self.get_object()
+        obj.deleted = True
+        obj.deleted_at = timezone.now()
+        obj.save(update_fields=["deleted", "deleted_at", "updated_at"])
+        return self._gm.success_response("Success")
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -616,14 +607,13 @@ class IDPUploadViews(viewsets.ModelViewSet):
         },
     )
     def update(self, request, *args, **kwargs):
+        saml_model = self.get_object()
         try:
-            uuid = kwargs.get(self.lookup_url_kwarg)
             form = IDPUploadForm(request.POST, request.FILES)
-            saml_model = SAMLMetadataModel.objects.filter(id=uuid, deleted=False).get()
             if not form.is_valid():
                 return self._gm.bad_request(_format_form_errors(form.errors))
             data = form.cleaned_data
-            data["organization"] = get_request_organization(request)
+            data.pop("organization", None)
             if int(saml_model.identity_type) != int(
                 data.get("identity_type")
             ) and not data.get("file"):
@@ -634,10 +624,8 @@ class IDPUploadViews(viewsets.ModelViewSet):
                     data["meta"] = meta.decode()
                 except Exception:
                     logger.info("No file in update SSO.")
-            SAMLMetadataModel.objects.filter(id=uuid).update(**data)
+            self.get_queryset().filter(id=saml_model.id).update(**data)
             return self._gm.success_response("Success")
-        except SAMLMetadataModel.DoesNotExist:
-            return self._gm.bad_request("Invalid saml group.")
         except Exception as e:
             traceback.print_exc()
             logger.error(e)

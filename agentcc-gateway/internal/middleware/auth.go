@@ -9,8 +9,8 @@ import (
 )
 
 // KeyAuth returns middleware that validates API keys from the Authorization
-// header before any handler runs. Routes that do not start with "/v1/" are
-// passed through without authentication (health checks, admin routes, etc.).
+// header before any handler runs. Only explicitly public health/discovery
+// routes and the separately authenticated admin namespace bypass API-key auth.
 //
 // If keyStore is nil, auth is considered disabled and all requests pass through.
 func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.Handler {
@@ -21,8 +21,7 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth for non-API routes (health, admin, etc.).
-			if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			if isPublicOrSeparatelyAuthenticatedPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -51,6 +50,15 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func isPublicOrSeparatelyAuthenticatedPath(path string) bool {
+	switch path {
+	case "/healthz", "/readyz", "/livez", "/.well-known/agent.json":
+		return true
+	default:
+		return strings.HasPrefix(path, "/-/")
 	}
 }
 
