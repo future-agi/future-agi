@@ -1,0 +1,103 @@
+eval_id: 204
+name: rag_context_precision
+description: Evaluates whether retrieved context chunks are ranked by relevance to
+  the query using step-by-step reasoning.
+criteria: 'You are evaluating the retrieval precision and ranking quality of the retrieved
+  context chunks.
+
+
+  ## Chain-of-Thought Evaluation Steps
+
+  1. Analyze the user''s input query to identify the specific factual information
+  needed.
+
+  2. For each retrieved context chunk (in ranked order), determine if it directly
+  contains useful facts to answer the query.
+
+  3. Verify whether the highest-ranked chunks contain the most relevant signal, or
+  if relevant information is buried underneath irrelevant noise.
+
+
+  ## Scoring
+
+  - Score 1.0 (High Precision): Top-ranked chunks directly address the query with
+  dense relevance.
+
+  - Score 0.5 (Moderate Precision): Context contains relevant information, but it
+  is placed below irrelevant distractor chunks.
+
+  - Score 0.0 (Low/Zero Precision): Retrieved chunks are completely irrelevant to
+  the input query.
+
+
+  ## Inputs
+
+  <input>{{input}}</input>
+
+  <context>{{context}}</context>'
+eval_tags:
+- RAG
+- Retrieval Systems
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - input
+  - context
+  output: score
+  eval_type_id: AgentEvaluator
+  config:
+    check_internet:
+      type: boolean
+      default: false
+  config_params_desc:
+    input: The user query or prompt
+    context: The retrieved context chunks in ranked order
+  param_modalities:
+    input:
+    - TEXT
+    - JSON
+    - ARRAY
+    context:
+    - TEXT
+    - KNOWLEDGE_BASE
+    - JSON
+    - LIST
+    - ARRAY
+  rule_prompt: 'You are evaluating the retrieval precision and ranking quality of
+    the retrieved context chunks.
+
+
+    ## Chain-of-Thought Evaluation Steps
+
+    1. Analyze the user''s input query to identify the specific factual information
+    needed.
+
+    2. For each retrieved context chunk (in ranked order), determine if it directly
+    contains useful facts to answer the query.
+
+    3. Verify whether the highest-ranked chunks contain the most relevant signal,
+    or if relevant information is buried underneath irrelevant noise.
+
+
+    ## Scoring
+
+    - Score 1.0 (High Precision): Top-ranked chunks directly address the query with
+    dense relevance.
+
+    - Score 0.5 (Moderate Precision): Context contains relevant information, but it
+    is placed below irrelevant distractor chunks.
+
+    - Score 0.0 (Low/Zero Precision): Retrieved chunks are completely irrelevant to
+    the input query.
+
+
+    ## Inputs
+
+    <input>{{input}}</input>
+
+    <context>{{context}}</context>'
