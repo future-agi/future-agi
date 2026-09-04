@@ -163,6 +163,177 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
         "749f3aa6de566e067b90ef0952544efefe8f7c799bd3b1811d7f55b1b35827f7",
     )
     assert len(manifest.statements) == 8
+
+
+def _runtime_tables() -> list[catalog_prod_schema.ReplicaTable]:
+    manifest = catalog_prod_schema.render_catalog_prod_schema(
+        target_database=TARGET, cluster=CLUSTER, keeper_path_prefix="/clickhouse/tables"
+    )
+    return [
+        catalog_prod_schema.ReplicaTable(
+            host="local",
+            database=TARGET,
+            name=table.table,
+            engine=table.engine,
+            create_table_query=_server_create_query(table, add_uuid=True),
+        )
+        for table in manifest.tables[:6]
+    ]
+
+
+@pytest.mark.parametrize("control_visible", [False, True])
+@pytest.mark.parametrize("target", [TARGET, "property_catalog"])
+def test_production_runtime_verifies_local_replicated_writer_schema_without_admin_grants(
+    control_visible: bool,
+    target: str,
+) -> None:
+    from tracer.services.clickhouse.v2 import catalog_dev_schema
+
+    rows = [
+        (
+            target,
+            table.name,
+            table.engine,
+            table.create_table_query.replace(TARGET, target),
+        )
+        for table in _runtime_tables()
+    ]
+    if control_visible:
+        # Control schema is owned and checked by a different runtime identity.
+        rows.append(
+            (
+                target,
+                "property_catalog_activation_control_events",
+                "ReplicatedMergeTree",
+                "",
+            )
+        )
+
+    client = mock.Mock()
+    client.query_rows.side_effect = [[("25.3.8.23",)], rows]
+    with mock.patch.object(
+        catalog_dev_schema,
+        "configured_production_property_catalog_database",
+        return_value=target,
+    ):
+        evidence = json.loads(
+            catalog_dev_schema.verify_catalog_schema(
+                client, target_database=target, deployment="prod"
+            )
+        )
+    assert evidence["validated_target_table_count"] == 6
+    assert evidence["write_count"] == 0
+    assert not evidence["development_only"]
+    client.command.assert_not_called()
+    assert client.query_rows.call_count == 2
+    for call in client.query_rows.call_args_list:
+        sql = call.args[0]
+        assert "clusterAllReplicas" not in sql and "system.clusters" not in sql
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("ReplicatedMergeTree", "MergeTree"),
+        ("ReplicatedMergeTree", "ReplicatedReplacingMergeTree"),
+        ("/clickhouse/tables/", "/clickhouse/wrong/"),
+        (f"/{TARGET}/", "/another_database/"),
+        ("{shard}", "wrong_shard"),
+        ("{replica}", "wrong_replica"),
+        ("UInt64", "UInt32"),
+        ("index_granularity = 8192", "index_granularity = 4096"),
+    ],
+)
+def test_production_runtime_rejects_replicated_schema_drift(old: str, new: str) -> None:
+    from dataclasses import replace
+
+    tables = _runtime_tables()
+    assert old in tables[0].create_table_query
+    tables[0] = replace(
+        tables[0], create_table_query=tables[0].create_table_query.replace(old, new)
+    )
+    with pytest.raises(catalog_prod_schema.CatalogProdSchemaError):
+        catalog_prod_schema.verify_runtime_catalog_tables(
+            tables, target_database=TARGET
+        )
+
+
+@pytest.mark.parametrize(
+    "change", ["missing", "extra", "duplicate", "engine", "database"]
+)
+def test_production_runtime_rejects_wrong_table_inventory(change: str) -> None:
+    from dataclasses import replace
+
+    tables = _runtime_tables()
+    if change == "missing":
+        tables.pop()
+    elif change == "extra":
+        tables.append(replace(tables[0], name="unexpected_catalog"))
+    elif change == "duplicate":
+        tables[-1] = tables[0]
+    elif change == "engine":
+        tables[0] = replace(tables[0], engine="MergeTree")
+    else:
+        tables[0] = replace(tables[0], database="default")
+    with pytest.raises(catalog_prod_schema.CatalogProdSchemaError):
+        catalog_prod_schema.verify_runtime_catalog_tables(
+            tables, target_database=TARGET
+        )
+
+
+def test_runtime_schema_digest_ignores_replica_uuid_and_row_order() -> None:
+    from dataclasses import replace
+
+    tables = _runtime_tables()
+    expected = catalog_prod_schema.verify_runtime_catalog_tables(
+        tables, target_database=TARGET
+    )
+    alternate = [
+        replace(
+            table,
+            host="another-replica",
+            create_table_query=table.create_table_query.replace(
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ),
+        )
+        for table in reversed(tables)
+    ]
+    assert (
+        catalog_prod_schema.verify_runtime_catalog_tables(
+            alternate, target_database=TARGET
+        )
+        == expected
+    )
+
+
+def test_dev_runtime_does_not_accept_production_replicated_engines() -> None:
+    from tracer.services.clickhouse.v2 import catalog_dev_schema
+
+    client = mock.Mock()
+    client.query_rows.side_effect = [
+        [("25.3.8.23",)],
+        [
+            (table.database, table.name, table.engine, table.create_table_query)
+            for table in _runtime_tables()
+        ],
+    ]
+    with (
+        mock.patch.object(
+            catalog_dev_schema,
+            "configured_production_property_catalog_database",
+            return_value="property_catalog",
+        ),
+        pytest.raises(catalog_dev_schema.CatalogDevSchemaError, match="tables/engines"),
+    ):
+        catalog_dev_schema.verify_catalog_schema(
+            client, target_database=TARGET, deployment="dev"
+        )
+    client.command.assert_not_called()
+
+
+def test_render_retains_exact_production_engines_and_create_only_contract() -> None:
+    manifest = _manifest()
     assert manifest.database_sql == (
         "CREATE DATABASE IF NOT EXISTS th7247_catalog_prod_unit ON CLUSTER 'us_prod';"
     )

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
+from uuid import UUID
 
 from tfc.settings.settings import validate_property_catalog_database
 
@@ -1084,6 +1085,8 @@ def _strict_positive_uint(value: Any, *, field: str, bits: int) -> int:
 
 
 def _text(value: Any, *, field: str) -> str:
+    if isinstance(value, UUID):
+        value = str(value)
     if isinstance(value, bytes):
         try:
             value = value.decode("utf-8")

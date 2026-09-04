@@ -46,6 +46,7 @@ const (
 	envDeliveryWall         = "FI_PROPERTY_CATALOG_DELIVERY_TIMEOUT"
 	envCheckpointMaxStreams = "FI_PROPERTY_CATALOG_CHECKPOINT_MAX_STREAMS"
 	envCheckpointMaxBytes   = "FI_PROPERTY_CATALOG_CHECKPOINT_MAX_INVENTORY_BYTES"
+	envCheckpointTimeout    = "FI_PROPERTY_CATALOG_CHECKPOINT_INVENTORY_TIMEOUT"
 
 	consumerModeKafka      = "kafka"
 	defaultDeliveryTimeout = propertycatalog.DefaultDeliveryTransportTimeout
@@ -279,6 +280,7 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 	checkpointLimits := propertycatalog.CheckpointLoaderLimits{
 		MaxStreams:        propertycatalog.DefaultCheckpointMaxStreams,
 		InventoryMaxBytes: propertycatalog.DefaultCheckpointInventoryMaxBytes,
+		InventoryTimeout:  propertycatalog.DefaultCheckpointInventoryTimeout,
 	}
 	if err := optionalBoundedPositiveInt(
 		lookup, envCheckpointMaxStreams, &checkpointLimits.MaxStreams,
@@ -289,6 +291,12 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 	if err := optionalBoundedPositiveInt64(
 		lookup, envCheckpointMaxBytes, &checkpointLimits.InventoryMaxBytes,
 		propertycatalog.MaximumCheckpointInventoryMaxBytes,
+	); err != nil {
+		return commandConfig{}, err
+	}
+	if err := optionalBoundedDuration(
+		lookup, envCheckpointTimeout, &checkpointLimits.InventoryTimeout,
+		propertycatalog.MaximumCheckpointInventoryTimeout,
 	); err != nil {
 		return commandConfig{}, err
 	}
@@ -391,6 +399,24 @@ func boundedDeliveryTimeout(lookup lookupEnvFunc) (time.Duration, error) {
 		)
 	}
 	return timeout, nil
+}
+
+func optionalBoundedDuration(
+	lookup lookupEnvFunc, name string, target *time.Duration, maximum time.Duration,
+) error {
+	value, present := lookup(name)
+	if !present {
+		return nil
+	}
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s must not contain surrounding whitespace", name)
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed < time.Second || parsed > maximum {
+		return fmt.Errorf("%s must be a duration in [1s,%s]", name, maximum)
+	}
+	*target = parsed
+	return nil
 }
 
 func optionalBoundedPositiveInt(
