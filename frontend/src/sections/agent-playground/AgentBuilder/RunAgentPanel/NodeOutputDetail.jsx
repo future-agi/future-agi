@@ -237,7 +237,11 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     () => nodeDetail?.outputs || [],
     [nodeDetail?.outputs],
   );
-  const hasErrorMessage = !!errorMessage && outputs.length === 0;
+  const hasErrorMessage = !!errorMessage;
+  // Error rows replace the grid only when the node produced no output.
+  // With partial output the grid keeps showing the outputs and the error
+  // is rendered as a banner above it instead.
+  const showErrorRows = hasErrorMessage && outputs.length === 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
   // Map API response to AG Grid row data
@@ -255,7 +259,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       return [{ id: nodeExecutionIdentifier, _running: true }];
     }
 
-    if (hasErrorMessage) {
+    if (showErrorRows) {
       if (inputs.length > 0) {
         // Has inputs but output errored — one row per input
         return inputs.map((inp, i) => ({
@@ -296,7 +300,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     nodeDetail,
     nodeExecutionIdentifier,
     errorMessage,
-    hasErrorMessage,
+    showErrorRows,
     isPairedMode,
     isNodeRunning,
     inputs,
@@ -330,7 +334,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     const usePairedInput =
-      isPairedMode || (hasErrorMessage && inputs.length > 0);
+      isPairedMode || (showErrorRows && inputs.length > 0);
     const cols = [];
 
     if (showInputs) {
@@ -353,7 +357,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       );
     }
 
-    if (hasErrorMessage) {
+    if (showErrorRows) {
       cols.push({
         field: "output",
         headerName: "Output",
@@ -382,7 +386,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     return cols;
-  }, [showInputs, hasErrorMessage, isPairedMode, isNodeRunning, inputs.length]);
+  }, [showInputs, showErrorRows, isPairedMode, isNodeRunning, inputs.length]);
 
   const PORT_ROW_HEIGHT = 120;
 
@@ -536,6 +540,21 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           }
         />
       </Box>
+
+      {/* Error banner — shown alongside partial output when a node
+          fails after producing some output. With no output at all the
+          grid itself renders the error rows instead. */}
+      {hasErrorMessage && !showErrorRows && (
+        <Box sx={{ mb: 2 }}>
+          <Typography
+            typography="s2"
+            color="error.main"
+            sx={{ whiteSpace: "pre-wrap" }}
+          >
+            {errorMessage}
+          </Typography>
+        </Box>
+      )}
 
       {/* AG Grid Table */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
