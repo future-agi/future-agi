@@ -2646,25 +2646,26 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // Load saved filters from localStorage on mount (for default tab)
   useEffect(() => {
     if (activeViewTabId) return; // custom view tabs load from backend
-    // A filter in the URL is an explicit instruction — someone followed a link
-    // scoped to an alert, a saved view or a chart — while localStorage is only
-    // this browser's last-used default. Restoring the default here would
-    // silently drop the scope the link was built to carry. Read from
-    // window.location for the same reason useUrlState's setter does: it is
-    // updated synchronously by history.replaceState.
+    // Read from window.location for the same reason useUrlState's setter does:
+    // it is updated synchronously by history.replaceState.
     const urlParams = new URLSearchParams(window.location.search);
-    if (
-      urlParams.has("primaryTraceFilter") ||
-      urlParams.has("primarySpanFilter") ||
-      urlParams.has(OBSERVE_LINK_FILTER_PARAM)
-    ) {
-      return;
-    }
+    // A link carrying its own chip scope owns the whole restore: it was built
+    // to show one thing, and this browser's last-used default would silently
+    // widen it.
+    if (urlParams.has(OBSERVE_LINK_FILTER_PARAM)) return;
+    // The primary filter params are not intent — the trace list writes them
+    // itself through useUrlState on every filter change, so they appear on any
+    // page that has ever been filtered. All they tell us is that the URL
+    // already holds the primary rows, which is a reason to skip those rows and
+    // nothing else. Skipping the whole effect here would drop extra_filters and
+    // the compare chips, which have no URL channel and no other source.
+    const urlHoldsPrimary =
+      urlParams.has("primaryTraceFilter") || urlParams.has("primarySpanFilter");
     try {
       const raw = localStorage.getItem(filtersStorageKey);
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (saved.filters?.length > 0) {
+      if (!urlHoldsPrimary && saved.filters?.length > 0) {
         const filtersWithIds = hydrateProjectFilterList(
           saved.filters,
           getRandomId,
