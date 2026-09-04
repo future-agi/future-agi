@@ -152,6 +152,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Whether this agent places calls or answers them. Voice only; chat is always inbound.
         "ALK_CALL_DIRECTION",
+        # Whether a suite is written by several writers at once rather than one scenario at a time.
+        "HARNESS_PARALLEL_SCENARIOS",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
