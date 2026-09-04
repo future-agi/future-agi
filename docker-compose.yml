@@ -340,7 +340,10 @@ services:
       # gemini-3.1 is 404 in regional endpoints; only served on `global`.
       GOOGLE_CLOUD_LOCATION: global
       SIMULATOR_LLM_PROVIDER: vertex
-      SIMULATOR_LLM_MODEL: gemini-3.1-flash-lite
+      # A flash-lite model given the simulator's full persona prompt (about 11KB) returns
+      # `no response generated` after its retries, so the caller falls silent, nothing ends
+      # the call, and it is discarded on the run deadline as a timeout. Use a full flash.
+      SIMULATOR_LLM_MODEL: gemini-3.7-flash
       # TTS is chosen per persona language by the hosted runner
       # (_voice_simulator_config): English -> Deepgram aura-2-andromeda-en,
       # other/unknown -> streaming Gemini (multilingual). Set
