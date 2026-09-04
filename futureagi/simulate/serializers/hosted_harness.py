@@ -192,6 +192,9 @@ class HarnessScenarioProvisionSerializer(serializers.Serializer):
     operation = serializers.ChoiceField(choices=("provision",))
     name = serializers.CharField(max_length=255)
     modality = serializers.ChoiceField(choices=("text", "voice"), default="text")
+    direction = serializers.ChoiceField(
+        choices=("inbound", "outbound"), required=False
+    )
     description = serializers.CharField(required=False, allow_blank=True)
     personas = HarnessProvisionPersonaSerializer(many=True, allow_empty=False)
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
@@ -216,6 +219,9 @@ class HarnessScenarioOperationSerializer(serializers.Serializer):
     operation = serializers.ChoiceField(choices=("provision", "begin"))
     name = serializers.CharField(required=False, max_length=255)
     modality = serializers.ChoiceField(choices=("text", "voice"), required=False)
+    direction = serializers.ChoiceField(
+        choices=("inbound", "outbound"), required=False
+    )
     description = serializers.CharField(required=False, allow_blank=True)
     personas = HarnessProvisionPersonaSerializer(many=True, required=False)
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)

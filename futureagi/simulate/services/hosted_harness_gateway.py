@@ -133,13 +133,18 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_MODEL": model,
     }
     for name in (
-        "LIVEKIT_URL",
-        "LIVEKIT_API_KEY",
-        "LIVEKIT_API_SECRET",
+        # Whether a simulated caller may be heard through ambient noise, and which backend each
+        # authoring stage runs on, are both deployment settings the sandbox cannot infer.
+        "ALK_BACKGROUND_NOISE",
+        "ALK_SCENARIOS_HARNESS",
+        "ALK_SCENARIOS_MODEL",
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+        "LIVEKIT_URL",
         "OPENAI_API_KEY",
         "SIMULATOR_STT_MODEL",
         "SIMULATOR_STT_PROVIDER",
@@ -519,6 +524,13 @@ def attach_platform_simulator_secret_refs(
 
 
 _MAX_EGRESS_DOMAINS = 20
+
+# Where a locally built guest wheel lands in the sandbox when ALK_HOSTED_WHEEL_OVERRIDE is set.
+# The basename is preserved because pip refuses a wheel whose filename is not PEP 427 shaped.
+_WHEEL_OVERRIDE_DIR = "/work"
+# The guest does not own the baked venv, so an override is installed here and put first on
+# PYTHONPATH rather than over the top of it.
+_WHEEL_OVERRIDE_TARGET = "/work/alk-latest"
 # RFC 1918 / loopback / link-local prefixes that must never appear in egress.
 _PRIVATE_HOST_PATTERNS = re.compile(
     r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|"
@@ -1448,6 +1460,24 @@ class DaytonaHostedGateway:
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
+            # A snapshot bakes the guest, so a sandbox created from one runs whatever ALK was
+            # current when it was cut. Setting ALK_HOSTED_WHEEL_OVERRIDE to a locally built wheel
+            # installs the current guest over it at launch, which is what lets a snapshot-created
+            # sandbox run today's code without publishing a new snapshot.
+            wheel_override = str(
+                getattr(settings, "ALK_HOSTED_WHEEL_OVERRIDE", "") or ""
+            ).strip()
+            wheel_override_installed = ""
+            if wheel_override and os.path.isfile(wheel_override):
+                wheel_override_installed = (
+                    f"{_WHEEL_OVERRIDE_DIR}/{os.path.basename(wheel_override)}"
+                )
+                with open(wheel_override, "rb") as handle:
+                    sandbox.fs.upload_file(handle.read(), wheel_override_installed)
+                logger.info(
+                    "hosted_harness_guest_wheel_override",
+                    extra={"job_id": str(job.id), "wheel": wheel_override},
+                )
             sandbox.fs.upload_file(
                 json.dumps(
                     dispatch_payload, sort_keys=True, separators=(",", ":")
@@ -1567,6 +1597,19 @@ class DaytonaHostedGateway:
                 SessionExecuteRequest(
                     command=(
                         (f"export {export_command} && " if export_command else "")
+                        # Installed with --no-deps so it needs no package index (the snapshot's
+                        # environment already carries every dependency this wheel declares), and
+                        # into a writable directory placed first on PYTHONPATH because the guest
+                        # does not own the baked venv and cannot write its console scripts.
+                        + (
+                            f"pip install --no-deps --force-reinstall --quiet "
+                            f"--target {_WHEEL_OVERRIDE_TARGET} "
+                            f"{wheel_override_installed} && "
+                            f"export PYTHONPATH={_WHEEL_OVERRIDE_TARGET}"
+                            '${PYTHONPATH:+:$PYTHONPATH} && '
+                            if wheel_override_installed
+                            else ""
+                        )
                         + "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
@@ -1828,6 +1871,16 @@ class DaytonaHostedGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
+        # How many scenarios the guest has actually proved so far. The journal is append-only and
+        # a retried slice re-journals, so this counts lines rather than distinct names: it decides
+        # only whether there is anything worth snapshotting, never what gets kept.
+        try:
+            counted = sandbox.process.exec(
+                "wc -l < /work/authoring/written.jsonl 2>/dev/null || echo 0", timeout=30
+            )
+            journalled_scenarios = int(str(counted.result or "0").strip() or "0")
+        except Exception:  # noqa: BLE001 - a checkpoint is best effort, never fail the run
+            journalled_scenarios = 0
         bundle = _json("/work/bundle/manifest.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
 
@@ -1837,17 +1890,24 @@ class DaytonaHostedGateway:
         # using the exact same sealed scenario suite instead of asking the model to
         # author a different suite for an already-registered RunTest.
         metadata = (job.payload or {}).get("metadata") or {}
+        # A partial snapshot may already be held from the checkpoint below. Freezing the
+        # complete suite has to be allowed to replace it, so the test is "not already frozen"
+        # rather than "no archive at all".
+        frozen = bool(metadata.get("authoring_object_key")) and not metadata.get(
+            "authoring_partial"
+        )
         if (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
-            and not metadata.get("authoring_object_key")
+            and not frozen
         ):
             try:
                 packed = sandbox.process.exec(
                     "cd /work/authoring && set --; "
                     "for path in schema.sql store.json world.sqlite collections.json "
                     "contract.json environment.json scenarios.json simulator_prompt.md "
+                    "blueprint.json written.jsonl sub_goals.json "
                     "scenarios handlers; do "
                     '[ -e "$path" ] && set -- "$@" "$path"; '
                     "done; "
@@ -1859,12 +1919,48 @@ class DaytonaHostedGateway:
                     raise RuntimeError(str(packed.result or "authoring pack failed"))
                 body = sandbox.fs.download_file("/tmp/authoring-rerun.tar.gz")
                 store_authoring_archive(job, body, advance_lifecycle=False)
+                _mark_authoring_snapshot(job, partial=False)
                 job.refresh_from_db()
             except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
                     "could not freeze unified authoring snapshot job=%s attempt=%s",
                     job.id,
                     attempt.id,
+                )
+        elif journalled_scenarios and not frozen:
+            # Checkpoint a suite that is still being written. The freeze above only fires on the
+            # complete count, so a guest that died at 199 of 200 left nothing to restore and the
+            # retry regenerated every scenario from scratch. Snapshotting the partial suite costs
+            # one tar per poll and turns a crash into a resume.
+            #
+            # Keyed on the journal, not on `scenarios.json`: a delegated writer journals each
+            # scenario as it proves it and only the final save writes the index and the folders.
+            # Waiting for the index meant this branch never ran during writing, so two crashes in
+            # one afternoon each threw away a partial suite it was built to keep.
+            try:
+                packed = sandbox.process.exec(
+                    "cd /work/authoring && set --; "
+                    "for path in schema.sql store.json world.sqlite collections.json "
+                    "contract.json environment.json scenarios.json simulator_prompt.md "
+                    "blueprint.json written.jsonl sub_goals.json "
+                    "scenarios handlers; do "
+                    '[ -e "$path" ] && set -- "$@" "$path"; '
+                    "done; "
+                    '[ -f contract.json ] && [ "$#" -gt 0 ] && '
+                    'tar -czf /tmp/authoring-partial.tar.gz "$@"',
+                    timeout=180,
+                )
+                if not packed.exit_code:
+                    body = sandbox.fs.download_file("/tmp/authoring-partial.tar.gz")
+                    store_authoring_archive(job, body, advance_lifecycle=False)
+                    _mark_authoring_snapshot(job, partial=True)
+                    job.refresh_from_db()
+            except Exception:  # noqa: BLE001 - a checkpoint is best effort, never fail the run
+                logger.warning(
+                    "could not checkpoint partial authoring job=%s attempt=%s scenarios=%s",
+                    job.id,
+                    attempt.id,
+                    len(scenarios),
                 )
         outputs = authoring_stage_outputs(
             contract,
@@ -2614,6 +2710,23 @@ def authoring_stage_outputs_from_archive(
         documents.get("environment.json"),
         scenarios,
     )
+
+
+def _mark_authoring_snapshot(job: HostedHarnessJob, *, partial: bool) -> None:
+    """Record whether the stored archive is a mid-run checkpoint or the finished suite.
+
+    A checkpoint must be replaceable by a later, fuller one and finally by the complete suite; a
+    frozen suite must not be overwritten by anything.
+    """
+    payload = dict(job.payload or {})
+    metadata = dict(payload.get("metadata") or {})
+    if partial:
+        metadata["authoring_partial"] = True
+    else:
+        metadata.pop("authoring_partial", None)
+    payload["metadata"] = metadata
+    job.payload = payload
+    job.save(update_fields=["payload", "updated_at"])
 
 
 def store_authoring_archive(

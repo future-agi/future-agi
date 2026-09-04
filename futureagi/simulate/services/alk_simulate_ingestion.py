@@ -25,6 +25,7 @@ from django.utils import timezone
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     CallExecution,
     RunTest,
     Scenarios,
@@ -250,6 +251,7 @@ def _provision_agent_definition(
     description,
     modality="text",
     workspace=None,
+    direction="inbound",
 ):
     """Resolve a modality-correct agent definition for an external ALK run.
 
@@ -279,14 +281,29 @@ def _provision_agent_definition(
                 "agent definition modality does not match the ALK run modality"
             )
         return agent_definition
-    return AgentDefinition.objects.create(
+    # An outbound agent rings the person, so it is not an inbound definition and the simulator,
+    # not the target, opens the conversation. Hardcoding inbound left every outbound run
+    # describing itself as the opposite of the call it actually placed.
+    agent_is_inbound = direction != "outbound"
+    agent_definition = AgentDefinition.objects.create(
         agent_name=agent_name or "alk-sdk-agent",
         agent_type=expected_type,
-        inbound=True,
+        inbound=agent_is_inbound,
+        target_speaks_first=agent_is_inbound,
         description=description or f"SDK-provisioned {modality} agent (ALK ingestion).",
         organization=organization,
         workspace=workspace,
     )
+    # Externally provisioned agents were the only ones created without a version, so
+    # ``latest_version`` was None and everything reading the configuration snapshot, including
+    # the ``agent_prompt`` eval input, resolved to an empty string. The snapshot is built from
+    # the agent during save, so this needs no second write.
+    agent_definition.create_version(
+        description=agent_definition.description,
+        commit_message="ALK ingestion",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    return agent_definition
 
 
 def provision_alk_sim_run_test(
@@ -300,6 +317,7 @@ def provision_alk_sim_run_test(
     agent_name: str | None = None,
     description: str = "",
     modality: str = "text",
+    direction: str = "inbound",
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
     """Stand up a modality-correct RunTest for an SDK-first run, two ways.
 
@@ -343,6 +361,7 @@ def provision_alk_sim_run_test(
                 description,
                 modality,
                 workspace,
+                direction,
             )
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
@@ -375,6 +394,7 @@ def provision_alk_sim_run_test(
             description,
             modality,
             workspace,
+            direction,
         )
 
         scenarios: list[Scenarios] = []

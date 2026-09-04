@@ -222,6 +222,9 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
         choices=("text", "chat", "voice"), required=False, default="text"
     )
     description = serializers.CharField(required=False, allow_blank=True)
+    direction = serializers.ChoiceField(
+        choices=("inbound", "outbound"), required=False, default="inbound"
+    )
     personas = ALKSimulateProvisionPersonaSerializer(many=True, required=False)
     scenario_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, allow_empty=False
