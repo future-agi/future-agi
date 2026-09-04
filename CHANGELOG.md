@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.35.0](https://github.com/future-agi/future-agi/compare/v1.34.1...v1.35.0) (2026-09-04)
+
+
+### Features
+
+* **error-feed:** add source identifier (Scanner/Eval) to Error Feed rows [TH-7813] ([76562ee](https://github.com/future-agi/future-agi/commit/76562ee5211b37c1ef739e3c487e946b2c223f07))
+
+
+### Bug Fixes
+
+* **catalog:** allow the production lifecycle controller past the startup guard ([054493a](https://github.com/future-agi/future-agi/commit/054493a1109df728e889429e1723cde6a68c1604))
+* **catalog:** continue lifecycle from completed physical snapshots ([e1de057](https://github.com/future-agi/future-agi/commit/e1de057a6e9839acb6dc657e4b6bc9338b5d15d9))
+* **catalog:** continue lifecycle from completed physical snapshots ([41c9ac3](https://github.com/future-agi/future-agi/commit/41c9ac334800da977207100779ab3af36fb24221))
+* **catalog:** decode native UUID control fields ([45743a8](https://github.com/future-agi/future-agi/commit/45743a8cd4b6e14f9f3e5565e685d3ab87635709))
+* **catalog:** give the consumer checkpoint inventory its own timeout ([64638d4](https://github.com/future-agi/future-agi/commit/64638d4239cee7eb894c13ad8dcded877722b5ce))
+* **catalog:** restore runtime startup and completed backfill recovery ([e6edef3](https://github.com/future-agi/future-agi/commit/e6edef3d6aaa6e3bedddc76dce715540145cd2e7))
+* **catalog:** validate replicated runtime and recover backfill checkpoints ([df235c1](https://github.com/future-agi/future-agi/commit/df235c19363b87cf28aa2e492d472b7fb4bb3be8))
+* **error-feed:** stop mangling acronyms and duplicating eval chip labels ([552e5fb](https://github.com/future-agi/future-agi/commit/552e5fbd435cadae659130072fae01455d7462fb))
+* **release:** allow deployment bump retry ([9b7423d](https://github.com/future-agi/future-agi/commit/9b7423d2d013a44150f1817ef1da8f91391baf18))
+
 ## [1.34.1](https://github.com/future-agi/future-agi/compare/v1.34.0...v1.34.1) (2026-09-03)
 
 
