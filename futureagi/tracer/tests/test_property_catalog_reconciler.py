@@ -123,7 +123,9 @@ def test_incremental_visibility_change_tombstones_stale_binding_immediately() ->
         definition=definition,
         source_adapter=SourceAdapter.EVAL_CONFIG,
         source_entity_id="77777777-7777-4777-8777-777777777777",
-        source_version=1,
+        # The completed physical snapshot used a nanosecond generation while
+        # the following lifecycle revision uses a microsecond source fence.
+        source_version=1_787_459_205_903_148_937,
         source_fingerprint=_sha("v1"),
         producer_stream_id=STREAM,
         producer_sequence=1,
@@ -173,6 +175,63 @@ def test_incremental_visibility_change_tombstones_stale_binding_immediately() ->
         (PROJECT_A, True),
         (PROJECT_B, False),
     }
+
+
+def test_same_revision_newer_source_version_still_conflicts() -> None:
+    definition = _definition()
+    old = project_definition(
+        organization_id=ORG,
+        workspace_id=WORKSPACE,
+        catalog_epoch=1,
+        catalog_revision=2,
+        build_token=BUILD,
+        projection_version=1,
+        visibility=VisibilityBinding(VisibilityScope.PROJECT, PROJECT_A),
+        definition=definition,
+        source_adapter=SourceAdapter.EVAL_CONFIG,
+        source_entity_id="77777777-7777-4777-8777-777777777777",
+        source_version=3,
+        source_fingerprint=_sha("v3"),
+        producer_stream_id=STREAM,
+        producer_sequence=1,
+        emitted_at=NOW,
+    )
+    record = _make_source_record(
+        source_adapter=SourceAdapter.EVAL_CONFIG,
+        source_entity_id=old.source_entity_id,
+        source_updated_at=NOW,
+        definition=definition,
+        visibilities=(VisibilityBinding(VisibilityScope.PROJECT, PROJECT_B),),
+    )
+    snapshot = SourceSnapshot(
+        source_adapter=SourceAdapter.EVAL_CONFIG,
+        records=(record,),
+        next_cursor=None,
+        terminal=True,
+        source_count=1,
+        source_bytes=record.encoded_bytes,
+        source_digest=_sha("snapshot"),
+        page_count=1,
+    )
+    request = ReconcileRequest(
+        context=PostgresSnapshotContext(
+            organization_id=ORG,
+            workspace_id=WORKSPACE,
+            project_ids=(PROJECT,),
+            catalog_epoch=1,
+            catalog_revision=2,
+            projection_version=1,
+            snapshot_cutoff=NOW,
+        ),
+        build_token=BUILD,
+        producer_stream_id=STREAM,
+        emitted_at=NOW,
+        source_version=2,
+    )
+
+    _, conflicts = _project_records(snapshot=snapshot, current=(old,), request=request)
+
+    assert conflicts == 1
 
 
 class _EmptyCurrentBindings:

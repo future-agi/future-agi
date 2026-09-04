@@ -3,6 +3,7 @@ package propertycatalog
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -35,6 +36,46 @@ func writePythonRetirementFixture(t *testing.T, directory string) {
 	); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func physicalSnapshotRetirementFixture(t *testing.T) ProducerStateRetirement {
+	t.Helper()
+	var document producerRetirementDocument
+	if err := json.Unmarshal(bytes.TrimSpace(pythonRetirementFixture(t)), &document); err != nil {
+		t.Fatal(err)
+	}
+	value := document.Retirements[0]
+	value.CatalogEpoch = 1
+	value.CatalogRevision = 3
+	value.ProjectionVersion = 3
+	value.LineageAnchorRevision = 3
+
+	var plan buildPlanDocumentJSON
+	if err := json.Unmarshal([]byte(value.BuildPlanJSON), &plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.CatalogEpoch = value.CatalogEpoch
+	plan.CatalogRevision = value.CatalogRevision
+	plan.ProjectionVersion = value.ProjectionVersion
+	for index := range plan.Streams {
+		plan.Streams[index].SourceCutoff.Label = "physical_snapshot_r3"
+		plan.Streams[index].SourceCutoff.Value = 1788179167838495941
+	}
+	setRetirementPlan(t, &value, plan)
+	return value
+}
+
+func setRetirementPlan(
+	t *testing.T, value *ProducerStateRetirement, plan buildPlanDocumentJSON,
+) {
+	t.Helper()
+	raw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value.BuildPlanJSON = string(raw)
+	value.BuildLeaseSHA256 = testDigest(value.BuildPlanJSON)
+	value.RetirementSHA256 = producerRetirementSHA256(*value)
 }
 
 func retirementRevisionFence(revision uint64, status string) RevisionFence {
@@ -170,6 +211,67 @@ func TestProducerRetirementConsumesExactCanonicalPythonProof(t *testing.T) {
 			t.Fatalf("non-private proof error=%v", err)
 		}
 	})
+}
+
+func TestProducerRetirementAcceptsRevisionScopedPhysicalSnapshots(t *testing.T) {
+	exact := physicalSnapshotRetirementFixture(t)
+	if err := validateProducerRetirement(exact); err != nil {
+		t.Fatalf("exact physical snapshot retirement was rejected: %v", err)
+	}
+
+	t.Run("different deployment coordinates", func(t *testing.T) {
+		value := exact
+		var plan buildPlanDocumentJSON
+		if err := json.Unmarshal([]byte(value.BuildPlanJSON), &plan); err != nil {
+			t.Fatal(err)
+		}
+		value.CatalogEpoch = 7
+		value.CatalogRevision = 41
+		value.ProjectionVersion = 9
+		value.LineageAnchorRevision = value.CatalogRevision
+		plan.CatalogEpoch = value.CatalogEpoch
+		plan.CatalogRevision = value.CatalogRevision
+		plan.ProjectionVersion = value.ProjectionVersion
+		for index := range plan.Streams {
+			plan.Streams[index].SourceCutoff.Label = "physical_snapshot_r41"
+		}
+		setRetirementPlan(t, &value, plan)
+		if err := validateProducerRetirement(value); err != nil {
+			t.Fatalf("generic physical snapshot retirement was rejected: %v", err)
+		}
+	})
+
+	tests := map[string]func(*ProducerStateRetirement, *buildPlanDocumentJSON){
+		"revision label mismatch": func(value *ProducerStateRetirement, plan *buildPlanDocumentJSON) {
+			value.CatalogRevision = 4
+			value.LineageAnchorRevision = 4
+			plan.CatalogRevision = 4
+		},
+		"non-initial lifecycle": func(value *ProducerStateRetirement, _ *buildPlanDocumentJSON) {
+			value.LifecycleMode = "full_repair"
+		},
+		"mixed label": func(_ *ProducerStateRetirement, plan *buildPlanDocumentJSON) {
+			plan.Streams[0].SourceCutoff.Label = "initial_backfill_postgres_until_us"
+		},
+		"mixed generation": func(_ *ProducerStateRetirement, plan *buildPlanDocumentJSON) {
+			plan.Streams[0].SourceCutoff.Value++
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			value := exact
+			var plan buildPlanDocumentJSON
+			if err := json.Unmarshal([]byte(value.BuildPlanJSON), &plan); err != nil {
+				t.Fatal(err)
+			}
+			mutate(&value, &plan)
+			setRetirementPlan(t, &value, plan)
+			if err := validateProducerRetirement(value); err == nil ||
+				!strings.Contains(err.Error(), "lifecycle mode differs") {
+				t.Fatalf("unsafe physical snapshot retirement error=%v", err)
+			}
+		})
+	}
 }
 
 func TestNewRuntimeAllowsEmptyPreBootstrapVolumeWithoutFence(t *testing.T) {

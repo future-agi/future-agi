@@ -2042,9 +2042,10 @@ def _decode_plan_scope(
     if len(by_role) != len(plan.streams):
         raise DurableLifecycleError("build plan contains duplicate lifecycle roles")
     if any(
-        value.source_cutoff_label == "physical_snapshot_r3" for value in plan.streams
+        value.source_cutoff_label.startswith("physical_snapshot_")
+        for value in plan.streams
     ):
-        # Decode-only compatibility with the completed r3 physical backfill.
+        # Physical snapshots are revision-scoped immutable initial builds.
         # OPEN/DRAINING recovery deliberately does not opt in: these are not
         # executable lifecycle plans. Active reads still require the fenced
         # reservation, matching activation manifest and ten clean checkpoints.
@@ -2052,11 +2053,10 @@ def _decode_plan_scope(
             raise DurableLifecycleError(
                 "physical snapshot cannot resume as a lifecycle run"
             )
+        expected_label = f"physical_snapshot_r{plan.catalog_revision}"
         if (
-            (plan.catalog_epoch, plan.catalog_revision, plan.projection_version)
-            != (1, 3, 3)
-            or {value.source_cutoff_label for value in plan.streams}
-            != {"physical_snapshot_r3"}
+            {value.source_cutoff_label for value in plan.streams}
+            != {expected_label}
             or len({value.source_version_fence for value in plan.streams}) != 1
         ):
             raise DurableLifecycleError("physical snapshot build plan contract changed")

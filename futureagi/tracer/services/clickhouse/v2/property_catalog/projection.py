@@ -195,12 +195,24 @@ def resolve_binding_history(
     if len(binding_ids) != 1:
         raise ValueError("binding history contains multiple binding IDs")
 
-    max_version = max(event.source_version for event in eligible)
-    candidates = [event for event in eligible if event.source_version == max_version]
+    # Catalog revisions are qualified and activated as complete snapshots. A
+    # newer revision therefore supersedes an older revision before its
+    # source-local version is compared. This is also the ordering used by the
+    # production ClickHouse reader and permits a source-version domain change
+    # across revisions without allowing stale state within one revision.
+    max_version = max(
+        (event.catalog_revision, event.source_version) for event in eligible
+    )
+    candidates = [
+        event
+        for event in eligible
+        if (event.catalog_revision, event.source_version) == max_version
+    ]
     state_hashes = {event.state_sha256 for event in candidates}
     if len(state_hashes) != 1:
         raise DefinitionConflictError(
-            f"binding {eligible[0].binding_id} has conflicting source version {max_version}"
+            f"binding {eligible[0].binding_id} has conflicting source version "
+            f"{max_version[1]} at catalog revision {max_version[0]}"
         )
     current = max(candidates, key=_transport_order)
     return BindingHistoryResolution(
