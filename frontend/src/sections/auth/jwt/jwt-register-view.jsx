@@ -39,7 +39,7 @@ import {
 } from "src/hooks/useDeploymentMode";
 
 export default function JwtRegisterView() {
-  const { register, login, awsRegister } = useAuthContext();
+  const { register, login, marketplaceRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   // Confirmed read only: the hook falls back to "oss" when deployment-info
@@ -59,6 +59,7 @@ export default function JwtRegisterView() {
   const [loading, setLoading] = useState(false);
   const queryParams = new URLSearchParams(location.search);
   const onboarding_token = queryParams.get("onboarding_token");
+  const onboarding_gcp_token = queryParams.get("onboarding_gcp_token");
 
   const RegisterSchema = Yup.object().shape({
     fullName: Yup.string().required("Full name required"),
@@ -179,11 +180,21 @@ export default function JwtRegisterView() {
         ...(isOSS ? { password: data?.password } : {}),
       };
       let response;
-      if (onboarding_token) {
-        response = await awsRegister({
-          ...payload,
-          onboarding_token: onboarding_token,
-        });
+      const marketplaceToken = onboarding_gcp_token || onboarding_token;
+      if (marketplaceToken) {
+        response = await marketplaceRegister(
+          onboarding_gcp_token
+            ? endpoints.auth.gcpSignUp
+            : endpoints.auth.awsSignUp,
+          // Both marketplace endpoints reject unknown fields, so send only the
+          // three they declare. company_name, recaptcha and allow_email are
+          // meaningless here: the onboarding token is the proof of purchase.
+          {
+            onboarding_token: marketplaceToken,
+            email: payload.email,
+            full_name: payload.full_name,
+          },
+        );
       } else {
         response = await register(payload);
       }
@@ -357,7 +368,9 @@ export default function JwtRegisterView() {
   const handleServiceProvider = async (provider) => {
     persistReturnTo();
     try {
-      const response = await axios.get(endpoints.auth.service(provider));
+      const response = await axios.get(
+        endpoints.auth.service(provider, onboarding_gcp_token),
+      );
       logger.debug("Service provider response:", {
         provider,
         response: response.data,

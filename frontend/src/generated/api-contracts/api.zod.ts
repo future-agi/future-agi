@@ -520,6 +520,24 @@ export const AccountsFirstChecksListResponse = zod.object({
   }),
 });
 
+/**
+ * Complete sign-up for a GCP Marketplace customer.
+ */
+
+export const AccountsGcpMarketplaceSignupCreateBody = zod.object({
+  onboarding_token: zod.string().min(1),
+  email: zod.string().email().min(1),
+  full_name: zod.string().min(1),
+});
+
+export const AccountsGcpMarketplaceSignupCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    message: zod.string().min(1),
+    user_email: zod.string().email().min(1),
+  }),
+});
+
 export const AccountsGetUserProfileDetailsListResponse = zod.object({
   name: zod.string(),
   email: zod.string().email().min(1),
@@ -30570,6 +30588,7 @@ export const Saml2AuthAcsCreateBody = zod.object({
 
 export const Saml2AuthAuthCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthAuthReadParams = zod.object({
@@ -30578,10 +30597,12 @@ export const Saml2AuthAuthReadParams = zod.object({
 
 export const Saml2AuthAuthReadQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthGithubCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthGithubReadParams = zod.object({
@@ -30590,6 +30611,7 @@ export const Saml2AuthGithubReadParams = zod.object({
 
 export const Saml2AuthGithubReadQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthIdpLoginListQueryParams = zod.object({
@@ -30701,6 +30723,7 @@ export const Saml2AuthIdpUploadsDeleteResponse = zod.object({
 
 export const Saml2AuthLoginListQueryParams = zod.object({
   provider: zod.enum(["google", "github", "microsoft"]),
+  onboarding_token: zod.string().optional(),
 });
 
 export const Saml2AuthLoginListResponse = zod.object({
@@ -30716,6 +30739,7 @@ export const Saml2AuthReadParams = zod.object({
 
 export const Saml2AuthReadQueryParams = zod.object({
   provider: zod.enum(["google", "github", "microsoft"]),
+  onboarding_token: zod.string().optional(),
 });
 
 export const Saml2AuthReadResponse = zod.object({
@@ -30727,6 +30751,7 @@ export const Saml2AuthReadResponse = zod.object({
 
 export const Saml2AuthMicrosoftCallbackListQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const Saml2AuthMicrosoftReadParams = zod.object({
@@ -30735,6 +30760,7 @@ export const Saml2AuthMicrosoftReadParams = zod.object({
 
 export const Saml2AuthMicrosoftReadQueryParams = zod.object({
   code: zod.string().optional(),
+  state: zod.string().optional(),
 });
 
 export const sdkApiV1ConfigureEvaluationsCreateBodyEvalConfigConfigDefault = {};
@@ -62995,6 +63021,8 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
         pricing: zod.record(zod.string(), zod.object({}).passthrough()),
       })
       .optional(),
+    plan_change_locked: zod.boolean().optional(),
+    plan_change_locked_reason: zod.string().optional(),
     pending_cancel: zod.boolean(),
     cancel_at: zod.string().min(1).optional(),
   }),

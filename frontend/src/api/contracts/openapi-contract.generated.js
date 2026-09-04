@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 986,
+  endpointCount: 988,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -819,6 +819,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/UserChecksResponse",
           },
+          400: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          401: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/accounts/gcp-marketplace/signup/": {
+      post: {
+        operationId: "accounts_gcp-marketplace_signup_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/GCPMarketplaceSignupRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GCPMarketplaceSignupResponse",
+          },
+          400: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          401: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/AccountsErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/accounts/gcp-marketplace/verify-token/": {
+      post: {
+        operationId: "accounts_gcp-marketplace_verify-token_create",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
           400: {
             $ref: "#/definitions/AccountsErrorResponse",
           },
@@ -25709,6 +25772,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
             },
           },
+          state: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
         },
         responses: {
           400: {
@@ -25728,6 +25797,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {
           code: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          state: {
             required: false,
             schema: {
               type: "string",
@@ -25757,6 +25832,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
             },
           },
+          state: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
         },
         responses: {
           400: {
@@ -25776,6 +25857,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {
           code: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          state: {
             required: false,
             schema: {
               type: "string",
@@ -25963,6 +26050,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               enum: ["google", "github", "microsoft"],
             },
           },
+          onboarding_token: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
         },
         responses: {
           200: {
@@ -25989,6 +26082,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: ["google", "github", "microsoft"],
+            },
+          },
+          onboarding_token: {
+            required: false,
+            schema: {
+              type: "string",
             },
           },
         },
@@ -26018,6 +26117,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
             },
           },
+          state: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
         },
         responses: {
           400: {
@@ -26037,6 +26142,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {
           code: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          state: {
             required: false,
             schema: {
               type: "string",
@@ -57362,6 +57473,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GCPMarketplaceSignupRequest: {
+      required: ["onboarding_token", "email", "full_name"],
+      type: "object",
+      properties: {
+        onboarding_token: {
+          title: "Onboarding token",
+          type: "string",
+          minLength: 1,
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        full_name: {
+          title: "Full name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    GCPMarketplaceSignupResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GCPMarketplaceSignupResult",
+        },
+      },
+    },
     GatewayBatchCancelResponse: {
       required: ["status", "result"],
       type: "object",
@@ -82870,6 +83016,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GCPMarketplaceSignupResult: {
+      required: ["message", "user_email"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        user_email: {
+          title: "User email",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+      },
+    },
     GatewayBatchCancelResult: {
       required: ["batch_id", "status"],
       type: "object",
@@ -92171,6 +92334,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         customDetails: {
           $ref: "#/definitions/UsageCustomPlanDetails",
+        },
+        plan_change_locked: {
+          title: "Plan change locked",
+          type: "boolean",
+        },
+        plan_change_locked_reason: {
+          title: "Plan change locked reason",
+          type: "string",
         },
         pending_cancel: {
           title: "Pending cancel",
