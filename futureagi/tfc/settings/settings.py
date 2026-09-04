@@ -723,6 +723,9 @@ DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
 DAYTONA_ORGANIZATION_ID = os.getenv("DAYTONA_ORGANIZATION_ID") or None
 ALK_DAYTONA_SNAPSHOT = os.getenv("ALK_DAYTONA_SNAPSHOT", "")
+# A locally built guest wheel installed over a snapshot at launch, so a sandbox created from
+# a snapshot can run a newer guest than the one baked into it.
+ALK_HOSTED_WHEEL_OVERRIDE = os.getenv("ALK_HOSTED_WHEEL_OVERRIDE", "")
 ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
 # Local certification escape hatch: Daytona builds an ephemeral sandbox directly from the
 # trusted hosted Dockerfile. Production leaves this empty and uses the immutable snapshot above.

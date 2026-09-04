@@ -524,6 +524,13 @@ def attach_platform_simulator_secret_refs(
 
 
 _MAX_EGRESS_DOMAINS = 20
+
+# Where a locally built guest wheel lands in the sandbox when ALK_HOSTED_WHEEL_OVERRIDE is set.
+# The basename is preserved because pip refuses a wheel whose filename is not PEP 427 shaped.
+_WHEEL_OVERRIDE_DIR = "/work"
+# The guest does not own the baked venv, so an override is installed here and put first on
+# PYTHONPATH rather than over the top of it.
+_WHEEL_OVERRIDE_TARGET = "/work/alk-latest"
 # RFC 1918 / loopback / link-local prefixes that must never appear in egress.
 _PRIVATE_HOST_PATTERNS = re.compile(
     r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|"
@@ -1453,6 +1460,24 @@ class DaytonaHostedGateway:
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
+            # A snapshot bakes the guest, so a sandbox created from one runs whatever ALK was
+            # current when it was cut. Setting ALK_HOSTED_WHEEL_OVERRIDE to a locally built wheel
+            # installs the current guest over it at launch, which is what lets a snapshot-created
+            # sandbox run today's code without publishing a new snapshot.
+            wheel_override = str(
+                getattr(settings, "ALK_HOSTED_WHEEL_OVERRIDE", "") or ""
+            ).strip()
+            wheel_override_installed = ""
+            if wheel_override and os.path.isfile(wheel_override):
+                wheel_override_installed = (
+                    f"{_WHEEL_OVERRIDE_DIR}/{os.path.basename(wheel_override)}"
+                )
+                with open(wheel_override, "rb") as handle:
+                    sandbox.fs.upload_file(handle.read(), wheel_override_installed)
+                logger.info(
+                    "hosted_harness_guest_wheel_override",
+                    extra={"job_id": str(job.id), "wheel": wheel_override},
+                )
             sandbox.fs.upload_file(
                 json.dumps(
                     dispatch_payload, sort_keys=True, separators=(",", ":")
@@ -1572,6 +1597,19 @@ class DaytonaHostedGateway:
                 SessionExecuteRequest(
                     command=(
                         (f"export {export_command} && " if export_command else "")
+                        # Installed with --no-deps so it needs no package index (the snapshot's
+                        # environment already carries every dependency this wheel declares), and
+                        # into a writable directory placed first on PYTHONPATH because the guest
+                        # does not own the baked venv and cannot write its console scripts.
+                        + (
+                            f"pip install --no-deps --force-reinstall --quiet "
+                            f"--target {_WHEEL_OVERRIDE_TARGET} "
+                            f"{wheel_override_installed} && "
+                            f"export PYTHONPATH={_WHEEL_OVERRIDE_TARGET}"
+                            '${PYTHONPATH:+:$PYTHONPATH} && '
+                            if wheel_override_installed
+                            else ""
+                        )
                         + "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
