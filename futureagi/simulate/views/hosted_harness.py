@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
@@ -34,6 +36,8 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_result_receipt,
 )
 from tfc.utils.api_contracts import validated_request
+
+logger = logging.getLogger(__name__)
 
 
 class HostedHarnessAttemptViewSet(viewsets.ViewSet):
@@ -140,6 +144,13 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
             if not preview_url.startswith("https://"):
                 raise ValueError("signed preview URL is missing or not HTTPS")
         except Exception as exc:
+            logger.warning(
+                "hosted ingress failed attempt=%s provider_ref=%s: %s: %s",
+                attempt.id,
+                attempt.provider_ref,
+                type(exc).__name__,
+                exc,
+            )
             raise HostedHarnessError(
                 "ingress_unavailable",
                 "the hosted callback URL could not be created; retry the run",
@@ -201,3 +212,4 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
             {"artifact_id": f"sha256:{artifact_digest}", "duplicate": not created},
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
