@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
+import re
 import uuid
 from collections import defaultdict
 from enum import StrEnum
@@ -52,6 +54,7 @@ class ConversationDirection(StrEnum):
     SIMULATOR_FIRST = "simulator_first"
     AGENT_FIRST = "agent_first"
 
+
 _MODE_TO_ENVIRONMENT = {
     "chat": ("chat", "conversation"),
 }
@@ -69,6 +72,28 @@ _PROVIDER_ENV = {
     "livekit": {"api_key": "LIVEKIT_API_KEY", "api_secret": "LIVEKIT_API_SECRET"},
 }
 
+
+def _require(value, label: str):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise HostedRunnerBuildError(f"voice runner job missing {label}")
+    return value
+
+
+# Duplicated from the SDK's source of truth (agent-learning-kit
+# src/fi/simulate/agent/definition.py:7) so a malformed number is caught here,
+# before any DID is leased, rather than only at SDK hydration.
+_E164 = re.compile(r"^\+[1-9]\d{6,14}$")
+
+
+def _require_e164(value, label: str):
+    value = _require(value, label)
+    # fullmatch (not match) so a trailing newline can't sneak past "$"; isinstance
+    # guard so a non-string value raises the typed build error, not a bare TypeError.
+    if not isinstance(value, str) or not _E164.fullmatch(value):
+        raise HostedRunnerBuildError(f"voice runner job invalid {label}")
+    return value
+
+
 # Provider profiles — the factory that replaces the hardcoded provider->transport
 # and per-provider agent-definition branches. Adding a web provider is one entry
 # here, with no dispatch edits. This is the Django-side twin of the SDK's
@@ -83,13 +108,18 @@ _PROVIDER_PROFILES: dict[str, dict[str, Any]] = {
         "api_key_env": _PROVIDER_ENV["vapi"]["api_key"],
         "emits_web_evidence": True,
         "sip_inbound_originator": "vapi",
+        "sip_inbound_originator_fields": (),
     },
     "retell": {
         "web_transport_kind": "retell_webcall",
         "target_id_field": "agent_id",
         "api_key_env": _PROVIDER_ENV["retell"]["api_key"],
         "emits_web_evidence": True,
-        "sip_inbound_originator": None,
+        "sip_inbound_originator": "retell",
+        "sip_inbound_originator_fields": (
+            ("originator_agent_id", "assistant_id", _require),
+            ("originator_from_number", "contact_number", _require_e164),
+        ),
     },
     "livekit": {
         "web_transport_kind": "webrtc",
@@ -97,6 +127,7 @@ _PROVIDER_PROFILES: dict[str, dict[str, Any]] = {
         "api_key_env": None,
         "emits_web_evidence": False,
         "sip_inbound_originator": None,
+        "sip_inbound_originator_fields": (),
     },
 }
 
@@ -111,19 +142,27 @@ class HostedRunnerBuildError(Exception):
     """Raised when a runner job cannot be assembled from the run test."""
 
 
-def resolve_runner_mode(agent_definition) -> str:
+def resolve_runner_mode(agent_definition, agent_version=None) -> str:
     """Runner mode for a run test's agent definition (view + builder share this).
 
     TEXT → ``chat``. VOICE resolves to ``voice_sip`` when the target is reached
     over the phone (a ``contact_number`` is set) and ``voice_webrtc`` otherwise
     (web bridge / native LiveKit). Only ``voice_sip`` leases a DID slot — mirrors
     the native ``_needs_phone`` gate.
+
+    ``agent_type`` is read the same "pinned version's snapshot is authoritative"
+    way as every other field the builder cares about (``_agent_field``) — a
+    definition edited to a different ``agent_type`` after a version was pinned
+    must not change what an already-pinned run resolves to.
     """
     if agent_definition is None:
         raise HostedRunnerBuildError("run test has no agent definition")
-    if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+    agent_type = _agent_field(
+        agent_definition, agent_version, "agent_type", agent_definition.agent_type
+    )
+    if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
         return _CHAT_MODE
-    if _target_uses_phone(agent_definition):
+    if _target_uses_phone(agent_definition, agent_version):
         return _VOICE_SIP_MODE
     return _VOICE_WEBRTC_MODE
 
@@ -133,21 +172,26 @@ def resolve_runner_mode(agent_definition) -> str:
 _HOSTED_UNSUPPORTED_PROVIDERS = {"bland"}
 
 
-def hosted_runner_supports(agent_definition) -> bool:
+def hosted_runner_supports(agent_definition, agent_version=None) -> bool:
     """False when the target's provider isn't supported by the released SDK
-    (e.g. Bland) so the caller can route the run to the native runner."""
+    (e.g. Bland) so the caller can route the run to the native runner.
+
+    A safety rail, not a field read: reject if either the snapshot or the
+    (possibly stale) definition column names an unsupported provider — a
+    rail must not be bypassable by a stale column or a versionless snapshot.
+    Credentials are not consulted: ``ProviderCredentials.ProviderType`` has
+    no Bland member (every other provider is coerced to vapi), so a
+    credentials-derived rejection could never fire and would only cost a
+    query.
+    """
     if agent_definition is None:
         return False
-    provider = (
-        getattr(
-            getattr(agent_definition, "provider_credentials", None),
-            "provider_type",
-            None,
-        )
-        or getattr(agent_definition, "provider", None)
-        or ""
-    )
-    return str(provider).strip().lower() not in _HOSTED_UNSUPPORTED_PROVIDERS
+    declared_provider = _agent_field(agent_definition, agent_version, "provider", "")
+    declared = str(declared_provider or "").strip().lower()
+    if declared in _HOSTED_UNSUPPORTED_PROVIDERS:
+        return False
+    column = str(getattr(agent_definition, "provider", "") or "").strip().lower()
+    return column not in _HOSTED_UNSUPPORTED_PROVIDERS
 
 
 def build_start_runner_job(
@@ -182,11 +226,17 @@ def build_start_runner_job(
     # Rerun scope: when specific calls are requested, build only their cases,
     # keyed the way ALK /batch adopts rows — (scenario_id, row_id) in canonical
     # scenario→row order — so the SDK's positional case→row mapping still lines
-    # up with exactly the rows /batch hands back. A rerun also picks up the
-    # RunTest's currently-selected agent version (the version pinned on the
-    # execution can be stale after a later edit).
+    # up with exactly the rows /batch hands back.
+    #
+    # The version used to build the job is always ``resolve_run_agent_version``
+    # — the one ladder shared with the view: the RunTest's own pin wins (what
+    # a fresh dispatch or rerun request carries), then the execution's pin
+    # (the native path backfills this after the run starts), then the
+    # definition's current version. A single shared ladder keeps the view's
+    # resolved mode and the builder's resolved transport looking at the same
+    # version for the same execution.
     selected_keys: set[tuple[str, str | None]] | None = None
-    agent_version = test_execution.agent_version
+    agent_version = resolve_run_agent_version(run_test, test_execution)
     if call_execution_ids:
         requested = {str(cid) for cid in call_execution_ids}
         selected_calls = list(
@@ -202,11 +252,6 @@ def build_start_runner_job(
             (str(call.scenario_id), str(call.row_id) if call.row_id else None)
             for call in selected_calls
         }
-        agent_version = (
-            run_test.agent_version
-            or test_execution.agent_version
-            or getattr(agent_definition, "latest_version", None)
-        )
 
     run_id = str(test_execution.id)
 
@@ -448,6 +493,13 @@ _ENV_LIVEKIT_API_KEY = "LIVEKIT_API_KEY"
 _ENV_LIVEKIT_API_SECRET = "LIVEKIT_API_SECRET"
 
 
+def _leased_room_reuse_enabled() -> bool:
+    # Read as an attribute only (never through ``_voice_setting``): its
+    # settings-or-env fallback would let a stray environment string override
+    # an explicit ``False`` and would read the string "false" as true.
+    return bool(getattr(settings, "HOSTED_RUNNER_LEASED_ROOM_REUSE", False))
+
+
 def _build_voice_job(
     *,
     mode: str,
@@ -460,10 +512,12 @@ def _build_voice_job(
     selected_keys: set[tuple[str, str | None]] | None = None,
 ) -> dict[str, Any]:
     credentials = _voice_credentials(agent_definition, agent_version)
-    provider = _voice_provider(agent_definition, credentials)
+    provider = _voice_provider(agent_definition, credentials, agent_version)
     inbound = _resolve_agent_inbound(agent_version, agent_definition)
     target_speaks_first = _resolve_target_speaks_first(agent_version, agent_definition)
-    transport_kind = _voice_transport_kind(agent_definition, provider, inbound)
+    transport_kind = _voice_transport_kind(
+        agent_definition, provider, inbound, agent_version
+    )
     dataset = _personas_for_scenarios(scenarios, selected_keys=selected_keys)
 
     if (transport_kind in {"sip_inbound", "sip_outbound"}) != (mode == _VOICE_SIP_MODE):
@@ -471,9 +525,27 @@ def _build_voice_job(
             f"mode {mode} does not match transport {transport_kind}"
         )
 
+    # A run whose target DIALS our leased number (sip_inbound with an
+    # originator) serves one scenario per leased room; a multi-scenario run
+    # is refused unless reuse is switched on (D10).
+    originator = _provider_profile(provider)["sip_inbound_originator"]
+    if transport_kind == "sip_inbound" and originator and len(dataset) > 1:
+        if not _leased_room_reuse_enabled():
+            raise HostedRunnerBuildError(
+                f"phone simulation selected {len(dataset)} scenario rows but "
+                "this runner serves one scenario per leased number; select a "
+                "single scenario row, or enable HOSTED_RUNNER_LEASED_ROOM_REUSE "
+                "on a runner whose simulator kit supports sequential room "
+                "reuse"
+            )
+
     secret_env: list[dict[str, Any]] = []
     agent_def, target_secret = _voice_agent_definition(
-        agent_definition, provider, transport_kind, credentials
+        agent_definition,
+        provider,
+        transport_kind,
+        credentials,
+        agent_version=agent_version,
     )
     secret_env.extend(target_secret)
 
@@ -501,6 +573,7 @@ def _build_voice_job(
                 max_concurrency=_target_max_concurrency(credentials),
                 max_call_minutes=_max_call_minutes(simulator_agent),
                 target_speaks_first=target_speaks_first,
+                leased_room=(transport_kind == "sip_inbound" and bool(originator)),
             ),
         },
         "sink": {
@@ -524,14 +597,116 @@ def _build_voice_job(
     return job
 
 
-def _target_uses_phone(agent_definition) -> bool:
-    return bool((getattr(agent_definition, "contact_number", "") or "").strip())
+def _resolve_agent_version(agent_definition, agent_version):
+    """The version whose ``configuration_snapshot`` is the source of truth.
+
+    One versionless ladder for the whole module: active_version, else
+    latest_version — same rung ``resolve_run_agent_version`` ends on.
+    """
+    if agent_version is not None:
+        return agent_version
+    return getattr(agent_definition, "active_version", None) or getattr(
+        agent_definition, "latest_version", None
+    )
+
+
+def _agent_field(agent_definition, agent_version, name: str, default=None):
+    """Read an agent attribute from the version snapshot, never the definition.
+
+    ``AgentDefinition``'s columns mirror only the latest save and are slated
+    for retirement; a run is pinned to an ``AgentVersion`` and must see that
+    version's ``configuration_snapshot``. When the snapshot is a dict it is
+    authoritative — a key it lacks means "unset", the definition is not
+    consulted. Only an agent with no version at all (no snapshot dict) falls
+    back to the definition column.
+    """
+    version = _resolve_agent_version(agent_definition, agent_version)
+    snapshot = getattr(version, "configuration_snapshot", None)
+    if isinstance(snapshot, dict):
+        return snapshot.get(name, default)
+    return getattr(agent_definition, name, default)
+
+
+def agent_field_for_version(agent_definition, agent_version, name: str, default=None):
+    """Read an agent field for an exact, already-resolved version — for a
+    caller with no ``RunTest`` row to hand ``agent_field_for_run`` (e.g. one
+    not yet saved)."""
+    return _agent_field(agent_definition, agent_version, name, default)
+
+
+def resolve_run_agent_version(run_test, test_execution=None):
+    """The one version ladder shared by the builder and the view.
+
+    ``run_test.agent_version`` (the RunTest's own pin — what a fresh dispatch
+    or a rerun request carries) wins; then ``test_execution.agent_version``
+    (the native activity backfills this after a run starts, so a rerun of a
+    natively-executed run can carry a pin the RunTest itself never had); then
+    the definition's ``active_version``, falling back to ``latest_version`` —
+    the same last rung every other version-resolving call site in this app
+    uses (``views/agent_definition.py``, ``views/agent_version.py``,
+    ``serializers/agent_definition.py``), so an unpinned run picks the same
+    version the rest of the platform would call current.
+    """
+    if run_test.agent_version is not None:
+        return run_test.agent_version
+    backfilled = getattr(test_execution, "agent_version", None)
+    if backfilled is not None:
+        return backfilled
+    agent_definition = run_test.agent_definition
+    return getattr(agent_definition, "active_version", None) or getattr(
+        agent_definition, "latest_version", None
+    )
+
+
+# Distinguishes an omitted ``agent_version=`` from an explicit ``None``: an
+# explicit ``None`` skips the run/execution rungs below, but ``_agent_field``
+# still resolves the definition's own active/latest ladder for that ``None``
+# (it reaches the column only when the agent has neither).
+_UNSET = object()
+
+
+def agent_field_for_run(
+    run_test, name: str, default=None, *, test_execution=None, agent_version=_UNSET
+):
+    """Read an agent field for a run test the same way the builder does.
+
+    Resolves the version with :func:`resolve_run_agent_version` and reads the
+    field through :func:`_agent_field`, so a view-side eligibility check (an
+    ``agent_type`` gate, say) agrees with what the builder will read for the
+    same run/execution instead of re-deriving its own, possibly different,
+    answer from the definition column directly. ``agent_version``, when
+    given (including an explicit ``None``), is read verbatim instead of going
+    through the run/execution ladder — for a caller that already resolved the
+    exact version to check (e.g. a version change pending in the same
+    request that hasn't been saved onto ``run_test`` yet). An explicit
+    ``None`` still resolves through ``_agent_field``'s own definition-level
+    fallback (``active_version`` or ``latest_version``), not straight to the
+    column.
+    """
+    resolved_version = (
+        agent_version
+        if agent_version is not _UNSET
+        else resolve_run_agent_version(run_test, test_execution)
+    )
+    return _agent_field(run_test.agent_definition, resolved_version, name, default)
+
+
+def _target_uses_phone(agent_definition, agent_version=None) -> bool:
+    contact_number = _agent_field(agent_definition, agent_version, "contact_number", "")
+    return bool(str(contact_number or "").strip())
 
 
 def _voice_credentials(agent_definition, agent_version):
     """Provider credentials for the target, preferring the versioned row (the
     native path reads ``agent_version.credentials``) then the legacy 1:1 on the
-    agent definition. Returns None when neither exists."""
+    agent definition. Returns None when neither exists.
+
+    An unpinned run now reaches here with ``agent_version`` resolved to
+    active/latest (``resolve_run_agent_version``) rather than ``None``, so
+    this prefers that version's own credentials over ``credentials_legacy`` —
+    intended: the platform's credential-editing endpoints write to the
+    version-scoped row, not the legacy one.
+    """
     if agent_version is not None:
         credentials = getattr(agent_version, "credentials", None)
         if credentials is not None:
@@ -539,10 +714,10 @@ def _voice_credentials(agent_definition, agent_version):
     return getattr(agent_definition, "credentials_legacy", None)
 
 
-def _voice_provider(agent_definition, credentials) -> str:
+def _voice_provider(agent_definition, credentials, agent_version=None) -> str:
     provider = (
         getattr(credentials, "provider_type", None)
-        or getattr(agent_definition, "provider", None)
+        or _agent_field(agent_definition, agent_version, "provider", None)
         or "livekit"
     )
     return str(provider).strip().lower()
@@ -551,19 +726,14 @@ def _voice_provider(agent_definition, credentials) -> str:
 def _resolve_agent_inbound(agent_version, agent_definition) -> bool:
     """Resolve the agent's inbound/outbound intent the way native does.
 
-    Mirrors the TestExecutor dynamic-prompt precedence: prefer the per-version
-    ``configuration_snapshot['inbound']`` the UI toggle writes, fall back to the
-    ``AgentDefinition.inbound`` column, default inbound. The bare column is stale
-    for versioned edits (the toggle only updates the snapshot), so the job
-    direction must read the snapshot first — otherwise an inbound agent runs
-    ``simulator_first`` while ingestion already treats it as inbound.
+    Same whole-dict precedence as ``_agent_field``: once the pinned version has
+    a snapshot dict, it alone decides — a key it lacks means "unset" and
+    defaults to inbound, the ``AgentDefinition.inbound`` column is NOT
+    consulted. Only an agent with no version at all (no snapshot dict) falls
+    back to the column. A later definition-level toggle must not reach back
+    and flip the call direction of an older pinned version that predates it.
     """
-    raw_inbound = None
-    snapshot = getattr(agent_version, "configuration_snapshot", None) or {}
-    if isinstance(snapshot, dict):
-        raw_inbound = snapshot.get("inbound", None)
-    if raw_inbound is None:
-        raw_inbound = getattr(agent_definition, "inbound", True)
+    raw_inbound = _agent_field(agent_definition, agent_version, "inbound", True)
     if isinstance(raw_inbound, str):
         return raw_inbound.strip().lower() == "true"
     return bool(raw_inbound)
@@ -573,17 +743,15 @@ def _resolve_target_speaks_first(agent_version, agent_definition) -> bool | None
     """Resolve the explicit "does the target agent speak first?" toggle.
 
     Tri-state: ``True``/``False`` override the conversation direction; ``None``
-    means "auto" (derive from inbound/outbound). Mirrors
-    ``_resolve_agent_inbound``'s snapshot-first precedence so a versioned edit is
-    honored, and coerces the ``"true"``/``"false"`` strings the snapshot may hold
-    (``bool("false")`` is truthy — must parse, not cast).
+    means "auto" (derive from inbound/outbound). Same whole-dict precedence as
+    ``_agent_field`` (see ``_resolve_agent_inbound``): a snapshot dict silent on
+    the key means "unset" (``None`` — auto), not a column fallback; only a
+    version with no snapshot dict at all falls back to the
+    ``AgentDefinition.target_speaks_first`` column. Coerces the
+    ``"true"``/``"false"`` strings the snapshot may hold (``bool("false")`` is
+    truthy — must parse, not cast).
     """
-    raw = None
-    snapshot = getattr(agent_version, "configuration_snapshot", None) or {}
-    if isinstance(snapshot, dict):
-        raw = snapshot.get("target_speaks_first", None)
-    if raw is None:
-        raw = getattr(agent_definition, "target_speaks_first", None)
+    raw = _agent_field(agent_definition, agent_version, "target_speaks_first", None)
     if raw is None:
         return None
     if isinstance(raw, str):
@@ -591,8 +759,10 @@ def _resolve_target_speaks_first(agent_version, agent_definition) -> bool | None
     return bool(raw)
 
 
-def _voice_transport_kind(agent_definition, provider: str, inbound: bool) -> str:
-    if _target_uses_phone(agent_definition):
+def _voice_transport_kind(
+    agent_definition, provider: str, inbound: bool, agent_version=None
+) -> str:
+    if _target_uses_phone(agent_definition, agent_version):
         # From the target agent's perspective: an inbound agent receives the
         # call, so the simulator dials out to it (sip_outbound); an outbound
         # agent places the call, so it dials the simulator's leased DID
@@ -615,11 +785,18 @@ def _env_passthrough_ref(env_var: str) -> dict[str, Any]:
 
 
 def _voice_agent_definition(
-    agent_definition, provider: str, transport_kind: str, credentials
+    agent_definition,
+    provider: str,
+    transport_kind: str,
+    credentials,
+    agent_version=None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    name = agent_definition.agent_name or f"{provider}-target"
+    def field(name: str, default=None):
+        return _agent_field(agent_definition, agent_version, name, default)
+
+    name = field("agent_name") or f"{provider}-target"
     system_prompt = (
-        agent_definition.description or ""
+        str(field("description") or "")
     ).strip() or "You are a helpful voice agent."
     agent_def: dict[str, Any] = {"name": name, "system_prompt": system_prompt}
     secret_env: list[dict[str, Any]] = []
@@ -629,9 +806,7 @@ def _voice_agent_definition(
         if profile["target_id_field"] is None:
             # webrtc: reached by managed dispatch on the agent name, no target
             agent_def["agent_name"] = (
-                getattr(credentials, "agent_name", "")
-                or agent_definition.assistant_id
-                or name
+                getattr(credentials, "agent_name", "") or field("assistant_id") or name
             )
             agent_def["transport"] = {"kind": transport_kind}
         else:
@@ -639,8 +814,7 @@ def _voice_agent_definition(
             agent_def["target"] = {
                 "provider": provider,
                 profile["target_id_field"]: _require(
-                    getattr(credentials, "assistant_id", None)
-                    or agent_definition.assistant_id,
+                    getattr(credentials, "assistant_id", None) or field("assistant_id"),
                     f"{provider} {profile['target_id_field']}",
                 ),
                 "api_key_env": env_var,
@@ -661,9 +835,7 @@ def _voice_agent_definition(
             "sip_number": _require(
                 _voice_setting("PSTN_CALLER_NUMBER"), "PSTN_CALLER_NUMBER"
             ),
-            "sip_call_to": _require(
-                agent_definition.contact_number, "agent contact_number"
-            ),
+            "sip_call_to": _require(field("contact_number"), "agent contact_number"),
             "participant_identity": "sip-caller-{invocation_id}-{test_case_id}",
             "answer_timeout_seconds": 60,
         }
@@ -679,13 +851,23 @@ def _voice_agent_definition(
             transport["inbound_call_originator"] = originator
             env_var = _PROVIDER_ENV[originator]["api_key"]
             secret_env.append(_credential_or_env(env_var, credentials, "api_key"))
-            # ALK requires provider evidence for an API-originated Vapi call so
-            # the originator response's call id is retained and reconciled.
-            if originator == "vapi":
-                agent_def["provider_evidence"] = {
-                    "provider": "vapi",
-                    "call_id_source": "originator_response",
-                }
+            for job_field_name, source_attribute, validator in profile[
+                "sip_inbound_originator_fields"
+            ]:
+                value = getattr(credentials, source_attribute, None) or field(
+                    source_attribute
+                )
+                label = f"{provider} {job_field_name}"
+                transport[job_field_name] = validator(value, label)
+            # ALK requires provider evidence for any API-originated call so the
+            # originator response's call id is retained and reconciled, with an
+            # explicit poll budget rather than an inherited model default.
+            agent_def["provider_evidence"] = {
+                "provider": originator,
+                "call_id_source": "originator_response",
+                "poll_interval_seconds": 3,
+                "poll_deadline_seconds": 45,
+            }
         agent_def["transport"] = transport
     else:  # pragma: no cover - guarded upstream
         raise HostedRunnerBuildError(f"unknown transport: {transport_kind}")
@@ -749,7 +931,10 @@ def _voice_simulator_config(
     if _is_english_language(language):
         default_tts_provider, default_tts_model = "deepgram", "aura-2-andromeda-en"
     else:
-        default_tts_provider, default_tts_model = "gemini", "gemini-3.1-flash-tts-preview"
+        default_tts_provider, default_tts_model = (
+            "gemini",
+            "gemini-3.1-flash-tts-preview",
+        )
     tts = {
         "provider": _voice_setting("SIMULATOR_TTS_PROVIDER") or default_tts_provider,
         "model": _voice_setting("SIMULATOR_TTS_MODEL") or default_tts_model,
@@ -835,9 +1020,8 @@ def _voice_params(
     max_concurrency: int = 1,
     max_call_minutes: int = _DEFAULT_MAX_CALL_MINUTES,
     target_speaks_first: bool | None = None,
+    leased_room: bool = False,
 ) -> dict[str, Any]:
-    from simulate.temporal.constants import HOSTED_RUNNER_MAX_DURATION_SECONDS
-
     is_telephony = transport_kind in {"sip_inbound", "sip_outbound"}
     # Who opens the conversation. The explicit ``target_speaks_first`` toggle on
     # the agent definition wins when set (True: wait for the target's greeting;
@@ -881,25 +1065,37 @@ def _voice_params(
     )
 
     # The child sums ``max_seconds + connect + readiness + cleanup + 60`` into
-    # its outer run deadline. Keep that strictly under the activity's
-    # start_to_close: the SDK's own timeout is graceful (still submits a partial
-    # report), but the Temporal activity timeout SIGTERMs the child, which
-    # aborts WITHOUT submitting — zero rows + "activity task failed".
-    deadline_cap = 0.9 * HOSTED_RUNNER_MAX_DURATION_SECONDS
+    # its own outer run deadline (child_run_seconds mirrors this). D15: that
+    # deadline is the child's budget, not capped against a parent ceiling —
+    # the parent derives its timeout from the child's number instead.
     fixed_overhead = connect_timeout + readiness_timeout + 60.0
-    # A single call must fit under the cap on its own.
-    max_seconds = min(max_seconds, deadline_cap - fixed_overhead - base_cleanup)
+    # A leased pool room hosts one case at a time and pays the drain's
+    # connect_timeout on top of the usual per-case overhead.
+    leased_overhead = fixed_overhead + connect_timeout
 
     cleanup_timeout = base_cleanup
     # Cases run in parallel up to ``effective_concurrency``, so the run's
     # wall-clock is ``ceil(N/C)`` case budgets; contribute those extra budgets
-    # through cleanup_timeout, then clamp the whole deadline under the cap.
-    if case_count > 1:
+    # through cleanup_timeout. A leased room serialises every case (telephony
+    # forces effective_concurrency to 1) and pays the drain's connect_timeout
+    # per case, so its real cost is the deadline identity below rather than
+    # the batch heuristic used for non-leased runs.
+    if case_count > 1 and leased_room:
+        cleanup_timeout = (
+            (case_count - 1) * max_seconds
+            + case_count * leased_overhead
+            - fixed_overhead
+            + base_cleanup
+        )
+    elif case_count > 1:
         per_case_budget = max_seconds + fixed_overhead + base_cleanup
         batches = -(-case_count // effective_concurrency)  # ceil division
         cleanup_timeout = base_cleanup + (batches - 1) * per_case_budget
-        max_cleanup = deadline_cap - max_seconds - fixed_overhead
-        cleanup_timeout = max(base_cleanup, min(cleanup_timeout, max_cleanup))
+    elif leased_room:
+        # A single leased case never reaches the accumulation above but still
+        # pays the drain (K1 runs it on every leased-room run, not only
+        # multi-case ones), so it needs its own standalone allowance.
+        cleanup_timeout = base_cleanup + connect_timeout
 
     return {
         "record_audio": True,
@@ -917,6 +1113,25 @@ def _voice_params(
     }
 
 
+def child_run_seconds(params: dict[str, Any]) -> int:
+    """The child's own run deadline (D15) — line-for-line the same sum the
+    kit computes from these same voice params (agent-learning-kit
+    src/fi/simulate/hosted/child_entrypoint.py:140), so the parent's timeout
+    can derive from it instead of imposing a second, competing cap."""
+    # Round up, not truncate: a fractional second must never make the
+    # parent's derived deadline shorter than what the child actually needs.
+    return math.ceil(
+        max(
+            300.0,
+            float(params.get("max_seconds", 45.0))
+            + float(params.get("connect_timeout", 15.0))
+            + float(params.get("readiness_timeout", 30.0))
+            + float(params.get("cleanup_timeout", 30.0))
+            + 60.0,
+        )
+    )
+
+
 def _credential_or_env(env_var: str, credentials, field: str) -> dict[str, Any]:
     if credentials is not None and getattr(credentials, "id", None) is not None:
         return _provider_credential_ref(env_var, credentials, field)
@@ -925,9 +1140,3 @@ def _credential_or_env(env_var: str, credentials, field: str) -> dict[str, Any]:
 
 def _voice_setting(name: str) -> str | None:
     return getattr(settings, name, None) or os.getenv(name)
-
-
-def _require(value, label: str):
-    if value is None or (isinstance(value, str) and not value.strip()):
-        raise HostedRunnerBuildError(f"voice runner job missing {label}")
-    return value
