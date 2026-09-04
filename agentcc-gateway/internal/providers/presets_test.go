@@ -68,6 +68,76 @@ func TestPreset_Groq(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. applyProviderPreset — MiniMax supports each documented endpoint
+// ---------------------------------------------------------------------------
+
+func TestPreset_MiniMax(t *testing.T) {
+	tests := []struct {
+		name         string
+		cfg          config.ProviderConfig
+		wantURL      string
+		wantFmt      string
+		wantEndpoint string
+	}{
+		{
+			name:         "global OpenAI default",
+			cfg:          config.ProviderConfig{Type: "minimax"},
+			wantURL:      "https://api.minimax.io",
+			wantFmt:      "openai",
+			wantEndpoint: "https://api.minimax.io/v1/chat/completions",
+		},
+		{
+			name: "China OpenAI override",
+			cfg: config.ProviderConfig{
+				Type:      "minimax",
+				BaseURL:   "https://api.minimaxi.com",
+				APIFormat: "openai",
+			},
+			wantURL:      "https://api.minimaxi.com",
+			wantFmt:      "openai",
+			wantEndpoint: "https://api.minimaxi.com/v1/chat/completions",
+		},
+		{
+			name: "global Anthropic override",
+			cfg: config.ProviderConfig{
+				Type:      "minimax",
+				BaseURL:   "https://api.minimax.io/anthropic",
+				APIFormat: "anthropic",
+			},
+			wantURL: "https://api.minimax.io/anthropic",
+			wantFmt: "anthropic",
+		},
+		{
+			name: "China Anthropic override",
+			cfg: config.ProviderConfig{
+				Type:      "minimax",
+				BaseURL:   "https://api.minimaxi.com/anthropic",
+				APIFormat: "anthropic",
+			},
+			wantURL: "https://api.minimaxi.com/anthropic",
+			wantFmt: "anthropic",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyProviderPreset(&tt.cfg)
+			if tt.cfg.BaseURL != tt.wantURL {
+				t.Errorf("BaseURL = %q, want %q", tt.cfg.BaseURL, tt.wantURL)
+			}
+			if tt.cfg.APIFormat != tt.wantFmt {
+				t.Errorf("APIFormat = %q, want %q", tt.cfg.APIFormat, tt.wantFmt)
+			}
+			if tt.wantEndpoint != "" {
+				if got := tt.cfg.EndpointURL("/v1/chat/completions"); got != tt.wantEndpoint {
+					t.Errorf("EndpointURL = %q, want %q", got, tt.wantEndpoint)
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 4. applyProviderPreset — "azure" fills only APIFormat (no BaseURL in preset)
 // ---------------------------------------------------------------------------
 
@@ -146,6 +216,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
+		"minimax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai", PathPrefix: "/v1"},
 		"azure":       {BaseURL: "", APIFormat: "azure", PathPrefix: ""},
 	}
 
