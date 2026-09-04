@@ -593,6 +593,27 @@ def _add_livekit_host(domains: set[str], host: str | None) -> None:
         domains.update({"coturn.turn-eu.futureagi.com", "turn-eu.futureagi.com"})
 
 
+def _effective_connector(
+    payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
+) -> str:
+    """Resolve ``connector="auto"`` from the credentials present (mirrors the guest)."""
+    agent = payload.get("agent") or {}
+    connector = str(agent.get("connector") or "auto").strip().lower()
+    if connector != "auto":
+        return connector
+    config = agent.get("config") or {}
+    if not isinstance(config, Mapping):
+        config = {}
+    aliases = {str(name).upper() for name in secrets_map}
+    if "LIVEKIT_URL" in aliases or _config_value(config, "livekit_url", "LIVEKIT_URL"):
+        return "livekit"
+    if "VAPI_API_KEY" in aliases:
+        return "vapi"
+    if "RETELL_API_KEY" in aliases:
+        return "retell"
+    return connector
+
+
 def _connector_egress_domains(
     payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
 ) -> set[str]:
@@ -603,24 +624,11 @@ def _connector_egress_domains(
     intentionally not guessed.
     """
     agent = payload.get("agent") or {}
-    connector = str(agent.get("connector") or "auto").strip().lower()
+    connector = _effective_connector(payload, secrets_map)
     config = agent.get("config") or {}
     if not isinstance(config, Mapping):
         config = {}
     domains: set[str] = set()
-
-    # Resolve 'auto' from the creds present so LiveKit TURN/media edges are allowlisted.
-    if connector == "auto":
-        aliases = {str(name).upper() for name in secrets_map}
-        has_livekit = "LIVEKIT_URL" in aliases or bool(
-            _config_value(config, "livekit_url", "LIVEKIT_URL")
-        )
-        if has_livekit:
-            connector = "livekit"
-        elif "VAPI_API_KEY" in aliases:
-            connector = "vapi"
-        elif "RETELL_API_KEY" in aliases:
-            connector = "retell"
 
     if connector == "livekit":
         livekit_url = None
@@ -823,15 +831,17 @@ def _resolved_egress_domains(
     values.extend(_provider_egress_domains(simulator_env))
     # The simulated caller rides the platform LiveKit server whenever the target connector does
     # not supply its own (Vapi/Retell); its signaling and TURN hosts are platform config, never
-    # derivable from customer input.
-    simulator_livekit: set[str] = set()
-    _add_livekit_host(
-        simulator_livekit,
-        _hostname_from_url(
-            {str(k).upper(): v for k, v in simulator_env.items()}.get("LIVEKIT_URL")
-        ),
-    )
-    values.extend(simulator_livekit)
+    # derivable from customer input. LiveKit targets share the customer's server, so skipping
+    # them there preserves headroom under Daytona's domain cap.
+    if _effective_connector(payload, target_secrets) != "livekit":
+        simulator_livekit: set[str] = set()
+        _add_livekit_host(
+            simulator_livekit,
+            _hostname_from_url(
+                {str(k).upper(): v for k, v in simulator_env.items()}.get("LIVEKIT_URL")
+            ),
+        )
+        values.extend(simulator_livekit)
     values.extend(_connector_egress_domains(payload, target_secrets))
     values.extend(domain for domain in customer_domains if isinstance(domain, str))
     if callback_host:

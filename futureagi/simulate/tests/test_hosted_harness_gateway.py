@@ -365,6 +365,19 @@ def test_retell_job_allowlists_platform_simulator_livekit_signaling_and_turn(set
     }
 
 
+def test_livekit_job_does_not_spend_egress_slots_on_platform_simulator_livekit(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = {
+        "agent": {"connector": "livekit", "config": {}},
+        "security": {"allowed_egress_domains": []},
+    }
+    simulator_env = {"LIVEKIT_URL": "wss://livekit-eu.futureagi.com"}
+
+    assert _resolved_egress_domains(
+        payload, {"LIVEKIT_URL": "wss://tenant-abc.livekit.cloud"}, simulator_env, None
+    ) == {"*.livekit.cloud", "*.turn.livekit.cloud"}
+
+
 def test_auto_connector_resolves_livekit_and_adds_cloud_turn_edges():
     payload = {
         "agent": {"connector": "auto", "config": {}},
