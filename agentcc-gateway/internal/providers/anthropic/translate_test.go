@@ -1795,6 +1795,62 @@ func TestTranslateResponse_ServerToolUseIsNotAClientToolCall(t *testing.T) {
 	}
 }
 
+func TestTranslateMessage_AssistantToolCallWithEmptyArguments(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments string
+	}{
+		{
+			name:      "empty arguments",
+			arguments: "",
+		},
+		{
+			name:      "null arguments",
+			arguments: "null",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := models.Message{
+				Role: "assistant",
+				ToolCalls: []models.ToolCall{
+					{
+						ID:   "toolu_empty",
+						Type: "function",
+						Function: models.FunctionCall{
+							Name:      "ping",
+							Arguments: tt.arguments,
+						},
+					},
+				},
+			}
+
+			am, err := translateMessage(msg)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var blocks []anthropicContentBlock
+			if err := json.Unmarshal(am.Content, &blocks); err != nil {
+				t.Fatalf("failed to unmarshal content: %v", err)
+			}
+
+			if len(blocks) != 1 {
+				t.Fatalf("blocks length = %d, want 1", len(blocks))
+			}
+
+			if blocks[0].Type != "tool_use" {
+				t.Fatalf("block type = %q, want %q", blocks[0].Type, "tool_use")
+			}
+
+			if string(blocks[0].Input) != `{}` {
+				t.Errorf("tool_use input = %q, want %q", string(blocks[0].Input), `{}`)
+			}
+		})
+	}
+}
+
 // Searches are billed per call on top of tokens, so a response reporting tokens
 // alone understates the cost.
 func TestTranslateResponse_CarriesServerToolUsage(t *testing.T) {
