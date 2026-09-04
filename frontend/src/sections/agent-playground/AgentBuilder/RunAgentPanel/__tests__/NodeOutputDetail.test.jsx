@@ -81,6 +81,7 @@ describe("NodeOutputDetail", () => {
   it("does not show an error for a successful node", () => {
     mockNodeDetail.status = "success";
     mockNodeDetail.outputs = [{ payload: "complete result" }];
+    mockNodeDetail.error_message = "Stale failure from an earlier attempt";
 
     render(
       <NodeOutputDetail
