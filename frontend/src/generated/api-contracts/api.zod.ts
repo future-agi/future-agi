@@ -41132,12 +41132,20 @@ export const SimulateRunTestsStatusListResponse = zod.object({
 export const simulateScenariosListQuerySearchDefault = ``;
 export const simulateScenariosListQueryPageDefault = 1;
 
+export const simulateScenariosListQuerySelectedScenariosDefault = ``;
+
 export const SimulateScenariosListQueryParams = zod.object({
   search: zod.string().default(simulateScenariosListQuerySearchDefault),
   agent_definition_id: zod.string().uuid().optional(),
   agent_type: zod.string().min(1).optional(),
   page: zod.number().min(1).default(simulateScenariosListQueryPageDefault),
   limit: zod.number().min(1).optional(),
+  selected_scenarios: zod
+    .string()
+    .default(simulateScenariosListQuerySelectedScenariosDefault)
+    .describe(
+      "JSON array of up to 100 scenario UUIDs to surface at the top of the list.",
+    ),
 });
 
 export const simulateScenariosListResponseResultsItemNameMax = 255;
@@ -41388,6 +41396,8 @@ export const SimulateScenariosCreateCreateBody = zod.object({
 export const simulateScenariosGetColumnsListQuerySearchDefault = ``;
 export const simulateScenariosGetColumnsListQueryPageDefault = 1;
 
+export const simulateScenariosGetColumnsListQuerySelectedScenariosDefault = ``;
+
 export const SimulateScenariosGetColumnsListQueryParams = zod.object({
   search: zod
     .string()
@@ -41399,6 +41409,12 @@ export const SimulateScenariosGetColumnsListQueryParams = zod.object({
     .min(1)
     .default(simulateScenariosGetColumnsListQueryPageDefault),
   limit: zod.number().min(1).optional(),
+  selected_scenarios: zod
+    .string()
+    .default(simulateScenariosGetColumnsListQuerySelectedScenariosDefault)
+    .describe(
+      "JSON array of up to 100 scenario UUIDs to surface at the top of the list.",
+    ),
 });
 
 export const simulateScenariosGetColumnsListResponseResultsItemNameMax = 255;
