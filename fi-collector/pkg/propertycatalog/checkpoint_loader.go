@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+// physicalSnapshotEnvelopeFormat is a completed backfill ledger format, NOT
+// a Kafka wire format. Only checkpoint recovery may accept this receipt.
+const physicalSnapshotEnvelopeFormat = "futureagi.property-catalog.physical-snapshot.v1"
+
 // checkpointInventoryQuery deliberately anchors every scope on the newest
 // serialized build reservation.  An open or draining newer revision must
 // never disappear behind an older active activation.  Raw latest-version rows
@@ -301,9 +305,11 @@ const checkpointStreamQuery = `SELECT
   max(identity_variants) AS max_identity_variants,
   countIf(identity_variants != 1) AS conflict_sequences,
   countIf(previous_payload_sha256 != expected_previous_payload_sha256) AS chain_breaks,
+  countIf(envelope_format = {physical_snapshot_format:String}) AS physical_snapshot_sequences,
   countIf(
-    envelope_format != {envelope_format:String}
+    envelope_format NOT IN ({envelope_format:String}, {physical_snapshot_format:String})
     OR envelope_version != {envelope_version:UInt16}
+    OR invalid_snapshot_transports != 0
     OR terminal > 1
     OR NOT match(envelope_id, '^[0-9a-f]{64}$')
     OR NOT match(payload_sha256, '^[0-9a-f]{64}$')
@@ -359,6 +365,11 @@ FROM
       any(delivery.definition_rows) AS definition_rows,
       any(delivery.value_rows) AS value_rows,
       any(delivery.tombstone_rows) AS tombstone_rows,
+      countIf(
+        delivery.envelope_format = {physical_snapshot_format:String}
+        AND (toString(delivery.transport) != 'reconcile'
+          OR delivery.kafka_partition != -1 OR delivery.kafka_offset != -1)
+      ) AS invalid_snapshot_transports,
       uniqExact(tuple(
         delivery.projection_version, delivery.envelope_format,
         delivery.envelope_version, delivery.envelope_id, delivery.payload_sha256,
@@ -632,6 +643,7 @@ type checkpointStreamProofJSON struct {
 	MaxIdentityVariants             uint64 `json:"max_identity_variants"`
 	ConflictSequences               uint64 `json:"conflict_sequences"`
 	ChainBreaks                     uint64 `json:"chain_breaks"`
+	PhysicalSnapshotSequences       uint64 `json:"physical_snapshot_sequences"`
 	InvalidWireSequences            uint64 `json:"invalid_wire_sequences"`
 	InvalidOutcomeSequences         uint64 `json:"invalid_outcome_sequences"`
 	InvalidTerminalSequences        uint64 `json:"invalid_terminal_sequences"`
@@ -724,16 +736,17 @@ func (l *ClickHouseCheckpointLoader) loadCheckpointStreamProof(
 	ctx context.Context, candidate checkpointInventoryJSON,
 ) (checkpointStreamProofJSON, bool, error) {
 	params := map[string]string{
-		"param_organization_id":    candidate.OrganizationID,
-		"param_workspace_id":       candidate.WorkspaceID,
-		"param_catalog_epoch":      fmt.Sprintf("%d", candidate.CatalogEpoch),
-		"param_catalog_revision":   fmt.Sprintf("%d", candidate.CatalogRevision),
-		"param_build_token":        candidate.BuildToken,
-		"param_source_adapter":     string(candidate.StreamSourceAdapter),
-		"param_producer_stream_id": candidate.StreamProducerStreamID,
-		"param_envelope_format":    EnvelopeFormat,
-		"param_envelope_version":   fmt.Sprintf("%d", EnvelopeVersion),
-		"param_zero_sha256":        ZeroSHA256,
+		"param_organization_id":          candidate.OrganizationID,
+		"param_workspace_id":             candidate.WorkspaceID,
+		"param_catalog_epoch":            fmt.Sprintf("%d", candidate.CatalogEpoch),
+		"param_catalog_revision":         fmt.Sprintf("%d", candidate.CatalogRevision),
+		"param_build_token":              candidate.BuildToken,
+		"param_source_adapter":           string(candidate.StreamSourceAdapter),
+		"param_producer_stream_id":       candidate.StreamProducerStreamID,
+		"param_envelope_format":          EnvelopeFormat,
+		"param_physical_snapshot_format": physicalSnapshotEnvelopeFormat,
+		"param_envelope_version":         fmt.Sprintf("%d", EnvelopeVersion),
+		"param_zero_sha256":              ZeroSHA256,
 	}
 	settings := map[string]string{
 		"max_execution_time":     "10",
@@ -1618,10 +1631,28 @@ func validateCheckpointStreamProof(
 		return StreamCheckpoint{}, errors.New("delivery stream has a broken chain, wire identity, outcome, or terminal fence")
 	}
 	if proof.TailProjectionVersion != row.StreamProjectionVersion ||
-		proof.TailEnvelopeFormat != EnvelopeFormat || proof.TailEnvelopeVersion != EnvelopeVersion ||
+		(proof.TailEnvelopeFormat != EnvelopeFormat && proof.TailEnvelopeFormat != physicalSnapshotEnvelopeFormat) ||
+		proof.TailEnvelopeVersion != EnvelopeVersion ||
 		!isLowerSHA256(proof.TailEnvelopeID) || !isLowerSHA256(proof.TailPayloadSHA256) ||
 		proof.TailTerminal > 1 {
 		return StreamCheckpoint{}, errors.New("delivery tail does not match the reserved stream projection or wire contract")
+	}
+	if proof.PhysicalSnapshotSequences > 0 || proof.TailEnvelopeFormat == physicalSnapshotEnvelopeFormat {
+		// The finalizer emits one optional inventory receipt followed by one
+		// terminal receipt. Never seed an open/mixed Kafka stream from these
+		// operator records, or accept one without matching durable completion.
+		if proof.PhysicalSnapshotSequences != proof.SequenceRows ||
+			proof.TailEnvelopeFormat != physicalSnapshotEnvelopeFormat || proof.LastSequence > 2 ||
+			proof.TerminalSequences != 1 || proof.TailTerminal != 1 || proof.GapSequences != 0 ||
+			row.ReservationStatus != "fenced" || row.StreamStatus != "complete" ||
+			row.StreamFirstSequence != 1 || row.StreamMaxContiguousSequence != proof.LastSequence ||
+			row.StreamLastIssuedSequence != proof.LastSequence || row.StreamFencedSequence != proof.LastSequence ||
+			row.CheckpointEvidenceRows == 0 || row.CheckpointStatus != "complete" || row.CheckpointTerminal != 1 ||
+			row.CheckpointNullFirstSequences != 0 || row.CheckpointNullLastSequences != 0 ||
+			row.CheckpointFirstSequence != 1 || row.CheckpointLastSequence != proof.LastSequence ||
+			row.CheckpointLastIssuedSequence != proof.LastSequence || row.CheckpointFencedSequence != proof.LastSequence {
+			return StreamCheckpoint{}, errors.New("physical snapshot requires an unmixed completed backfill stream and checkpoint")
+		}
 	}
 	switch proof.TerminalSequences {
 	case 0:
