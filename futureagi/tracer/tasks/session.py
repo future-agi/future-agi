@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import structlog
 from django.db import close_old_connections, transaction
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.utils import timezone
 
 from tfc.temporal import temporal_activity
@@ -383,50 +383,94 @@ def update_end_user_analytics_task():
 
         updated_count = 0
 
-        for user in active_users:
-            try:
-                # Try the analytics-service CH path first for session-level
-                # rollups it already computes.
-                ch_stats = _get_user_stats_from_ch(user, user.project_id)
+        # Pre-batch session counts to avoid N individual count queries on fallback
+        session_counts = dict(
+            TraceSession.objects.filter(end_user__in=active_users)
+            .values_list("end_user")
+            .annotate(n=Count("id"))
+        )
 
-                if ch_stats is not None:
-                    # Use the analytics-service CH data for session-level
-                    # rollups; per-user span/trace aggregate now also comes
-                    # from CH via CHSpanReader.aggregate_by_end_user (single
-                    # call returning span_count, trace_count, tokens, cost,
-                    # first_seen, last_seen).
-                    user.total_sessions = ch_stats["session_count"]
-                    user.total_tokens_used = ch_stats["total_tokens"]
-                    user.total_cost = Decimal(str(ch_stats["total_cost"]))
+        with get_reader() as reader:
+            for user in active_users:
+                try:
+                    # Try the analytics-service CH path first for session-level
+                    # rollups it already computes.
+                    ch_stats = _get_user_stats_from_ch(user, user.project_id)
 
-                    # trace_count via uniqExact(trace_id) in CH (was
-                    # .filter(end_user=user).values("trace_id").distinct()
-                    # .count() in PG). project_id scopes the read for
-                    # defense-in-depth tenant isolation.
-                    with get_reader() as reader:
+                    if ch_stats is not None:
+                        # Use the analytics-service CH data for session-level
+                        # rollups; per-user span/trace aggregate now also comes
+                        # from CH via CHSpanReader.aggregate_by_end_user (single
+                        # call returning span_count, trace_count, tokens, cost,
+                        # first_seen, last_seen).
+                        user.total_sessions = ch_stats["session_count"]
+                        user.total_tokens_used = ch_stats["total_tokens"]
+                        user.total_cost = Decimal(str(ch_stats["total_cost"]))
+
+                        # trace_count via uniqExact(trace_id) in CH (was
+                        # .filter(end_user=user).values("trace_id").distinct()
+                        # .count() in PG). project_id scopes the read for
+                        # defense-in-depth tenant isolation.
                         user_agg = reader.aggregate_by_end_user(
                             str(user.id), project_id=str(user.project_id)
                         )
+                        user.total_traces = user_agg["trace_count"]
+
+                        if ch_stats.get("first_seen"):
+                            if (
+                                not user.first_seen
+                                or ch_stats["first_seen"] < user.first_seen
+                            ):
+                                user.first_seen = ch_stats["first_seen"]
+
+                        # last_seen parity: prefer user_agg["last_seen"] which
+                        # is max(end_time) — matches Django's previous behavior
+                        # of `.order_by("-end_time").first().end_time`. The
+                        # legacy ch_stats path returns max(start_time), which
+                        # underestimates last_seen for any long-running span.
+                        # Use that only as a fallback when CHSpanReader has
+                        # nothing (e.g. CH lag for this user).
+                        if user_agg["last_seen"]:
+                            user.last_seen = user_agg["last_seen"]
+                        elif ch_stats.get("last_seen"):
+                            user.last_seen = ch_stats["last_seen"]
+
+                        user.save(
+                            update_fields=[
+                                "total_sessions",
+                                "total_traces",
+                                "total_tokens_used",
+                                "total_cost",
+                                "first_seen",
+                                "last_seen",
+                            ]
+                        )
+                        updated_count += 1
+                        continue
+
+                    # Fallback path: the analytics-service short-circuit didn't
+                    # apply, but all per-user span aggregates still go through
+                    # CH via CHSpanReader.aggregate_by_end_user — one CH read
+                    # covers Sum(tokens), Sum(cost), uniqExact(trace_id),
+                    # min(start_time) (first_seen), max(end_time) (last_seen).
+                    session_count = session_counts.get(user.id, 0)
+
+                    user_agg = reader.aggregate_by_end_user(
+                        str(user.id), project_id=str(user.project_id)
+                    )
+
+                    # Update user analytics
+                    user.total_sessions = session_count
                     user.total_traces = user_agg["trace_count"]
+                    user.total_tokens_used = user_agg["total_tokens"]
+                    user.total_cost = Decimal(str(user_agg["cost"] or 0))
 
-                    if ch_stats.get("first_seen"):
-                        if (
-                            not user.first_seen
-                            or ch_stats["first_seen"] < user.first_seen
-                        ):
-                            user.first_seen = ch_stats["first_seen"]
+                    if user_agg["first_seen"]:
+                        if not user.first_seen or user_agg["first_seen"] < user.first_seen:
+                            user.first_seen = user_agg["first_seen"]
 
-                    # last_seen parity: prefer user_agg["last_seen"] which
-                    # is max(end_time) — matches Django's previous behavior
-                    # of `.order_by("-end_time").first().end_time`. The
-                    # legacy ch_stats path returns max(start_time), which
-                    # underestimates last_seen for any long-running span.
-                    # Use that only as a fallback when CHSpanReader has
-                    # nothing (e.g. CH lag for this user).
                     if user_agg["last_seen"]:
                         user.last_seen = user_agg["last_seen"]
-                    elif ch_stats.get("last_seen"):
-                        user.last_seen = ch_stats["last_seen"]
 
                     user.save(
                         update_fields=[
@@ -438,50 +482,12 @@ def update_end_user_analytics_task():
                             "last_seen",
                         ]
                     )
+
                     updated_count += 1
+
+                except Exception as e:
+                    logger.warning(f"Failed to update analytics for user {user.id}: {e}")
                     continue
-
-                # Fallback path: the analytics-service short-circuit didn't
-                # apply, but all per-user span aggregates still go through
-                # CH via CHSpanReader.aggregate_by_end_user — one CH read
-                # covers Sum(tokens), Sum(cost), uniqExact(trace_id),
-                # min(start_time) (first_seen), max(end_time) (last_seen).
-                session_count = TraceSession.objects.filter(end_user=user).count()
-
-                with get_reader() as reader:
-                    user_agg = reader.aggregate_by_end_user(
-                        str(user.id), project_id=str(user.project_id)
-                    )
-
-                # Update user analytics
-                user.total_sessions = session_count
-                user.total_traces = user_agg["trace_count"]
-                user.total_tokens_used = user_agg["total_tokens"]
-                user.total_cost = Decimal(str(user_agg["cost"] or 0))
-
-                if user_agg["first_seen"]:
-                    if not user.first_seen or user_agg["first_seen"] < user.first_seen:
-                        user.first_seen = user_agg["first_seen"]
-
-                if user_agg["last_seen"]:
-                    user.last_seen = user_agg["last_seen"]
-
-                user.save(
-                    update_fields=[
-                        "total_sessions",
-                        "total_traces",
-                        "total_tokens_used",
-                        "total_cost",
-                        "first_seen",
-                        "last_seen",
-                    ]
-                )
-
-                updated_count += 1
-
-            except Exception as e:
-                logger.warning(f"Failed to update analytics for user {user.id}: {e}")
-                continue
 
         logger.info(f"Updated analytics for {updated_count} end users")
         return {"updated_users": updated_count}
@@ -635,80 +641,86 @@ def recalculate_project_user_analytics_task(project_id: str):
         users = EndUser.objects.filter(project_id=project_id)
         updated_count = 0
 
-        for user in users:
-            try:
-                with transaction.atomic():
-                    # Try the analytics-service CH path first for session-
-                    # level rollups it already provides.
-                    ch_stats = _get_user_stats_from_ch(user, project_id)
+        # Pre-batch session counts to avoid N individual count queries on fallback
+        session_counts = dict(
+            TraceSession.objects.filter(end_user__in=users)
+            .values_list("end_user")
+            .annotate(n=Count("id"))
+        )
 
-                    if ch_stats is not None:
-                        user.total_sessions = ch_stats["session_count"]
-                        user.total_tokens_used = ch_stats["total_tokens"]
-                        user.total_cost = Decimal(str(ch_stats["total_cost"]))
+        with get_reader() as reader:
+            for user in users:
+                try:
+                    with transaction.atomic():
+                        # Try the analytics-service CH path first for session-
+                        # level rollups it already provides.
+                        ch_stats = _get_user_stats_from_ch(user, project_id)
 
-                        # trace_count via uniqExact(trace_id) in CH (was
-                        # .filter(end_user=user).values("trace_id").
-                        # distinct().count() in PG). project_id is the
-                        # task argument; pass it through for tenant-scope
-                        # defense-in-depth.
-                        with get_reader() as reader:
+                        if ch_stats is not None:
+                            user.total_sessions = ch_stats["session_count"]
+                            user.total_tokens_used = ch_stats["total_tokens"]
+                            user.total_cost = Decimal(str(ch_stats["total_cost"]))
+
+                            # trace_count via uniqExact(trace_id) in CH (was
+                            # .filter(end_user=user).values("trace_id").
+                            # distinct().count() in PG). project_id is the
+                            # task argument; pass it through for tenant-scope
+                            # defense-in-depth.
                             user_agg = reader.aggregate_by_end_user(
                                 str(user.id), project_id=str(project_id)
                             )
-                        user.total_traces = user_agg["trace_count"]
+                            user.total_traces = user_agg["trace_count"]
 
-                        if ch_stats.get("first_seen"):
-                            user.first_seen = ch_stats["first_seen"]
+                            if ch_stats.get("first_seen"):
+                                user.first_seen = ch_stats["first_seen"]
 
-                        # last_seen parity: prefer user_agg["last_seen"]
-                        # (max(end_time)) over ch_stats["last_seen"]
-                        # (max(start_time)) — matches Django's
-                        # `.order_by("-end_time").first().end_time`
-                        # semantics. ch_stats is the legacy fallback for
-                        # cases where CHSpanReader has nothing.
-                        if user_agg["last_seen"]:
-                            user.last_seen = user_agg["last_seen"]
-                        elif ch_stats.get("last_seen"):
-                            user.last_seen = ch_stats["last_seen"]
+                            # last_seen parity: prefer user_agg["last_seen"]
+                            # (max(end_time)) over ch_stats["last_seen"]
+                            # (max(start_time)) — matches Django's
+                            # `.order_by("-end_time").first().end_time`
+                            # semantics. ch_stats is the legacy fallback for
+                            # cases where CHSpanReader has nothing.
+                            if user_agg["last_seen"]:
+                                user.last_seen = user_agg["last_seen"]
+                            elif ch_stats.get("last_seen"):
+                                user.last_seen = ch_stats["last_seen"]
 
-                        user.save()
-                        updated_count += 1
-                        continue
+                            user.save()
+                            updated_count += 1
+                            continue
 
-                    # Fallback path: the analytics-service short-circuit
-                    # didn't apply, but the per-user span aggregate still
-                    # goes through CH via CHSpanReader.aggregate_by_end_user
-                    # — one CH read covers Sum(tokens), Sum(cost),
-                    # uniqExact(trace_id), min(start_time) (first_seen),
-                    # max(end_time) (last_seen). Replaces 5 separate
-                    # ObservationSpan queries.
-                    session_count = TraceSession.objects.filter(end_user=user).count()
+                        # Fallback path: the analytics-service short-circuit
+                        # didn't apply, but the per-user span aggregate still
+                        # goes through CH via CHSpanReader.aggregate_by_end_user
+                        # — one CH read covers Sum(tokens), Sum(cost),
+                        # uniqExact(trace_id), min(start_time) (first_seen),
+                        # max(end_time) (last_seen). Replaces 5 separate
+                        # ObservationSpan queries.
+                        session_count = session_counts.get(user.id, 0)
 
-                    with get_reader() as reader:
                         user_agg = reader.aggregate_by_end_user(
                             str(user.id), project_id=str(project_id)
                         )
 
-                    user.total_sessions = session_count
-                    user.total_traces = user_agg["trace_count"]
-                    user.total_tokens_used = user_agg["total_tokens"]
-                    user.total_cost = Decimal(str(user_agg["cost"] or 0))
+                        user.total_sessions = session_count
+                        user.total_traces = user_agg["trace_count"]
+                        user.total_tokens_used = user_agg["total_tokens"]
+                        user.total_cost = Decimal(str(user_agg["cost"] or 0))
 
-                    if user_agg["first_seen"]:
-                        user.first_seen = user_agg["first_seen"]
+                        if user_agg["first_seen"]:
+                            user.first_seen = user_agg["first_seen"]
 
-                    if user_agg["last_seen"]:
-                        user.last_seen = user_agg["last_seen"]
+                        if user_agg["last_seen"]:
+                            user.last_seen = user_agg["last_seen"]
 
-                    user.save()
-                    updated_count += 1
+                        user.save()
+                        updated_count += 1
 
-            except Exception as e:
-                logger.warning(
-                    f"Failed to recalculate analytics for user {user.id}: {e}"
-                )
-                continue
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to recalculate analytics for user {user.id}: {e}"
+                    )
+                    continue
 
         logger.info(
             f"Recalculated analytics for {updated_count} users in project {project_id}"
