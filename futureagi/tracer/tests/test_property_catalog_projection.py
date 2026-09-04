@@ -150,7 +150,7 @@ def test_tombstone_restore_stale_duplicate_and_conflict_resolution() -> None:
     assert resolve_source_update(restore_v3, tombstone_v2).status is (
         VersionResolutionStatus.STALE
     )
-    duplicate = replace(restore_v3, catalog_revision=4, producer_sequence=9)
+    duplicate = replace(restore_v3, producer_sequence=9)
     duplicate_result = resolve_source_update(restore_v3, duplicate)
     assert duplicate_result.status is VersionResolutionStatus.DUPLICATE
     assert duplicate_result.current is duplicate
@@ -158,7 +158,7 @@ def test_tombstone_restore_stale_duplicate_and_conflict_resolution() -> None:
     conflict = _row(
         definition=_definition(details={"choices": ["free", "paid"]}),
         source_version=3,
-        revision=4,
+        revision=3,
         sequence=4,
     )
     assert resolve_source_update(restore_v3, conflict).status is (
@@ -171,6 +171,21 @@ def test_tombstone_restore_stale_duplicate_and_conflict_resolution() -> None:
     assert resolved.current is duplicate
     assert resolved.duplicate_count == 1
     assert resolved.stale_count == 2
+
+
+def test_new_catalog_revision_precedes_prior_source_version_domain() -> None:
+    physical_snapshot = _row(
+        source_version=1_787_459_205_903_148_937,
+        revision=3,
+        sequence=1,
+    )
+    lifecycle = _row(source_version=1_788_557_026_259_543, revision=4, sequence=2)
+
+    resolved = resolve_binding_history([physical_snapshot, lifecycle])
+
+    assert resolved.current is lifecycle
+    assert resolved.duplicate_count == 0
+    assert resolved.stale_count == 1
 
 
 def test_visibility_is_tenant_scoped_tombstone_safe_and_deduplicated() -> None:
