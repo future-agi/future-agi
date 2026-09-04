@@ -1010,9 +1010,9 @@ async def test_prepare_call_rejects_bland_without_web_connector(
 
 @pytest.fixture
 def unsupported_sip_call(db, call_execution, agent_definition, organization, workspace):
-    """An OUTBOUND CallExecution whose customer provider is Retell (not VAPI or
-    Bland) with a contact_number, so prepare_call takes the SIP path for a
-    provider whose outbound data plane we don't drive."""
+    """An OUTBOUND CallExecution whose customer provider is ElevenLabs (not
+    VAPI, Bland or Retell) with a contact_number, so prepare_call takes the SIP
+    path for a provider whose outbound data plane we don't drive."""
     from simulate.models import AgentVersion
 
     version = AgentVersion.objects.create(
@@ -1022,7 +1022,7 @@ def unsupported_sip_call(db, call_execution, agent_definition, organization, wor
         version_number=1,
         version_name="v1",
         configuration_snapshot={
-            "provider": "retell",
+            "provider": "eleven_labs",
             "assistant_id": "asst-1",
             "contact_number": "+16505550100",
         },
@@ -1039,9 +1039,12 @@ async def test_prepare_call_rejects_unsupported_sip_provider(
     from ee.voice.temporal.activities.voice_small import prepare_call
     from simulate.temporal.types.activities import PrepareCallInput
 
-    with patch("temporalio.activity.info"), patch(
-        "simulate.services.agent_definition.resolve_api_key_for_version",
-        return_value="org_retell_key",
+    with (
+        patch("temporalio.activity.info"),
+        patch(
+            "simulate.services.agent_definition.resolve_api_key_for_version",
+            return_value="org_eleven_labs_key",
+        ),
     ):
         result = await prepare_call(
             PrepareCallInput(
@@ -1051,5 +1054,5 @@ async def test_prepare_call_rejects_unsupported_sip_provider(
         )
 
     assert result.error is not None
-    assert "retell" in result.error
+    assert "eleven_labs" in result.error
     assert result.is_outbound is True
