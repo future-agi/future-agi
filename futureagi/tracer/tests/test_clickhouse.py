@@ -612,9 +612,9 @@ class TestClickHouseSchema:
         assert names.index("span_metrics_hourly_mv") < names.index(
             "span_metrics_hourly"
         ), "MV must drop before its source table"
-        assert names.index("spans_mv") < names.index("tracer_observation_span"), (
-            "spans_mv must drop before tracer_observation_span"
-        )
+        assert names.index("spans_mv") < names.index(
+            "tracer_observation_span"
+        ), "spans_mv must drop before tracer_observation_span"
         # Idempotency: every drop wraps IF EXISTS so reruns are no-ops.
         for _, sql in drops:
             assert "IF EXISTS" in sql, f"drop must be idempotent: {sql}"
@@ -6453,7 +6453,8 @@ class TestEvalMetricsQueryBuilderExtended:
         query, params = builder.build()
         assert "countIf" in query
         assert "has(JSONExtract(output_str_list, 'Array(String)')" in query
-        assert "OR output_str =" in query
+        assert "OR output_str = %(choice_0)s" in query
+        assert "OR JSONExtractString(output_str, 'choice') = %(choice_0)s" in query
         assert "choice_0" in params
         assert "choice_1" in params
         assert "choice_2" in params
@@ -7696,17 +7697,17 @@ class TestVoiceCallListPhase1bMigration:
                 )
             ],
         )
-        assert "project_id = %(project_id)s" in query, (
-            "Phase 1b must scope by project_id so the primary key can prune."
-        )
+        assert (
+            "project_id = %(project_id)s" in query
+        ), "Phase 1b must scope by project_id so the primary key can prune."
         assert "trace_id IN %(content_trace_ids)s" in query
         assert "toDate(start_time) IN %(content_root_dates)s" in query
         assert "toUnixTimestamp64Micro(start_time)" in query
         assert params["content_root_identities"][0][3] % 1_000_000 == 123456
         # attrs_string Map strip.
-        assert "mapFilter" in query and "call_logs" in query, (
-            "Phase 1b must exclude `call_logs` from attrs_string at read time."
-        )
+        assert (
+            "mapFilter" in query and "call_logs" in query
+        ), "Phase 1b must exclude `call_logs` from attrs_string at read time."
         # attributes_extra JSON-overflow strip (backfill cohort).
         assert "JSONExtractKeysAndValuesRaw" in query, (
             "Phase 1b must also strip `call_logs` from attributes_extra so the "
@@ -8130,9 +8131,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Each phone number is still recognised as a simulator call in Python.
         for phone in VAPI_PHONE_NUMBERS:
             span_attrs = {"raw_log": {"customer": {"number": phone}}}
-            assert VoiceCallListQueryBuilder.is_simulator_call(span_attrs, "vapi"), (
-                f"Missing phone number: {phone}"
-            )
+            assert VoiceCallListQueryBuilder.is_simulator_call(
+                span_attrs, "vapi"
+            ), f"Missing phone number: {phone}"
 
     def test_simulation_filter_uses_json_extract(self):
         """Simulation filtering is now Python-side against parsed raw_log.
@@ -9032,12 +9033,14 @@ class TestMonitorMetricsQueryBuilder:
         query, params = builder.build_metric_value_query(
             "evaluation_metrics", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        # List-containment only: choice evals write output_str_list exclusively.
+        # TH-7788: the verdict may live in the list, a bare output_str, or the
+        # JSON ``choice`` key — all three must match.
         assert (
             "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)"
             in query
         )
-        assert "OR output_str =" not in query
+        assert "OR output_str = %(choice_val)s" in query
+        assert "OR JSONExtractString(output_str, 'choice') = %(choice_val)s" in query
         assert params["choice_val"] == "Good"
 
     def test_evaluation_metrics_no_config_returns_null(self):

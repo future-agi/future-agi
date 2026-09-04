@@ -23,6 +23,9 @@ from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.expressions import (
+    eval_choice_match_expr,
+)
 
 # Eval output type constants (mirrors EvalOutputType from Django models)
 SCORE = "SCORE"
@@ -334,17 +337,14 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             # No choices defined -- return a simple count query
             return self._build_score_raw()
 
-        # Build per-choice columns. ClickHouse stores output_str_list as a JSON
-        # string, so parse it before calling has(); output_str is kept as the
-        # single-choice fallback for older rows/imports.
+        # Build per-choice columns; the match predicate is shared with the
+        # alert builder so charts and alerts agree on the same rows.
         choice_cols: list[str] = []
-        choice_array_expr = "JSONExtract(output_str_list, 'Array(String)')"
         for i, choice in enumerate(self.choices):
             param_name = f"choice_{i}"
             self.params[param_name] = choice
             choice_cols.append(
-                f"countIf(has({choice_array_expr}, %({param_name})s) "
-                f"OR output_str = %({param_name})s) * 100.0 "
+                f"countIf({eval_choice_match_expr(param_name)}) * 100.0 "
                 f"/ greatest(count(), 1) AS `choice_{i}`"
             )
 

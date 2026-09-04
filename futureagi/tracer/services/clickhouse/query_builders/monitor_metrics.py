@@ -35,6 +35,9 @@ from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_version_column,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder, _parse_dt
+from tracer.services.clickhouse.query_builders.expressions import (
+    eval_choice_match_expr,
+)
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
@@ -66,6 +69,8 @@ _EVAL_SPAN_BUCKET_EXPR = (
 _EVAL_NON_VALUE_STATUSES = ", ".join(
     f"'{s.value}'" for s in EvalEntryStatus if s is not EvalEntryStatus.COMPLETED
 )
+
+
 def _pruned_window(start_param: str, end_param: str) -> str:
     """Half-open exact start_time window ``[start, end)`` + padded created_at guard.
 
@@ -123,8 +128,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def _eval_choice_match_expr(param_name: str = "choice_val") -> str:
-        """Choice membership in the JSON list (PG parity: list containment only)."""
-        return f"has(JSONExtract(output_str_list, 'Array(String)'), %({param_name})s)"
+        """Choice verdict match shared with the charts builder (TH-7788)."""
+        return eval_choice_match_expr(param_name)
 
     def _translate_filters(self) -> None:
         """Translate raw monitor filter JSON into CH WHERE clause fragments."""
@@ -684,7 +689,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         ):
             obs_type = (
                 "tool"
-                if metric_type == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
+                if metric_type
+                == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
                 else "llm"
             )
             params["obs_type_ts"] = obs_type
@@ -833,9 +839,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         version_column = eval_logger_version_column(eval_table)
         span_cols = "id, start_time" if include_span_start_time else "id"
         span_projection = (
-            ", sp.start_time AS span_start_time"
-            if include_span_start_time
-            else ""
+            ", sp.start_time AS span_start_time" if include_span_start_time else ""
         )
         return f"""
             (

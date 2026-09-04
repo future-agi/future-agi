@@ -65,6 +65,19 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
         eval_output_type = _EVAL_OUTPUT_TYPE_MAP.get(raw_output)
         if eval_output_type is None:
             raise MonitorConfigError(f"Eval config {monitor.metric} has no output type")
+        # TH-7788: a score-typed template can still carry choice labels (via
+        # choice_scores), and the alert form offers those labels. When the
+        # monitor was configured against one of them, evaluate it as a
+        # CHOICES metric; otherwise the selected label is silently ignored
+        # and the average score is compared to the threshold instead.
+        template_choices = getattr(custom_eval_config.eval_template, "choices", None)
+        if (
+            eval_output_type == "SCORE"
+            and monitor.threshold_metric_value
+            and isinstance(template_choices, list)
+            and monitor.threshold_metric_value in template_choices
+        ):
+            eval_output_type = "CHOICES"
         eval_config_id = str(monitor.metric)
 
     # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS

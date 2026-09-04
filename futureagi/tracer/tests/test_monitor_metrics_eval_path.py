@@ -62,9 +62,15 @@ def _eval_sqls(
 ) -> list[str]:
     b = _builder(cls, filters=filters)
     return [
-        b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0],
-        b.build_historical_stats_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0],
-        b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)[0],
+        b.build_metric_value_query(
+            MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+        )[0],
+        b.build_historical_stats_query(
+            MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+        )[0],
+        b.build_time_series_query(
+            MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600
+        )[0],
     ]
 
 
@@ -76,9 +82,7 @@ def test_eval_legacy_table_default_predicate() -> None:
             assert "ORDER BY eval_scan._peerdb_version DESC" in sql
             assert "LIMIT 1 BY eval_scan.id" in sql
             assert "latest_eval._peerdb_is_deleted = 0" in sql
-            assert (
-                "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in sql
-            )
+            assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in sql
             assert sql.index("LIMIT 1 BY eval_scan.id") < sql.index(
                 "latest_eval._peerdb_is_deleted = 0"
             )
@@ -152,7 +156,10 @@ def test_v1_eval_filter_emits_legacy_span_attr_token() -> None:
     b = _builder(filters=ATTR_FILTER)
     assert b._filter_clause, "attr filter should compile to a clause"
     assert (
-        "span_attr" in b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0]
+        "span_attr"
+        in b.build_metric_value_query(
+            MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+        )[0]
     )
 
 
@@ -178,12 +185,14 @@ def test_eval_empty_window_yields_null_for_all_output_types() -> None:
         )
         assert (
             "ifNotFinite("
-            in b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0]
+            in b.build_metric_value_query(
+                MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+            )[0]
         )
         assert (
-            b.build_historical_stats_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0].count(
-                "ifNotFinite("
-            )
+            b.build_historical_stats_query(
+                MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+            )[0].count("ifNotFinite(")
             >= 2
         )
 
@@ -196,7 +205,9 @@ def test_all_eval_output_types_build(output_type: str) -> None:
         eval_output_type=output_type,
         threshold_metric_value="Passed" if output_type != "SCORE" else None,
     )
-    sql, _ = b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)
+    sql, _ = b.build_metric_value_query(
+        MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+    )
     assert "FROM " in sql and "custom_eval_config_id" in sql
 
 
@@ -209,9 +220,15 @@ def test_choices_without_threshold_value_returns_null() -> None:
         eval_output_type="CHOICES",
         threshold_metric_value=None,
     )
-    value_sql, _ = b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)
-    stats_sql, _ = b.build_historical_stats_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)
-    ts_sql, _ = b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)
+    value_sql, _ = b.build_metric_value_query(
+        MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+    )
+    stats_sql, _ = b.build_historical_stats_query(
+        MonitorMetricTypeChoices.EVALUATION_METRICS, START, END
+    )
+    ts_sql, _ = b.build_time_series_query(
+        MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600
+    )
     assert "NULL" in value_sql and "output_str_list" not in value_sql
     assert "NULL" in stats_sql and "output_str_list" not in stats_sql
     assert "output_str_list" not in ts_sql
@@ -224,7 +241,9 @@ def test_pass_fail_time_series_shape() -> None:
         eval_output_type="PASS_FAIL",
         threshold_metric_value="Passed",
     )
-    sql, params = b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)
+    sql, params = b.build_time_series_query(
+        MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600
+    )
     assert "output_bool = %(output_bool_val)s" in sql
     assert params["output_bool_val"] == 1
     assert "GROUP BY timestamp" in sql
@@ -237,7 +256,32 @@ def test_choices_time_series_shape() -> None:
         eval_output_type="CHOICES",
         threshold_metric_value="Good",
     )
-    sql, params = b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)
+    sql, params = b.build_time_series_query(
+        MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600
+    )
     assert "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)" in sql
     assert params["choice_val"] == "Good"
     assert "GROUP BY timestamp" in sql
+
+
+def test_choices_match_shared_by_all_three_queries() -> None:
+    # TH-7788: value, historical stats and time series must all read the
+    # verdict from output_str_list, bare output_str, or the JSON choice key.
+    b = MonitorMetricsQueryBuilder(
+        project_id=PROJECT_ID,
+        eval_config_id=EVAL_CONFIG_ID,
+        eval_output_type="CHOICES",
+        threshold_metric_value="Complete",
+    )
+    mt = MonitorMetricTypeChoices.EVALUATION_METRICS
+    for sql, params in (
+        b.build_metric_value_query(mt, START, END),
+        b.build_historical_stats_query(mt, START, END),
+        b.build_time_series_query(mt, START, END, 3600),
+    ):
+        assert (
+            "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)" in sql
+        )
+        assert "OR output_str = %(choice_val)s" in sql
+        assert "OR JSONExtractString(output_str, 'choice') = %(choice_val)s" in sql
+        assert params["choice_val"] == "Complete"

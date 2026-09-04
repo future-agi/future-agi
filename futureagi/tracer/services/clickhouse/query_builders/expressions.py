@@ -33,3 +33,20 @@ def annotation_numeric_value_expr(
         f"JSONExtractFloat({prefix}value, 'rating'), "
         f"JSONExtractFloat({prefix}value, 'value'))"
     )
+
+
+def eval_choice_match_expr(param_name: str) -> str:
+    """Return a predicate matching a CHOICES-eval verdict to ``%(param_name)s``.
+
+    A verdict can land in any of three places depending on the writer path
+    (TH-7788): the ``output_str_list`` JSON list, a bare ``output_str`` string,
+    or the ``choice`` key of a JSON object stored in ``output_str``.
+    ``JSONExtractString`` yields ``''`` on non-JSON text, so free-text rows
+    never false-match.
+    """
+    p = f"%({param_name})s"
+    return (
+        f"(has(JSONExtract(output_str_list, 'Array(String)'), {p}) "
+        f"OR output_str = {p} "
+        f"OR JSONExtractString(output_str, 'choice') = {p})"
+    )
