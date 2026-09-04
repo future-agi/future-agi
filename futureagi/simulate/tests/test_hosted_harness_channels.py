@@ -77,6 +77,25 @@ def test_receipt_evaluations_preserve_deterministic_and_judged_checks():
     ]
 
 
+def test_receipt_evaluations_omit_a_sub_goal_nothing_decided():
+    body = {
+        "sub_goals": [
+            {"name": "booking_created", "held": True, "judged": False, "reason": None},
+            {"name": "explained_refusal", "held": None, "judged": True, "reason": None},
+        ],
+        "evaluations": [],
+    }
+
+    assert _receipt_evaluations(body) == [
+        {
+            "name": "booking_created",
+            "kind": "checkpoint",
+            "passed": True,
+            "reason": "",
+        },
+    ]
+
+
 def test_receipt_coverage_distinguishes_missing_grading_from_agent_failure():
     assert _receipt_evaluation_coverage(
         {

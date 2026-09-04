@@ -53,6 +53,7 @@ _ARTIFACT_KINDS = {
     "recording_assistant",
     "transcript",
     "tool_trace",
+    "evidence",
     "result",
     "build",
     "trace",
@@ -61,7 +62,15 @@ _ARTIFACT_KINDS = {
 }
 _ALLOWED_ARTIFACTS = {
     "metadata-only": {"build", "result", "log"},
-    "traces": {"build", "result", "log", "trace", "tool_trace", "transcript"},
+    "traces": {
+        "build",
+        "result",
+        "log",
+        "trace",
+        "tool_trace",
+        "transcript",
+        "evidence",
+    },
     "traces-and-recordings": _ARTIFACT_KINDS - {"other"},
     "full": _ARTIFACT_KINDS,
 }
@@ -865,11 +874,16 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     for goal in body.get("sub_goals") or []:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
+        # A null verdict means nothing decided this sub-goal, which is not the same as
+        # deciding against it. Coercing it would publish a failed, reasonless eval for
+        # every check a run never reached. Coverage carries the declared-but-unjudged count.
+        if goal.get("held") is None:
+            continue
         results.append(
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": bool(goal.get("held")),
+                "passed": bool(goal["held"]),
                 "reason": str(goal.get("reason") or ""),
             }
         )
