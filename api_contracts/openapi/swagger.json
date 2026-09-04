@@ -47134,54 +47134,6 @@
                 }
             ]
         },
-        "/sdk/api/v1/configure-evaluations/": {
-            "post": {
-                "operationId": "sdk_api_v1_configure-evaluations_create",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/SDKConfigureEvaluationsRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/SDKConfigureEvaluationsResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/SDKErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/SDKErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "sdk"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
         "/sdk/api/v1/eval/": {
             "post": {
                 "operationId": "sdk_api_v1_eval_create",
@@ -111883,68 +111835,6 @@
                 }
             }
         },
-        "ConfigureEvaluations": {
-            "required": [
-                "eval_templates",
-                "inputs"
-            ],
-            "type": "object",
-            "properties": {
-                "eval_templates": {
-                    "title": "Eval templates",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "inputs": {
-                    "title": "Inputs",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
-                },
-                "model_name": {
-                    "title": "Model name",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "config": {
-                    "title": "Config",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "default": {}
-                }
-            }
-        },
-        "SDKConfigureEvaluationsRequest": {
-            "required": [
-                "eval_config",
-                "platform"
-            ],
-            "type": "object",
-            "properties": {
-                "eval_config": {
-                    "$ref": "#/definitions/ConfigureEvaluations"
-                },
-                "platform": {
-                    "title": "Platform",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "custom_eval_name": {
-                    "title": "Custom eval name",
-                    "type": "string",
-                    "x-nullable": true
-                }
-            },
-            "additionalProperties": {
-                "description": "Provider-specific credential fields accepted at top level.",
-                "type": "object"
-            }
-        },
         "SDKMessageResult": {
             "required": [
                 "message"
@@ -111955,22 +111845,6 @@
                     "title": "Message",
                     "type": "string",
                     "minLength": 1
-                }
-            }
-        },
-        "SDKConfigureEvaluationsResponse": {
-            "required": [
-                "status",
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean"
-                },
-                "result": {
-                    "$ref": "#/definitions/SDKMessageResult"
                 }
             }
         },

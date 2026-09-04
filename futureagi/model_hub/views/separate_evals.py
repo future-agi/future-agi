@@ -139,7 +139,6 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
-from tracer.models.external_eval_config import ExternalEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.services.clickhouse.client import is_clickhouse_enabled
 from tracer.services.clickhouse.query_builders.base import (
@@ -7972,9 +7971,6 @@ class DeleteEvalTemplateView(APIView):
                 InlineEval.objects.filter(
                     evaluation__eval_template=eval_template
                 ).update(deleted=True, deleted_at=timezone.now())
-                ExternalEvalConfig.objects.filter(eval_template=eval_template).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
                 if APICallLog is not None:
                     APICallLog.objects.filter(source_id=eval_template_id).update(
                         deleted=True, deleted_at=timezone.now()

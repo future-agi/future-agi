@@ -14541,35 +14541,11 @@ export interface SAMLIDPUploadDetailResponseApi {
   result: SAMLIDPUploadDetailResultApi;
 }
 
-export type ConfigureEvaluationsApiInputs = { [key: string]: string };
 
-export type ConfigureEvaluationsApiConfig = { [key: string]: string };
 
-export interface ConfigureEvaluationsApi {
-  /** @minLength 1 */
-  eval_templates: string;
-  inputs: ConfigureEvaluationsApiInputs;
-  model_name?: string;
-  config?: ConfigureEvaluationsApiConfig;
-}
 
-export interface SDKConfigureEvaluationsRequestApi {
-  eval_config: ConfigureEvaluationsApi;
-  /** @minLength 1 */
-  platform: string;
-  custom_eval_name?: string;
-  [key: string]: { [key: string]: unknown };
-}
 
-export interface SDKMessageResultApi {
-  /** @minLength 1 */
-  message: string;
-}
 
-export interface SDKConfigureEvaluationsResponseApi {
-  status: boolean;
-  result: SDKMessageResultApi;
-}
 
 export type SDKErrorResponseApiErrors = { [key: string]: string[] };
 

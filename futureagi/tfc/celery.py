@@ -114,7 +114,7 @@ celery_app.conf.beat_schedule = {
     # "eval_task_cron": migrated to Temporal schedule "eval-task-cron"
     # "check_alerts": migrated to Temporal schedule "check-alerts"
     # "run_evals_on_spans": migrated to Temporal schedule "run-evals-on-spans"
-    # "run_external_evals": migrated to Temporal schedule "process-external-evals"
+    # "run_external_evals": retired with ExternalEvalConfig (#2519)
     # "fetch_observability_logs": migrated to Temporal schedule "fetch-observability-logs"
     # "check-trace-errors": migrated to Temporal schedule "check-trace-errors"
     # ==========================================================================

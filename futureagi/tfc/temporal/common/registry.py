@@ -59,7 +59,6 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.utils.observability_provider",
     "tracer.utils.trace_ingestion",
     "tracer.utils.inline_evals",
-    "tracer.utils.external_eval",
     "tracer.utils.eval_tasks",
     "tracer.utils.monitor",
     # simulate tasks
