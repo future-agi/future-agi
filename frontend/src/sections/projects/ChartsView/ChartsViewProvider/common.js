@@ -8,7 +8,14 @@ export const convertToISO = (dateArray) => {
 
 export const normalizeTimestamp = (timestamp) => {
   if (!timestamp) return timestamp;
+  if (typeof timestamp === "number") return timestamp;
 
-  // Remove common timezone patterns: +00:00, -05:00, Z, etc.
-  return timestamp.replace(/([+-]\d{2}:\d{2}|Z)$/, "");
+  // Parse the timestamp with its offset intact and return epoch
+  // milliseconds. Stripping the offset suffix used to leave a bare
+  // local-time string, so every point was plotted shifted by the
+  // viewer's distance from UTC. Offset-less strings still parse as
+  // local time and pass through unchanged in value.
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return timestamp;
+  return parsed.getTime();
 };
