@@ -1871,6 +1871,16 @@ class DaytonaHostedGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
+        # How many scenarios the guest has actually proved so far. The journal is append-only and
+        # a retried slice re-journals, so this counts lines rather than distinct names: it decides
+        # only whether there is anything worth snapshotting, never what gets kept.
+        try:
+            counted = sandbox.process.exec(
+                "wc -l < /work/authoring/written.jsonl 2>/dev/null || echo 0", timeout=30
+            )
+            journalled_scenarios = int(str(counted.result or "0").strip() or "0")
+        except Exception:  # noqa: BLE001 - a checkpoint is best effort, never fail the run
+            journalled_scenarios = 0
         bundle = _json("/work/bundle/manifest.json")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
 
@@ -1917,12 +1927,16 @@ class DaytonaHostedGateway:
                     job.id,
                     attempt.id,
                 )
-        elif isinstance(scenarios, list) and scenarios and not frozen:
+        elif journalled_scenarios and not frozen:
             # Checkpoint a suite that is still being written. The freeze above only fires on the
             # complete count, so a guest that died at 199 of 200 left nothing to restore and the
             # retry regenerated every scenario from scratch. Snapshotting the partial suite costs
-            # one tar per poll and turns a crash into a resume. `scenarios.json` is written as the
-            # suite grows, so its presence is the signal that there is something worth keeping.
+            # one tar per poll and turns a crash into a resume.
+            #
+            # Keyed on the journal, not on `scenarios.json`: a delegated writer journals each
+            # scenario as it proves it and only the final save writes the index and the folders.
+            # Waiting for the index meant this branch never ran during writing, so two crashes in
+            # one afternoon each threw away a partial suite it was built to keep.
             try:
                 packed = sandbox.process.exec(
                     "cd /work/authoring && set --; "
