@@ -69,6 +69,8 @@ from tfc.settings.settings import (
     MICROSOFT_CLIENT_SECRET,
     MICROSOFT_GRAPH_API,
     MICROSOFT_OAUTH_URL,
+    SAML_SP_CERT_FILE,
+    SAML_SP_KEY_FILE,
     default_error_next_url,
     default_next_url,
     get_assertion_url,
@@ -169,25 +171,47 @@ def _get_metadata(alias):
 
 def _get_saml_client(alias, acs_url):
     metadata, identity_type = _get_metadata(alias)
-    saml_settings = {
-        "metadata": metadata,
-        "service": {
-            "sp": {
-                "endpoints": {
-                    "assertion_consumer_service": [
-                        (acs_url, BINDING_HTTP_REDIRECT),
-                        (acs_url, BINDING_HTTP_POST),
-                    ],
-                },
-                "allow_unsolicited": True,
-                "authn_requests_signed": False,
-                "logout_requests_signed": True,
-                "want_assertions_signed": True,
-                "want_response_signed": False,
-            },
+    sp_service = {
+        "endpoints": {
+            "assertion_consumer_service": [
+                (acs_url, BINDING_HTTP_REDIRECT),
+                (acs_url, BINDING_HTTP_POST),
+            ],
         },
-        "entityid": get_entity_id,
+        "allow_unsolicited": False,
+        "logout_requests_signed": True,
+        "want_assertions_signed": True,
+        # Entra ID (and other IdPs) sign only the assertion, not the response
+        # envelope — requiring the response too would break SP-initiated login.
+        "want_assertions_or_response_signed": True,
     }
+    # Signing AuthN requests requires an SP keypair. Without one, pysaml2's
+    # security_context leaves sec_backend=None and prepare_for_authenticate()
+    # crashes on backend.get_signer(). Keep the flag off until keys exist.
+    # key_file/cert_file must be set both top-level (SecurityContext reads the
+    # top-level attrs) and in the SP service dict.
+    if SAML_SP_KEY_FILE and SAML_SP_CERT_FILE:
+        saml_settings = {
+            "key_file": SAML_SP_KEY_FILE,
+            "cert_file": SAML_SP_CERT_FILE,
+            "metadata": metadata,
+            "service": {"sp": sp_service},
+            "entityid": get_entity_id,
+        }
+        sp_service["key_file"] = SAML_SP_KEY_FILE
+        sp_service["cert_file"] = SAML_SP_CERT_FILE
+        sp_service["authn_requests_signed"] = True
+    else:
+        logger.warning(
+            "SAML_SP_KEY_FILE/SAML_SP_CERT_FILE not configured; "
+            "SAML AuthN requests will not be signed"
+        )
+        sp_service["authn_requests_signed"] = False
+        saml_settings = {
+            "metadata": metadata,
+            "service": {"sp": sp_service},
+            "entityid": get_entity_id,
+        }
 
     saml_settings["service"]["sp"]["name_id_format"] = get_name_id_format
 
@@ -215,26 +239,6 @@ def _format_form_errors(errors):
 class ACSView(APIView):
     _gm = GeneralMethods()
     parser_classes = [FormParser, MultiPartParser]
-
-    def save_auth_response(self, authn_response, user_identity):
-        """Save SAML authentication response to a file"""
-        try:
-            log_dir = os.path.join(BASE_DIR, "saml_logs")
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = os.path.join(log_dir, f"saml_response_{timestamp}.txt")
-
-            with open(filename, "w") as f:
-                f.write("Authentication Response:\n")
-                f.write(str(authn_response) + "\n\n")
-                f.write("User Identity:\n")
-                f.write(str(user_identity))
-
-            logger.info(f"SAML response saved to {filename}")
-        except Exception as e:
-            logger.error(f"Failed to save SAML response: {str(e)}")
 
     @swagger_auto_schema(
         request_body=no_body,
@@ -646,7 +650,7 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
 import urllib.parse  # noqa: E402
 
-from jose import jwt  # noqa: E402
+from jose import jwk, jwt  # noqa: E402
 
 
 class Auth0LoginView(APIView):
@@ -720,8 +724,6 @@ class Auth0CallbackView(APIView):
             if not code:
                 logger.error("No code provided in callback.")
                 raise Exception("Authorization code not provided.")
-            logger.info(f"CODE: {code}")
-
             # Exchange code for access token
             token_url = f"https://{AUTH0_DOMAIN}/token"
             token_payload = {
@@ -734,8 +736,6 @@ class Auth0CallbackView(APIView):
             }
 
             response = requests.post(token_url, json=token_payload, timeout=10)
-            logger.info(f"RESPONSE: {response}")
-            logger.info(f"RESPONSE JSON: {response.text}")
 
             tokens = response.json()
             id_token = tokens.get("id_token")
@@ -743,14 +743,40 @@ class Auth0CallbackView(APIView):
             # Decode the ID token
             if id_token:
                 access_token = tokens.get("access_token")
+
+                # Verify signature against Auth0 JWKS endpoint (cached to avoid
+                # a per-login round-trip).
+                jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
+                jwks_data = cache.get(f"auth0_jwks_{AUTH0_DOMAIN}")
+                if jwks_data is None:
+                    jwks_response = requests.get(jwks_url, timeout=10)
+                    jwks_response.raise_for_status()
+                    jwks_data = jwks_response.json()
+                    cache.set(
+                        f"auth0_jwks_{AUTH0_DOMAIN}", jwks_data, timeout=60 * 60 * 12
+                    )
+                unverified_header = jwt.get_unverified_header(id_token)
+                matching_key = next(
+                    (
+                        k
+                        for k in jwks_data["keys"]
+                        if k["kid"] == unverified_header["kid"]
+                    ),
+                    None,
+                )
+                if not matching_key:
+                    logger.error("no_matching_jwk_for_token")
+                    raise Exception("Unable to validate authentication token")
+
+                public_key = jwk.construct(matching_key)
                 decoded = jwt.decode(
                     id_token,
-                    options={"verify_signature": False},
-                    key=AUTH0_CLIENT_ID,
+                    public_key,
+                    algorithms=["RS256"],
                     audience=AUTH0_CLIENT_ID,
+                    issuer=f"https://{AUTH0_DOMAIN}/",
                     access_token=access_token,
                 )
-                logger.info(f"DECODED: {decoded}")
 
                 user_email = decoded.get("email")
 
@@ -760,7 +786,6 @@ class Auth0CallbackView(APIView):
                         f"{GOOGLE_USERINFO_API}?alt=json&access_token={access_token}"
                     )
                     user_info_response = requests.get(get_name_google, timeout=10)
-                    logger.info(f"GOOGLE NAME RESPONSE: {user_info_response.text}")
                     if user_info_response.status_code == 200:
                         name = user_info_response.json().get("name")
                     else:
@@ -846,8 +871,6 @@ class GithubCallbackView(APIView):
                 logger.error("No code provided in callback.")
                 # return self._gm.error_response("Authorization code not provided.", status=400)
                 raise Exception("Authorization code not provided.")
-
-            logger.info(f"GitHub callback received with code: {code}")
 
             token_url = f"{GITHUB_OAUTH_URL}/access_token"
             token_payload = {
@@ -986,8 +1009,6 @@ class MicrosoftCallbackView(APIView):
                 logger.error("No code provided in callback.")
                 raise Exception("Authorization code not provided.")
 
-            logger.info(f"Microsoft callback received with code: {code}")
-
             # Exchange code for access token
             token_url = f"{MICROSOFT_OAUTH_URL}/token"
             token_payload = {
@@ -1025,7 +1046,6 @@ class MicrosoftCallbackView(APIView):
                 raise Exception("Failed to retrieve user information.")
 
             microsoft_user = user_response.json()
-            logger.info(f"Microsoft user info: {microsoft_user}")
 
             # Extract user information
             user_email = microsoft_user.get("mail") or microsoft_user.get(

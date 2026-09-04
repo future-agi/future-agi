@@ -880,6 +880,14 @@ GOOGLE_USERINFO_API = "https://www.googleapis.com/oauth2/v1/userinfo"
 MICROSOFT_OAUTH_URL = "https://login.microsoftonline.com/common/oauth2/v2.0"
 MICROSOFT_GRAPH_API = "https://graph.microsoft.com/v1.0"
 
+# SAML SP signing keypair (paths to PEM files). Required for signed AuthN
+# requests; when unset, authn_requests_signed falls back to False to keep
+# SP-initiated login working until keys are provisioned.
+# Generate: openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out sp.key
+#           openssl req -new -x509 -key sp.key -out sp.crt -days 3650 -subj "/CN=<entity-id>"
+SAML_SP_KEY_FILE = os.getenv("SAML_SP_KEY_FILE", "")
+SAML_SP_CERT_FILE = os.getenv("SAML_SP_CERT_FILE", "")
+
 RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "")
 RECAPTCHA_ENABLED = os.getenv(
     "RECAPTCHA_ENABLED",
