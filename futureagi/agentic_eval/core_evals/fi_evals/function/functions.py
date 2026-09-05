@@ -3573,48 +3573,79 @@ def _parse_number_list(val):
     return [float(val)]
 
 
+def _pearson_r(x, y):
+    """Pearson's r for two equal-length sequences.
+
+    Returns None when either sequence is constant, because r is undefined there
+    (the denominator is zero). Callers decide how to report that.
+
+    Callers validate equal lengths before reaching here, so ``strict=True``
+    guards against future misuse.
+    """
+    n = len(x)
+    mx, my = sum(x) / n, sum(y) / n
+    ss_x = sum((xi - mx) ** 2 for xi in x)
+    ss_y = sum((yi - my) ** 2 for yi in y)
+    if ss_x == 0 or ss_y == 0:
+        return None
+    cov = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y, strict=True))
+    return cov / (ss_x * ss_y) ** 0.5
+
+
 def calculate_pearson_correlation(output, expected, **kwargs):
     """Compute Pearson correlation coefficient between two sets of values."""
     x = _parse_number_list(output)
     y = _parse_number_list(expected)
     if len(x) != len(y) or len(x) < 2:
         return {"result": 0.0, "reason": f"Invalid input: {len(x)} vs {len(y)} values (need >=2)"}
-    n = len(x)
-    mx, my = sum(x) / n, sum(y) / n
-    ss_x = sum((xi - mx) ** 2 for xi in x)
-    ss_y = sum((yi - my) ** 2 for yi in y)
-    if ss_x == 0 or ss_y == 0:
+    r = _pearson_r(x, y)
+    if r is None:
         return {"result": 0.0, "reason": "Zero variance in one or both inputs"}
-    r = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y)) / (ss_x * ss_y) ** 0.5
     score = (r + 1) / 2  # Normalize from [-1,1] to [0,1]
     return {"result": score, "reason": f"Pearson r={r:.4f}, normalized={score:.4f}"}
 
 
+def _midranks(vals):
+    """Rank ``vals`` ascending, assigning tied values the average of their ranks."""
+    n = len(vals)
+    indexed = sorted(enumerate(vals), key=lambda t: t[1])
+    ranks = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j < n - 1 and indexed[j + 1][1] == indexed[i][1]:
+            j += 1
+        avg_rank = (i + j) / 2.0 + 1
+        for k in range(i, j + 1):
+            ranks[indexed[k][0]] = avg_rank
+        i = j + 1
+    return ranks
+
+
 def calculate_spearman_correlation(output, expected, **kwargs):
-    """Compute Spearman rank correlation coefficient."""
+    """Compute Spearman rank correlation coefficient.
+
+    Spearman's rho is Pearson's r computed over the ranks. The familiar
+    ``1 - 6*sum(d^2)/(n*(n^2-1))`` shortcut is an algebraic simplification that
+    holds only when both rank vectors are permutations of 1..n. Ties produce
+    midranks, which breaks that assumption, so the shortcut is not used here.
+    """
     x = _parse_number_list(output)
     y = _parse_number_list(expected)
     if len(x) != len(y) or len(x) < 2:
         return {"result": 0.0, "reason": f"Invalid input: {len(x)} vs {len(y)} values"}
-    n = len(x)
 
-    def _rank(vals):
-        indexed = sorted(enumerate(vals), key=lambda t: t[1])
-        ranks = [0.0] * n
-        i = 0
-        while i < n:
-            j = i
-            while j < n - 1 and indexed[j + 1][1] == indexed[i][1]:
-                j += 1
-            avg_rank = (i + j) / 2.0 + 1
-            for k in range(i, j + 1):
-                ranks[indexed[k][0]] = avg_rank
-            i = j + 1
-        return ranks
+    rx, ry = _midranks(x), _midranks(y)
+    rho = _pearson_r(rx, ry)
+    if rho is None:
+        # Every value in one input is identical, so its ranks are constant and
+        # rho is undefined. Report no correlation (0.5 once normalized) rather
+        # than the perfect 1.0 the d^2 shortcut produced for this input.
+        return {
+            "result": 0.5,
+            "reason": "Zero variance in one or both inputs; Spearman rho is undefined",
+        }
 
-    rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n ** 2 - 1))
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
