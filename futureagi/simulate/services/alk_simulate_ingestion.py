@@ -744,7 +744,14 @@ def ingest_alk_sim_result(
         # null score.
         _dispatch_csat_once(call_execution)
         call_metadata = call_execution.call_metadata or {}
-        if "harness_evaluations" in call_metadata:
+        # Ordering for a hosted harness call, in one place: the call ends, this receipt lands, the
+        # row reaches COMPLETED, and only then are platform evals dispatched -- with exactly the
+        # config ids selected at scenario provision, so a harness result column (mapping {}) is
+        # never run as if it were an eval. Results attach to the call and roll up to the
+        # execution. The harness's own checkpoints are already on the row by this point and are
+        # not affected either way.
+        selected_eval_config_ids = _selected_eval_config_ids(call_execution)
+        if "harness_evaluations" in call_metadata and not selected_eval_config_ids:
             # An ALK harness result already contains the execution-backed
             # checks. Starting the platform evaluator as well leaves the call
             # permanently `eval_started` when no platform eval templates are
@@ -755,7 +762,9 @@ def ingest_alk_sim_result(
             call_execution.call_metadata = call_metadata
             call_execution.save(update_fields=["call_metadata"])
         else:
-            eval_dispatched = _dispatch_evaluations_once(call_execution)
+            eval_dispatched = _dispatch_evaluations_once(
+                call_execution, eval_config_ids=selected_eval_config_ids or None
+            )
 
     _roll_up_external_execution(call_execution.test_execution_id)
 
@@ -846,13 +855,20 @@ def _roll_up_external_execution(test_execution_id) -> None:
         if calls.filter(status=CallExecution.CallStatus.COMPLETED).exists()
         else TestExecution.ExecutionStatus.FAILED
     )
-    completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
-    failed_calls = calls.filter(
-        status__in=(
-            CallExecution.CallStatus.FAILED,
-            CallExecution.CallStatus.CANCELLED,
-        )
-    ).count()
+    # A hosted harness call keeps transport status COMPLETED even when its scenario failed, so
+    # counting only transport failures reported a clean run while two of three scenarios had
+    # failed. The outcome lives in `harness_outcome_status`. Completed and failed stay a
+    # partition of the terminal calls so the two never sum past the total.
+    unsuccessful = {
+        call.id
+        for call in calls
+        if call.status
+        in (CallExecution.CallStatus.FAILED, CallExecution.CallStatus.CANCELLED)
+        or str((call.call_metadata or {}).get("harness_outcome_status") or "")
+        in ("failed", "errored")
+    }
+    failed_calls = len(unsuccessful)
+    completed_calls = calls.exclude(id__in=unsuccessful).count()
     TestExecution.objects.filter(id=test_execution_id).update(
         status=status,
         completed_at=timezone.now(),
@@ -938,6 +954,18 @@ def _call_execution_key(call_execution: CallExecution) -> tuple[str, str | None]
     )
 
 
+def _simulator_llm_model() -> str:
+    """The model the simulated caller actually runs on.
+
+    The gateway ships `SIMULATOR_LLM_MODEL` into every hosted sandbox, so recording anything else
+    here makes the stored simulator disagree with the one that spoke. The old constant is kept as
+    the fallback for a deployment that configures nothing.
+    """
+    import os
+
+    return str(os.environ.get("SIMULATOR_LLM_MODEL") or "gpt-4").strip()
+
+
 def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorAgent:
     simulator_agent = scenario.simulator_agent or run_test.simulator_agent
     if simulator_agent is not None:
@@ -948,7 +976,7 @@ def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorA
         prompt=fallback_prompt,
         voice_provider="livekit",
         voice_name="alk-simulator",
-        model="gpt-4",
+        model=_simulator_llm_model(),
         llm_temperature=0.7,
         initial_message="Hi!",
         max_call_duration_in_minutes=30,
@@ -995,6 +1023,10 @@ def _build_call_execution(
             "dataset_id": row_data_info.get("dataset_id"),
             "base_prompt": base_prompt,
             "agent_description": agent_definition.description,
+            # The target agent's own instructions, under the name a reader looks for. Same text
+            # the eval mapping resolves through the agent version, kept here so the call detail
+            # can show it without a join.
+            "agent_prompt": agent_definition.description,
             "dynamic_prompt": row_data_info.get("dynamic_prompt"),
             "language": "en",
             "initial_message": simulator_agent.initial_message,
@@ -1344,10 +1376,16 @@ def _apply_conversation_metrics(call_execution: CallExecution) -> None:
     ]
     full_user_count = full_metric_roles.count("user")
     full_bot_count = full_metric_roles.count("bot")
+    # Three different counts, and they are easy to read as one. `message_count` is every
+    # transcript message and is the number a harness receipt reports as its `turns`.
+    # `turn_count` counts the agent's messages only, which is what the platform has always
+    # meant by a turn. `agent_turn_count` states that plainly beside it so neither is mistaken
+    # for the receipt's figure.
     detailed_data.update(
         {
             "message_count": len(full_metric_roles),
             "turn_count": full_bot_count,
+            "agent_turn_count": full_bot_count,
             "user_message_count": full_user_count,
             "bot_message_count": full_bot_count,
         }
@@ -1596,7 +1634,19 @@ def _dispatch_csat_once(call_execution: CallExecution) -> None:
         call_execution.save(update_fields=["call_metadata"])
 
 
-def _dispatch_evaluations_once(call_execution: CallExecution) -> bool:
+def _selected_eval_config_ids(call_execution: CallExecution) -> list[str]:
+    """Platform evals this run selected, empty when it selected none."""
+    from simulate.services.harness_evals import runnable_eval_config_ids
+
+    run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
+    if not run_test_id:
+        return []
+    return runnable_eval_config_ids(run_test_id)
+
+
+def _dispatch_evaluations_once(
+    call_execution: CallExecution, eval_config_ids: list[str] | None = None
+) -> bool:
     call_metadata = call_execution.call_metadata or {}
     if call_metadata.get("eval_started"):
         return False
@@ -1604,7 +1654,9 @@ def _dispatch_evaluations_once(call_execution: CallExecution) -> bool:
     call_execution.call_metadata = call_metadata
     call_execution.save(update_fields=["call_metadata"])
     try:
-        _run_simulate_evaluations_task.apply_async(args=(str(call_execution.id),))
+        _run_simulate_evaluations_task.apply_async(
+            args=(str(call_execution.id), eval_config_ids)
+        )
         return True
     except Exception as dispatch_error:
         logger.exception(

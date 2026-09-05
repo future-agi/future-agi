@@ -196,6 +196,15 @@ class HarnessScenarioProvisionSerializer(serializers.Serializer):
     personas = HarnessProvisionPersonaSerializer(many=True, allow_empty=False)
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    # The target agent's own instructions. Without them nothing on the platform can show what
+    # the agent was told, and every eval binding `agent_prompt` scores against an empty string.
+    agent_prompt = serializers.CharField(required=False, allow_blank=True)
+    # Platform eval template names the guest picked out of the offered catalogue. Names only:
+    # the platform owns the mapping, so a guest cannot bind a variable to a source that resolves
+    # empty.
+    chosen_evals = serializers.ListField(
+        child=serializers.CharField(max_length=2000), required=False
+    )
 
     def validate_personas(self, personas):
         keys = [persona["scenario_key"] for persona in personas]
@@ -220,6 +229,13 @@ class HarnessScenarioOperationSerializer(serializers.Serializer):
     personas = HarnessProvisionPersonaSerializer(many=True, required=False)
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    # Declared here as well as on the provision serializer: `reject_unknown_fields` compares the
+    # request body against this outer serializer's field names, so a field missing here is a 400
+    # before the provision serializer ever sees it.
+    agent_prompt = serializers.CharField(required=False, allow_blank=True)
+    chosen_evals = serializers.ListField(
+        child=serializers.CharField(max_length=2000), required=False
+    )
     run_test_id = serializers.UUIDField(required=False)
     scenario_keys = serializers.ListField(
         child=serializers.CharField(max_length=255), required=False

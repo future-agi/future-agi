@@ -835,9 +835,34 @@ def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:
     if run_test is None:
         return
     agent = run_test.agent_definition
-    if agent is not None and agent.agent_type != AgentDefinition.AgentTypeChoices.VOICE:
+    if agent is None:
+        return
+    if agent.agent_type != AgentDefinition.AgentTypeChoices.VOICE:
+        fields = ["agent_type", "updated_at"]
         agent.agent_type = AgentDefinition.AgentTypeChoices.VOICE
-        agent.save(update_fields=["agent_type", "updated_at"])
+        # The placeholder description was written from the same wrong modality. Only the
+        # generated placeholder is rewritten; a real agent prompt recorded at provision is never
+        # touched.
+        if str(agent.description or "").startswith("SDK-provisioned text agent"):
+            agent.description = "SDK-provisioned voice agent (ALK ingestion)."
+            fields.insert(1, "description")
+        agent.save(update_fields=fields)
+    # Rows pre-allocated before the promotion carry `call_channel: chat`, which sends a voice
+    # call through the chat schema in every reader that trusts it. Correcting the definition
+    # without correcting them leaves the two disagreeing for the life of the run.
+    stale = [
+        call
+        for call in CallExecution.no_workspace_objects.filter(
+            test_execution__run_test_id=run_test.id, deleted=False
+        )
+        if (call.call_metadata or {}).get("call_channel") == "chat"
+    ]
+    for call in stale:
+        metadata = dict(call.call_metadata or {})
+        metadata["call_channel"] = "livekit"
+        call.call_metadata = metadata
+    if stale:
+        CallExecution.no_workspace_objects.bulk_update(stale, ["call_metadata"])
 
 
 def _call_lifecycle_status(body: dict[str, Any]) -> str:

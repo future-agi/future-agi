@@ -1385,7 +1385,7 @@ class DaytonaHostedGateway:
             else ({}, "")
         )
         dispatch_payload = prepare_dispatch_payload(
-            payload, secrets_map, simulator_secrets=simulator_env
+            payload, secrets_map, simulator_secrets=simulator_env, job=job
         )
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
@@ -2483,6 +2483,7 @@ def prepare_dispatch_payload(
     secrets_map: dict[str, str],
     *,
     simulator_secrets: dict[str, str] | None = None,
+    job: Any = None,
 ) -> dict[str, Any]:
     """Add non-secret connector configuration derived from run-scoped secrets.
 
@@ -2510,7 +2511,41 @@ def prepare_dispatch_payload(
         config["livekit_url"] = livekit_url
         agent["config"] = config
         dispatched["agent"] = agent
+    if job is not None:
+        offered = _offered_eval_catalogue(job)
+        if offered:
+            # Metadata is free-form on both sides, so the catalogue reaches the guest without a
+            # contract change. Offered, not required: a guest that ignores it selects nothing and
+            # the run behaves exactly as it does today.
+            metadata = dict(dispatched.get("metadata") or {})
+            metadata["available_evals"] = offered
+            dispatched["metadata"] = metadata
     return dispatched
+
+
+def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
+    """The platform evals this job may select, filtered to its own modality and tenant."""
+    from simulate.services.harness_evals import offered_evals
+
+    try:
+        modality = _authored_modality(job)
+        return offered_evals(job.organization, job.workspace, modality)
+    except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
+        logger.exception("harness_eval_catalogue_failed", job_id=str(job.id))
+        return []
+
+
+def _authored_modality(job: Any) -> str:
+    """Voice or text, from the authored contract, defaulting to text like provisioning does."""
+    for output in job.stage_outputs or []:
+        if not isinstance(output, dict) or output.get("kind") != "contract":
+            continue
+        data = output.get("data")
+        if isinstance(data, dict):
+            authored = str(data.get("modality") or "").lower()
+            if authored in {"text", "voice"}:
+                return authored
+    return "text"
 
 
 def _secret_safe(value: Any, *, key: str = "") -> Any:
