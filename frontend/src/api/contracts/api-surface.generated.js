@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 998,
+  "endpointCount": 997,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -3103,9 +3103,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/tracer/v1/health": [
         "get"
-      ],
-      "/tracer/webhook/": [
-        "post"
       ]
     },
     "usage": {
@@ -6452,9 +6449,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/tracer/v1/health": [
     "get"
-  ],
-  "/tracer/webhook/": [
-    "post"
   ],
   "/usage/admin/custom-plan/": [
     "get",

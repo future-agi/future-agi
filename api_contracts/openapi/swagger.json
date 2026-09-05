@@ -65116,54 +65116,6 @@
             },
             "parameters": []
         },
-        "/tracer/webhook/": {
-            "post": {
-                "operationId": "tracer_webhook_create",
-                "description": "",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/WebhookRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/WebhookResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "tracer"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
         "/usage/admin/custom-plan/": {
             "get": {
                 "operationId": "usage_admin_custom-plan_list",
@@ -131244,36 +131196,6 @@
                 },
                 "service": {
                     "title": "Service",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "WebhookRequest": {
-            "required": [
-                "call"
-            ],
-            "type": "object",
-            "properties": {
-                "call": {
-                    "title": "Call",
-                    "type": "object"
-                }
-            }
-        },
-        "WebhookResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "title": "Result",
                     "type": "string",
                     "minLength": 1
                 }

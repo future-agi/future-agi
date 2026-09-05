@@ -1,10 +1,13 @@
+import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
 import structlog
 
+from simulate.models.agent_definition import AgentDefinition, ProviderCredentials
 from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
@@ -14,7 +17,34 @@ logger = structlog.get_logger(__name__)
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
 OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
-RETELL_CALL_HYDRATION_BOUND = 250
+RETELL_LIST_PAGE_LIMIT = 1000
+RETELL_REQUEST_TIMEOUT_SECONDS = 30
+RETELL_MAX_ATTEMPTS = 3
+
+# Module-level so it stays patchable.
+_sleep = time.sleep
+
+
+@dataclass(frozen=True)
+class RetellPage:
+    calls: list[dict]
+    has_more: bool
+    next_key: str | None
+    dropped_no_end: int
+    dropped_missing: int
+    dropped_failed: int
+
+
+class RetellConfigurationError(Exception):
+    """Agent/credential setup prevents a Retell fetch; message never carries key material or provider values."""
+
+
+class RetellCursorRejected(Exception):
+    """Retell rejected the pagination cursor or offset; the orchestrator restarts the window."""
+
+    def __init__(self, *, cause: str):
+        super().__init__(cause)
+        self.cause = cause
 
 
 class ObservabilityService:
@@ -111,10 +141,6 @@ class ObservabilityService:
         """
         if provider.provider == ProviderChoices.VAPI:
             return ObservabilityService._fetch_vapi_logs(provider, start_time, end_time)
-        elif provider.provider == ProviderChoices.RETELL:
-            return ObservabilityService._fetch_retell_logs(
-                provider, start_time, end_time
-            )
         elif provider.provider == ProviderChoices.ELEVEN_LABS:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
@@ -202,133 +228,274 @@ class ObservabilityService:
         return all_logs
 
     @staticmethod
-    def _fetch_retell_call_detail(
-        call: dict[str, Any], headers: dict[str, str]
-    ) -> dict[str, Any]:
-        """Hydrate a lean v3 list item with fields available only from Get Call.
+    def _retell_request(method: str, url: str, **kwargs: Any) -> requests.Response:
+        """One retry helper for every Retell HTTP call.
 
-        Raises:
-            ValueError: if call has no call_id or response is not a dict.
-            requests.RequestException: on HTTP or network failure.
-            TypeError: if response JSON is not a dict.
+        429 / 5xx / connection or timeout errors retry up to RETELL_MAX_ATTEMPTS,
+        sleeping 1s then 2s via the module-level ``_sleep``. 401/403 raise at
+        once. Every other non-2xx raises via ``raise_for_status`` (so any
+        ``requests.HTTPError`` this raises carries ``.response``).
         """
-        call_id = call.get("call_id")
-        if not call_id:
-            raise ValueError("Retell call detail: missing call_id")
+        request_fn = requests.post if method == "post" else requests.get
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                response = request_fn(
+                    url, timeout=RETELL_REQUEST_TIMEOUT_SECONDS, **kwargs
+                )
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt >= RETELL_MAX_ATTEMPTS:
+                    raise
+                _sleep(1 if attempt == 1 else 2)
+                continue
 
-        response = requests.get(
-            f"{ObservabilityRoutes.RETELL_GET_CALL_URL.value}/{call_id}",
-            headers=headers,
-            timeout=30,
-        )
-        response.raise_for_status()
-        detail = response.json()
+            if response.status_code in (401, 403):
+                response.raise_for_status()
 
-        if not isinstance(detail, dict):
-            raise TypeError(
-                f"Retell call detail response must be a dict, "
-                f"got {type(detail).__name__}"
-            )
+            retryable = response.status_code == 429 or response.status_code >= 500
+            if retryable and attempt < RETELL_MAX_ATTEMPTS:
+                _sleep(1 if attempt == 1 else 2)
+                continue
 
-        return {**call, **detail}
+            response.raise_for_status()
+            return response
 
     @staticmethod
-    def _fetch_retell_logs(
-        provider: ObservabilityProvider,
-        start_time: datetime | None = None,
-        end_time: datetime | None = None,
-    ):
-        """
-        Fetches call logs from Retell AI.
+    def _fetch_retell_call_detail(
+        call: dict[str, Any], headers: dict[str, str]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Hydrate one list item via Get Call. Caller guarantees ``call["call_id"]``.
 
-        Returns:
-            List of logs, or empty list if API key is missing.
+        Never raises for a single call except 401/403 (propagated so the page
+        fails loudly on an auth problem). Returns ``(merged_call, None)`` on
+        success, or ``(None, "missing")`` for a 400/404/422 (bad or unknown
+        call id — permanent), or ``(None, "failed")`` for anything else after
+        retries, including a body that isn't JSON or doesn't parse to a dict.
         """
-        agent = ObservabilityService._get_agent_definition(provider)
-        api_key = ObservabilityService._validate_agent_api_key(
-            agent, provider, "Retell"
+        call_id = call.get("call_id")
+        try:
+            response = ObservabilityService._retell_request(
+                "get",
+                f"{ObservabilityRoutes.RETELL_GET_CALL_URL.value}/{call_id}",
+                headers=headers,
+            )
+            detail = response.json()
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            if status in (401, 403):
+                raise
+            if status in (400, 404, 422):
+                return None, "missing"
+            return None, "failed"
+        except (requests.RequestException, ValueError):
+            # Covers ConnectionError/Timeout after retries and a non-JSON body
+            # (requests.JSONDecodeError subclasses both RequestException and ValueError).
+            return None, "failed"
+
+        if not isinstance(detail, dict):
+            return None, "failed"
+
+        merged = dict(call)
+        for key, value in detail.items():
+            if value is not None:
+                merged[key] = value
+        return merged, None
+
+    @staticmethod
+    def _hydrate_retell_calls(
+        items: list[dict[str, Any]], headers: dict[str, str]
+    ) -> tuple[list[dict[str, Any]], int, int, int]:
+        """Hydrate every list item; drop and count items that never yield a usable call."""
+        dropped_no_end = dropped_missing = dropped_failed = 0
+        by_call_id: dict[str, dict[str, Any]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                # A malformed envelope entry, not a per-call HTTP outcome.
+                dropped_failed += 1
+                continue
+            if item.get("end_timestamp") is None:
+                dropped_no_end += 1
+                continue
+            call_id = item.get("call_id")
+            if not isinstance(call_id, str) or not call_id:
+                # No request can be made without a usable id; same bucket as a
+                # Retell-confirmed unknown id, since retrying never helps either.
+                dropped_missing += 1
+                continue
+            merged, reason = ObservabilityService._fetch_retell_call_detail(
+                item, headers
+            )
+            if reason == "missing":
+                dropped_missing += 1
+                continue
+            if reason == "failed":
+                dropped_failed += 1
+                continue
+            # Key off the list item's own id, not the merged one: a detail body
+            # can only ever add fields, never replace an already-hashable key.
+            by_call_id[call_id] = merged
+        return list(by_call_id.values()), dropped_no_end, dropped_missing, dropped_failed
+
+    @staticmethod
+    def _resolve_retell_key(provider: ObservabilityProvider) -> tuple[str, str]:
+        """Retell-only key resolution: versioned credential row beats the legacy one.
+
+        Version status is deliberately ignored; soft-deleted rows are excluded
+        by the default manager on both query arms.
+        """
+        try:
+            agent = provider.agent_definition
+        except AgentDefinition.DoesNotExist:
+            raise RetellConfigurationError("Retell observability needs a linked agent")
+
+        rows = (
+            ProviderCredentials.objects.filter(
+                agent_version__agent_definition=agent,
+                provider_type=ProviderCredentials.ProviderType.RETELL,
+            )
+            .exclude(api_key="")
+            .order_by("-agent_version__version_number")
         )
-        if not api_key:
-            return []
+        legacy = (
+            ProviderCredentials.objects.filter(
+                agent_definition=agent,
+                provider_type=ProviderCredentials.ProviderType.RETELL,
+            )
+            .exclude(api_key="")
+            .first()
+        )
+        chosen = rows.first() or legacy
+        try:
+            key = chosen.get_api_key() if chosen else (agent.api_key or None)
+        except ValueError:
+            raise RetellConfigurationError("Retell credential could not be decrypted")
+        if not key:
+            raise RetellConfigurationError(
+                "Retell API key is not configured for this agent"
+            )
+        if not agent.assistant_id:
+            raise RetellConfigurationError(
+                "Retell agent id is not configured for this agent"
+            )
+        return key, agent.assistant_id
 
+    @staticmethod
+    def fetch_retell_page(
+        provider: ObservabilityProvider,
+        start_time: datetime | None,
+        end_time: datetime,
+        *,
+        pagination_key: str | None = None,
+        skip: int | None = None,
+    ) -> RetellPage:
+        """Fetch exactly ONE Retell list-calls page, fully hydrated.
+
+        Bootstrap mode: ``start_time is None``. Offset mode: ``skip is not
+        None``. Cursor mode: everything else (windowed, page 1 included).
+        Knows nothing about watermarks or storage; never writes provider state.
+        """
+        if end_time is None or end_time.tzinfo is None:
+            raise RetellConfigurationError("Retell fetch needs an aware end_time")
+        if start_time is not None and start_time.tzinfo is None:
+            raise RetellConfigurationError("Retell fetch needs an aware start_time")
+        if start_time is not None and start_time >= end_time:
+            raise RetellConfigurationError("Retell fetch window is empty")
+        bootstrap = start_time is None
+        if bootstrap and (pagination_key is not None or skip is not None):
+            raise RetellConfigurationError(
+                "Retell bootstrap mode takes no pagination cursor or offset"
+            )
+        if pagination_key is not None and skip is not None:
+            raise RetellConfigurationError(
+                "Retell fetch cannot use both a pagination cursor and an offset"
+            )
+
+        key, assistant_id = ObservabilityService._resolve_retell_key(provider)
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         }
-        agent_assistant_id = getattr(agent, "assistant_id", None) if agent else None
-        data: dict[str, Any] = {
-            "limit": RETELL_CALL_HYDRATION_BOUND,
-            "filter_criteria": {
-                # Using assistant_id as the agent identifier
-                "agent": (
-                    [{"agent_id": agent_assistant_id}] if agent_assistant_id else []
-                ),
-                "call_status": {
-                    "type": "enum",
-                    "op": "in",
-                    "value": ["ended", "error"],
+
+        end_ms = int(end_time.timestamp() * 1000)
+        if bootstrap:
+            body: dict[str, Any] = {
+                "sort_order": "descending",
+                "limit": RETELL_LIST_PAGE_LIMIT,
+                "filter_criteria": {
+                    "agent": [{"agent_id": assistant_id}],
+                    "call_status": {"type": "enum", "op": "in", "value": ["ended", "error"]},
+                    "end_timestamp": {"type": "range", "op": "bt", "value": [0, end_ms]},
                 },
-            },
-        }
-        if start_time and end_time:
-            data["filter_criteria"]["end_timestamp"] = {
-                "type": "range",
-                "op": "bt",
-                "value": [
-                    int(start_time.timestamp() * 1000),
-                    int(end_time.timestamp() * 1000),
-                ],
             }
+        else:
+            start_ms = int(start_time.timestamp() * 1000)
+            body = {
+                "sort_order": "ascending",
+                "limit": RETELL_LIST_PAGE_LIMIT,
+                "filter_criteria": {
+                    "agent": [{"agent_id": assistant_id}],
+                    "call_status": {"type": "enum", "op": "in", "value": ["ended", "error"]},
+                    "end_timestamp": {"type": "range", "op": "bt", "value": [start_ms - 1, end_ms]},
+                },
+            }
+            if pagination_key is not None:
+                body["pagination_key"] = pagination_key
+            elif skip is not None:
+                body["skip"] = skip
 
-        all_logs: list[dict] = []
-        pagination_key = None
-        seen_pagination_keys: set[str] = set()
-        while True:
-            request_data = dict(data)
-            if pagination_key:
-                request_data["pagination_key"] = pagination_key
-
-            response = requests.post(
+        has_cursor_or_offset = pagination_key is not None or skip is not None
+        try:
+            response = ObservabilityService._retell_request(
+                "post",
                 ObservabilityRoutes.RETELL_LIST_CALLS_URL.value,
                 headers=headers,
-                json=request_data,
-                timeout=30,
+                json=body,
             )
-            response.raise_for_status()
-            payload = response.json()
-            has_more = bool(payload.get("has_more"))
-            next_pagination_key = payload.get("pagination_key")
-            all_logs.extend(payload.get("items") or [])
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            if has_cursor_or_offset and status in (400, 404, 422):
+                raise RetellCursorRejected(cause=f"http_{status}") from exc
+            raise
 
-            if len(all_logs) > RETELL_CALL_HYDRATION_BOUND or (
-                has_more and len(all_logs) >= RETELL_CALL_HYDRATION_BOUND
-            ):
-                raise RuntimeError(
-                    "Retell pagination did not complete within the "
-                    f"{RETELL_CALL_HYDRATION_BOUND}-call hydration bound "
-                    f"(has_more={has_more}, collected={len(all_logs)})."
-                )
+        payload = response.json()
+        has_more = bool(payload.get("has_more"))
+        raw_key = payload.get("pagination_key")
 
-            if not has_more:
-                break
-            if not next_pagination_key:
-                raise RuntimeError(
-                    "Retell pagination reported has_more without a pagination_key"
-                )
-            if next_pagination_key in seen_pagination_keys:
-                raise RuntimeError(
-                    f"Retell pagination repeated cursor {next_pagination_key!r}"
-                )
-            seen_pagination_keys.add(next_pagination_key)
-            pagination_key = next_pagination_key
+        offset_mode = skip is not None
+        cursor_mode = not bootstrap and not offset_mode
+        if cursor_mode:
+            if has_more and not raw_key:
+                raise RetellCursorRejected(cause="missing_key")
+            next_key = raw_key if has_more else None
+        else:
+            next_key = None
 
-        if all_logs:
-            all_logs = [
-                ObservabilityService._fetch_retell_call_detail(call, headers)
-                for call in all_logs
-            ]
+        items = payload.get("items") or []
+        calls, dropped_no_end, dropped_missing, dropped_failed = (
+            ObservabilityService._hydrate_retell_calls(items, headers)
+        )
+        if dropped_missing:
+            logger.warning(
+                "retell_call_detail_missing",
+                provider_id=str(provider.id),
+                count=dropped_missing,
+            )
+        if dropped_failed:
+            logger.warning(
+                "retell_call_detail_failed",
+                provider_id=str(provider.id),
+                count=dropped_failed,
+            )
 
-        return all_logs
+        return RetellPage(
+            calls=calls,
+            has_more=has_more,
+            next_key=next_key,
+            dropped_no_end=dropped_no_end,
+            dropped_missing=dropped_missing,
+            dropped_failed=dropped_failed,
+        )
 
     @staticmethod
     def _list_eleven_labs_conversations(

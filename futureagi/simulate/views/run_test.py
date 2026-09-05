@@ -431,27 +431,38 @@ class CreateRunTestView(APIView):
             if not user_organization:
                 return self.gm.not_found("Organization not found for the user.")
 
-            # Resolve the agent definition up-front so we can gate on its
-            # type. Only voice simulations are entitlement-gated; chat
-            # (text) simulations are available on every plan.
+            # Resolve the agent definition (and the version the new run test
+            # will be pinned to, if one was requested) up-front so we can gate
+            # on the pinned agent_type. Only voice simulations are
+            # entitlement-gated; chat (text) simulations are available on
+            # every plan.
             agent_definition = AgentDefinition.objects.get(
                 id=validated_data["agent_definition_id"],
                 organization=user_organization,
             )
+            agent_version = validated_data.get("agent_version")
+            if agent_version:
+                agent_version = AgentVersion.objects.get(
+                    id=agent_version, deleted=False, organization=user_organization
+                )
 
-            if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+            from simulate.services.hosted_runner import agent_field_for_version
+
+            # No RunTest row exists yet, so read the exact version this call
+            # will pin directly — no unsaved ORM instance needed.
+            agent_type = agent_field_for_version(
+                agent_definition,
+                agent_version,
+                "agent_type",
+                agent_definition.agent_type,
+            )
+            if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
                 forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
 
             # Create the RunTest
             with transaction.atomic():
-                agent_version = validated_data.get("agent_version")
-                if agent_version:
-                    agent_version = AgentVersion.objects.get(
-                        id=agent_version, deleted=False, organization=user_organization
-                    )
-
                 # simulator_agent = SimulatorAgent.objects.get(
                 #     id=validated_data['simulator_agent_id'],
                 #     organization=user_organization
@@ -754,14 +765,19 @@ class RunTestExecutionView(APIView):
                 deleted=False,
             )
 
-            if (
-                run_test.agent_definition
-                and run_test.agent_definition.agent_type
-                == AgentDefinition.AgentTypeChoices.VOICE
-            ):
-                forbidden = _voice_sim_gate_response(user_organization, self.gm)
-                if forbidden is not None:
-                    return forbidden
+            if run_test.agent_definition:
+                from simulate.services.hosted_runner import agent_field_for_run
+
+                # Read the pinned version's agent_type, not the column, so
+                # this gate cannot disagree with what the eligibility check
+                # and the builder resolve for the same run.
+                agent_type = agent_field_for_run(
+                    run_test, "agent_type", run_test.agent_definition.agent_type
+                )
+                if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+                    forbidden = _voice_sim_gate_response(user_organization, self.gm)
+                    if forbidden is not None:
+                        return forbidden
 
             # Get parameters from the runtime-validated request contract.
             scenario_ids = request.validated_data.get("scenario_ids", [])
@@ -942,18 +958,36 @@ class RunTestExecutionView(APIView):
     def _hosted_runner_eligible(self, run_test: RunTest) -> bool:
         """Chat (TEXT) always routes to the hosted runner. Voice routes only
         when HOSTED_RUNNER_VOICE_ENABLED is on (default off ⇒ voice stays on
-        the native path, no regression)."""
+        the native path, no regression).
+
+        ``agent_type`` is read via ``agent_field_for_run`` (pinned version's
+        snapshot first, same as the builder) rather than the bare
+        ``AgentDefinition.agent_type`` column, so this gate cannot disagree
+        with what ``build_start_runner_job`` resolves for the same run.
+        This call has no ``TestExecution`` yet (dispatched before one is
+        created), so it can only resolve ``run_test.agent_version`` /
+        ``latest_version`` — the fresh-run case, where the created execution's
+        pin always matches the RunTest's."""
         agent_definition = run_test.agent_definition
         if agent_definition is None:
             return False
-        if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+        from simulate.services.hosted_runner import agent_field_for_run
+
+        agent_type = agent_field_for_run(
+            run_test, "agent_type", agent_definition.agent_type
+        )
+        if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
             return True
         return _hosted_execution_eligible(run_test)
 
-    def _hosted_runner_mode(self, run_test: RunTest) -> str:
-        from simulate.services.hosted_runner import resolve_runner_mode
+    def _hosted_runner_mode(self, run_test: RunTest, test_execution=None) -> str:
+        from simulate.services.hosted_runner import (
+            resolve_run_agent_version,
+            resolve_runner_mode,
+        )
 
-        return resolve_runner_mode(run_test.agent_definition)
+        agent_version = resolve_run_agent_version(run_test, test_execution)
+        return resolve_runner_mode(run_test.agent_definition, agent_version)
 
     def _execute_with_hosted_runner(
         self, run_test: RunTest, scenario_ids: list[str], simulator_id: str | None
@@ -996,7 +1030,7 @@ class RunTestExecutionView(APIView):
                 run_test_id=str(run_test.id),
                 org_id=str(run_test.organization_id),
                 scenario_ids=[str(sid) for sid in scenario_ids],
-                mode=self._hosted_runner_mode(run_test),
+                mode=self._hosted_runner_mode(run_test, test_execution),
                 simulator_id=str(simulator_id) if simulator_id else None,
             )
 
@@ -4275,7 +4309,19 @@ class RunTestComponentsUpdateView(APIView):
                     )
 
                     if agent_version_to_check and run_test.agent_definition:
-                        agent_type = run_test.agent_definition.agent_type
+                        from simulate.services.hosted_runner import (
+                            agent_field_for_run,
+                        )
+
+                        # Check the exact version this update is about to pin
+                        # (may not be run_test.agent_version yet), not the
+                        # definition column.
+                        agent_type = agent_field_for_run(
+                            run_test,
+                            "agent_type",
+                            run_test.agent_definition.agent_type,
+                            agent_version=agent_version_to_check,
+                        )
                         if (
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
@@ -6398,23 +6444,46 @@ def _rerun_call_executions(call_executions, rerun_type):
     return successful_reruns, failed_reruns, has_pending_calls, has_pending_evals
 
 
-def _hosted_execution_eligible(run_test) -> bool:
+def _hosted_execution_eligible(
+    run_test, test_execution=None, *, agent_version=None
+) -> bool:
     """Whether a run's execution routes to the hosted simulation runner — the
     same predicate the execute view uses. Rerun must mirror it so hosted
     executions re-dispatch through the runner instead of the native
     CallExecutionWorkflow (which would try to place a real provider call with no
-    phone number and fail with "activity task failed")."""
+    phone number and fail with "activity task failed").
+
+    ``test_execution``, when the caller already has one (a rerun), is passed
+    through the shared ``resolve_run_agent_version`` ladder so this agrees
+    with the version the builder resolves for the same execution rather than
+    only ever looking at ``run_test.agent_version``. ``agent_version``, when
+    the caller already resolved it (the bulk rerun loop does, once per
+    execution), is reused instead of resolving the ladder a second time here.
+    """
     agent_definition = run_test.agent_definition
     if agent_definition is None:
         return False
-    if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+    from simulate.services.hosted_runner import agent_field_for_run
+
+    if agent_version is None:
+        from simulate.services.hosted_runner import resolve_run_agent_version
+
+        agent_version = resolve_run_agent_version(run_test, test_execution)
+
+    agent_type = agent_field_for_run(
+        run_test,
+        "agent_type",
+        agent_definition.agent_type,
+        agent_version=agent_version,
+    )
+    if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
         return True
-    if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+    if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
         if not bool(getattr(app_settings, "HOSTED_RUNNER_VOICE_ENABLED", False)):
             return False
         from simulate.services.hosted_runner import hosted_runner_supports
 
-        return hosted_runner_supports(agent_definition)
+        return hosted_runner_supports(agent_definition, agent_version)
     return False
 
 
@@ -6430,7 +6499,9 @@ def _repository_harness_job_id(test_execution) -> str | None:
     from simulate.models import HostedHarnessJob
 
     related_job_id = (
-        HostedHarnessJob.no_workspace_objects.filter(test_execution_id=test_execution.id)
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        )
         .values_list("id", flat=True)
         .first()
     )
@@ -6482,18 +6553,28 @@ def _dispatch_hosted_rerun(test_execution, call_execution_ids=None) -> str:
 
     ``call_execution_ids`` scopes the rebuilt job to only those calls (a partial
     or single-call rerun); the runner builds exactly their cases so the SDK's
-    positional case→row mapping matches the rows ``/batch`` re-adopts."""
-    from simulate.services.hosted_runner import resolve_runner_mode
+    positional case→row mapping matches the rows ``/batch`` re-adopts.
+
+    The mode is resolved through ``resolve_run_agent_version`` (run_test pin →
+    this execution's pin → latest_version) — the same ladder
+    ``build_start_runner_job`` uses for the rebuilt job, so this dispatch's
+    mode cannot disagree with the transport the builder derives for it.
+    """
+    from simulate.services.hosted_runner import (
+        resolve_run_agent_version,
+        resolve_runner_mode,
+    )
     from simulate.temporal.client import start_simulation_runner_workflow
 
     run_test = test_execution.run_test
     scenario_ids = [str(sid) for sid in (test_execution.scenario_ids or [])]
+    agent_version = resolve_run_agent_version(run_test, test_execution)
     return start_simulation_runner_workflow(
         test_execution_id=str(test_execution.id),
         run_test_id=str(run_test.id),
         org_id=str(run_test.organization_id),
         scenario_ids=scenario_ids,
-        mode=resolve_runner_mode(run_test.agent_definition),
+        mode=resolve_runner_mode(run_test.agent_definition, agent_version),
         simulator_id=(
             str(test_execution.simulator_agent_id)
             if test_execution.simulator_agent_id
@@ -6567,8 +6648,12 @@ class CallExecutionRerunView(APIView):
 
             # Hosted executions re-run through the simulation runner, not the
             # native CallExecutionWorkflow (call_and_eval only; eval_only reruns
-            # just re-score existing transcripts).
-            is_hosted = _hosted_execution_eligible(test_execution.run_test)
+            # just re-score existing transcripts). Pass this execution so the
+            # eligibility check resolves the same pinned version the rerun
+            # dispatch/builder will.
+            is_hosted = _hosted_execution_eligible(
+                test_execution.run_test, test_execution
+            )
 
             # Repository-backed harness executions own their modality in the
             # saved ALK contract. Their platform AgentDefinition is only a
@@ -6583,7 +6668,17 @@ class CallExecutionRerunView(APIView):
                 and not repository_job_id
                 and test_execution.run_test.agent_definition
             ):
-                agent_type = test_execution.run_test.agent_definition.agent_type
+                from simulate.services.hosted_runner import agent_field_for_run
+
+                # Same pinned version is_hosted just resolved, not the column,
+                # so this guard cannot classify the run differently than the
+                # eligibility check above did.
+                agent_type = agent_field_for_run(
+                    test_execution.run_test,
+                    "agent_type",
+                    test_execution.run_test.agent_definition.agent_type,
+                    test_execution=test_execution,
+                )
                 if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
                     return self._gm.bad_request(
                         "Text/Chat agents only support 'eval_only' rerun type."
@@ -7222,10 +7317,6 @@ class TestExecutionRerunView(APIView):
             select_all = request.validated_data.get("select_all", False)
             test_execution_ids = request.validated_data.get("test_execution_ids", [])
 
-            # Hosted executions re-run through the simulation runner (call_and_eval
-            # only); native ones keep the RerunCoordinatorWorkflow path.
-            is_hosted = _hosted_execution_eligible(run_test)
-
             # Repository-uploaded agents carry their authoritative modality in
             # the saved ALK contract. Do not apply the native AgentDefinition
             # TEXT guard to that durable harness execution.
@@ -7237,7 +7328,11 @@ class TestExecutionRerunView(APIView):
                 and repository_execution is None
                 and run_test.agent_definition
             ):
-                agent_type = run_test.agent_definition.agent_type
+                from simulate.services.hosted_runner import agent_field_for_run
+
+                agent_type = agent_field_for_run(
+                    run_test, "agent_type", run_test.agent_definition.agent_type
+                )
                 if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
                     return self._gm.bad_request(
                         "Text/Chat agents only support 'eval_only' rerun type."
@@ -7253,16 +7348,24 @@ class TestExecutionRerunView(APIView):
                 TestExecution.ExecutionStatus.RUNNING,
                 TestExecution.ExecutionStatus.CANCELLING,
             ]
+            # select_related: each execution's own pin resolution (below) reads
+            # both FKs, so this avoids two extra queries per execution.
             if select_all:
-                test_executions = TestExecution.objects.filter(
-                    run_test=run_test
-                ).exclude(status__in=non_rerunnable_statuses)
+                test_executions = (
+                    TestExecution.objects.filter(run_test=run_test)
+                    .select_related("agent_version", "run_test__agent_version")
+                    .exclude(status__in=non_rerunnable_statuses)
+                )
                 if test_execution_ids:
                     test_executions = test_executions.exclude(id__in=test_execution_ids)
             else:
-                test_executions = TestExecution.objects.filter(
-                    id__in=test_execution_ids, run_test=run_test
-                ).exclude(status__in=non_rerunnable_statuses)
+                test_executions = (
+                    TestExecution.objects.filter(
+                        id__in=test_execution_ids, run_test=run_test
+                    )
+                    .select_related("agent_version", "run_test__agent_version")
+                    .exclude(status__in=non_rerunnable_statuses)
+                )
 
             if not test_executions.exists():
                 return self._gm.bad_request(
@@ -7334,6 +7437,19 @@ class TestExecutionRerunView(APIView):
                 pre_rerun_status = test_execution.status
                 call_executions = CallExecution.objects.filter(
                     test_execution=test_execution
+                )
+
+                # Resolved per execution (not once for the whole batch): each
+                # execution can be pinned to a different version than
+                # run_test's. Resolved once here and passed in so the
+                # eligibility check below doesn't resolve the ladder again.
+                from simulate.services.hosted_runner import (
+                    resolve_run_agent_version,
+                )
+
+                resolved_version = resolve_run_agent_version(run_test, test_execution)
+                is_hosted = _hosted_execution_eligible(
+                    run_test, test_execution, agent_version=resolved_version
                 )
 
                 if not call_executions.exists():
