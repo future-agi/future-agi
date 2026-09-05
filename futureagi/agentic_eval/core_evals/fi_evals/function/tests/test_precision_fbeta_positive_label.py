@@ -102,13 +102,37 @@ class TestExplicitPositiveLabel:
 
     def test_falsy_integer_zero_is_honoured_by_f_beta(self):
         # Regression: `if positive_label` dropped an explicit 0 and fell back to
-        # auto-detection, which scored class "1" instead.
+        # auto-detection. With labels {0, 1} the old code happened to land on
+        # "0" anyway, so the defect only shows once another class sorts ahead of
+        # it -- see test_falsy_zero_with_a_lower_sorting_class below.
         labels = ["0", "0", "1", "1"]
         preds = ["0", "0", "0", "1"]
         result = calculate_f_beta_score(preds, labels, positive_label=0)
         # P = 2/3, R = 1.0 -> F1 = 0.8
         assert result["result"] == pytest.approx(0.8)
         assert "positive='0'" in result["reason"]
+
+    @pytest.mark.parametrize(
+        "scorer, expected",
+        [(calculate_precision_score, 1.0), (calculate_f_beta_score, 2 / 3)],
+    )
+    def test_falsy_zero_with_a_lower_sorting_class(self, scorer, expected):
+        # Sentiment labels -1 / 0 / 1, scoring the neutral class 0. "-1" sorts
+        # ahead of "0", so the old truthiness gate discarded positive_label=0
+        # and silently scored "-1" instead, reporting a perfect 1.0 for F1.
+        labels = ["0", "0", "1", "-1", "1"]
+        preds = ["0", "1", "1", "-1", "1"]
+        result = scorer(preds, labels, positive_label=0)
+        assert result["result"] == pytest.approx(expected)
+        assert "positive='0'" in result["reason"]
+
+    def test_int_and_str_positive_label_agree(self):
+        # Passing 0 and "0" must not produce different scores.
+        labels = ["0", "0", "1", "-1", "1"]
+        preds = ["0", "1", "1", "-1", "1"]
+        as_int = calculate_f_beta_score(preds, labels, positive_label=0)["result"]
+        as_str = calculate_f_beta_score(preds, labels, positive_label="0")["result"]
+        assert as_int == pytest.approx(as_str)
 
     def test_falsy_string_zero_is_honoured(self):
         labels = ["0", "0", "1", "1"]
