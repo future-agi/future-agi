@@ -265,6 +265,45 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
         return locked
 
 
+
+def _is_bare_uuid(value: str) -> bool:
+    """Return True when *value* looks like a bare UUID (no surrounding text)."""
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
+def _derive_name_from_job(job: "HostedHarnessJob") -> str:
+    """Derive a human-readable run name from the job when the guest sends a UUID."""
+    source = (job.payload or {}).get("source", {})
+    repo = source.get("repository", "") if isinstance(source, dict) else ""
+    if repo and "/" in repo:
+        return repo.rsplit("/", 1)[-1]
+    if repo:
+        return repo
+    return f"simulation-{str(job.id)[:8]}"
+
+
+def _derive_agent_name_from_job(job: "HostedHarnessJob") -> str:
+    """Derive an agent name from the job's contract stage output."""
+    for output in job.stage_outputs or []:
+        if not isinstance(output, dict) or output.get("kind") != "contract":
+            continue
+        data = output.get("data")
+        if not isinstance(data, dict):
+            continue
+        agent = str(data.get("agent") or "").strip()
+        if agent:
+            return agent.replace("_", " ").replace("-", " ").title()[:200]
+        one_liner = str(data.get("one_liner") or "").strip()
+        if one_liner:
+            # Use the first few words of the one-liner
+            return one_liner[:100]
+    return _derive_name_from_job(job)
+
+
 def provision_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
@@ -310,13 +349,21 @@ def provision_scenarios(
         # Misclassifying a LiveKit run here makes completed voice calls render
         # through the chat schema and effectively disappear from call-details.
         modality = _resolve_scenario_modality(job, payload)
+        # Defense: when the guest sends a bare UUID as the run name
+        # (older guests use job.run_id), derive something readable.
+        run_name = payload["name"]
+        if _is_bare_uuid(run_name):
+            run_name = _derive_name_from_job(job)
+        incoming_agent_name = payload.get("agent_name")
+        if not incoming_agent_name or incoming_agent_name == "alk-sdk-agent":
+            incoming_agent_name = _derive_agent_name_from_job(job)
         run_test, scenarios, _ = provision_alk_sim_run_test(
             job.organization,
             workspace=job.workspace,
-            name=payload["name"],
+            name=run_name,
             personas=personas,
             agent_definition_id=payload.get("agent_definition_id"),
-            agent_name=payload.get("agent_name"),
+            agent_name=incoming_agent_name,
             description=payload.get("description", ""),
             modality=modality,
         )
