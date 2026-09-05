@@ -3069,7 +3069,116 @@ def calculate_accuracy(output, expected, **kwargs):
     return {"result": accuracy, "reason": f"Accuracy: {accuracy:.4f} ({correct}/{len(labels)} correct)"}
 
 
-def calculate_precision_score(output, expected, positive_label=None, **kwargs):
+# Conventional binary label pairs, mapped to the member that means "positive".
+# Used to resolve the positive class when the caller does not name one. Picking
+# the positive class alphabetically is wrong for every pair listed here, so a
+# label set that matches one of these is resolved by convention instead.
+_POSITIVE_LABEL_CONVENTIONS = (
+    (frozenset({"yes", "no"}), "yes"),
+    (frozenset({"true", "false"}), "true"),
+    (frozenset({"1", "0"}), "1"),
+    (frozenset({"positive", "negative"}), "positive"),
+    (frozenset({"pass", "fail"}), "pass"),
+    (frozenset({"spam", "ham"}), "spam"),
+    (frozenset({"relevant", "irrelevant"}), "relevant"),
+    (frozenset({"correct", "incorrect"}), "correct"),
+    (frozenset({"valid", "invalid"}), "valid"),
+)
+
+_VALID_AVERAGES = ("binary", "macro", "micro", "weighted")
+
+
+def _parse_label_list(val):
+    """Normalize a label input into a lowercased list of string labels."""
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [str(v).lower() for v in val]
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return [str(v).lower() for v in parsed]
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return [val.strip().lower()]
+    return [str(val).lower()]
+
+
+def _resolve_conventional_positive_label(classes):
+    """Return the conventional positive label for a binary class set, else None.
+
+    Only exact two-class matches against ``_POSITIVE_LABEL_CONVENTIONS`` resolve;
+    anything else returns None so the caller can fall back to averaging rather
+    than guessing a class.
+    """
+    class_set = frozenset(classes)
+    if len(class_set) != 2:
+        return None
+    for pair, positive in _POSITIVE_LABEL_CONVENTIONS:
+        if class_set == pair:
+            return positive
+    return None
+
+
+def _binary_counts(preds, labels, pos):
+    """Return (tp, fp, fn) for ``pos`` treated as the positive class.
+
+    Callers validate that ``preds`` and ``labels`` are the same length before
+    reaching here, so ``strict=True`` guards against future misuse.
+    """
+    tp = fp = fn = 0
+    for pred, label in zip(preds, labels, strict=True):
+        if pred == pos:
+            if label == pos:
+                tp += 1
+            else:
+                fp += 1
+        elif label == pos:
+            fn += 1
+    return tp, fp, fn
+
+
+def _resolve_averaging(preds, labels, positive_label):
+    """Decide how to reduce per-class scores to a single number.
+
+    Returns ``(pos, average)``. When ``pos`` is not None the caller scores that
+    single class one-vs-rest; otherwise it averages using ``average``.
+
+    Resolution order:
+      1. An explicitly supplied ``positive_label`` (including falsy ones such as
+         ``0`` or ``"0"``) wins.
+      2. A two-class problem matching a known convention resolves to that
+         convention's positive member.
+      3. Everything else macro-averages, which is independent of label ordering.
+    """
+    if positive_label is not None:
+        return str(positive_label).lower(), "binary"
+
+    classes = set(labels) | set(preds)
+    conventional = _resolve_conventional_positive_label(classes)
+    if conventional is not None:
+        return conventional, "binary"
+
+    return None, "macro"
+
+
+def _average_per_class(per_class, labels, average):
+    """Reduce ``{class: score}`` to a scalar using the requested averaging."""
+    if not per_class:
+        return 0.0
+    if average == "weighted":
+        supports = {cls: labels.count(cls) for cls in per_class}
+        total = sum(supports.values())
+        if total == 0:
+            return 0.0
+        return sum(per_class[cls] * supports[cls] for cls in per_class) / total
+    return sum(per_class.values()) / len(per_class)
+
+
+def calculate_precision_score(
+    output, expected, positive_label=None, average=None, **kwargs
+):
     """
     Compute precision for binary/multiclass classification.
     Precision = TP / (TP + FP).
@@ -3077,46 +3186,96 @@ def calculate_precision_score(output, expected, positive_label=None, **kwargs):
     Args:
         output: Predicted label(s).
         expected: Expected label(s).
-        positive_label: The label considered as positive (default: auto-detect).
+        positive_label: The label to treat as positive. When omitted, a known
+            binary convention (yes/no, true/false, 1/0, spam/ham, ...) is used
+            if the labels match one; otherwise precision is macro-averaged over
+            every class.
+        average: Explicit averaging strategy — one of "binary", "macro",
+            "micro", "weighted". "binary" requires ``positive_label`` or a
+            resolvable convention. Defaults to automatic resolution.
 
     Returns:
         dict: {"result": float (0-1), "reason": str}
     """
-    def _parse(val):
-        if val is None:
-            return []
-        if isinstance(val, list):
-            return [str(v).lower() for v in val]
-        if isinstance(val, str):
-            try:
-                parsed = json.loads(val)
-                if isinstance(parsed, list):
-                    return [str(v).lower() for v in parsed]
-            except (json.JSONDecodeError, ValueError):
-                pass
-            return [val.strip().lower()]
-        return [str(val).lower()]
-
-    preds = _parse(output)
-    labels = _parse(expected)
+    preds = _parse_label_list(output)
+    labels = _parse_label_list(expected)
 
     if len(preds) != len(labels) or not labels:
-        return {"result": 0.0, "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels"}
+        return {
+            "result": 0.0,
+            "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels",
+        }
 
-    if positive_label is not None:
-        pos = str(positive_label).lower()
-    else:
-        unique = set(labels)
-        pos = sorted(unique)[0] if unique else ""
+    if average is not None and average not in _VALID_AVERAGES:
+        return {
+            "result": 0.0,
+            "reason": (
+                f"Invalid average '{average}'; expected one of "
+                f"{', '.join(_VALID_AVERAGES)}"
+            ),
+        }
 
-    tp = sum(1 for p, l in zip(preds, labels) if p == pos and l == pos)
-    fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
+    pos, resolved_average = _resolve_averaging(preds, labels, positive_label)
+    if average is not None:
+        resolved_average = average
+        if average != "binary":
+            pos = None
+        elif pos is None:
+            return {
+                "result": 0.0,
+                "reason": (
+                    "average='binary' requires positive_label, or labels that "
+                    "match a known binary convention"
+                ),
+            }
 
-    if tp + fp == 0:
-        return {"result": 0.0, "reason": f"Precision: 0.0 (no positive predictions for label '{pos}')"}
+    if resolved_average == "binary":
+        tp, fp, _ = _binary_counts(preds, labels, pos)
+        if tp + fp == 0:
+            return {
+                "result": 0.0,
+                "reason": (
+                    f"Precision: 0.0 (no predictions for positive label '{pos}')"
+                ),
+            }
+        precision = tp / (tp + fp)
+        return {
+            "result": precision,
+            "reason": (
+                f"Precision: {precision:.4f} (TP={tp}, FP={fp}, positive='{pos}')"
+            ),
+        }
 
-    precision = tp / (tp + fp)
-    return {"result": precision, "reason": f"Precision: {precision:.4f} (TP={tp}, FP={fp}, positive='{pos}')"}
+    classes = sorted(set(labels) | set(preds))
+
+    if resolved_average == "micro":
+        tp_total = sum(_binary_counts(preds, labels, c)[0] for c in classes)
+        fp_total = sum(_binary_counts(preds, labels, c)[1] for c in classes)
+        if tp_total + fp_total == 0:
+            return {"result": 0.0, "reason": "Precision: 0.0 (no predictions)"}
+        precision = tp_total / (tp_total + fp_total)
+        return {
+            "result": precision,
+            "reason": (
+                f"Precision (micro): {precision:.4f} "
+                f"(TP={tp_total}, FP={fp_total}, {len(classes)} classes)"
+            ),
+        }
+
+    per_class = {}
+    for cls in classes:
+        tp, fp, _ = _binary_counts(preds, labels, cls)
+        per_class[cls] = tp / (tp + fp) if tp + fp > 0 else 0.0
+
+    precision = _average_per_class(per_class, labels, resolved_average)
+    breakdown = ", ".join(f"{c}={per_class[c]:.4f}" for c in classes)
+    return {
+        "result": precision,
+        "reason": (
+            f"Precision ({resolved_average}): {precision:.4f} "
+            f"over {len(classes)} classes [{breakdown}]"
+        ),
+    }
 
 
 def calculate_cohen_kappa(output, expected, **kwargs):
@@ -3689,36 +3848,129 @@ def calculate_balanced_accuracy(output, expected, **kwargs):
     return {"result": ba, "reason": f"Balanced Accuracy: {ba:.4f} (avg recall across {len(classes)} classes)"}
 
 
-def calculate_f_beta_score(output, expected, beta=1.0, positive_label=None, **kwargs):
-    """Compute F-beta score with configurable beta."""
-    def _parse(val):
-        if isinstance(val, list):
-            return [str(v).lower() for v in val]
-        if isinstance(val, str):
-            try:
-                parsed = json.loads(val)
-                if isinstance(parsed, list):
-                    return [str(v).lower() for v in parsed]
-            except (json.JSONDecodeError, ValueError):
-                pass
-            return [val.strip().lower()]
-        return [str(val).lower()]
-    preds = _parse(output)
-    labels = _parse(expected)
-    if len(preds) != len(labels) or not labels:
-        return {"result": 0.0, "reason": "Invalid input"}
-    beta = float(beta)
-    pos = str(positive_label).lower() if positive_label else sorted(set(labels))[0]
-    tp = sum(1 for p, l in zip(preds, labels) if p == pos and l == pos)
-    fp = sum(1 for p, l in zip(preds, labels) if p == pos and l != pos)
-    fn = sum(1 for p, l in zip(preds, labels) if p != pos and l == pos)
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+def _f_beta(precision, recall, b2):
+    """Combine precision and recall into an F-beta score."""
     if precision + recall == 0:
-        return {"result": 0.0, "reason": f"F{beta}: 0.0 (no TP)"}
-    b2 = beta ** 2
-    fb = (1 + b2) * precision * recall / (b2 * precision + recall)
-    return {"result": fb, "reason": f"F{beta}: {fb:.4f} (P={precision:.4f}, R={recall:.4f})"}
+        return 0.0
+    return (1 + b2) * precision * recall / (b2 * precision + recall)
+
+
+def calculate_f_beta_score(
+    output, expected, beta=1.0, positive_label=None, average=None, **kwargs
+):
+    """Compute F-beta score with configurable beta.
+
+    Args:
+        output: Predicted label(s).
+        expected: Expected label(s).
+        beta: Weight of recall relative to precision.
+        positive_label: The label to treat as positive. When omitted, a known
+            binary convention (yes/no, true/false, 1/0, spam/ham, ...) is used
+            if the labels match one; otherwise the score is macro-averaged over
+            every class.
+        average: Explicit averaging strategy — one of "binary", "macro",
+            "micro", "weighted". "binary" requires ``positive_label`` or a
+            resolvable convention. Defaults to automatic resolution.
+
+    Returns:
+        dict: {"result": float (0-1), "reason": str}
+    """
+    preds = _parse_label_list(output)
+    labels = _parse_label_list(expected)
+    if len(preds) != len(labels) or not labels:
+        return {
+            "result": 0.0,
+            "reason": f"Invalid input: {len(preds)} preds vs {len(labels)} labels",
+        }
+
+    try:
+        beta = float(beta)
+    except (TypeError, ValueError):
+        return {"result": 0.0, "reason": f"Invalid beta: {beta!r}"}
+    if beta < 0:
+        return {"result": 0.0, "reason": f"beta must be non-negative, got {beta}"}
+
+    if average is not None and average not in _VALID_AVERAGES:
+        return {
+            "result": 0.0,
+            "reason": (
+                f"Invalid average '{average}'; expected one of "
+                f"{', '.join(_VALID_AVERAGES)}"
+            ),
+        }
+
+    pos, resolved_average = _resolve_averaging(preds, labels, positive_label)
+    if average is not None:
+        resolved_average = average
+        if average != "binary":
+            pos = None
+        elif pos is None:
+            return {
+                "result": 0.0,
+                "reason": (
+                    "average='binary' requires positive_label, or labels that "
+                    "match a known binary convention"
+                ),
+            }
+
+    b2 = beta**2
+
+    if resolved_average == "binary":
+        tp, fp, fn = _binary_counts(preds, labels, pos)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        fb = _f_beta(precision, recall, b2)
+        if fb == 0.0:
+            return {
+                "result": 0.0,
+                "reason": f"F{beta}: 0.0 (no true positives for '{pos}')",
+            }
+        return {
+            "result": fb,
+            "reason": (
+                f"F{beta}: {fb:.4f} (P={precision:.4f}, R={recall:.4f}, "
+                f"positive='{pos}')"
+            ),
+        }
+
+    classes = sorted(set(labels) | set(preds))
+
+    if resolved_average == "micro":
+        tp_total = fp_total = fn_total = 0
+        for cls in classes:
+            tp, fp, fn = _binary_counts(preds, labels, cls)
+            tp_total += tp
+            fp_total += fp
+            fn_total += fn
+        precision = (
+            tp_total / (tp_total + fp_total) if (tp_total + fp_total) > 0 else 0.0
+        )
+        recall = tp_total / (tp_total + fn_total) if (tp_total + fn_total) > 0 else 0.0
+        fb = _f_beta(precision, recall, b2)
+        return {
+            "result": fb,
+            "reason": (
+                f"F{beta} (micro): {fb:.4f} (P={precision:.4f}, R={recall:.4f}, "
+                f"{len(classes)} classes)"
+            ),
+        }
+
+    per_class = {}
+    for cls in classes:
+        tp, fp, fn = _binary_counts(preds, labels, cls)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        per_class[cls] = _f_beta(precision, recall, b2)
+
+    fb = _average_per_class(per_class, labels, resolved_average)
+    breakdown = ", ".join(f"{c}={per_class[c]:.4f}" for c in classes)
+    return {
+        "result": fb,
+        "reason": (
+            f"F{beta} ({resolved_average}): {fb:.4f} "
+            f"over {len(classes)} classes [{breakdown}]"
+        ),
+    }
 
 
 def calculate_log_loss(output, expected, **kwargs):
