@@ -22979,18 +22979,6 @@ export interface OTLPHealthResponseApi {
   service: string;
 }
 
-export type WebhookRequestApiCall = { [key: string]: unknown };
-
-export interface WebhookRequestApi {
-  call: WebhookRequestApiCall;
-}
-
-export interface WebhookResponseApi {
-  status?: boolean;
-  /** @minLength 1 */
-  result: string;
-}
-
 export type AdminCustomPlanResponseApiResult = {[key: string]: string};
 
 export interface AdminCustomPlanResponseApi {

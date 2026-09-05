@@ -11,6 +11,7 @@ object-storage upload. Everything else — metric computation, DB writes,
 the API envelope — runs for real.
 """
 
+import importlib
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -100,6 +101,9 @@ def run_test(db, organization, workspace, agent_definition, scenario, simulator_
 @pytest.fixture(autouse=True)
 def _patch_side_effects():
     """No-op the async dispatch + websocket so the service runs inline."""
+    # The string targets below are attribute paths; make sure the module is
+    # imported even when a -k selection runs only tests that never import it.
+    importlib.import_module("simulate.services.alk_simulate_ingestion")
     targets = (
         "simulate.services.alk_simulate_ingestion.notify_simulation_update",
         "simulate.services.test_executor._run_simulate_evaluations_task.apply_async",
@@ -1399,6 +1403,41 @@ class TestBuildVoiceRunnerJob:
         )
         return job, mode
 
+    def _build_multi(self, organization, workspace, simulator_agent, agent, n):
+        """Like ``_build`` but attaches ``n`` scenarios with no dataset rows,
+        so the builder derives one persona per scenario (mirrors ``_build``'s
+        single-scenario attach)."""
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_test_execution,
+        )
+        from simulate.services.hosted_runner import (
+            build_start_runner_job,
+            resolve_runner_mode,
+        )
+
+        scenarios = [
+            self._scenario(organization, workspace, agent, simulator_agent)
+            for _ in range(n)
+        ]
+        rt = RunTest.objects.create(
+            name="Voice Run",
+            description="voice",
+            agent_definition=agent,
+            simulator_agent=simulator_agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        rt.scenarios.add(*scenarios)
+        te = create_alk_sim_test_execution(rt)
+        mode = resolve_runner_mode(agent)
+        job = build_start_runner_job(
+            test_execution_id=str(te.id),
+            run_test_id=str(rt.id),
+            scenario_ids=[str(s.id) for s in scenarios],
+            mode=mode,
+        )
+        return job, mode
+
     def test_resolve_runner_mode(self, organization, workspace):
         from simulate.services.hosted_runner import resolve_runner_mode
 
@@ -1549,11 +1588,9 @@ class TestBuildVoiceRunnerJob:
         # (>=120s), not the old flat 120s that cut real calls at ~2 minutes.
         params = job["voice"]["params"]
         assert params["max_seconds"] >= 120.0
-        # The child sums these into its outer run deadline; it must stay under
-        # the activity's start_to_close so the SDK's graceful timeout (which
-        # still submits a partial report) beats the activity SIGTERM (which
-        # submits nothing -> "activity task failed").
-        from simulate.temporal.constants import HOSTED_RUNNER_MAX_DURATION_SECONDS
+        # D15: the child's own deadline (no parent cap to fit under anymore)
+        # — the parent's timeout is derived FROM this, not compared against it.
+        from simulate.services.hosted_runner import child_run_seconds
 
         deadline = (
             params["max_seconds"]
@@ -1562,7 +1599,7 @@ class TestBuildVoiceRunnerJob:
             + params["cleanup_timeout"]
             + 60.0
         )
-        assert deadline <= 0.9 * HOSTED_RUNNER_MAX_DURATION_SECONDS
+        assert child_run_seconds(params) == int(deadline)
 
     def test_rerun_scopes_job_to_selected_calls(
         self, organization, workspace, simulator_agent
@@ -1690,7 +1727,620 @@ class TestBuildVoiceRunnerJob:
         assert job["voice"]["agent_definition"]["provider_evidence"] == {
             "provider": "vapi",
             "call_id_source": "originator_response",
+            "poll_interval_seconds": 3,
+            "poll_deadline_seconds": 45,
         }
+
+    def test_builds_retell_sip_inbound_job(
+        self, organization, workspace, simulator_agent
+    ):
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="+14155550123",
+            inbound=False,
+            assistant_id="agent_xyz",
+        )
+        job, mode = self._build(organization, workspace, simulator_agent, agent)
+        assert mode == "voice_sip"
+        t = job["voice"]["agent_definition"]["transport"]
+        assert t["kind"] == "sip_inbound"
+        assert t["inbound_call_originator"] == "retell"
+        assert t["originator_agent_id"] == "agent_xyz"
+        assert t["originator_from_number"] == "+14155550123"
+        assert job["voice"]["agent_definition"]["provider_evidence"] == {
+            "provider": "retell",
+            "call_id_source": "originator_response",
+            "poll_interval_seconds": 3,
+            "poll_deadline_seconds": 45,
+        }
+        secret_env = job["metadata"]["secret_env"]
+        assert any(
+            ref["key"] == "RETELL_API_KEY" and ref["manager"] == "provider_credentials"
+            for ref in secret_env
+        )
+
+    def test_retell_sip_inbound_missing_agent_id_raises(
+        self, organization, workspace, simulator_agent
+    ):
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="+14155550123",
+            inbound=False,
+            assistant_id="",
+        )
+        with pytest.raises(HostedRunnerBuildError) as excinfo:
+            self._build(organization, workspace, simulator_agent, agent)
+        assert (
+            str(excinfo.value) == "voice runner job missing retell originator_agent_id"
+        )
+
+    def test_retell_sip_inbound_missing_number_raises(self, organization, workspace):
+        # An empty contact_number resolves mode to voice_webrtc, not sip_inbound
+        # (§7 D7), so the validator can't be reached through build_start_runner_job
+        # with a blank number — exercise it directly the way _build_voice_job does.
+        from simulate.models.agent_definition import ProviderCredentials
+        from simulate.services.hosted_runner import (
+            HostedRunnerBuildError,
+            _voice_agent_definition,
+        )
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="",
+            inbound=False,
+            assistant_id="agent_xyz",
+        )
+        credentials = ProviderCredentials.objects.get(agent_definition=agent)
+        with pytest.raises(HostedRunnerBuildError) as excinfo:
+            _voice_agent_definition(agent, "retell", "sip_inbound", credentials)
+        assert (
+            str(excinfo.value)
+            == "voice runner job missing retell originator_from_number"
+        )
+
+    def test_retell_sip_inbound_malformed_number_raises(
+        self, organization, workspace, simulator_agent
+    ):
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="4155550123",
+            inbound=False,
+            assistant_id="agent_xyz",
+        )
+        with pytest.raises(HostedRunnerBuildError) as excinfo:
+            self._build(organization, workspace, simulator_agent, agent)
+        assert (
+            str(excinfo.value)
+            == "voice runner job invalid retell originator_from_number"
+        )
+
+    @pytest.mark.parametrize(
+        "number,valid",
+        [
+            ("+1234567", True),
+            ("+123456", False),
+            ("+01234567", False),
+            ("4155550123", False),
+            ("+14155550123\n", False),
+        ],
+    )
+    def test_retell_originator_from_number_e164_boundaries(
+        self, organization, workspace, simulator_agent, number, valid
+    ):
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone=number,
+            inbound=False,
+            assistant_id="agent_xyz",
+        )
+        if valid:
+            job, mode = self._build(organization, workspace, simulator_agent, agent)
+            assert (
+                job["voice"]["agent_definition"]["transport"]["originator_from_number"]
+                == number
+            )
+        else:
+            with pytest.raises(HostedRunnerBuildError):
+                self._build(organization, workspace, simulator_agent, agent)
+
+    def test_pinned_version_snapshot_wins_over_definition_in_full_build(
+        self, organization, workspace, simulator_agent
+    ):
+        """Pins the run to an OLDER version and cuts a NEWER one afterward
+        (mirrors an edit reaching the definition columns after a version was
+        already pinned), so ``_agent_field``'s own versionless fallback to
+        ``latest_version`` cannot coincidentally match the pin — with only
+        one version ever created, that fallback would still find the right
+        snapshot even if ``agent_version`` were dropped somewhere on the path
+        from ``build_start_runner_job`` through to ``_voice_agent_definition``,
+        masking a real wiring break.
+
+        Credentials are created once with ``assistant_id=""`` and never
+        resynced, so ``credentials.assistant_id`` stays falsy throughout and
+        cannot mask either version's own ``assistant_id``."""
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_test_execution,
+        )
+        from simulate.services.hosted_runner import (
+            build_start_runner_job,
+            resolve_runner_mode,
+        )
+
+        # Outbound target (inbound=False) -> sip_inbound transport, so Retell's
+        # originator_from_number / originator_agent_id fields are populated.
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="+15559999999",
+            inbound=False,
+            assistant_id="",
+        )
+        agent.assistant_id = "snap_agent"
+        agent.agent_name = "Snap Name"
+        agent.description = "snap prompt"
+        agent.save(update_fields=["assistant_id", "agent_name", "description"])
+        version_pinned = agent.create_version(
+            description="pinned version", commit_message="v1", status="active"
+        )
+
+        # A later edit reaches the definition columns directly (today's edit
+        # endpoints do exactly this) and a new version is cut from it, so
+        # latest_version now differs from the pin.
+        agent.contact_number = "+15550000001"
+        agent.assistant_id = "def_agent"
+        agent.agent_name = "Def Name"
+        agent.description = "def prompt"
+        agent.save(
+            update_fields=[
+                "contact_number",
+                "assistant_id",
+                "agent_name",
+                "description",
+            ]
+        )
+        agent.create_version(
+            description="later edit", commit_message="v2", status="active"
+        )
+        assert agent.latest_version.id != version_pinned.id
+
+        scenario = self._scenario(organization, workspace, agent, simulator_agent)
+        rt = self._run_test(organization, workspace, agent, simulator_agent, scenario)
+        rt.agent_version = version_pinned
+        rt.save(update_fields=["agent_version"])
+
+        te = create_alk_sim_test_execution(rt)
+        assert te.agent_version_id == version_pinned.id  # pin carried to the execution
+
+        mode = resolve_runner_mode(agent, version_pinned)
+        assert mode == "voice_sip"
+        job = build_start_runner_job(
+            test_execution_id=str(te.id),
+            run_test_id=str(rt.id),
+            scenario_ids=[str(scenario.id)],
+            mode=mode,
+        )
+        transport = job["voice"]["agent_definition"]["transport"]
+        assert transport["originator_from_number"] == "+15559999999"
+        assert transport["originator_agent_id"] == "snap_agent"
+        assert job["voice"]["agent_definition"]["name"] == "Snap Name"
+        assert job["voice"]["agent_definition"]["system_prompt"] == "snap prompt"
+
+    def test_pinned_version_snapshot_clears_phone_and_falls_back_to_webrtc(
+        self, organization, workspace, simulator_agent
+    ):
+        """Same two-version wiring as the previous test, but for the
+        mode/transport gate rather than the originator fields: the pinned
+        version's snapshot silencing contact_number must win over a stale
+        phone column, dropping the run to voice_webrtc/retell_webcall with no
+        DID lease and no originator."""
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_test_execution,
+        )
+        from simulate.services.hosted_runner import (
+            build_start_runner_job,
+            resolve_runner_mode,
+        )
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="+15551234567",
+            assistant_id="agent_xyz",
+        )
+        version = agent.create_version(
+            description="pinned for hosted run",
+            commit_message="clear phone",
+            status="active",
+        )
+        version.configuration_snapshot = {
+            **version.configuration_snapshot,
+            "contact_number": "",
+        }
+        version.save(update_fields=["configuration_snapshot"])
+
+        scenario = self._scenario(organization, workspace, agent, simulator_agent)
+        rt = self._run_test(organization, workspace, agent, simulator_agent, scenario)
+        rt.agent_version = version
+        rt.save(update_fields=["agent_version"])
+
+        te = create_alk_sim_test_execution(rt)
+        mode = resolve_runner_mode(agent, version)
+        assert mode == "voice_webrtc"
+        job = build_start_runner_job(
+            test_execution_id=str(te.id),
+            run_test_id=str(rt.id),
+            scenario_ids=[str(scenario.id)],
+            mode=mode,
+        )
+        transport = job["voice"]["agent_definition"]["transport"]
+        assert transport["kind"] == "retell_webcall"
+        assert "inbound_call_originator" not in transport
+
+    def _retell_originator_agent(self, organization, workspace):
+        return self._voice_agent(
+            organization,
+            workspace,
+            provider="retell",
+            phone="+14155550123",
+            inbound=False,
+            assistant_id="agent_xyz",
+        )
+
+    def test_multi_scenario_sip_inbound_originator_refused_without_reuse(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            with pytest.raises(HostedRunnerBuildError) as excinfo:
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
+        message = str(excinfo.value)
+        assert "3 scenario rows" in message
+        assert "select a single scenario row" in message
+        assert "HOSTED_RUNNER_LEASED_ROOM_REUSE" in message
+
+    def test_multi_scenario_sip_inbound_originator_builds_with_reuse_on(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, mode = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        assert mode == "voice_sip"
+        params = job["voice"]["params"]
+        assert params["max_concurrency"] == 1
+        # The budget follows the rows: each call keeps the full ceiling and the
+        # cleanup carries the other calls plus one drain allowance per call.
+        assert params["max_seconds"] == 30 * 60.0
+        fixed_overhead = params["connect_timeout"] + params["readiness_timeout"] + 60.0
+        leased_overhead = fixed_overhead + params["connect_timeout"]
+        assert params["cleanup_timeout"] == (
+            2 * params["max_seconds"] + 3 * leased_overhead - fixed_overhead + 30.0
+        )
+
+    def test_switch_off_ignores_env_true(
+        self, organization, workspace, simulator_agent, monkeypatch
+    ):
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._retell_originator_agent(organization, workspace)
+        monkeypatch.setenv("HOSTED_RUNNER_LEASED_ROOM_REUSE", "true")
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            with pytest.raises(HostedRunnerBuildError):
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
+
+    def test_single_scenario_sip_inbound_originator_builds_with_reuse_off(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            job, mode = self._build(organization, workspace, simulator_agent, agent)
+        assert mode == "voice_sip"
+
+    def test_multi_scenario_sip_inbound_no_originator_builds_with_reuse_off(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=False,
+        )
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            job, mode = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        assert mode == "voice_sip"
+        transport = job["voice"]["agent_definition"]["transport"]
+        assert transport["kind"] == "sip_inbound"
+        assert "inbound_call_originator" not in transport
+
+    def test_multi_scenario_sip_outbound_builds_with_reuse_off(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=True,
+        )
+        with override_settings(
+            HOSTED_RUNNER_LEASED_ROOM_REUSE=False,
+            LIVEKIT_OUTBOUND_TRUNK_ID="ST_trunk",
+            PSTN_CALLER_NUMBER="+15550009999",
+        ):
+            job, mode = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        assert mode == "voice_sip"
+        assert job["voice"]["agent_definition"]["transport"]["kind"] == "sip_outbound"
+
+    def test_multi_scenario_web_transport_builds_with_reuse_off(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._voice_agent(
+            organization, workspace, provider="vapi", phone="", assistant_id="asst_123"
+        )
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            job, mode = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        assert mode == "voice_webrtc"
+
+    def test_leased_room_budget_default_ceiling_n3(
+        self, organization, workspace, simulator_agent
+    ):
+        # D15: max_seconds is the call ceiling, full stop — no per-case
+        # shrink for however many rows are leased into one room.
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        assert job["voice"]["params"]["max_seconds"] == 1800.0
+
+    def test_leased_room_budget_two_minute_ceiling_n3(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        simulator_agent.max_call_duration_in_minutes = 2
+        simulator_agent.save(update_fields=["max_call_duration_in_minutes"])
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        assert job["voice"]["params"]["max_seconds"] == 120.0
+
+    def test_leased_room_budget_two_minute_ceiling_n6_builds(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        simulator_agent.max_call_duration_in_minutes = 2
+        simulator_agent.save(update_fields=["max_call_duration_in_minutes"])
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 6
+            )
+        assert job["voice"]["params"]["max_seconds"] == 120.0
+
+    def test_leased_room_budget_two_minute_ceiling_n10_builds(
+        self, organization, workspace, simulator_agent
+    ):
+        # D15: a row count that used to be refused now simply builds — the
+        # child owns however long its own budget needs to be.
+        from django.test import override_settings
+
+        simulator_agent.max_call_duration_in_minutes = 2
+        simulator_agent.save(update_fields=["max_call_duration_in_minutes"])
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 10
+            )
+        assert job["voice"]["params"]["max_seconds"] == 120.0
+
+    def _assert_leased_deadline_identity(self, job, case_count):
+        """D15: pin ``cleanup_timeout`` and the derived child deadline from
+        the budget constants (not by echoing the function's own output), so a
+        regression that reverts to the old per-case shrink is caught here
+        even though every other assertion in this class only pins
+        ``max_seconds``."""
+        from simulate.services.hosted_runner import child_run_seconds
+
+        connect_timeout = 60.0
+        readiness_timeout = 120.0
+        base_cleanup = 30.0
+        fixed_overhead = connect_timeout + readiness_timeout + 60.0
+        leased_overhead = fixed_overhead + connect_timeout
+
+        params = job["voice"]["params"]
+        max_seconds = params["max_seconds"]
+        cleanup_timeout = (
+            (case_count - 1) * max_seconds
+            + case_count * leased_overhead
+            - fixed_overhead
+            + base_cleanup
+        )
+        assert params["cleanup_timeout"] == cleanup_timeout
+        run_seconds = child_run_seconds(params)
+        expected = case_count * (max_seconds + leased_overhead) + base_cleanup
+        assert run_seconds == expected
+
+    def test_leased_room_budget_fits_every_case_n3(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 3
+            )
+        self._assert_leased_deadline_identity(job, 3)
+
+    def test_leased_room_budget_fits_every_case_n5(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 5
+            )
+        self._assert_leased_deadline_identity(job, 5)
+
+    def test_leased_room_budget_fits_every_case_n2(
+        self, organization, workspace, simulator_agent
+    ):
+        # N=2 used to disagree with the N>=3 formula only because the old
+        # max_cleanup clamp bound differently at low case counts; with the
+        # clamp gone, the same identity now covers every N >= 2 uniformly.
+        from django.test import override_settings
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 2
+            )
+        assert job["voice"]["params"]["max_seconds"] == 1800.0
+        self._assert_leased_deadline_identity(job, 2)
+
+    def test_single_scenario_leased_budget_untouched_at_defaults(
+        self, organization, workspace, simulator_agent
+    ):
+        # The single-case drain allowance lives in cleanup_timeout, not
+        # max_seconds — unaffected by D15 either way.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import child_run_seconds
+
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            job, _ = self._build(organization, workspace, simulator_agent, agent)
+        params = job["voice"]["params"]
+        leased_overhead = 300.0
+
+        assert params["max_seconds"] == 1800.0
+        assert params["cleanup_timeout"] == 90.0
+        run_seconds = child_run_seconds(params)
+        need = params["max_seconds"] + leased_overhead + 30
+        assert need == 2130.0
+        assert run_seconds == 2130.0
+        assert run_seconds == need
+
+    def test_single_scenario_leased_budget_at_55_minute_ceiling(
+        self, organization, workspace, simulator_agent
+    ):
+        # D15: the single-case clamp that used to cap max_seconds at 3180s is
+        # gone — the full 55-minute ceiling (3300s) now passes through.
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import child_run_seconds
+
+        simulator_agent.max_call_duration_in_minutes = 55
+        simulator_agent.save(update_fields=["max_call_duration_in_minutes"])
+        agent = self._retell_originator_agent(organization, workspace)
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=False):
+            job, _ = self._build(organization, workspace, simulator_agent, agent)
+        params = job["voice"]["params"]
+        leased_overhead = 300.0
+
+        assert params["max_seconds"] == 3300.0
+        assert params["cleanup_timeout"] == 90.0
+        run_seconds = child_run_seconds(params)
+        need = params["max_seconds"] + leased_overhead + 30
+        assert need == 3630.0
+        assert run_seconds == 3630.0
+        assert run_seconds == need
+
+    def test_sip_outbound_multi_scenario_budget_untouched_n7(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=True,
+        )
+        with override_settings(
+            HOSTED_RUNNER_LEASED_ROOM_REUSE=True,
+            LIVEKIT_OUTBOUND_TRUNK_ID="ST_trunk",
+            PSTN_CALLER_NUMBER="+15550009999",
+        ):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 7
+            )
+        assert job["voice"]["agent_definition"]["transport"]["kind"] == "sip_outbound"
+        # sip_outbound is untouched by D12 — today's value, unshortened.
+        assert job["voice"]["params"]["max_seconds"] == 1800.0
+
+    def test_no_originator_sip_inbound_budget_untouched_n7(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=False,
+        )
+        with override_settings(HOSTED_RUNNER_LEASED_ROOM_REUSE=True):
+            job, _ = self._build_multi(
+                organization, workspace, simulator_agent, agent, 7
+            )
+        transport = job["voice"]["agent_definition"]["transport"]
+        assert transport["kind"] == "sip_inbound"
+        assert "inbound_call_originator" not in transport
+        # No-originator sip_inbound is untouched by D12 — today's value.
+        assert job["voice"]["params"]["max_seconds"] == 1800.0
 
 
 class TestHostedRunnerActivityHelpers:
@@ -1753,10 +2403,111 @@ class TestHostedRunnerActivityHelpers:
             == "simulator_first"
         )
 
+    @pytest.mark.parametrize("case_count", [1, 3, 5, 20, 40])
+    @pytest.mark.parametrize("max_call_minutes", [30, 2, 55])
+    def test_leased_budget_never_shrinks_or_refuses(self, case_count, max_call_minutes):
+        # D15: the builder no longer clamps against a parent cap or refuses a
+        # row count — max_seconds always equals the call ceiling, and
+        # cleanup_timeout/run_seconds follow the child's own deadline
+        # identity, however large. 55 min is where the deleted max_seconds
+        # clamp used to bind (3240s), so this sweep now catches that
+        # regression without a DB-backed test.
+        from simulate.services.hosted_runner import _voice_params, child_run_seconds
+
+        params = _voice_params(
+            "sip_inbound",
+            inbound=False,
+            case_count=case_count,
+            max_concurrency=5,
+            max_call_minutes=max_call_minutes,
+            leased_room=True,
+        )
+        ceiling = float(max(120, max_call_minutes * 60))
+        assert params["max_seconds"] == ceiling
+
+        connect_timeout = 60.0
+        readiness_timeout = 120.0
+        base_cleanup = 30.0
+        fixed_overhead = connect_timeout + readiness_timeout + 60.0
+        leased_overhead = fixed_overhead + connect_timeout
+        if case_count > 1:
+            expected_cleanup = (
+                (case_count - 1) * ceiling
+                + case_count * leased_overhead
+                - fixed_overhead
+                + base_cleanup
+            )
+        else:
+            # N = 1 form: the single-case drain allowance, no accumulation.
+            expected_cleanup = base_cleanup + connect_timeout
+        assert params["cleanup_timeout"] == expected_cleanup
+
+        run_seconds = child_run_seconds(params)
+        assert run_seconds == case_count * (ceiling + leased_overhead) + base_cleanup
+
+    def test_child_run_seconds_rounds_a_fractional_sum_up(self):
+        # A fractional term (cleanup_timeout=30.5) must round the parent's
+        # derived deadline UP, never down — truncation could leave the
+        # child's own budget a fraction of a second longer than what the
+        # parent is willing to wait for it.
+        from simulate.services.hosted_runner import child_run_seconds
+
+        params = {
+            "max_seconds": 1800.0,
+            "connect_timeout": 60.0,
+            "readiness_timeout": 120.0,
+            "cleanup_timeout": 30.5,
+        }
+        # kit sum = 1800 + 60 + 120 + 30.5 + 60 = 2070.5
+        assert child_run_seconds(params) == 2071
+
+    def test_non_leased_web_budget_unclamped_n1_n2_matched_n7_grows(self):
+        # N=1/N=2 never hit HEAD's cap, so both fields are byte-identical to
+        # before; N=7 only changes cleanup_timeout — HEAD clamped it to 1470
+        # (0.9 * the old 65-minute constant, minus overhead), the unclamped
+        # identity now gives 2100. max_seconds is unaffected at every N since
+        # a single case never needed the deleted clamp either.
+        from simulate.services.hosted_runner import _voice_params
+
+        for case_count, expected_cleanup in ((1, 30.0), (2, 30.0), (7, 2100.0)):
+            params = _voice_params(
+                "webrtc",
+                inbound=True,
+                case_count=case_count,
+                max_concurrency=5,
+                max_call_minutes=30,
+                leased_room=False,
+            )
+            assert params["max_seconds"] == 1800.0
+            assert params["cleanup_timeout"] == expected_cleanup
+
+    def test_no_originator_sip_inbound_budget_unclamped_n1_matched_n7_grows(self):
+        # Telephony without a leased room serialises every case
+        # (effective_concurrency pinned to 1), so N=7's unclamped
+        # cleanup_timeout (12450) grows far past HEAD's capped 1470 — the
+        # child now gets the whole real drain instead of a truncated one.
+        from simulate.services.hosted_runner import _voice_params
+
+        for case_count, expected_cleanup in ((1, 30.0), (7, 12450.0)):
+            params = _voice_params(
+                "sip_inbound",
+                inbound=False,
+                case_count=case_count,
+                max_concurrency=5,
+                max_call_minutes=30,
+                leased_room=False,
+            )
+            assert params["max_seconds"] == 1800.0
+            assert params["cleanup_timeout"] == expected_cleanup
+
     def test_resolve_agent_inbound_prefers_version_snapshot(self):
-        """The per-version configuration_snapshot['inbound'] (what the UI toggle
-        writes) wins over the stale AgentDefinition.inbound column, matching the
-        native TestExecutor dynamic-prompt precedence."""
+        """Once the pinned version has a snapshot dict, it alone decides
+        inbound/outbound — same whole-dict precedence as ``_agent_field``. A
+        key it lacks means "unset" (defaults to inbound=True); the
+        ``AgentDefinition.inbound`` column is NOT consulted in that case, only
+        when the agent has no version at all (no snapshot dict). This stops a
+        later definition-level toggle from reaching back and flipping the call
+        direction of an older pinned version that predates it."""
         from types import SimpleNamespace
 
         from simulate.services.hosted_runner import _resolve_agent_inbound
@@ -1774,9 +2525,10 @@ class TestHostedRunnerActivityHelpers:
         version = SimpleNamespace(configuration_snapshot={"inbound": "true"})
         assert _resolve_agent_inbound(version, agent_def_outbound) is True
 
-        # Snapshot missing the key → fall back to the AgentDefinition column.
+        # Snapshot missing the key → default inbound=True; the column is NOT
+        # consulted (a versioned run must not see a later column edit).
         version = SimpleNamespace(configuration_snapshot={})
-        assert _resolve_agent_inbound(version, agent_def_outbound) is False
+        assert _resolve_agent_inbound(version, agent_def_outbound) is True
         assert _resolve_agent_inbound(version, agent_def_inbound) is True
 
         # No version at all → column fallback (default inbound when absent).
@@ -1809,7 +2561,10 @@ class TestHostedRunnerActivityHelpers:
         _inject_did_slot(inbound, slot)
         t = inbound["voice"]["agent_definition"]["transport"]
         assert t["dispatch_rule_name"] == "rule-1"
-        assert inbound["voice"]["params"]["inbound_did"] == "+15557654321"
+        assert inbound["metadata"]["leased_did"] == "+15557654321"
+        # Never in voice.params — the SDK splats params as kwargs and has no
+        # inbound_did parameter, so a stray key there raises TypeError.
+        assert "inbound_did" not in inbound["voice"]["params"]
         assert _child_environment(inbound)["LIVEKIT_INBOUND_DID"] == "+15557654321"
         assert inbound["voice"]["livekit_runtime"] == {
             "room_name": "sim-slot-01",
@@ -1830,13 +2585,718 @@ class TestHostedRunnerActivityHelpers:
             not in (outbound["voice"]["agent_definition"]["transport"])
         )
 
+    def test_inject_did_slot_pins_multi_row_originator_job(self):
+        # The multi-scenario reuse population (an originator job): pinned
+        # identically to the single-row case.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        slot = {
+            "did": "+15557654321",
+            "dispatch_rule_name": "rule-1",
+            "room_name": "sim-slot-01",
+            "slot_id": "s1",
+        }
+        job = {
+            "voice": {
+                "agent_definition": {
+                    "transport": {
+                        "kind": "sip_inbound",
+                        "inbound_call_originator": "retell",
+                    }
+                },
+                "livekit_runtime": {"room_name": "hosted-{test_case_id}"},
+                "params": {},
+                "scenario": {
+                    "dataset": [
+                        {"persona": {"name": "A"}},
+                        {"persona": {"name": "B"}},
+                        {"persona": {"name": "C"}},
+                    ]
+                },
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(job, slot)
+        assert job["voice"]["livekit_runtime"] == {
+            "room_name": "sim-slot-01",
+            "room_name_verbatim": True,
+        }
+
+    def test_inject_did_slot_leaves_multi_row_no_originator_job_templated(self):
+        # A multi-row job without an originator is not the reuse population —
+        # the guard and D12 budget do not cover it, so it keeps the templated
+        # runtime exactly as today.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        slot = {
+            "did": "+15557654321",
+            "dispatch_rule_name": "rule-1",
+            "room_name": "sim-slot-01",
+            "slot_id": "s1",
+        }
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "livekit_runtime": {"room_name": "hosted-{test_case_id}"},
+                "params": {},
+                "scenario": {
+                    "dataset": [
+                        {"persona": {"name": "A"}},
+                        {"persona": {"name": "B"}},
+                        {"persona": {"name": "C"}},
+                    ]
+                },
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(job, slot)
+        assert job["voice"]["livekit_runtime"] == {"room_name": "hosted-{test_case_id}"}
+
+    def test_inject_did_slot_pins_single_row_no_originator_job(self):
+        # Today's behaviour: a single-row job is pinned even without an
+        # originator.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        slot = {
+            "did": "+15557654321",
+            "dispatch_rule_name": "rule-1",
+            "room_name": "sim-slot-01",
+            "slot_id": "s1",
+        }
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "livekit_runtime": {"room_name": "hosted-{test_case_id}"},
+                "params": {},
+                "scenario": {"dataset": [{"persona": {"name": "A"}}]},
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(job, slot)
+        assert job["voice"]["livekit_runtime"] == {
+            "room_name": "sim-slot-01",
+            "room_name_verbatim": True,
+        }
+
+    def test_inject_did_slot_treats_whitespace_number_as_absent(self):
+        # Pin _inject_did_slot's OWN .strip() independently of the
+        # guard's — a whitespace-only did in the leased slot must never reach
+        # metadata.leased_did, even though the guard downstream would also
+        # strip it if it somehow did.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(job, {"slot_id": "s1", "dispatch_rule_name": "r1", "did": " "})
+
+        assert "leased_did" not in job.get("metadata", {})
+
+    def test_inject_did_slot_treats_whitespace_room_name_as_absent(self):
+        # A whitespace-only room_name must not be pinned — the templated
+        # runtime is left untouched exactly as when room_name is absent.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "livekit_runtime": {"room_name": "hosted-{test_case_id}"},
+                "params": {},
+                "scenario": {"dataset": [{"persona": {"name": "A"}}]},
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(
+            job,
+            {"slot_id": "s1", "dispatch_rule_name": "r1", "room_name": "   "},
+        )
+
+        assert job["voice"]["livekit_runtime"] == {"room_name": "hosted-{test_case_id}"}
+
+    def test_inject_did_slot_strips_pinned_room_name(self):
+        # The pinned value itself must be stripped, not just checked for
+        # blankness — an unstripped pin will not match the pool rule's
+        # destination downstream.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "livekit_runtime": {"room_name": "hosted-{test_case_id}"},
+                "params": {},
+                "scenario": {"dataset": [{"persona": {"name": "A"}}]},
+            },
+            "metadata": {},
+        }
+        slot = {
+            "slot_id": "s1",
+            "dispatch_rule_name": "r1",
+            "room_name": "  sim-slot-01 ",
+        }
+        _inject_did_slot(job, slot)
+
+        assert job["voice"]["livekit_runtime"] == {
+            "room_name": "sim-slot-01",
+            "room_name_verbatim": True,
+        }
+
+    def test_inject_did_slot_tolerates_explicit_null_transport(self):
+        # An explicit "transport": null must not raise AttributeError — the
+        # helper returns without pinning or raising, matching the activity's
+        # own "or {}" guard.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": None},
+                "params": {},
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(
+            job, {"slot_id": "s1", "dispatch_rule_name": "r1", "did": "+15557654321"}
+        )
+
+        assert "leased_did" not in job.get("metadata", {})
+        assert "livekit_runtime" not in job["voice"]
+
+    def test_inject_did_slot_tolerates_explicit_null_scenario(self):
+        # C5a: an explicit "scenario": null must not raise — the room-name
+        # sizing check falls back to an empty dataset instead.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+                "scenario": None,
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(job, {"slot_id": "s1", "room_name": "sim-slot-01"})
+
+        # No dataset to size against, so the single-row room pin never fires.
+        assert "livekit_runtime" not in job["voice"]
+
+    def test_inject_did_slot_tolerates_explicit_null_dataset(self):
+        # C5a: an explicit "dataset": null (scenario present) must not raise.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+                "scenario": {"dataset": None},
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(job, {"slot_id": "s1", "room_name": "sim-slot-01"})
+
+        assert "livekit_runtime" not in job["voice"]
+
+    def test_inject_did_slot_tolerates_explicit_null_metadata(self):
+        # C5a: an explicit "metadata": null must not raise — setdefault only
+        # fires when the key is absent, not when it is present but None.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+            },
+            "metadata": None,
+        }
+        _inject_did_slot(job, {"slot_id": "s1", "did": "+15557654321"})
+
+        assert job["metadata"]["leased_did"] == "+15557654321"
+
+    def test_inject_did_slot_strips_pinned_did(self):
+        # The stored DID must be the stripped value, not just checked for
+        # blankness — the same fix already applied to room_name — or a
+        # padded number reaches LIVEKIT_INBOUND_DID and metadata.leased_did
+        # verbatim.
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+            },
+            "metadata": {},
+        }
+        _inject_did_slot(
+            job,
+            {"slot_id": "s1", "dispatch_rule_name": "r1", "did": " +15557654321 "},
+        )
+
+        assert job["metadata"]["leased_did"] == "+15557654321"
+
     def test_acquire_did_slot_none_without_script(self, monkeypatch):
         import asyncio
 
         from simulate.temporal.activities.hosted_runner import _acquire_did_slot
 
         monkeypatch.delenv("ALK_SIM_SLOT_LEASE_SCRIPT", raising=False)
-        assert asyncio.run(_acquire_did_slot("job-1")) is None
+        assert asyncio.run(_acquire_did_slot("job-1", 900)) is None
+
+    def test_build_runner_job_fills_run_seconds_for_voice(self, monkeypatch):
+        # D15: BuildRunnerJobOutput.run_seconds comes from the job's own
+        # voice.params via child_run_seconds, not a shared parent cap.
+        # No DB touch: build_start_runner_job and close_old_connections are
+        # both stubbed, so _run_db's executor thread issues no query.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import BuildRunnerJobInput
+
+        fake_job = {
+            "job_id": "job-1",
+            "mode": "voice_webrtc",
+            "metadata": {"run_id": "run-1"},
+            "voice": {
+                "params": {
+                    "max_seconds": 1800.0,
+                    "connect_timeout": 60.0,
+                    "readiness_timeout": 120.0,
+                    "cleanup_timeout": 90.0,
+                }
+            },
+        }
+        monkeypatch.setattr(hr, "close_old_connections", lambda: None)
+        monkeypatch.setattr(
+            "simulate.services.hosted_runner.build_start_runner_job",
+            lambda **kwargs: fake_job,
+        )
+
+        inp = BuildRunnerJobInput(
+            test_execution_id="te-1",
+            run_test_id="rt-1",
+            scenario_ids=["s-1"],
+            mode="voice_webrtc",
+        )
+        out = asyncio.run(hr.build_runner_job(inp))
+
+        assert out.run_seconds == 2130  # 1800 + 60 + 120 + 90 + 60
+
+    def test_build_runner_job_run_seconds_for_chat_uses_its_own_constant(
+        self, monkeypatch
+    ):
+        # Chat carries no voice params, so it can't derive a child deadline
+        # (D15 rule 7) — it falls back to the chat runner's own fixed budget.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.constants import HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS
+        from simulate.temporal.types.hosted_runner import BuildRunnerJobInput
+
+        fake_job = {
+            "job_id": "job-2",
+            "mode": "chat",
+            "metadata": {"run_id": "run-2"},
+            "spec": {},
+        }
+        monkeypatch.setattr(hr, "close_old_connections", lambda: None)
+        monkeypatch.setattr(
+            "simulate.services.hosted_runner.build_start_runner_job",
+            lambda **kwargs: fake_job,
+        )
+
+        inp = BuildRunnerJobInput(
+            test_execution_id="te-2",
+            run_test_id="rt-2",
+            scenario_ids=["s-2"],
+            mode="chat",
+        )
+        out = asyncio.run(hr.build_runner_job(inp))
+
+        assert out.run_seconds == HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS
+
+    def test_chat_mode_constant_matches_the_service_module_literal(self):
+        # The workflow sandbox can't import the Django-backed services
+        # module, so the "chat" literal is duplicated there on purpose
+        # (constants.py:81-83) — pin the two copies together so they can't
+        # drift apart silently.
+        from simulate.services.hosted_runner import _CHAT_MODE
+        from simulate.temporal.constants import HOSTED_RUNNER_CHAT_MODE
+
+        assert HOSTED_RUNNER_CHAT_MODE == _CHAT_MODE
+
+    def test_build_runner_job_voice_params_none_does_not_crash(self, monkeypatch):
+        # child_run_seconds indexes into params via .get(); an explicit
+        # "params": null on a voice job must fall back to {} (the kit's own
+        # floor) instead of raising AttributeError/TypeError.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import BuildRunnerJobInput
+
+        fake_job = {
+            "job_id": "job-3",
+            "mode": "voice_webrtc",
+            "metadata": {"run_id": "run-3"},
+            "voice": {"params": None},
+        }
+        monkeypatch.setattr(hr, "close_old_connections", lambda: None)
+        monkeypatch.setattr(
+            "simulate.services.hosted_runner.build_start_runner_job",
+            lambda **kwargs: fake_job,
+        )
+
+        inp = BuildRunnerJobInput(
+            test_execution_id="te-3",
+            run_test_id="rt-3",
+            scenario_ids=["s-3"],
+            mode="voice_webrtc",
+        )
+        out = asyncio.run(hr.build_runner_job(inp))
+
+        # 300 is child_run_seconds' own floor for an empty params dict.
+        assert out.run_seconds == 300
+
+    def test_run_seconds_decodes_to_none_without_the_field(self):
+        # Pins the absent default: a payload recorded before this field
+        # existed must still decode, yielding None rather than raising
+        # TypeError — the loud-failure guard lives at the workflow/activity
+        # call sites, not in the dataclass shape.
+        from simulate.temporal.types.hosted_runner import (
+            BuildRunnerJobOutput,
+            RunHostedJobInput,
+        )
+
+        build_out = BuildRunnerJobOutput(
+            job_id="j1", run_id="r1", mode="voice_sip", job_json="{}"
+        )
+        run_in = RunHostedJobInput(
+            job_id="j1", run_id="r1", mode="voice_sip", job_json="{}"
+        )
+        assert build_out.run_seconds is None
+        assert run_in.run_seconds is None
+
+    def test_workflow_command_sequence_is_independent_of_run_seconds(self):
+        # C9/D15: an older worker's replayed history already has
+        # run_hosted_sdk_job scheduled next, so nothing between the build
+        # and run activity calls may raise or branch which command gets
+        # emitted on run_seconds — only the timeout value may vary.
+        import ast
+        import pathlib
+
+        import simulate.temporal.workflows.simulation_runner_workflow as wf
+
+        wf_path = pathlib.Path(wf.__file__)
+        tree = ast.parse(wf_path.read_text(), filename=str(wf_path))
+
+        def activity_name(node):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute_activity"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ):
+                return node.args[0].value
+            return None
+
+        run_method = next(
+            (
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, ast.AsyncFunctionDef) and n.name == "run"
+            ),
+            None,
+        )
+        assert run_method is not None, "SimulationRunnerWorkflow.run not found"
+
+        try_node = next(n for n in ast.walk(run_method) if isinstance(n, ast.Try))
+        body = try_node.body
+
+        def index_containing(name):
+            for i, stmt in enumerate(body):
+                if any(activity_name(n) == name for n in ast.walk(stmt)):
+                    return i
+            return None
+
+        build_idx = index_containing("build_runner_job")
+        run_idx = index_containing("run_hosted_sdk_job")
+        finalize_idx = index_containing("finalize_hosted_execution")
+        assert build_idx is not None, "build_runner_job call not found"
+        assert run_idx is not None, "run_hosted_sdk_job call not found"
+        assert finalize_idx is not None, "finalize_hosted_execution call not found"
+        assert build_idx < run_idx < finalize_idx, (
+            "run() must call build, then run, then finalize in that order"
+        )
+
+        calls_before_finalize = [
+            name
+            for i, stmt in enumerate(body)
+            if i < finalize_idx
+            for name in (activity_name(n) for n in ast.walk(stmt))
+            if name is not None
+        ]
+        assert calls_before_finalize == ["build_runner_job", "run_hosted_sdk_job"], (
+            "exactly build_runner_job then run_hosted_sdk_job may execute "
+            "before the finalize path"
+        )
+
+        def references_run_seconds(test):
+            return any(
+                (isinstance(n, ast.Attribute) and n.attr == "run_seconds")
+                or (isinstance(n, ast.Name) and n.id == "run_seconds")
+                for n in ast.walk(test)
+            )
+
+        between = body[build_idx + 1 : run_idx]
+
+        raises = [
+            n for stmt in between for n in ast.walk(stmt) if isinstance(n, ast.Raise)
+        ]
+        assert raises == [], (
+            "no Raise may sit between build_runner_job and run_hosted_sdk_job"
+        )
+
+        run_seconds_ifs = [
+            n
+            for stmt in between
+            for n in ast.walk(stmt)
+            if isinstance(n, ast.If) and references_run_seconds(n.test)
+        ]
+        assert len(run_seconds_ifs) == 1, (
+            "the only If testing run_seconds between build and run must be "
+            "the timeout assignment's own branch"
+        )
+
+    def test_workflow_timeout_derives_from_run_seconds_not_a_shared_cap(self):
+        # AST check (C9/D15): this is the ONLY guard on the rule, so it must
+        # pin the expression actually feeding run_hosted_sdk_job's own
+        # timeout keyword byte-for-byte — an expression that merely
+        # *contains* the derivation lets a literal cap or a unit swap slip
+        # through with the suite green.
+        import ast
+        import pathlib
+
+        import simulate
+        import simulate.temporal.workflows.simulation_runner_workflow as wf
+
+        wf_path = pathlib.Path(wf.__file__)
+        tree = ast.parse(wf_path.read_text(), filename=str(wf_path))
+
+        def is_target_call(node):
+            return (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute_activity"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "run_hosted_sdk_job"
+            )
+
+        call = owner = None
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(func):
+                if is_target_call(node):
+                    call, owner = node, func
+                    break
+            if call is not None:
+                break
+        assert call is not None, "run_hosted_sdk_job execute_activity call not found"
+
+        timeout_kw = next(
+            kw for kw in call.keywords if kw.arg == "start_to_close_timeout"
+        )
+        expr = timeout_kw.value
+        assert isinstance(expr, ast.Name), (
+            "start_to_close_timeout must be fed by a local, not inlined"
+        )
+        timeout_name = expr.id
+
+        def is_build_call(node):
+            return (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute_activity"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "build_runner_job"
+            )
+
+        # Bind the build result's own local name rather than hardcoding
+        # "job", so a rename can't silently blind the checks below.
+        build_assign = next(
+            n
+            for n in ast.walk(owner)
+            if isinstance(n, ast.Assign)
+            and any(is_build_call(x) for x in ast.walk(n.value))
+        )
+        assert len(build_assign.targets) == 1 and isinstance(
+            build_assign.targets[0], ast.Name
+        ), "build_runner_job result must be assigned to a single local"
+        job_name = build_assign.targets[0].id
+
+        # Locate the specific `if job.mode == HOSTED_RUNNER_CHAT_MODE` (or
+        # `!=`) node, rather than trusting which physical branch reads
+        # "if" vs "else" — the comparison operator says which arm is chat.
+        def is_chat_mode_test(test):
+            return (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Attribute)
+                and test.left.attr == "mode"
+                and isinstance(test.left.value, ast.Name)
+                and test.left.value.id == job_name
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], (ast.Eq, ast.NotEq))
+                and len(test.comparators) == 1
+                and isinstance(test.comparators[0], ast.Name)
+                and test.comparators[0].id == "HOSTED_RUNNER_CHAT_MODE"
+            )
+
+        if_node = next(
+            (
+                n
+                for n in ast.walk(owner)
+                if isinstance(n, ast.If) and is_chat_mode_test(n.test)
+            ),
+            None,
+        )
+        assert if_node is not None, "no job.mode/HOSTED_RUNNER_CHAT_MODE if"
+
+        is_eq = isinstance(if_node.test.ops[0], ast.Eq)
+        chat_arm = if_node.body if is_eq else if_node.orelse
+        other_top = if_node.orelse if is_eq else if_node.body
+        assert chat_arm and other_top, "both if/else arms must be present"
+
+        # The non-chat arm is a single nested If (an elif in source form):
+        # a positive-budget branch and a placeholder branch, never a flat
+        # unconditional assignment.
+        assert len(other_top) == 1 and isinstance(other_top[0], ast.If), (
+            "the non-chat arm must be a single nested If on run_seconds"
+        )
+        inner_if = other_top[0]
+
+        def assigns_to(stmts, name):
+            return [
+                stmt.value
+                for stmt in stmts
+                if isinstance(stmt, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == name for t in stmt.targets)
+            ]
+
+        chat_assigns = assigns_to(chat_arm, timeout_name)
+        positive_assigns = assigns_to(inner_if.body, timeout_name)
+        placeholder_assigns = assigns_to(inner_if.orelse, timeout_name)
+        assert len(chat_assigns) == 1, (
+            f"chat arm must assign {timeout_name} exactly once"
+        )
+        assert len(positive_assigns) == 1, (
+            f"the positive-budget branch must assign {timeout_name} once"
+        )
+        assert len(placeholder_assigns) == 1, (
+            f"the placeholder branch must assign {timeout_name} exactly once"
+        )
+
+        def normalized_dump(node):
+            # ast.dump ignores position info by default; re-parsing an
+            # unparse of `node` gives a detached copy so renaming the job
+            # local for comparison can't mutate the tree under test.
+            copy = ast.parse(ast.unparse(node), mode="eval").body
+            for n in ast.walk(copy):
+                if isinstance(n, ast.Name) and n.id == job_name:
+                    n.id = "job"
+            return ast.dump(copy)
+
+        def expr_dump(src):
+            return ast.dump(ast.parse(src, mode="eval").body)
+
+        expected_chat = expr_dump(
+            "timedelta(seconds=HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS)"
+        )
+        expected_voice = expr_dump(
+            "timedelta(seconds=job.run_seconds + HOSTED_RUNNER_PARENT_SLACK_SECONDS)"
+        )
+
+        # Pins which arm runs, not just what each arm computes: the two
+        # assertions above alone let a flipped comparison operator (or `<`
+        # for `>`) send every voice run down the placeholder branch while
+        # leaving both arm expressions untouched and the suite green.
+        expected_predicate = expr_dump(
+            "isinstance(job.run_seconds, (int, float)) and job.run_seconds > 0"
+        )
+        assert normalized_dump(inner_if.test) == expected_predicate, (
+            "the elif predicate must be exactly isinstance(run_seconds, "
+            "(int, float)) and run_seconds > 0"
+        )
+
+        assert normalized_dump(chat_assigns[0]) == expected_chat, (
+            "chat arm must be exactly timedelta(seconds="
+            "HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS)"
+        )
+        assert normalized_dump(positive_assigns[0]) == expected_voice, (
+            "positive-budget branch must be exactly timedelta(seconds="
+            "run_seconds + HOSTED_RUNNER_PARENT_SLACK_SECONDS), not merely "
+            "contain that sum"
+        )
+        assert normalized_dump(placeholder_assigns[0]) == expected_chat, (
+            "placeholder branch must reuse the chat expression exactly, "
+            "not a different constant"
+        )
+
+        # Exactly these three assignments to the name exist anywhere in the
+        # function — catches a correct set of branches silently overwritten
+        # by a later, unconditional reassignment of the same local.
+        all_assigns = [
+            stmt
+            for stmt in ast.walk(owner)
+            if isinstance(stmt, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == timeout_name for t in stmt.targets
+            )
+        ]
+        assert len(all_assigns) == 3, (
+            f"{timeout_name} must be assigned exactly once per branch and nowhere else"
+        )
+
+        def names_and_attrs(t):
+            names = {n.id for n in ast.walk(t) if isinstance(n, ast.Name)}
+            attrs = {n.attr for n in ast.walk(t) if isinstance(n, ast.Attribute)}
+            return names | attrs
+
+        simulate_root = pathlib.Path(simulate.__file__).parent
+        offenders = [
+            str(path)
+            for path in simulate_root.rglob("*.py")
+            if "HOSTED_RUNNER_MAX_DURATION_SECONDS"
+            in names_and_attrs(ast.parse(path.read_text(), filename=str(path)))
+        ]
+        assert offenders == []
+
+        # Two more keywords a mutant could drop silently: no run_seconds
+        # means the activity always refuses a voice run; no heartbeat_timeout
+        # means Temporal loses its only liveness signal on the long-lived
+        # child. Neither is touched by the checks above.
+        input_call = call.args[1]
+        assert (
+            isinstance(input_call, ast.Call)
+            and isinstance(input_call.func, ast.Name)
+            and input_call.func.id == "RunHostedJobInput"
+        ), "run_hosted_sdk_job's 2nd arg must build RunHostedJobInput"
+
+        run_seconds_kw = next(
+            kw for kw in input_call.keywords if kw.arg == "run_seconds"
+        )
+        expected_run_seconds = expr_dump("job.run_seconds")
+        assert normalized_dump(run_seconds_kw.value) == expected_run_seconds, (
+            "run_seconds must be job.run_seconds verbatim"
+        )
+
+        heartbeat_kw = next(kw for kw in call.keywords if kw.arg == "heartbeat_timeout")
+        expected_heartbeat = expr_dump("timedelta(seconds=60)")
+        assert normalized_dump(heartbeat_kw.value) == expected_heartbeat, (
+            "heartbeat_timeout must be exactly timedelta(seconds=60)"
+        )
 
     def test_child_environment_maps_internal_sink_secret(self, monkeypatch):
         from simulate.temporal.activities.hosted_runner import _child_environment
@@ -1857,6 +3317,121 @@ class TestHostedRunnerActivityHelpers:
         child_env = _child_environment(job)
 
         assert child_env["FI_INTERNAL_SUBMIT_SECRET"] == "shared-service-secret"
+
+    def test_child_environment_denies_customer_provider_api_keys(self, monkeypatch):
+        # Exact-key, not prefix: a chat job
+        # declares no secret_env ref at all, so the ref-scoped scrub never
+        # touches RETELL_API_KEY/VAPI_API_KEY — the exact-key deny in
+        # _child_environment is what keeps them out of a job shape that has
+        # no business seeing either provider's key.
+        from simulate.temporal.activities.hosted_runner import _child_environment
+
+        monkeypatch.setenv("RETELL_API_KEY", "platform-retell")
+        monkeypatch.setenv("VAPI_API_KEY", "platform-vapi")
+
+        job = {
+            "spec": {"target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+        }
+        child_env = _child_environment(job)
+
+        assert "RETELL_API_KEY" not in child_env
+        assert "VAPI_API_KEY" not in child_env
+
+    def test_child_environment_keeps_non_secret_provider_config(self, monkeypatch):
+        # The deny is by exact key, not by RETELL_/VAPI_ prefix, so
+        # non-secret config the SDK child reads straight from env — base
+        # URLs, phone number ids, assistant ids — must still reach it.
+        from simulate.temporal.activities.hosted_runner import _child_environment
+
+        monkeypatch.setenv("VAPI_PHONE_NUMBER_ID", "+15551234567")
+        monkeypatch.setenv("RETELL_API_BASE_URL", "https://api.retellai.com")
+
+        job = {
+            "spec": {"target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+        }
+        child_env = _child_environment(job)
+
+        assert child_env["VAPI_PHONE_NUMBER_ID"] == "+15551234567"
+        assert child_env["RETELL_API_BASE_URL"] == "https://api.retellai.com"
+
+    def test_child_environment_still_inherits_livekit_system_key(self, monkeypatch):
+        # Complement to the exact-key deny above: LiveKit's api_key_env is
+        # None in _PROVIDER_PROFILES, so LIVEKIT_API_KEY never joins
+        # _customer_provider_env_keys() — it is the platform's own runtime
+        # var by design (C5) and must stay inherited when no ref scrubs it.
+        from simulate.temporal.activities.hosted_runner import _child_environment
+
+        monkeypatch.setenv("LIVEKIT_API_KEY", "system-lk-key")
+
+        job = {
+            "spec": {"target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+        }
+        child_env = _child_environment(job)
+
+        assert child_env["LIVEKIT_API_KEY"] == "system-lk-key"
+
+    def test_child_environment_pops_stale_inbound_did_without_lease(self, monkeypatch):
+        # _child_environment only ever SETS LIVEKIT_INBOUND_DID when a DID
+        # was leased; an inherited value from the worker process must not
+        # leak into a job with no lease (defense-in-depth: the C5 guard
+        # blocks every originator job without an injected DID before spawn,
+        # but a non-originator sip_inbound job reaches the child regardless).
+        from simulate.temporal.activities.hosted_runner import _child_environment
+
+        monkeypatch.setenv("LIVEKIT_INBOUND_DID", "STALE")
+
+        job_without_lease = {
+            "spec": {"target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {},
+        }
+        assert "LIVEKIT_INBOUND_DID" not in _child_environment(job_without_lease)
+
+        job_with_lease = {
+            "spec": {"target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {"leased_did": "+15557654321"},
+        }
+        child_env = _child_environment(job_with_lease)
+        assert child_env["LIVEKIT_INBOUND_DID"] == "+15557654321"
+
+    def test_child_environment_denies_new_provider_key_via_profile_table(
+        self, monkeypatch
+    ):
+        # Pin: a new provider profile with an api_key_env must join
+        # the inheritance deny automatically, with no hand-maintained edit to
+        # this module — the same guarantee _customer_provider_env_keys()
+        # already gives the hoisted raise in _resolve_voice_secret_env.
+        from simulate.services.hosted_runner import _PROVIDER_PROFILES
+        from simulate.temporal.activities.hosted_runner import (
+            _child_environment,
+            _customer_provider_env_keys,
+        )
+
+        monkeypatch.setenv("ZZZ_API_KEY", "platform-zzz")
+        _PROVIDER_PROFILES["zzz_synthetic"] = {
+            "web_transport_kind": "zzz_websocket",
+            "target_id_field": "assistant_id",
+            "api_key_env": "ZZZ_API_KEY",
+            "emits_web_evidence": True,
+            "sip_inbound_originator": None,
+            "sip_inbound_originator_fields": (),
+        }
+        _customer_provider_env_keys.cache_clear()
+        try:
+            job = {
+                "spec": {"target": {"secret_refs": {}}},
+                "sink": {"api_url": "http://localhost:8000"},
+            }
+            child_env = _child_environment(job)
+
+            assert "ZZZ_API_KEY" not in child_env
+        finally:
+            del _PROVIDER_PROFILES["zzz_synthetic"]
+            _customer_provider_env_keys.cache_clear()
 
     def test_waiting_for_child_slot_heartbeats(self, monkeypatch):
         import asyncio
@@ -1883,6 +3458,7 @@ class TestHostedRunnerActivityHelpers:
         import asyncio
 
         from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.constants import HOSTED_RUNNER_PARENT_SLACK_SECONDS
 
         calls = []
 
@@ -1905,7 +3481,7 @@ class TestHostedRunnerActivityHelpers:
         monkeypatch.setenv("ALK_RUNNER_PYTHON", "/venv/bin/python")
         monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", fake_exec)
 
-        slot = asyncio.run(hr._acquire_did_slot("job-123"))
+        slot = asyncio.run(hr._acquire_did_slot("job-123", 1200))
 
         assert calls == [
             (
@@ -1914,10 +3490,351 @@ class TestHostedRunnerActivityHelpers:
                 "acquire",
                 "--run-id",
                 "job-123",
+                "--ttl",
+                str(1200 + HOSTED_RUNNER_PARENT_SLACK_SECONDS),
             )
         ]
         assert slot["slot_id"] == "07"
         assert slot["did"] == "+15557654321"
+        assert slot["run_id"] == "job-123"
+
+    def test_acquire_did_slot_ttl_tracks_run_seconds(self, monkeypatch):
+        # D15: the lease TTL follows the job's own run_seconds, not a shared
+        # parent cap — check a second value past the one above.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.constants import HOSTED_RUNNER_PARENT_SLACK_SECONDS
+
+        calls = []
+
+        class LeaseProc:
+            returncode = 0
+
+            async def communicate(self):
+                return b'{\n  "slot": "01"\n}\n', b""
+
+        async def fake_exec(*args, **kwargs):
+            calls.append(args)
+            return LeaseProc()
+
+        monkeypatch.setenv("ALK_SIM_SLOT_LEASE_SCRIPT", "/infra/lease_sim_slot.py")
+        monkeypatch.setenv("ALK_RUNNER_PYTHON", "/venv/bin/python")
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", fake_exec)
+
+        asyncio.run(hr._acquire_did_slot("job-456", 42030))
+
+        assert calls[0][-1] == str(42030 + HOSTED_RUNNER_PARENT_SLACK_SECONDS)
+
+    def test_release_did_slot_argv_carries_run_id_when_present(self, monkeypatch):
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+
+        calls = []
+
+        class ReleaseProc:
+            returncode = 0
+
+            async def communicate(self):
+                return (b'{"status": "ok"}', b"")
+
+        async def fake_exec(*args, **kwargs):
+            calls.append(args)
+            return ReleaseProc()
+
+        monkeypatch.setenv("ALK_SIM_SLOT_LEASE_SCRIPT", "/infra/lease_sim_slot.py")
+        monkeypatch.setenv("ALK_RUNNER_PYTHON", "/venv/bin/python")
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", fake_exec)
+
+        asyncio.run(hr._release_did_slot({"slot_id": "07", "run_id": "job-123"}))
+        assert calls == [
+            (
+                "/venv/bin/python",
+                "/infra/lease_sim_slot.py",
+                "release",
+                "--slot",
+                "07",
+                "--run-id",
+                "job-123",
+            )
+        ]
+
+        calls.clear()
+        asyncio.run(hr._release_did_slot({"slot_id": "07"}))
+        assert calls == [
+            (
+                "/venv/bin/python",
+                "/infra/lease_sim_slot.py",
+                "release",
+                "--slot",
+                "07",
+            )
+        ]
+
+    def test_release_did_slot_logs_warning_on_non_owner_error(self, monkeypatch):
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+
+        warnings = []
+
+        class ReleaseProc:
+            returncode = 1
+
+            async def communicate(self):
+                return (b'{"status": "error", "code": "not_owner"}', b"")
+
+        async def fake_exec(*args, **kwargs):
+            return ReleaseProc()
+
+        monkeypatch.setenv("ALK_SIM_SLOT_LEASE_SCRIPT", "/infra/lease_sim_slot.py")
+        monkeypatch.setenv("ALK_RUNNER_PYTHON", "/venv/bin/python")
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", fake_exec)
+        monkeypatch.setattr(hr.activity.logger, "warning", warnings.append)
+
+        asyncio.run(hr._release_did_slot({"slot_id": "07", "run_id": "job-123"}))
+
+        assert any("not_owner" in message for message in warnings)
+
+
+class TestSimulationRunnerWorkflowReplay:
+    # The AST tests above cannot see a command-sequence change reached
+    # through indirection (e.g. a raise hoisted into a helper the walk
+    # never visits): they read run()'s statement list, not its behavior.
+    # A real replay against a recorded history is the only check that
+    # would catch a hidden branch or an extra activity call regardless of
+    # how it got there, so it is the guard of last resort on this
+    # invariant, not a duplicate of the AST tests.
+
+    @staticmethod
+    def _payload(obj):
+        import base64
+
+        return {
+            "metadata": {"encoding": base64.b64encode(b"json/plain").decode()},
+            "data": base64.b64encode(json.dumps(obj).encode()).decode(),
+        }
+
+    @classmethod
+    def _payloads(cls, *objs):
+        return {"payloads": [cls._payload(o) for o in objs]}
+
+    @classmethod
+    def _build_history(cls, *, include_run_seconds):
+        """A hand-built history: build_runner_job completes, then
+        run_hosted_sdk_job is already scheduled/started/completed --
+        matching what an older worker's history looks like whether or not
+        the build result carried a run_seconds field."""
+        task_queue = {"name": "simulation_runner", "kind": "TASK_QUEUE_KIND_NORMAL"}
+        events = []
+
+        def add(event_type, key, attrs):
+            n = len(events) + 1
+            events.append(
+                {
+                    "eventId": str(n),
+                    "eventTime": "2026-09-04T00:00:00Z",
+                    "eventType": event_type,
+                    "taskId": "1",
+                    key: attrs,
+                }
+            )
+            return n
+
+        started_input = {
+            "test_execution_id": "te-1",
+            "run_test_id": "rt-1",
+            "org_id": "org-1",
+            "scenario_ids": ["s-1"],
+            "mode": "voice_sip",
+            "simulator_id": None,
+            "call_execution_ids": [],
+        }
+        add(
+            "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+            "workflowExecutionStartedEventAttributes",
+            {
+                "workflowType": {"name": "SimulationRunnerWorkflow"},
+                "taskQueue": task_queue,
+                "input": cls._payloads(started_input),
+                "workflowTaskTimeout": "10s",
+                "originalExecutionRunId": "run-1",
+                "firstExecutionRunId": "run-1",
+                "attempt": 1,
+            },
+        )
+
+        def wft():
+            s = add(
+                "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+                "workflowTaskScheduledEventAttributes",
+                {
+                    "taskQueue": task_queue,
+                    "startToCloseTimeout": "10s",
+                    "attempt": 1,
+                },
+            )
+            st = add(
+                "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+                "workflowTaskStartedEventAttributes",
+                {
+                    "scheduledEventId": str(s),
+                    "identity": "old-worker",
+                    "requestId": "r",
+                },
+            )
+            return s, st
+
+        def wft_complete(s, st):
+            add(
+                "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+                "workflowTaskCompletedEventAttributes",
+                {
+                    "scheduledEventId": str(s),
+                    "startedEventId": str(st),
+                    "identity": "old-worker",
+                },
+            )
+
+        s, st = wft()
+        wft_complete(s, st)
+
+        build_scheduled = add(
+            "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+            "activityTaskScheduledEventAttributes",
+            {
+                "activityId": "1",
+                "activityType": {"name": "build_runner_job"},
+                "taskQueue": task_queue,
+                "input": cls._payloads({}),
+                "scheduleToCloseTimeout": "0s",
+                "scheduleToStartTimeout": "0s",
+                "startToCloseTimeout": "120s",
+                "heartbeatTimeout": "0s",
+                "workflowTaskCompletedEventId": "4",
+            },
+        )
+        build_started = add(
+            "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+            "activityTaskStartedEventAttributes",
+            {
+                "scheduledEventId": str(build_scheduled),
+                "identity": "old-worker",
+                "requestId": "r",
+                "attempt": 1,
+            },
+        )
+        # The two histories under test differ only in whether the recorded
+        # build payload carries run_seconds.
+        build_out = {
+            "job_id": "j1",
+            "job_json": "{}",
+            "mode": "voice_sip",
+            "run_id": "r1",
+        }
+        if include_run_seconds:
+            build_out["run_seconds"] = 2130
+        add(
+            "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+            "activityTaskCompletedEventAttributes",
+            {
+                "scheduledEventId": str(build_scheduled),
+                "startedEventId": str(build_started),
+                "identity": "old-worker",
+                "result": cls._payloads(build_out),
+            },
+        )
+
+        s, st = wft()
+        wft_complete(s, st)
+
+        sdk_timeout = "2730s" if include_run_seconds else "3900s"
+        sdk_scheduled = add(
+            "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+            "activityTaskScheduledEventAttributes",
+            {
+                "activityId": "2",
+                "activityType": {"name": "run_hosted_sdk_job"},
+                "taskQueue": task_queue,
+                "input": cls._payloads({}),
+                "scheduleToCloseTimeout": "0s",
+                "scheduleToStartTimeout": "0s",
+                "startToCloseTimeout": sdk_timeout,
+                "heartbeatTimeout": "60s",
+                "workflowTaskCompletedEventId": str(st + 1),
+            },
+        )
+        sdk_started = add(
+            "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+            "activityTaskStartedEventAttributes",
+            {
+                "scheduledEventId": str(sdk_scheduled),
+                "identity": "old-worker",
+                "requestId": "r",
+                "attempt": 1,
+            },
+        )
+        add(
+            "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+            "activityTaskCompletedEventAttributes",
+            {
+                "scheduledEventId": str(sdk_scheduled),
+                "startedEventId": str(sdk_started),
+                "identity": "old-worker",
+                "result": cls._payloads(
+                    {
+                        "phase": "completed",
+                        "return_code": 0,
+                        "report_hash": "h",
+                        "submission_status": "submitted",
+                        "detail": None,
+                    }
+                ),
+            },
+        )
+        wft()
+        return {"events": events}
+
+    @classmethod
+    def _replay(cls, *, include_run_seconds):
+        import asyncio
+
+        from temporalio.client import WorkflowHistory
+        from temporalio.worker import Replayer, UnsandboxedWorkflowRunner
+
+        from simulate.temporal.workflows.simulation_runner_workflow import (
+            SimulationRunnerWorkflow,
+        )
+
+        history = cls._build_history(include_run_seconds=include_run_seconds)
+        replayer = Replayer(
+            workflows=[SimulationRunnerWorkflow],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        )
+
+        async def _run():
+            return await replayer.replay_workflow(
+                WorkflowHistory.from_json("wf-1", json.dumps(history)),
+                raise_on_replay_failure=False,
+            )
+
+        return asyncio.run(_run())
+
+    def test_replay_pre_run_seconds_history_stays_deterministic(self):
+        # A worker running the previous release recorded histories
+        # with a four-field BuildRunnerJobOutput (no run_seconds) and
+        # run_hosted_sdk_job already scheduled next; today's workflow must
+        # still emit that exact same command against such a history.
+        result = self._replay(include_run_seconds=False)
+        assert result.replay_failure is None, result.replay_failure
+
+    def test_replay_current_history_stays_deterministic(self):
+        # Same shape, recorded by the current code: a five-field build
+        # result with a positive run_seconds. Confirms the new field
+        # itself introduces no divergence from what was already scheduled.
+        result = self._replay(include_run_seconds=True)
+        assert result.replay_failure is None, result.replay_failure
 
 
 class _FakeStdout:
@@ -1951,8 +3868,24 @@ class TestRunHostedSdkJob:
     """Runtime-exercise the restructured run_hosted_sdk_job (try/finally + DID
     lease + secret env), spawning a fake child instead of the real SDK."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_db_connection_hygiene(self, monkeypatch):
+        """These tests stub the ORM lookups; the resolver's Django
+        connection-hygiene call must not open a real DB connection."""
+        from simulate.temporal.activities import hosted_runner as hr
+
+        monkeypatch.setattr(hr, "close_old_connections", lambda: None)
+
     def _run(
-        self, monkeypatch, *, mode, job, status_lines, acquire=None, released=None
+        self,
+        monkeypatch,
+        *,
+        mode,
+        job,
+        status_lines,
+        acquire=None,
+        released=None,
+        run_seconds=900,
     ):
         import asyncio
 
@@ -1971,9 +3904,67 @@ class TestRunHostedSdkJob:
             monkeypatch.setattr(hr, "_release_did_slot", released)
 
         inp = RunHostedJobInput(
-            job_id="job-x", run_id="run-x", mode=mode, job_json=json.dumps(job)
+            job_id="job-x",
+            run_id="run-x",
+            mode=mode,
+            job_json=json.dumps(job),
+            run_seconds=run_seconds,
         )
         return asyncio.run(hr.run_hosted_sdk_job(inp))
+
+    # Both voice modes share the same non-chat guard condition (`mode !=
+    # HOSTED_RUNNER_CHAT_MODE`), so the refusal is pinned for each of them
+    # rather than only the one mode that happened to be exercised first.
+    @pytest.mark.parametrize("mode", ["voice_sip", "voice_webrtc"])
+    @pytest.mark.parametrize("run_seconds", [None, 0, -5])
+    def test_missing_run_seconds_raises_before_slot_or_lease(
+        self, monkeypatch, run_seconds, mode
+    ):
+        # The workflow no longer guards this — only this activity does,
+        # since it never replays. Refuse loudly before the child slot
+        # semaphore, any DID lease, or the child is ever touched.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        slot_calls = []
+        exec_calls = []
+        lease_calls = []
+
+        async def _acquire_slot():
+            slot_calls.append(True)
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire_did(job_id, run_seconds):
+            lease_calls.append(job_id)
+            return None
+
+        monkeypatch.setattr(hr, "_acquire_child_slot", _acquire_slot)
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire_did)
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode=mode,
+            job_json=json.dumps({"mode": mode}),
+            run_seconds=run_seconds,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "hosted_run_budget_missing"
+        assert excinfo.value.non_retryable
+        assert slot_calls == []
+        assert exec_calls == []
+        assert lease_calls == []
 
     def test_chat_job_runs_and_completes(self, monkeypatch):
         job = {
@@ -1992,13 +3983,37 @@ class TestRunHostedSdkJob:
         assert out.return_code == 0
         assert out.submission_status == "submitted"
 
+    def test_chat_mode_with_run_seconds_none_proceeds_to_spawn(self, monkeypatch):
+        # Chat never derives a budget from run_seconds, so a replayed
+        # pre-field payload (run_seconds=None) must not be blocked by the
+        # voice-only guard above.
+        job = {
+            "mode": "chat",
+            "spec": {"run_id": "run-x", "target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {"run_id": "run-x"},
+        }
+        lines = [
+            '{"phase": "completed", "job_id": "job-x", '
+            '"submission_status": "submitted"}'
+        ]
+        out = self._run(
+            monkeypatch,
+            mode="chat",
+            job=job,
+            status_lines=lines,
+            run_seconds=None,
+        )
+        assert out.phase == "completed"
+
     def test_voice_sip_leases_injects_and_releases(self, monkeypatch):
         released_slots = []
 
-        async def _acquire(job_id):
+        async def _acquire(job_id, run_seconds):
             return {
                 "did": "+15557654321",
                 "dispatch_rule_name": "rule-9",
+                "room_name": "sim-slot-01",
                 "slot_id": "s9",
             }
 
@@ -2030,7 +4045,9 @@ class TestRunHostedSdkJob:
         assert released_slots == ["s9"]
 
     def test_web_voice_never_leases(self, monkeypatch):
-        async def _acquire(job_id):  # pragma: no cover - must not be called
+        async def _acquire(  # pragma: no cover - must not be called
+            job_id, run_seconds
+        ):
             raise AssertionError("web voice must not lease a DID")
 
         job = {
@@ -2053,6 +4070,874 @@ class TestRunHostedSdkJob:
             acquire=_acquire,
         )
         assert out.phase == "completed"
+
+    def _originator_sip_job(self, originator):
+        return {
+            "mode": "voice_sip",
+            "voice": {
+                "agent_definition": {
+                    "transport": {
+                        "kind": "sip_inbound",
+                        "inbound_call_originator": originator,
+                    }
+                },
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {"run_id": "run-x", "secret_env": []},
+        }
+
+    @pytest.mark.parametrize("originator", ["retell", "vapi"])
+    @pytest.mark.parametrize(
+        "slot",
+        [
+            {"slot_id": "s1", "dispatch_rule_name": "r1"},
+            # A whitespace-only DID must be treated as absent, not as
+            # a real leased number — both _inject_did_slot and the guard's
+            # own .strip() must agree it never reaches metadata.leased_did.
+            {"slot_id": "s1", "dispatch_rule_name": "r1", "did": " "},
+        ],
+        ids=["no_did_key", "whitespace_only_did"],
+    )
+    def test_guard_blocks_originator_job_when_lease_has_no_did(
+        self, monkeypatch, originator, slot, tmp_path
+    ):
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+        released = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return slot
+
+        async def _release(slot):
+            released.append(slot)
+
+        # Pin the scratch dir so we can assert it is cleaned up when
+        # the guard raises before any child is ever spawned.
+        scratch_dir = tmp_path / "alk-runner-scratch"
+        scratch_dir.mkdir()
+        # Also pin _runs_base() into tmp_path so the run_root assertion below
+        # exercises the real path, not the host's system temp dir.
+        runs_base = tmp_path / "alk-runner-runs"
+        monkeypatch.setenv("ALK_RUNNER_RUN_ROOT", str(runs_base))
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+        monkeypatch.setattr(hr.tempfile, "mkdtemp", lambda *a, **k: str(scratch_dir))
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(self._originator_sip_job(originator)),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.non_retryable
+        assert excinfo.value.type == "inbound_originator_requires_leased_did"
+        assert exec_calls == []
+        # The leased slot must still be released even though the guard raised.
+        assert released == [slot]
+        # No child was ever started, so the scratch dir must not leak.
+        assert not scratch_dir.exists()
+        # Nor must the empty run_root the guard blocked before any child
+        # could write artifacts into it.
+        assert not (runs_base / "job-x").exists()
+
+    @pytest.mark.parametrize("originator", ["retell", "vapi"])
+    def test_guard_blocks_originator_job_when_lease_returns_none(
+        self, monkeypatch, originator
+    ):
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+        release_calls = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return None
+
+        async def _release(slot):  # pragma: no cover - must not be called
+            release_calls.append(slot)
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(self._originator_sip_job(originator)),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError):
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert exec_calls == []
+        assert release_calls == []
+
+    @pytest.mark.parametrize("originator", ["retell", "vapi"])
+    def test_guard_rejects_whitespace_leased_did_planted_directly(
+        self, monkeypatch, originator
+    ):
+        # Pin the guard's OWN .strip() independently of
+        # _inject_did_slot's — plant metadata.leased_did = " " directly
+        # (bypassing _inject_did_slot entirely: the lease returns no slot, so
+        # the injector never runs) and confirm the guard still treats
+        # whitespace-only as no DID rather than relying on the injector to
+        # have already cleaned it up.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return None
+
+        async def _release(slot):  # pragma: no cover - must not be called
+            pass
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        job = self._originator_sip_job(originator)
+        job["metadata"]["leased_did"] = " "
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.non_retryable
+        assert excinfo.value.type == "inbound_originator_requires_leased_did"
+        assert exec_calls == []
+
+    @pytest.mark.parametrize("originator", ["retell", "vapi"])
+    def test_guard_blocks_originator_job_when_only_stale_params_inbound_did_set(
+        self, monkeypatch, originator
+    ):
+        # Regression guard: the guard predicate must read
+        # metadata.leased_did, not voice.params.inbound_did. A job that
+        # (incorrectly) carries only the stale params location and no
+        # metadata.leased_did must still be blocked.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {"slot_id": "s1", "dispatch_rule_name": "r1"}  # no "did"
+
+        async def _release(slot):
+            pass
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        job = self._originator_sip_job(originator)
+        job["voice"]["params"]["inbound_did"] = "+15557654321"
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "inbound_originator_requires_leased_did"
+        assert exec_calls == []
+
+    def test_guard_blocks_originator_job_when_lease_has_rule_but_no_room(
+        self, monkeypatch
+    ):
+        # D11: a leased slot naming a routing rule but no room can never route
+        # a call to the simulator — refuse before spawning (mirrors
+        # test_guard_blocks_originator_job_when_lease_has_no_did).
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+        released = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {
+                "did": "+15557654321",
+                "dispatch_rule_name": "rule-9",
+                "slot_id": "s9",
+            }
+
+        async def _release(slot):
+            released.append(slot["slot_id"])
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(self._originator_sip_job("retell")),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.non_retryable
+        assert excinfo.value.type == "leased_slot_requires_room"
+        assert exec_calls == []
+        assert released == ["s9"]
+
+    def test_guard_room_message_falls_back_to_unknown_slot_id(self, monkeypatch):
+        # D11: a malformed lease is the very case this guard exists for, so
+        # slot_id/slot can both be missing too — the message must not render
+        # the literal "None" for the slot identity.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        async def _fake_exec(*args, **kwargs):
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {"did": "+15557654321", "dispatch_rule_name": "rule-9"}
+
+        async def _release(slot):
+            pass
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(self._originator_sip_job("retell")),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "leased_slot_requires_room"
+        assert "<unknown>" in str(excinfo.value)
+        assert "None" not in str(excinfo.value)
+
+    def test_slot_with_did_and_no_routing_fields_spawns_normally(self, monkeypatch):
+        # A slot naming neither a rule nor a room is not a malformed lease —
+        # the kit self-provisions its own rule for it, exactly as today.
+        async def _acquire(job_id, run_seconds):
+            return {"did": "+15557654321", "slot_id": "s9"}
+
+        job = self._originator_sip_job("retell")
+        lines = [
+            '{"phase": "completed", "job_id": "job-x", "submission_status": "submitted"}'
+        ]
+        out = self._run(
+            monkeypatch,
+            mode="voice_sip",
+            job=job,
+            status_lines=lines,
+            acquire=_acquire,
+        )
+        assert out.phase == "completed"
+
+    def test_number_guard_fires_before_room_guard(self, monkeypatch):
+        # Guard order: a slot with a routing rule and no number is reported as
+        # the missing-number guard, not the missing-room guard.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {"dispatch_rule_name": "rule-9", "slot_id": "s9"}
+
+        async def _release(slot):
+            pass
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(self._originator_sip_job("retell")),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "inbound_originator_requires_leased_did"
+        assert exec_calls == []
+
+    def test_sip_outbound_job_with_rule_only_slot_not_refused_by_d11(self, monkeypatch):
+        # A sip_outbound job also leases a slot today and must not trip the
+        # sip_inbound-only D11 guard.
+        async def _acquire(job_id, run_seconds):
+            return {
+                "did": "+15557654321",
+                "dispatch_rule_name": "rule-9",
+                "slot_id": "s9",
+            }
+
+        job = {
+            "mode": "voice_sip",
+            "voice": {
+                "agent_definition": {
+                    "transport": {"kind": "sip_outbound", "sip_call_to": "+1"}
+                },
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {"run_id": "run-x", "secret_env": []},
+        }
+        lines = [
+            '{"phase": "completed", "job_id": "job-x", "submission_status": "submitted"}'
+        ]
+        out = self._run(
+            monkeypatch,
+            mode="voice_sip",
+            job=job,
+            status_lines=lines,
+            acquire=_acquire,
+        )
+        assert out.phase == "completed"
+
+    def test_guard_leaves_chat_job_untouched(self, monkeypatch):
+        # A chat job has no "voice" key at all — the guard's safe .get() chain
+        # must not raise or block it.
+        job = {
+            "mode": "chat",
+            "spec": {"run_id": "run-x", "target": {"secret_refs": {}}},
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {"run_id": "run-x"},
+        }
+        lines = [
+            '{"phase": "completed", "job_id": "job-x", "submission_status": "submitted"}'
+        ]
+        out = self._run(monkeypatch, mode="chat", job=job, status_lines=lines)
+        assert out.phase == "completed"
+
+    def test_missing_provider_credential_blocks_child_and_releases_slot(
+        self, monkeypatch, tmp_path
+    ):
+        # A secret_env ref to a deleted/nonexistent ProviderCredentials row must
+        # never fall through to the worker's own env — it should fail loudly
+        # before the child ever dials on the platform's own key.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.models.agent_definition import ProviderCredentials
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+        released = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {
+                "did": "+15557654321",
+                "dispatch_rule_name": "r1",
+                "room_name": "sim-slot-01",
+                "slot_id": "s1",
+            }
+
+        async def _release(slot):
+            released.append(slot["slot_id"])
+
+        def _raise_missing(*args, **kwargs):
+            raise ProviderCredentials.DoesNotExist
+
+        # Pin the scratch dir so we can assert it is cleaned up when
+        # credential resolution raises before any child is ever spawned.
+        scratch_dir = tmp_path / "alk-runner-scratch"
+        scratch_dir.mkdir()
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+        monkeypatch.setattr(ProviderCredentials.objects, "get", _raise_missing)
+        monkeypatch.setattr(hr.tempfile, "mkdtemp", lambda *a, **k: str(scratch_dir))
+
+        job = {
+            "mode": "voice_sip",
+            "voice": {
+                "agent_definition": {
+                    "transport": {
+                        "kind": "sip_inbound",
+                        "inbound_call_originator": "retell",
+                    }
+                },
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [
+                    {
+                        "key": "RETELL_API_KEY",
+                        "manager": "provider_credentials",
+                        "credential_id": "does-not-exist",
+                        "field": "api_key",
+                    }
+                ],
+            },
+        }
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "provider_credentials_missing"
+        assert excinfo.value.non_retryable
+        assert exec_calls == []
+        # The leased slot must still be released even though resolution raised.
+        assert released == ["s1"]
+        # No child was ever started, so the scratch dir must not leak.
+        assert not scratch_dir.exists()
+
+    def test_empty_provider_credential_field_blocks_child_and_releases_slot(
+        self, monkeypatch
+    ):
+        # An existing ProviderCredentials row whose resolved field
+        # decrypts to an empty string must fail exactly like a missing row —
+        # never let the child dial on an empty key.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.models.agent_definition import ProviderCredentials
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+        released = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {
+                "did": "+15557654321",
+                "dispatch_rule_name": "r1",
+                "room_name": "sim-slot-01",
+                "slot_id": "s1",
+            }
+
+        async def _release(slot):
+            released.append(slot["slot_id"])
+
+        fake_credentials = SimpleNamespace(
+            get_api_key=lambda: "", get_api_secret=lambda: ""
+        )
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+        monkeypatch.setattr(
+            ProviderCredentials.objects, "get", lambda *a, **k: fake_credentials
+        )
+
+        job = {
+            "mode": "voice_sip",
+            "voice": {
+                "agent_definition": {
+                    "transport": {
+                        "kind": "sip_inbound",
+                        "inbound_call_originator": "retell",
+                    }
+                },
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [
+                    {
+                        "key": "RETELL_API_KEY",
+                        "manager": "provider_credentials",
+                        "credential_id": "cred-1",
+                        "field": "api_key",
+                    }
+                ],
+            },
+        }
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "provider_credentials_missing"
+        assert excinfo.value.non_retryable
+        assert exec_calls == []
+        assert released == ["s1"]
+
+    def test_livekit_webrtc_empty_api_secret_blocks_child(self, monkeypatch):
+        # Reachable for a backend-built job — a customer LiveKit
+        # ProviderCredentials row saved with an api_key but a blank
+        # api_secret (services/hosted_runner.py's _voice_livekit_runtime
+        # webrtc branch emits a provider_credentials ref for both fields).
+        # No DID lease is involved on the webrtc path.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.models.agent_definition import ProviderCredentials
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        exec_calls = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        fake_credentials = SimpleNamespace(
+            get_api_key=lambda: "customer-lk-key", get_api_secret=lambda: ""
+        )
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(
+            ProviderCredentials.objects, "get", lambda *a, **k: fake_credentials
+        )
+
+        job = {
+            "mode": "voice_webrtc",
+            "voice": {
+                "agent_definition": {"transport": {"kind": "webrtc"}},
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [
+                    {
+                        "key": "LIVEKIT_API_KEY",
+                        "manager": "provider_credentials",
+                        "credential_id": "cred-2",
+                        "field": "api_key",
+                    },
+                    {
+                        "key": "LIVEKIT_API_SECRET",
+                        "manager": "provider_credentials",
+                        "credential_id": "cred-2",
+                        "field": "api_secret",
+                    },
+                ],
+            },
+        }
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_webrtc",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "provider_credentials_missing"
+        assert exec_calls == []
+
+    def test_env_passthrough_customer_key_blocks_child_even_when_worker_has_value(
+        self, monkeypatch
+    ):
+        # A manager:"env" ref for a CUSTOMER provider key must never
+        # let the child dial on the worker's own key — even when the worker
+        # process happens to have that exact env var set (e.g. for the
+        # platform's own, unrelated use). The ref itself is the bug signal,
+        # not just an unresolved lookup.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        monkeypatch.setenv("RETELL_API_KEY", "platform-key")
+
+        exec_calls = []
+
+        async def _fake_exec(*args, **kwargs):
+            exec_calls.append(args)
+            return _FakeProc([])
+
+        async def _acquire(job_id, run_seconds):
+            return {
+                "did": "+15557654321",
+                "dispatch_rule_name": "r1",
+                "room_name": "sim-slot-01",
+                "slot_id": "s1",
+            }
+
+        async def _release(slot):
+            pass
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+        monkeypatch.setattr(hr, "_acquire_did_slot", _acquire)
+        monkeypatch.setattr(hr, "_release_did_slot", _release)
+
+        job = self._originator_sip_job("retell")
+        job["metadata"]["secret_env"] = [
+            {"key": "RETELL_API_KEY", "manager": "env", "source": "RETELL_API_KEY"},
+        ]
+
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_sip",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert excinfo.value.type == "provider_credentials_missing"
+        assert excinfo.value.non_retryable
+        assert exec_calls == []
+
+    def test_env_passthrough_system_livekit_key_still_reaches_child(self, monkeypatch):
+        # Positive case: a system LiveKit runtime var
+        # (platform-owned by design, see _voice_livekit_runtime) must still
+        # reach the child via env passthrough.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        monkeypatch.setenv("LIVEKIT_API_KEY", "system-lk-key")
+
+        seen_env = {}
+
+        async def _fake_exec(*args, **kwargs):
+            seen_env.update(kwargs.get("env") or {})
+            return _FakeProc(
+                [
+                    b'{"phase": "completed", "job_id": "job-x", '
+                    b'"submission_status": "submitted"}'
+                ]
+            )
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+
+        job = {
+            "mode": "voice_webrtc",
+            "voice": {
+                "agent_definition": {"transport": {"kind": "webrtc"}},
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [
+                    {
+                        "key": "LIVEKIT_API_KEY",
+                        "manager": "env",
+                        "source": "LIVEKIT_API_KEY",
+                    },
+                ],
+            },
+        }
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_webrtc",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+        out = asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert out.phase == "completed"
+        assert seen_env["LIVEKIT_API_KEY"] == "system-lk-key"
+
+    def test_declared_ref_that_resolves_to_nothing_is_scrubbed_not_inherited(
+        self, monkeypatch
+    ):
+        # A declared secret_env ref that resolves to
+        # nothing (here, a falsy credential_id -> _resolve_provider_credential
+        # returns None) must not fall back to whatever the worker process
+        # happens to have under that name. Only the ref-scoped scrub in
+        # _child_environment (_secret_env_ref_keys pop) protects this —
+        # deleting that pop lets the platform's own LIVEKIT_API_KEY leak
+        # through, since the overlay from _resolve_voice_secret_env adds
+        # nothing back for an unresolved ref.
+        import asyncio
+
+        from simulate.temporal.activities import hosted_runner as hr
+        from simulate.temporal.types.hosted_runner import RunHostedJobInput
+
+        monkeypatch.setenv("LIVEKIT_API_KEY", "platform-lk")
+
+        seen_env = {}
+
+        async def _fake_exec(*args, **kwargs):
+            seen_env.update(kwargs.get("env") or {})
+            return _FakeProc(
+                [
+                    b'{"phase": "completed", "job_id": "job-x", '
+                    b'"submission_status": "submitted"}'
+                ]
+            )
+
+        monkeypatch.setattr(hr.asyncio, "create_subprocess_exec", _fake_exec)
+        monkeypatch.setattr(hr.activity, "heartbeat", lambda *a, **k: None)
+
+        job = {
+            "mode": "voice_webrtc",
+            "voice": {
+                "agent_definition": {"transport": {"kind": "webrtc"}},
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [
+                    {
+                        "key": "LIVEKIT_API_KEY",
+                        "manager": "provider_credentials",
+                        "credential_id": "",
+                        "field": "api_key",
+                    }
+                ],
+            },
+        }
+        inp = RunHostedJobInput(
+            job_id="job-x",
+            run_id="run-x",
+            mode="voice_webrtc",
+            job_json=json.dumps(job),
+            run_seconds=900,
+        )
+        out = asyncio.run(hr.run_hosted_sdk_job(inp))
+        assert out.phase == "completed"
+        assert "LIVEKIT_API_KEY" not in seen_env
+
+    def test_setting_manager_ref_for_customer_key_is_blocked(self):
+        # A manager:"setting" ref for a customer
+        # provider key must be blocked exactly like a manager:"env" ref —
+        # the customer-key rule must not live only inside the env-passthrough
+        # branch, where a "setting" ref (or any future manager) would
+        # silently bypass it.
+        import asyncio
+
+        from temporalio.exceptions import ApplicationError
+
+        from simulate.temporal.activities.hosted_runner import (
+            _resolve_voice_secret_env,
+        )
+
+        job = {
+            "metadata": {
+                "secret_env": [
+                    {
+                        "key": "RETELL_API_KEY",
+                        "manager": "setting",
+                        "setting": "RETELL_API_KEY",
+                    }
+                ]
+            }
+        }
+        with pytest.raises(ApplicationError) as excinfo:
+            asyncio.run(_resolve_voice_secret_env(job))
+        assert excinfo.value.type == "provider_credentials_missing"
+        assert excinfo.value.non_retryable
 
 
 @pytest.mark.integration
@@ -2238,7 +5123,7 @@ class TestHostedRunnerProviderSupport:
         from simulate.services.hosted_runner import hosted_runner_supports
 
         assert not hosted_runner_supports(
-            SimpleNamespace(provider="bland", provider_credentials=None)
+            SimpleNamespace(provider="bland", credentials_legacy=None)
         )
 
     def test_supported_providers(self):
@@ -2246,21 +5131,88 @@ class TestHostedRunnerProviderSupport:
 
         for prov in ("vapi", "retell", "livekit"):
             assert hosted_runner_supports(
-                SimpleNamespace(provider=prov, provider_credentials=None)
+                SimpleNamespace(provider=prov, credentials_legacy=None)
             )
 
-    def test_credentials_provider_type_takes_precedence(self):
+    def test_declared_bland_rejects_regardless_of_credentials_legacy(self):
+        # Credentials are not consulted (they can never name Bland — every
+        # other provider is coerced to vapi), so a stale credentials_legacy
+        # must not rescue a bland column.
         from simulate.services.hosted_runner import hosted_runner_supports
 
         creds = SimpleNamespace(provider_type="vapi")
-        assert hosted_runner_supports(
-            SimpleNamespace(provider="bland", provider_credentials=creds)
+        assert not hosted_runner_supports(
+            SimpleNamespace(provider="bland", credentials_legacy=creds)
         )
+
+    def test_supported_column_ignores_credentials_legacy(self):
+        # A supported column passes regardless of credentials_legacy, since
+        # the rail no longer reads it.
+        from simulate.services.hosted_runner import hosted_runner_supports
+
+        creds = SimpleNamespace(provider_type="retell")
+        assert hosted_runner_supports(
+            SimpleNamespace(provider="vapi", credentials_legacy=creds)
+        )
+
+    def test_snapshot_missing_provider_key_falls_back_to_stale_bland_column(self):
+        # exclude_none drops "provider" from a snapshot cut while the column
+        # was null; the rail must still reject on the column, not read the
+        # missing key as "unset" and let the run through.
+        from simulate.services.hosted_runner import hosted_runner_supports
+
+        agent = SimpleNamespace(provider="bland", credentials_legacy=None)
+        version = SimpleNamespace(
+            configuration_snapshot={},
+            credentials=SimpleNamespace(provider_type="vapi"),
+        )
+        assert not hosted_runner_supports(agent, version)
+
+    def test_credentials_rewrite_cannot_mask_a_stale_bland_column(self):
+        # sync_provider_credentials rewrites the pinned version's own
+        # credentials row (and can touch its snapshot) without touching the
+        # column; the rail must still reject on the column.
+        from simulate.services.hosted_runner import hosted_runner_supports
+
+        agent = SimpleNamespace(provider="bland", credentials_legacy=None)
+        version = SimpleNamespace(
+            configuration_snapshot={"provider": "vapi"},
+            credentials=SimpleNamespace(provider_type="vapi"),
+        )
+        assert not hosted_runner_supports(agent, version)
+
+    def test_hosted_runner_supports_agrees_across_both_rails(self):
+        from simulate.services.hosted_runner import hosted_runner_supports
+
+        agent = SimpleNamespace(provider="retell", credentials_legacy=None)
+        version = SimpleNamespace(configuration_snapshot={"provider": "retell"})
+        assert hosted_runner_supports(agent, version)
+
+    def test_hosted_runner_build_error_is_non_retryable(self):
+        # A deterministic build failure (bad job shape) must fail once, not be
+        # retried three times with backoff.
+        from simulate.temporal.retry_policies import DB_RETRY_POLICY
+
+        assert "HostedRunnerBuildError" in DB_RETRY_POLICY.non_retryable_error_types
 
     def test_none_agent_definition(self):
         from simulate.services.hosted_runner import hosted_runner_supports
 
         assert not hosted_runner_supports(None)
+
+    def test_customer_provider_env_keys_track_profile_table(self):
+        # Pin the derivation to the profile table so the two can
+        # never silently drift apart even if the derivation is later inlined
+        # for import reasons. A new provider profile with an api_key_env
+        # automatically joins this set with no hand-maintained edit required.
+        from simulate.services.hosted_runner import _PROVIDER_PROFILES
+        from simulate.temporal.activities.hosted_runner import (
+            _customer_provider_env_keys,
+        )
+
+        assert _customer_provider_env_keys() == {
+            p["api_key_env"] for p in _PROVIDER_PROFILES.values() if p["api_key_env"]
+        }
 
 
 @pytest.mark.integration
@@ -2319,69 +5271,765 @@ def test_dataset_language_none_single_multi():
     mixed = [{"persona": {"language": labels[0]}}, {"persona": {"language": labels[1]}}]
     assert _dataset_language(mixed) == "multi"
 
-    def test_target_speaks_first_toggle_overrides_direction(self):
-        """The explicit target_speaks_first toggle wins over the inbound/outbound
-        heuristic; None falls back to it; Retell stays pinned regardless."""
-        from simulate.services.hosted_runner import _voice_params
 
-        # True → wait for the target (agent_first) even for an inbound target
-        # that the heuristic would have opened simulator_first.
-        assert (
-            _voice_params("webrtc", inbound=True, target_speaks_first=True)[
-                "conversation_direction"
-            ]
-            == "agent_first"
-        )
-        # False → the simulator opens even for an outbound target.
-        assert (
-            _voice_params("webrtc", inbound=False, target_speaks_first=False)[
-                "conversation_direction"
-            ]
-            == "simulator_first"
-        )
-        # None → unchanged heuristic (inbound → simulator_first).
-        assert (
-            _voice_params("webrtc", inbound=True, target_speaks_first=None)[
-                "conversation_direction"
-            ]
-            == "simulator_first"
-        )
-        # Retell cannot greet first in the SDK → clamped even when the toggle
-        # asks for agent_first.
-        assert (
-            _voice_params("retell_webcall", inbound=False, target_speaks_first=True)[
-                "conversation_direction"
-            ]
-            == "simulator_first"
-        )
+# NOTE: the two tests below were previously nested inside
+# test_dataset_language_none_single_multi (an indentation slip that predates
+# this branch) and so were never collected by pytest — dedented to module
+# level so the coverage they claim actually runs.
+def test_target_speaks_first_toggle_overrides_direction():
+    """The explicit target_speaks_first toggle wins over the inbound/outbound
+    heuristic; None falls back to it; Retell stays pinned regardless."""
+    from simulate.services.hosted_runner import _voice_params
 
-    def test_resolve_target_speaks_first_precedence(self):
-        """Snapshot wins over the column; strings coerce; absent → None (auto)."""
+    # True → wait for the target (agent_first) even for an inbound target
+    # that the heuristic would have opened simulator_first.
+    assert (
+        _voice_params("webrtc", inbound=True, target_speaks_first=True)[
+            "conversation_direction"
+        ]
+        == "agent_first"
+    )
+    # False → the simulator opens even for an outbound target.
+    assert (
+        _voice_params("webrtc", inbound=False, target_speaks_first=False)[
+            "conversation_direction"
+        ]
+        == "simulator_first"
+    )
+    # None → unchanged heuristic (inbound → simulator_first).
+    assert (
+        _voice_params("webrtc", inbound=True, target_speaks_first=None)[
+            "conversation_direction"
+        ]
+        == "simulator_first"
+    )
+    # Retell cannot greet first in the SDK → clamped even when the toggle
+    # asks for agent_first.
+    assert (
+        _voice_params("retell_webcall", inbound=False, target_speaks_first=True)[
+            "conversation_direction"
+        ]
+        == "simulator_first"
+    )
+
+
+def test_resolve_target_speaks_first_precedence():
+    """Snapshot wins over the column; strings coerce. Once the pinned version
+    has a snapshot dict, it alone decides — same whole-dict precedence as
+    ``_agent_field`` (see ``_resolve_agent_inbound``): a key it lacks means
+    "unset" (``None`` — auto), the column is NOT consulted; only a version with
+    no snapshot dict at all falls back to the column."""
+    from types import SimpleNamespace
+
+    from simulate.services.hosted_runner import _resolve_target_speaks_first
+
+    agent_true = SimpleNamespace(target_speaks_first=True)
+    agent_none = SimpleNamespace(target_speaks_first=None)
+
+    # Snapshot overrides the column.
+    version = SimpleNamespace(configuration_snapshot={"target_speaks_first": False})
+    assert _resolve_target_speaks_first(version, agent_true) is False
+
+    # String "false" must not be truthy.
+    version = SimpleNamespace(configuration_snapshot={"target_speaks_first": "false"})
+    assert _resolve_target_speaks_first(version, agent_true) is False
+    version = SimpleNamespace(configuration_snapshot={"target_speaks_first": "true"})
+    assert _resolve_target_speaks_first(version, agent_none) is True
+
+    # Missing in snapshot → None (auto); the column is NOT consulted once the
+    # snapshot is a dict (a versioned run must not see a later column edit).
+    version = SimpleNamespace(configuration_snapshot={})
+    assert _resolve_target_speaks_first(version, agent_true) is None
+
+    # Absent everywhere → None (auto: derive from inbound/outbound).
+    assert _resolve_target_speaks_first(None, agent_none) is None
+    assert _resolve_target_speaks_first(None, SimpleNamespace()) is None
+
+
+class TestAgentFieldsReadFromVersionSnapshot:
+    """The version's configuration_snapshot is the source of truth for the
+    hosted builder; AgentDefinition columns mirror only the latest save and are
+    being retired. A run pinned to an older version must see that version."""
+
+    @staticmethod
+    def _agent(contact_number="", provider="retell", assistant_id="agent_1"):
         from types import SimpleNamespace
 
-        from simulate.services.hosted_runner import _resolve_target_speaks_first
-
-        agent_true = SimpleNamespace(target_speaks_first=True)
-        agent_none = SimpleNamespace(target_speaks_first=None)
-
-        # Snapshot overrides the column.
-        version = SimpleNamespace(configuration_snapshot={"target_speaks_first": False})
-        assert _resolve_target_speaks_first(version, agent_true) is False
-
-        # String "false" must not be truthy.
-        version = SimpleNamespace(
-            configuration_snapshot={"target_speaks_first": "false"}
+        return SimpleNamespace(
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            agent_name="Def Name",
+            description="def prompt",
+            contact_number=contact_number,
+            provider=provider,
+            assistant_id=assistant_id,
+            credentials_legacy=None,
+            latest_version=None,
         )
-        assert _resolve_target_speaks_first(version, agent_true) is False
-        version = SimpleNamespace(
-            configuration_snapshot={"target_speaks_first": "true"}
+
+    @staticmethod
+    def _version(**snapshot):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(configuration_snapshot=snapshot, credentials=None)
+
+    def test_snapshot_contact_number_decides_phone_mode(self):
+        from simulate.services.hosted_runner import resolve_runner_mode
+
+        # Definition says "no phone", the pinned version says phone → phone.
+        agent = self._agent(contact_number="")
+        assert (
+            resolve_runner_mode(agent, self._version(contact_number="+15551234567"))
+            == "voice_sip"
         )
-        assert _resolve_target_speaks_first(version, agent_none) is True
+        # Definition says phone, the pinned version says none → web. The stale
+        # column must not turn a web-call version into a leased-DID run.
+        agent = self._agent(contact_number="+15551234567")
+        assert (
+            resolve_runner_mode(agent, self._version(contact_number=""))
+            == "voice_webrtc"
+        )
 
-        # Missing in snapshot → column fallback.
-        version = SimpleNamespace(configuration_snapshot={})
-        assert _resolve_target_speaks_first(version, agent_true) is True
+    def test_snapshot_without_the_key_means_unset(self):
+        from simulate.services.hosted_runner import _target_uses_phone
 
-        # Absent everywhere → None (auto: derive from inbound/outbound).
-        assert _resolve_target_speaks_first(None, agent_none) is None
-        assert _resolve_target_speaks_first(None, SimpleNamespace()) is None
+        agent = self._agent(contact_number="+15551234567")
+        assert _target_uses_phone(agent, self._version(inbound=False)) is False
+
+    def test_non_dict_snapshot_falls_back_to_definition_column(self):
+        """A snapshot that is neither a dict nor None must not be read as
+        authoritative — only a dict snapshot is; anything else falls back to
+        the definition column."""
+        from simulate.services.hosted_runner import _agent_field
+
+        agent = self._agent(assistant_id="def_agent")
+        version = SimpleNamespace(configuration_snapshot=["not", "a", "dict"])
+        assert (
+            _agent_field(agent, version, "assistant_id", agent.assistant_id)
+            == "def_agent"
+        )
+
+    def test_whitespace_only_contact_number_is_not_a_phone_target(self):
+        """A whitespace-only contact_number must resolve to no-phone, not a
+        truthy non-empty string."""
+        from simulate.services.hosted_runner import _target_uses_phone
+
+        agent = self._agent(contact_number="   ")
+        assert _target_uses_phone(agent, None) is False
+
+    def test_versionless_agent_falls_back_to_definition(self):
+        from simulate.services.hosted_runner import resolve_runner_mode
+
+        agent = self._agent(contact_number="+15551234567")
+        assert resolve_runner_mode(agent, None) == "voice_sip"
+        agent = self._agent(contact_number="")
+        assert resolve_runner_mode(agent, None) == "voice_webrtc"
+
+    def test_latest_version_is_used_when_run_has_no_pinned_version(self):
+        from simulate.services.hosted_runner import resolve_runner_mode
+
+        agent = self._agent(contact_number="+15551234567")
+        agent.latest_version = self._version(contact_number="")
+        assert resolve_runner_mode(agent, None) == "voice_webrtc"
+
+    def test_resolve_agent_version_prefers_active_over_latest(self):
+        """_resolve_agent_version's own versionless fallback must match
+        resolve_run_agent_version's last rung — one ladder for the module,
+        not two that can silently disagree."""
+        from simulate.services.hosted_runner import _agent_field
+
+        agent = self._agent(assistant_id="def_agent")
+        agent.active_version = self._version(assistant_id="active_agent")
+        agent.latest_version = self._version(assistant_id="latest_agent")
+        assert (
+            _agent_field(agent, None, "assistant_id", agent.assistant_id)
+            == "active_agent"
+        )
+
+    def test_hosted_runner_supports_rejects_bland_from_either_rail(self):
+        # A safety rail, not a plain field read: unlike every other field, a
+        # stale Bland column still blocks routing even when the pinned
+        # snapshot names a supported provider, and vice versa.
+        from simulate.services.hosted_runner import hosted_runner_supports
+
+        agent = self._agent(provider="bland")
+        assert hosted_runner_supports(agent, self._version(provider="retell")) is False
+        agent = self._agent(provider="retell")
+        assert hosted_runner_supports(agent, self._version(provider="bland")) is False
+
+    def test_hosted_runner_supports_rejects_declared_bland_despite_vapi_credentials(
+        self,
+    ):
+        from simulate.services.hosted_runner import hosted_runner_supports
+
+        agent = self._agent(provider="retell")
+        version = self._version(provider="bland")
+        version.credentials = SimpleNamespace(provider_type="vapi")
+        assert hosted_runner_supports(agent, version) is False
+
+    def test_originator_from_number_and_prompt_come_from_snapshot(self):
+        from simulate.services.hosted_runner import _voice_agent_definition
+
+        agent = self._agent(contact_number="+15550000001", assistant_id="def_agent")
+        version = self._version(
+            contact_number="+15559999999",
+            assistant_id="snap_agent",
+            agent_name="Snap Name",
+            description="snap prompt",
+        )
+        agent_def, _secret_env = _voice_agent_definition(
+            agent, "retell", "sip_inbound", None, agent_version=version
+        )
+        transport = agent_def["transport"]
+        assert transport["inbound_call_originator"] == "retell"
+        assert transport["originator_from_number"] == "+15559999999"
+        assert transport["originator_agent_id"] == "snap_agent"
+        assert agent_def["name"] == "Snap Name"
+        assert agent_def["system_prompt"] == "snap prompt"
+
+    def test_web_target_id_comes_from_snapshot(self):
+        from simulate.services.hosted_runner import _voice_agent_definition
+
+        agent = self._agent(contact_number="", assistant_id="def_agent")
+        version = self._version(contact_number="", assistant_id="snap_agent")
+        agent_def, _ = _voice_agent_definition(
+            agent, "retell", "retell_webcall", None, agent_version=version
+        )
+        assert agent_def["target"]["agent_id"] == "snap_agent"
+
+    def test_agent_type_read_from_snapshot_for_mode(self):
+        """resolve_runner_mode must read agent_type via _agent_field, not
+        the bare AgentDefinition column, the same "pinned version wins" rule
+        as every other field the builder reads."""
+        from simulate.services.hosted_runner import resolve_runner_mode
+
+        # Definition says TEXT, the pinned version says VOICE + phone -> sip.
+        agent = self._agent(contact_number="+15551234567")
+        agent.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        version = self._version(
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+15551234567",
+        )
+        assert resolve_runner_mode(agent, version) == "voice_sip"
+
+        # Definition says VOICE, the pinned version says TEXT -> chat.
+        agent = self._agent(contact_number="+15551234567")
+        version = self._version(agent_type=AgentDefinition.AgentTypeChoices.TEXT)
+        assert resolve_runner_mode(agent, version) == "chat"
+
+    def test_agent_field_for_run_agrees_with_resolve_runner_mode(self):
+        """The view-side helper (agent_field_for_run) must read agent_type
+        the same way resolve_runner_mode does for the same run, or the view's
+        eligibility gate could disagree with the builder's mode."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import agent_field_for_run
+
+        agent = self._agent(contact_number="+15551234567")
+        agent.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        version = self._version(agent_type=AgentDefinition.AgentTypeChoices.VOICE)
+        run_test = SimpleNamespace(agent_definition=agent, agent_version=version)
+        assert (
+            agent_field_for_run(run_test, "agent_type", agent.agent_type)
+            == AgentDefinition.AgentTypeChoices.VOICE
+        )
+
+    def test_agent_field_for_run_uses_the_passed_test_execution(self):
+        """agent_field_for_run must actually feed its test_execution keyword
+        into the ladder, not just accept and ignore it — otherwise a caller
+        passing an execution pin (a rerun, say) silently falls back to
+        run_test.agent_version / latest_version instead."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import agent_field_for_run
+
+        agent = self._agent()
+        agent.agent_type = AgentDefinition.AgentTypeChoices.VOICE
+        agent.latest_version = self._version(
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE
+        )
+        run_test = SimpleNamespace(agent_definition=agent, agent_version=None)
+        test_execution = SimpleNamespace(
+            agent_version=self._version(
+                agent_type=AgentDefinition.AgentTypeChoices.TEXT
+            )
+        )
+        assert (
+            agent_field_for_run(
+                run_test, "agent_type", agent.agent_type, test_execution=test_execution
+            )
+            == AgentDefinition.AgentTypeChoices.TEXT
+        )
+
+    def test_agent_version_override_is_read_verbatim_not_the_ladder(self):
+        """The agent_version= override must win even though run_test itself
+        is pinned to a different (VOICE) snapshot — a caller with an
+        already-resolved version to check (e.g. a pending PATCH) must not be
+        silently overridden by the ladder."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import agent_field_for_run
+
+        agent = self._agent()
+        voice_pin = self._version(agent_type=AgentDefinition.AgentTypeChoices.VOICE)
+        text_override = self._version(agent_type=AgentDefinition.AgentTypeChoices.TEXT)
+        run_test = SimpleNamespace(agent_definition=agent, agent_version=voice_pin)
+        assert (
+            agent_field_for_run(
+                run_test, "agent_type", agent.agent_type, agent_version=text_override
+            )
+            == AgentDefinition.AgentTypeChoices.TEXT
+        )
+
+    def test_agent_version_none_still_resolves_the_definition_ladder(self):
+        """An explicit agent_version=None skips the run/execution rungs, but
+        _agent_field still resolves the definition's own active_version —
+        not a bypass straight to the column."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import agent_field_for_run
+
+        agent = self._agent()
+        agent.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        agent.active_version = self._version(
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE
+        )
+        pinned = self._version(agent_type=AgentDefinition.AgentTypeChoices.TEXT)
+        run_test = SimpleNamespace(agent_definition=agent, agent_version=pinned)
+        assert (
+            agent_field_for_run(
+                run_test, "agent_type", agent.agent_type, agent_version=None
+            )
+            == AgentDefinition.AgentTypeChoices.VOICE
+        )
+
+    def test_voice_provider_reads_provider_from_snapshot(self):
+        """_voice_provider's own snapshot read (the credentials arm is already
+        covered by test_hosted_runner_supports_reads_provider_from_snapshot and
+        TestHostedRunnerProviderSupport). Reverting _voice_provider to the
+        definition column must fail this."""
+        from simulate.services.hosted_runner import _voice_provider
+
+        agent = self._agent(provider="vapi")
+        version = self._version(provider="retell")
+        assert _voice_provider(agent, None, version) == "retell"
+
+    def test_resolve_run_agent_version_ladder(self):
+        """run_test.agent_version wins, then test_execution.agent_version
+        (the native path backfills this), then the definition's
+        latest_version — the one ladder shared by the view and the builder."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import resolve_run_agent_version
+
+        latest = self._version(contact_number="+15550000000")
+        agent = self._agent()
+        agent.latest_version = latest
+        pinned = self._version(contact_number="+15551111111")
+        backfilled = self._version(contact_number="+15552222222")
+
+        run_test = SimpleNamespace(agent_version=pinned, agent_definition=agent)
+        assert resolve_run_agent_version(run_test) is pinned
+        assert (
+            resolve_run_agent_version(
+                run_test, SimpleNamespace(agent_version=backfilled)
+            )
+            is pinned
+        )
+
+        run_test_no_pin = SimpleNamespace(agent_version=None, agent_definition=agent)
+        assert (
+            resolve_run_agent_version(
+                run_test_no_pin, SimpleNamespace(agent_version=backfilled)
+            )
+            is backfilled
+        )
+        assert resolve_run_agent_version(run_test_no_pin, None) is latest
+
+    def test_resolve_run_agent_version_prefers_active_over_latest(self):
+        """The last rung must match every other version-resolving call site
+        in the app (active_version or latest_version), not latest_version
+        alone — otherwise an unpinned run can pick a different version (and
+        credentials row) than the rest of the platform treats as current."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import resolve_run_agent_version
+
+        active = self._version(contact_number="+15550000001")
+        latest = self._version(contact_number="+15550000002")
+        agent = self._agent()
+        agent.active_version = active
+        agent.latest_version = latest
+
+        run_test_no_pin = SimpleNamespace(agent_version=None, agent_definition=agent)
+        assert resolve_run_agent_version(run_test_no_pin, None) is active
+
+    def test_unpinned_full_build_prefers_resolved_version_credentials_over_legacy(
+        self,
+    ):
+        """An unpinned run now resolves active/latest before reading
+        credentials, so the version's own credentials row wins over the
+        definition-level legacy one — a deliberate repair (the version-scoped
+        row is what the platform's credential-editing endpoints write)."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import (
+            _voice_credentials,
+            resolve_run_agent_version,
+        )
+
+        version_creds = SimpleNamespace(provider_type="retell")
+        version = self._version()
+        version.credentials = version_creds
+        agent = self._agent()
+        agent.latest_version = version
+        agent.credentials_legacy = SimpleNamespace(provider_type="vapi")
+
+        run_test = SimpleNamespace(agent_version=None, agent_definition=agent)
+        resolved = resolve_run_agent_version(run_test, None)
+        assert _voice_credentials(agent, resolved) is version_creds
+
+    def test_view_mode_and_builder_transport_agree_when_pin_is_backfilled(self):
+        """When run_test.agent_version is None but the execution's pin was
+        backfilled (the native path does this before a hosted rerun), the
+        shared resolve_run_agent_version ladder must give the view
+        (resolve_runner_mode) and the builder (_voice_transport_kind) the same
+        version — otherwise the mode/transport mismatch guard at
+        _build_voice_job raises HostedRunnerBuildError."""
+        from simulate.services.hosted_runner import (
+            _voice_transport_kind,
+            resolve_run_agent_version,
+            resolve_runner_mode,
+        )
+
+        agent = self._agent(contact_number="")
+        backfilled = self._version(contact_number="+15551234567")
+        run_test = SimpleNamespace(agent_version=None, agent_definition=agent)
+        test_execution = SimpleNamespace(agent_version=backfilled)
+
+        resolved = resolve_run_agent_version(run_test, test_execution)
+        mode = resolve_runner_mode(agent, resolved)
+        transport = _voice_transport_kind(
+            agent, "retell", inbound=False, agent_version=resolved
+        )
+        assert mode == "voice_sip"
+        assert transport == "sip_inbound"
+
+
+@pytest.mark.django_db
+class TestViewGatesReadVersionSnapshot:
+    """The DB-free suites above stand in AgentDefinition/AgentVersion with
+    SimpleNamespace; these use real ORM instances (a real configuration_snapshot
+    JSONField round-trip) to prove each request-time gate still reads the
+    pinned version, not a column edited after the pin, the same way the
+    builder does for the same run/execution. Most tests pin ``run_test``
+    directly, so the ladder's active_version/latest_version querying
+    properties are exercised only where a test leaves the run unpinned."""
+
+    @staticmethod
+    def _pinned_voice_agent(organization, workspace, *, provider="retell", phone=""):
+        """Column says TEXT; the pinned version's snapshot, captured while the
+        column still said VOICE, says VOICE — mirrors an agent_type edit that
+        reached the column after a version was already pinned."""
+        agent = AgentDefinition.objects.create(
+            agent_name="Gate Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number=phone,
+            inbound=True,
+            description="gate agent",
+            provider=provider,
+            assistant_id="gate_asst",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        version = agent.create_version(
+            description="pinned", commit_message="v1", status="active"
+        )
+        agent.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        agent.save(update_fields=["agent_type"])
+        return agent, version
+
+    def test_hosted_runner_eligible_reads_snapshot_not_column(
+        self, organization, workspace
+    ):
+        import simulate.views.run_test as run_test_module
+        from simulate.views.run_test import RunTestExecutionView
+
+        agent, version = self._pinned_voice_agent(organization, workspace)
+        run_test = RunTest.objects.create(
+            name="Gate RT",
+            agent_definition=agent,
+            agent_version=version,
+            organization=organization,
+            workspace=workspace,
+        )
+        # Pin the flag instead of relying on its process default: a TEXT
+        # classification would short-circuit True regardless of the flag, so
+        # False here can only come from a genuine VOICE read of the snapshot.
+        with patch.object(
+            run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", False
+        ):
+            assert RunTestExecutionView()._hosted_runner_eligible(run_test) is False
+
+    def test_hosted_runner_eligible_routes_voice_when_enabled(
+        self, organization, workspace
+    ):
+        import simulate.views.run_test as run_test_module
+        from simulate.views.run_test import RunTestExecutionView
+
+        agent, version = self._pinned_voice_agent(organization, workspace)
+        run_test = RunTest.objects.create(
+            name="Gate RT",
+            agent_definition=agent,
+            agent_version=version,
+            organization=organization,
+            workspace=workspace,
+        )
+        with patch.object(
+            run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", True
+        ):
+            assert RunTestExecutionView()._hosted_runner_eligible(run_test) is True
+
+    def test_hosted_execution_eligible_reads_snapshot_not_column(
+        self, organization, workspace
+    ):
+        import simulate.views.run_test as run_test_module
+        from simulate.views.run_test import _hosted_execution_eligible
+
+        agent, version = self._pinned_voice_agent(organization, workspace)
+        run_test = RunTest.objects.create(
+            name="Gate RT",
+            agent_definition=agent,
+            agent_version=version,
+            organization=organization,
+            workspace=workspace,
+        )
+        test_execution = SimTestExecution.objects.create(run_test=run_test)
+        with patch.object(
+            run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", False
+        ):
+            assert _hosted_execution_eligible(run_test, test_execution) is False
+
+    def test_hosted_execution_eligible_routes_voice_when_enabled(
+        self, organization, workspace
+    ):
+        import simulate.views.run_test as run_test_module
+        from simulate.views.run_test import _hosted_execution_eligible
+
+        agent, version = self._pinned_voice_agent(organization, workspace)
+        run_test = RunTest.objects.create(
+            name="Gate RT",
+            agent_definition=agent,
+            agent_version=version,
+            organization=organization,
+            workspace=workspace,
+        )
+        test_execution = SimTestExecution.objects.create(run_test=run_test)
+        with patch.object(
+            run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", True
+        ):
+            assert _hosted_execution_eligible(run_test, test_execution) is True
+
+    def test_hosted_runner_mode_reads_snapshot_not_column(
+        self, organization, workspace
+    ):
+        from simulate.views.run_test import RunTestExecutionView
+
+        agent, version = self._pinned_voice_agent(
+            organization, workspace, phone="+15551234567"
+        )
+        run_test = RunTest.objects.create(
+            name="Gate RT",
+            agent_definition=agent,
+            agent_version=version,
+            organization=organization,
+            workspace=workspace,
+        )
+        # A TEXT read would resolve "chat"; the pinned snapshot's VOICE +
+        # phone must resolve voice_sip instead.
+        assert RunTestExecutionView()._hosted_runner_mode(run_test) == "voice_sip"
+
+    def test_components_patch_gate_reads_snapshot_not_column(
+        self, auth_client, organization, workspace
+    ):
+        # A TEXT read of the stale column would return 200 (no check run);
+        # only a VOICE read of the pinned snapshot 400s on the missing key.
+        agent, version = self._pinned_voice_agent(organization, workspace)
+        run_test = RunTest.objects.create(
+            name="Gate RT",
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        response = auth_client.patch(
+            f"/simulate/run-tests/{run_test.id}/components/",
+            {"version": str(version.id), "enable_tool_evaluation": True},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert response.json()["result"]["error_code"] == (
+            "API_KEY_AND_ASSISTANT_ID_REQUIRED"
+        )
+
+    def test_create_run_test_view_gate_reads_snapshot_not_column(
+        self, auth_client, organization, workspace, scenario
+    ):
+        # A TEXT read of the stale column would skip the entitlement gate
+        # and 201; only a VOICE read of the version about to be pinned
+        # reaches check_feature and 403s, before any RunTest row exists.
+        from ee.usage.schemas.events import CheckResult
+
+        agent, version = self._pinned_voice_agent(organization, workspace)
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch("tfc.ee_gates.voice_sim_oss_gate_response", return_value=None),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.check_feature"
+            ) as mock_check,
+        ):
+            mock_check.return_value = CheckResult(
+                allowed=False,
+                reason="Voice simulation requires PAYG plan",
+                error_code="ENTITLEMENT_DENIED",
+            )
+            response = auth_client.post(
+                "/simulate/run-tests/create/",
+                {
+                    "name": "Gate Create RT",
+                    "agent_definition_id": str(agent.id),
+                    "agent_version": str(version.id),
+                    "scenario_ids": [str(scenario.id)],
+                },
+                format="json",
+            )
+        assert response.status_code == 403
+        mock_check.assert_called_once_with(str(organization.id), "has_voice_sim")
+
+    def test_bulk_rerun_routes_each_execution_by_its_own_pinned_version(
+        self, auth_client, organization, workspace, scenario
+    ):
+        """Two executions of the same unpinned run_test, pinned to different
+        versions whose OWN declared provider differs (one Bland/unsupported,
+        one Retell/supported) — the bulk rerun must dispatch each through the
+        runner its own pin resolves to, not one decision for the whole batch."""
+        import simulate.views.run_test as run_test_module
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Bulk Rerun Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="",
+            inbound=True,
+            description="bulk rerun agent",
+            provider="bland",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        unsupported_version = agent.create_version(
+            description="unsupported provider",
+            commit_message="v-bland",
+            status="active",
+        )
+        agent.provider = "retell"
+        agent.save(update_fields=["provider"])
+        supported_version = agent.create_version(
+            description="supported provider", commit_message="v-retell", status="active"
+        )
+
+        run_test = RunTest.objects.create(
+            name="Bulk Rerun RT",
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test.scenarios.add(scenario)
+
+        native_execution = SimTestExecution.objects.create(
+            run_test=run_test,
+            agent_definition=agent,
+            agent_version=unsupported_version,
+            status=SimTestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            scenario_ids=[str(scenario.id)],
+        )
+        hosted_execution = SimTestExecution.objects.create(
+            run_test=run_test,
+            agent_definition=agent,
+            agent_version=supported_version,
+            status=SimTestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            scenario_ids=[str(scenario.id)],
+        )
+        CallExecution.objects.create(
+            test_execution=native_execution,
+            scenario=scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.COMPLETED,
+            service_provider_call_id="vapi-test-123",
+            eval_outputs={"eval1": {"score": 0.9}},
+            call_metadata={
+                "base_prompt": "You are a test agent",
+                "voice_settings": {"provider": "elevenlabs"},
+                "call_direction": "inbound",
+                "eval_started": True,
+                "eval_completed": True,
+            },
+        )
+        CallExecution.objects.create(
+            test_execution=hosted_execution,
+            scenario=scenario,
+            phone_number="+1234567890",
+            status=CallExecution.CallStatus.COMPLETED,
+            service_provider_call_id="vapi-test-456",
+            eval_outputs={"eval1": {"score": 0.7}},
+            call_metadata={
+                "base_prompt": "You are a test agent",
+                "voice_settings": {"provider": "elevenlabs"},
+                "call_direction": "inbound",
+                "eval_started": True,
+                "eval_completed": True,
+            },
+        )
+
+        with (
+            patch.object(
+                run_test_module.app_settings, "HOSTED_RUNNER_VOICE_ENABLED", True
+            ),
+            patch.object(
+                run_test_module, "_voice_sim_gate_response", return_value=None
+            ),
+            patch.object(
+                run_test_module,
+                "_dispatch_hosted_rerun",
+                return_value="hosted-wf",
+            ) as dispatch_hosted,
+            patch(
+                "simulate.temporal.client.rerun_call_executions",
+                return_value={"merged": False, "workflow_id": "native-wf"},
+            ) as dispatch_native,
+        ):
+            response = auth_client.post(
+                f"/simulate/run-tests/{run_test.id}/rerun-test-executions/",
+                {
+                    "rerun_type": "call_and_eval",
+                    "test_execution_ids": [
+                        str(native_execution.id),
+                        str(hosted_execution.id),
+                    ],
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200
+        dispatch_hosted.assert_called_once()
+        assert dispatch_hosted.call_args[0][0].id == hosted_execution.id
+        dispatch_native.assert_called_once()
+        assert dispatch_native.call_args.kwargs["test_execution_id"] == str(
+            native_execution.id
+        )
+        # A swallowed per-call error (missing agent_definition, say) would
+        # still return 200 with a per-execution failure_count > 0 instead of
+        # tripping dispatch_native/dispatch_hosted — assert it directly too.
+        results_by_id = {r["test_execution_id"]: r for r in response.data["results"]}
+        assert results_by_id[str(native_execution.id)]["failure_count"] == 0
+        assert results_by_id[str(hosted_execution.id)]["failure_count"] == 0

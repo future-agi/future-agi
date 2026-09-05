@@ -583,6 +583,12 @@ HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
     "HOSTED_RUNNER_VOICE_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Rollback lever for sequential reuse of the leased simulator room (D10):
+# default on, flip off if reuse misbehaves at runtime without a redeploy.
+HOSTED_RUNNER_LEASED_ROOM_REUSE = os.getenv(
+    "HOSTED_RUNNER_LEASED_ROOM_REUSE", "true"
+).lower() in ("true", "1", "yes")
+
 # Structured logging configuration with django-structlog
 # This provides:
 # - JSON output in production, colored console in development

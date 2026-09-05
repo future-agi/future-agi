@@ -486,8 +486,10 @@ for region in eu us; do
         "$region runner enables dynamic memory tuning"
     assert_rendered_env_value "$rendered_worker" TEMPORAL_TARGET_CPU_USAGE "" \
         "$region runner enables dynamic CPU tuning"
-    assert_rendered_env_value "$rendered_worker" HOSTED_RUNNER_MAX_DURATION_SECONDS 3900 \
-        "$region runner duration ceiling is not 3900 seconds"
+    # The run budget now comes from each job's own deadline; a global ceiling
+    # in the worker env is a leftover that no code reads.
+    assert_rendered_env_value "$rendered_worker" HOSTED_RUNNER_MAX_DURATION_SECONDS "" \
+        "$region runner still sets the retired HOSTED_RUNNER_MAX_DURATION_SECONDS ceiling"
 
     assert_contains \
         "$rendered_worker" \
