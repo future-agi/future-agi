@@ -6,12 +6,23 @@ Fixes CORE-BACKEND-WCN (VAPI 401) and CORE-BACKEND-WTW (Retell 401).
 Run with: pytest tracer/tests/test_observability_providers.py -v
 """
 
-from unittest.mock import Mock, patch
+from datetime import timedelta
+from unittest.mock import Mock, call, patch
 
 import pytest
+import requests
 from requests.exceptions import HTTPError
+from structlog.testing import capture_logs
 
 from tracer.models.observability_provider import ProviderChoices
+from tracer.services.observability_providers import (
+    RETELL_MAX_ATTEMPTS,
+    RETELL_REQUEST_TIMEOUT_SECONDS,
+    ObservabilityService,
+    RetellConfigurationError,
+    RetellCursorRejected,
+)
+from tracer.tests.fixtures.retell_calls import FAKE_AGENT_ID, detail, list_item, list_page
 
 
 class TestValidateAgentApiKey:
@@ -378,406 +389,1116 @@ class TestFetchVapiLogs:
         assert len(result) == 50
 
 
-class TestFetchRetellLogs:
-    """Tests for _fetch_retell_logs method."""
+def _end(hours: int = 0):
+    """An aware UTC end_time, offset by ``hours`` (positive = later)."""
+    from datetime import UTC, datetime, timedelta
 
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
+    return datetime(2026, 9, 3, 12, 0, 0, tzinfo=UTC) + timedelta(hours=hours)
+
+
+def _provider_with_agent(assistant_id=None, api_key="legacy-retell-key"):
+    """A Mock provider whose ``.agent_definition`` resolves like a real one,
+    with no ProviderCredentials rows so the legacy ``agent.api_key`` wins."""
+    from tracer.tests.fixtures.retell_calls import FAKE_AGENT_ID
+
+    provider = Mock()
+    provider.id = "retell-provider-1"
+    agent = Mock()
+    agent.assistant_id = assistant_id or FAKE_AGENT_ID
+    agent.api_key = api_key
+    provider.agent_definition = agent
+    return provider
+
+
+class _EmptyCredentialsQuerySet(list):
+    """Stands in for a ProviderCredentials queryset with zero rows."""
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def exclude(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return None
+
+
+@pytest.fixture
+def no_extra_credentials():
+    """Patches ProviderCredentials.objects so key resolution falls back to
+    the Mock agent's plaintext ``api_key`` field without touching the DB."""
+    with patch(
+        "tracer.services.observability_providers.ProviderCredentials.objects"
+    ) as mock_manager:
+        mock_manager.filter.return_value = _EmptyCredentialsQuerySet()
+        yield mock_manager
+
+
+def _list_response(items, *, has_more=False, pagination_key=None, status_code=200):
+    response = Mock()
+    response.status_code = status_code
+    response.json.return_value = list_page(
+        items, has_more=has_more, pagination_key=pagination_key
     )
-    def test_returns_empty_list_when_no_api_key(
-        self, mock_get_agent, mock_requests_post
-    ):
-        """Returns empty list when agent has no API key (graceful handling)."""
-        from tracer.services.observability_providers import ObservabilityService
+    response.raise_for_status = Mock()
+    return response
 
-        mock_get_agent.return_value = None
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
 
-        result = ObservabilityService._fetch_retell_logs(mock_provider)
+def _detail_response(call_id, start_ms, end_ms, *, status_code=200, **kwargs):
+    response = Mock()
+    response.status_code = status_code
+    response.json.return_value = detail(call_id, start_ms, end_ms, **kwargs)
+    response.raise_for_status = Mock()
+    return response
 
-        assert result == []
-        # Should not make HTTP request when validation fails
-        mock_requests_post.assert_not_called()
 
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_makes_request_with_valid_api_key(self, mock_get_agent, mock_requests_post):
-        """Makes HTTP request when API key is valid."""
-        from tracer.services.observability_providers import ObservabilityService
+def _http_error_response(status_code):
+    response = Mock()
+    response.status_code = status_code
+    response.raise_for_status = Mock(side_effect=HTTPError(response=response))
+    return response
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
 
-        mock_response = Mock()
-        mock_response.json.return_value = {"items": []}
-        mock_response.raise_for_status = Mock()
-        mock_requests_post.return_value = mock_response
+class TestFetchRetellPageRequestBody:
+    """Literal request-body assertions (§3): nesting, mode selection, cursor/skip placement."""
 
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
+    def test_bootstrap_body_is_literal(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
 
-        result = ObservabilityService._fetch_retell_logs(mock_provider)
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, None, end)
 
-        mock_requests_post.assert_called_once()
-        call_kwargs = mock_requests_post.call_args
-        assert "Bearer valid-retell-key" in str(call_kwargs)
-        # Verify v3 request body shape
-        body = call_kwargs[1]["json"]
-        assert "agent" in body["filter_criteria"]
-        assert body["filter_criteria"]["agent"] == [{"agent_id": "agent-123"}]
-        assert body["filter_criteria"]["call_status"]["type"] == "enum"
-        assert body["filter_criteria"]["call_status"]["op"] == "in"
-        assert body["filter_criteria"]["call_status"]["value"] == ["ended", "error"]
-        assert body["limit"] == 250
-
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_follows_pagination_cursor(
-        self, mock_get_agent, mock_requests_post, mock_requests_get
-    ):
-        """Fetches all pages returned by the v3 cursor pagination response."""
-        from tracer.services.observability_providers import ObservabilityService
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
-
-        first_response = Mock()
-        first_response.json.return_value = {
-            "items": [{"call_id": "call-1"}],
-            "has_more": True,
-            "pagination_key": "next-page",
-        }
-        first_response.raise_for_status = Mock()
-
-        second_response = Mock()
-        second_response.json.return_value = {
-            "items": [{"call_id": "call-2"}],
-            "has_more": False,
-        }
-        second_response.raise_for_status = Mock()
-        mock_requests_post.side_effect = [first_response, second_response]
-
-        def get_call_detail(url, **kwargs):
-            call_id = url.rsplit("/", 1)[-1]
-            detail_response = Mock()
-            detail_response.json.return_value = {
-                "call_id": call_id,
-                "transcript_with_tool_calls": [
-                    {
-                        "role": "agent",
-                        "content": f"transcript for {call_id}",
-                        "words": [{"start": 0.0, "end": 1.0}],
-                    }
-                ],
-                "recording_url": f"https://recordings.example/{call_id}.wav",
-            }
-            detail_response.raise_for_status = Mock()
-            return detail_response
-
-        mock_requests_get.side_effect = get_call_detail
-
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
-
-        result = ObservabilityService._fetch_retell_logs(mock_provider)
-
-        assert [call["call_id"] for call in result] == ["call-1", "call-2"]
-        assert result[0]["transcript_with_tool_calls"][0]["content"] == (
-            "transcript for call-1"
+        mock_post.assert_called_once()
+        assert (
+            mock_post.call_args.args[0] == "https://api.retellai.com/v3/list-calls"
         )
-        assert result[0]["recording_url"] == ("https://recordings.example/call-1.wav")
-
-        processed = ObservabilityService._process_retell_logs(result[0])
-        assert processed["transcript_available"] is True
-        assert processed["transcript"][0]["content"] == "transcript for call-1"
-        assert processed["recording_available"] is True
-        assert mock_requests_post.call_count == 2
-        first_body = mock_requests_post.call_args_list[0].kwargs["json"]
-        second_body = mock_requests_post.call_args_list[1].kwargs["json"]
-        assert "pagination_key" not in first_body
-        assert second_body["pagination_key"] == "next-page"
-        assert {call.args[0] for call in mock_requests_get.call_args_list} == {
-            "https://api.retellai.com/v2/get-call/call-1",
-            "https://api.retellai.com/v2/get-call/call-2",
-        }
-        assert all(
-            call.kwargs["headers"]["Authorization"] == "Bearer valid-retell-key"
-            and call.kwargs["timeout"] == 30
-            for call in mock_requests_get.call_args_list
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == (
+            "Bearer legacy-retell-key"
         )
-
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_raises_on_repeated_pagination_cursor(
-        self, mock_get_agent, mock_requests_post, mock_requests_get
-    ):
-        """Fails the poll rather than accepting a partial result on a cursor loop."""
-        from tracer.services.observability_providers import ObservabilityService
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
-
-        response = Mock()
-        response.json.return_value = {
-            "items": [{"call_id": "call-1"}],
-            "has_more": True,
-            "pagination_key": "next-page",
+        assert mock_post.call_args.kwargs["timeout"] == RETELL_REQUEST_TIMEOUT_SECONDS
+        body = mock_post.call_args.kwargs["json"]
+        assert body == {
+            "sort_order": "descending",
+            "limit": 1000,
+            "filter_criteria": {
+                "agent": [{"agent_id": FAKE_AGENT_ID}],
+                "call_status": {"type": "enum", "op": "in", "value": ["ended", "error"]},
+                "end_timestamp": {
+                    "type": "range",
+                    "op": "bt",
+                    "value": [0, int(end.timestamp() * 1000)],
+                },
+            },
         }
-        response.raise_for_status = Mock()
-        mock_requests_post.return_value = response
+        assert "include_total" not in body
 
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
+    def test_windowed_body_page_one_has_no_cursor_or_skip(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
 
-        with pytest.raises(RuntimeError, match="repeated cursor"):
-            ObservabilityService._fetch_retell_logs(mock_provider)
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, start, end)
 
-        assert mock_requests_post.call_count == 2
-        mock_requests_get.assert_not_called()
-
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_raises_when_has_more_omits_pagination_cursor(
-        self, mock_get_agent, mock_requests_post, mock_requests_get
-    ):
-        """Fails the poll when Retell claims another page without a cursor."""
-        from tracer.services.observability_providers import ObservabilityService
-
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
-
-        response = Mock()
-        response.json.return_value = {
-            "items": [{"call_id": "call-1"}],
-            "has_more": True,
+        body = mock_post.call_args.kwargs["json"]
+        assert "pagination_key" not in body
+        assert "skip" not in body
+        assert body == {
+            "sort_order": "ascending",
+            "limit": 1000,
+            "filter_criteria": {
+                "agent": [{"agent_id": FAKE_AGENT_ID}],
+                "call_status": {"type": "enum", "op": "in", "value": ["ended", "error"]},
+                "end_timestamp": {
+                    "type": "range",
+                    "op": "bt",
+                    "value": [
+                        int(start.timestamp() * 1000) - 1,
+                        int(end.timestamp() * 1000),
+                    ],
+                },
+            },
         }
-        response.raise_for_status = Mock()
-        mock_requests_post.return_value = response
 
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
+    def test_windowed_body_carries_pagination_key(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
 
-        with pytest.raises(RuntimeError, match="without a pagination_key"):
-            ObservabilityService._fetch_retell_logs(mock_provider)
-
-        mock_requests_post.assert_called_once()
-        mock_requests_get.assert_not_called()
-
-
-    @patch("tracer.services.observability_providers.requests.get")
-    def test_raises_when_get_call_json_is_invalid(self, mock_requests_get):
-        """Hydration JSON errors propagate instead of accepting the lean list item."""
-        from tracer.services.observability_providers import ObservabilityService
-
-        list_item = {"call_id": "call-1", "call_status": "ended"}
-        mock_response = Mock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json.side_effect = ValueError("invalid JSON")
-        mock_requests_get.return_value = mock_response
-
-        with pytest.raises(ValueError, match="invalid JSON"):
-            ObservabilityService._fetch_retell_call_detail(
-                list_item, {"Authorization": "Bearer valid-retell-key"}
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(
+                provider, start, end, pagination_key="cursor-1"
             )
 
-    @patch("tracer.services.observability_providers.requests.get")
-    def test_raises_when_get_call_missing_id(self, mock_requests_get):
-        """Hydration raises ValueError when the call entry has no call_id."""
-        from tracer.services.observability_providers import ObservabilityService
+        body = mock_post.call_args.kwargs["json"]
+        assert body["pagination_key"] == "cursor-1"
+        assert "skip" not in body
 
-        list_item = {"call_status": "ended"}
+    def test_windowed_body_carries_skip_zero(self, no_extra_credentials):
+        """skip=0 is a valid offset and must still be sent (falsy but not None)."""
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
 
-        with pytest.raises(ValueError, match="missing call_id"):
-            ObservabilityService._fetch_retell_call_detail(
-                list_item, {"Authorization": "Bearer valid-retell-key"}
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, start, end, skip=0)
+
+        body = mock_post.call_args.kwargs["json"]
+        assert body["skip"] == 0
+        assert "pagination_key" not in body
+
+    def test_never_sends_both_pagination_key_and_skip(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch("tracer.services.observability_providers.requests.post"):
+            with pytest.raises(RetellConfigurationError):
+                ObservabilityService.fetch_retell_page(
+                    provider, start, end, pagination_key="k", skip=0
+                )
+
+    def test_one_list_request_per_call(self, no_extra_credentials):
+        """fetch_retell_page never loops; it returns exactly one page."""
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response(
+                [], has_more=True, pagination_key="k"
             )
-        mock_requests_get.assert_not_called()
+            ObservabilityService.fetch_retell_page(provider, None, end)
 
-    @patch("tracer.services.observability_providers.requests.get")
-    def test_raises_when_get_call_returns_non_dict(self, mock_requests_get):
-        """Hydration raises TypeError when the response JSON is not a dict."""
-        from tracer.services.observability_providers import ObservabilityService
+        mock_post.assert_called_once()
 
-        list_item = {"call_id": "call-1", "call_status": "ended"}
-        mock_response = Mock()
-        mock_response.json.return_value = ["not", "a", "dict"]
-        mock_response.raise_for_status = Mock()
-        mock_requests_get.return_value = mock_response
 
-        with pytest.raises(TypeError, match="must be a dict"):
-            ObservabilityService._fetch_retell_call_detail(
-                list_item, {"Authorization": "Bearer valid-retell-key"}
+class TestFetchRetellPageConfigurationErrors:
+    """§3: end_time naive/missing; start_time naive; start_time >= end_time; cursor/skip in bootstrap."""
+
+    def test_missing_end_time_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(provider, None, None)
+
+    def test_naive_end_time_raises(self, no_extra_credentials):
+        from datetime import datetime
+
+        provider = _provider_with_agent()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(
+                provider, None, datetime(2026, 9, 3, 12, 0, 0)
             )
 
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_filters_by_end_timestamp(
-        self, mock_get_agent, mock_requests_post, mock_requests_get
+    def test_naive_start_time_raises(self, no_extra_credentials):
+        from datetime import datetime
+
+        provider = _provider_with_agent()
+        end = _end()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(
+                provider, datetime(2026, 9, 3, 10, 0, 0), end
+            )
+
+    def test_start_after_end_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(provider, end + timedelta(hours=1), end)
+
+    def test_start_equal_end_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(provider, end, end)
+
+    def test_pagination_key_in_bootstrap_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(provider, None, end, pagination_key="x")
+
+    def test_skip_in_bootstrap_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        with pytest.raises(RetellConfigurationError):
+            ObservabilityService.fetch_retell_page(provider, None, end, skip=0)
+
+
+class TestFetchRetellPageEnvelope:
+    """§3 modes: has_more / next_key pass-through, cursor page 1 included."""
+
+    def test_cursor_mode_page_one_has_more_returns_key(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response(
+                [], has_more=True, pagination_key="next-key"
+            )
+            page = ObservabilityService.fetch_retell_page(provider, start, end)
+
+        assert page.has_more is True
+        assert page.next_key == "next-key"
+
+    def test_cursor_mode_no_more_pages_next_key_none(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([], has_more=False)
+            page = ObservabilityService.fetch_retell_page(provider, start, end)
+
+        assert page.has_more is False
+        assert page.next_key is None
+
+    def test_bootstrap_has_more_true_returns_next_key_none_without_raising(
+        self, no_extra_credentials
     ):
-        """Uses end_timestamp (not start_timestamp) filter when times are provided."""
-        from datetime import UTC, datetime, timedelta
+        provider = _provider_with_agent()
+        end = _end()
 
-        from tracer.services.observability_providers import ObservabilityService
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            # A real key in the envelope proves bootstrap discards it, not that
+            # the response happened to carry none.
+            mock_post.return_value = _list_response(
+                [], has_more=True, pagination_key="should-not-surface"
+            )
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
+        assert page.has_more is True
+        assert page.next_key is None
 
-        mock_response = Mock()
-        mock_response.json.return_value = {"items": []}
-        mock_response.raise_for_status = Mock()
-        mock_requests_post.return_value = mock_response
-
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
-
-        now = datetime.now(tz=UTC)
-        start = now - timedelta(hours=2)
-        end = now
-
-        result = ObservabilityService._fetch_retell_logs(
-            mock_provider, start_time=start, end_time=end
-        )
-
-        assert result == []
-        body = mock_requests_post.call_args.kwargs["json"]
-        assert "end_timestamp" in body["filter_criteria"]
-        assert "start_timestamp" not in body["filter_criteria"]
-        ts_range = body["filter_criteria"]["end_timestamp"]
-        assert ts_range["type"] == "range"
-        assert ts_range["op"] == "bt"
-        assert ts_range["value"] == [
-            int(start.timestamp() * 1000),
-            int(end.timestamp() * 1000),
-        ]
-
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_raises_on_over_bound_has_more(
-        self, mock_get_agent, mock_requests_post, mock_requests_get
+    def test_cursor_mode_has_more_without_key_raises_missing_key(
+        self, no_extra_credentials
     ):
-        """When has_more=True at the hydration bound, raises before issuing Get Call requests."""
-        from tracer.services.observability_providers import (
-            RETELL_CALL_HYDRATION_BOUND,
-            ObservabilityService,
-        )
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([], has_more=True)
+            with pytest.raises(RetellCursorRejected) as exc_info:
+                ObservabilityService.fetch_retell_page(provider, start, end)
 
-        # Return equal to bound with has_more=True (window exceeds limit)
-        response = Mock()
-        boundsize_payload = [
-            {"call_id": f"call-{i}"} for i in range(RETELL_CALL_HYDRATION_BOUND)
-        ]
-        response.json.return_value = {
-            "items": boundsize_payload,
-            "has_more": True,
+        assert exc_info.value.cause == "missing_key"
+
+    def test_offset_mode_has_more_without_key_does_not_raise(
+        self, no_extra_credentials
+    ):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            # A real key in the envelope proves offset mode discards it, not
+            # that the response happened to carry none.
+            mock_post.return_value = _list_response(
+                [], has_more=True, pagination_key="should-not-surface"
+            )
+            page = ObservabilityService.fetch_retell_page(provider, start, end, skip=0)
+
+        assert page.has_more is True
+        assert page.next_key is None
+
+
+class TestFetchRetellPageListFailures:
+    """§3 HTTP failure table for the LIST request."""
+
+    def test_400_with_pagination_key_raises_cursor_rejected(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _http_error_response(400)
+            with pytest.raises(RetellCursorRejected) as exc_info:
+                ObservabilityService.fetch_retell_page(
+                    provider, start, end, pagination_key="k"
+                )
+
+        assert exc_info.value.cause == "http_400"
+
+    def test_404_with_skip_raises_cursor_rejected(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _http_error_response(404)
+            with pytest.raises(RetellCursorRejected) as exc_info:
+                ObservabilityService.fetch_retell_page(provider, start, end, skip=0)
+
+        assert exc_info.value.cause == "http_404"
+
+    def test_422_with_pagination_key_raises_cursor_rejected(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _http_error_response(422)
+            with pytest.raises(RetellCursorRejected) as exc_info:
+                ObservabilityService.fetch_retell_page(
+                    provider, start, end, pagination_key="k"
+                )
+
+        assert exc_info.value.cause == "http_422"
+
+    @pytest.mark.parametrize("status_code", [400, 404, 422])
+    def test_4xx_without_cursor_or_skip_raises_plain_http_error(
+        self, no_extra_credentials, status_code
+    ):
+        provider = _provider_with_agent()
+        start = _end(-1)
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _http_error_response(status_code)
+            with pytest.raises(HTTPError) as exc_info:
+                ObservabilityService.fetch_retell_page(provider, start, end)
+
+        assert exc_info.value.response.status_code == status_code
+
+    def test_list_500_x3_raises_and_sleeps_1_then_2(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.return_value = _http_error_response(500)
+            with pytest.raises(HTTPError):
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_count == RETELL_MAX_ATTEMPTS
+        assert mock_sleep.call_args_list == [call(1), call(2)]
+
+    def test_list_429_x3_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch("tracer.services.observability_providers._sleep"):
+            mock_post.return_value = _http_error_response(429)
+            with pytest.raises(HTTPError):
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_count == RETELL_MAX_ATTEMPTS
+
+    def test_list_401_raises_at_once_no_retry(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.return_value = _http_error_response(401)
+            with pytest.raises(HTTPError):
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        mock_post.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_list_403_raises_at_once_no_retry(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.return_value = _http_error_response(403)
+            with pytest.raises(HTTPError):
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        mock_post.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_list_connection_error_then_success_sleeps_once(
+        self, no_extra_credentials
+    ):
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.side_effect = [
+                requests.ConnectionError("connection reset"),
+                _list_response([]),
+            ]
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert mock_post.call_count == 2
+        mock_sleep.assert_called_once_with(1)
+
+    def test_list_timeout_x3_raises(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.side_effect = requests.Timeout("timed out")
+            with pytest.raises(requests.Timeout):
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_count == RETELL_MAX_ATTEMPTS
+        assert mock_sleep.call_args_list == [call(1), call(2)]
+
+
+class TestFetchRetellPageHydration:
+    """§3 hydration: non-null merge, dropped_no_end, get-call failure table, dedup."""
+
+    def test_null_detail_fields_do_not_overwrite_list_values(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            mock_get.return_value = _detail_response(
+                "c1", 1_000, 2_000, null_fields=("end_timestamp",)
+            )
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.dropped_no_end == 0
+        assert page.calls[0]["end_timestamp"] == 2_000
+        assert page.calls[0]["call_id"] == "c1"
+
+    def test_dropped_no_end_excludes_item_and_skips_hydration(
+        self, no_extra_credentials
+    ):
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, None)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert page.dropped_no_end == 1
+        mock_get.assert_not_called()
+
+    def test_get_call_404_counts_as_dropped_missing(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep, capture_logs() as logs:
+            mock_post.return_value = _list_response([item])
+            mock_get.return_value = _http_error_response(404)
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert page.dropped_missing == 1
+        assert page.dropped_failed == 0
+        mock_sleep.assert_not_called()
+
+        missing_events = [e for e in logs if e["event"] == "retell_call_detail_missing"]
+        assert len(missing_events) == 1
+        fields = {
+            k: v for k, v in missing_events[0].items() if k not in ("event", "log_level")
         }
-        response.raise_for_status = Mock()
-        mock_requests_post.return_value = response
+        assert set(fields) == {"provider_id", "count"}
+        assert fields["count"] == 1
 
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
+    def test_get_call_422_counts_as_dropped_missing(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
 
-        with pytest.raises(RuntimeError) as exc_info:
-            ObservabilityService._fetch_retell_logs(mock_provider)
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            mock_get.return_value = _http_error_response(422)
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
 
-        assert "hydration bound" in str(exc_info.value).lower()
-        # No detail GET calls should have been made
-        mock_requests_get.assert_not_called()
+        assert page.dropped_missing == 1
 
-    @patch("tracer.services.observability_providers.requests.get")
-    @patch("tracer.services.observability_providers.requests.post")
-    @patch.object(
-        __import__(
-            "tracer.services.observability_providers", fromlist=["ObservabilityService"]
-        ).ObservabilityService,
-        "_get_agent_definition",
-    )
-    def test_raises_when_response_exceeds_hydration_bound(
-        self, mock_get_agent, mock_requests_post, mock_requests_get
+    def test_get_call_400_counts_as_dropped_missing(self, no_extra_credentials):
+        """The get-call HTTP failure table only excepts 401/403 from being counted."""
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            mock_get.return_value = _http_error_response(400)
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.dropped_missing == 1
+
+    def test_get_call_500_x3_counts_as_dropped_failed_other_calls_hydrated(
+        self, no_extra_credentials
     ):
-        """Never hydrates more than the per-poll Retell call bound."""
-        from tracer.services.observability_providers import (
-            RETELL_CALL_HYDRATION_BOUND,
-            ObservabilityService,
+        provider = _provider_with_agent()
+        end = _end()
+        items = [list_item("c1", 1_000, 2_000), list_item("c2", 1_000, 2_000)]
+
+        def get_side_effect(url, **kwargs):
+            if url.endswith("/c1"):
+                return _http_error_response(500)
+            return _detail_response("c2", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep, capture_logs() as logs:
+            mock_post.return_value = _list_response(items)
+            mock_get.side_effect = get_side_effect
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.dropped_failed == 1
+        assert page.dropped_missing == 0
+        assert [c["call_id"] for c in page.calls] == ["c2"]
+        assert mock_sleep.call_args_list == [call(1), call(2)]
+
+        failed_events = [e for e in logs if e["event"] == "retell_call_detail_failed"]
+        assert len(failed_events) == 1
+        fields = {
+            k: v for k, v in failed_events[0].items() if k not in ("event", "log_level")
+        }
+        assert set(fields) == {"provider_id", "count"}
+        assert fields["count"] == 1
+
+    def test_get_call_429_x3_counts_as_dropped_failed_other_calls_hydrated(
+        self, no_extra_credentials
+    ):
+        provider = _provider_with_agent()
+        end = _end()
+        items = [list_item("c1", 1_000, 2_000), list_item("c2", 1_000, 2_000)]
+
+        def get_side_effect(url, **kwargs):
+            if url.endswith("/c1"):
+                return _http_error_response(429)
+            return _detail_response("c2", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.return_value = _list_response(items)
+            mock_get.side_effect = get_side_effect
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.dropped_failed == 1
+        assert page.dropped_missing == 0
+        assert [c["call_id"] for c in page.calls] == ["c2"]
+        assert mock_sleep.call_args_list == [call(1), call(2)]
+
+    def test_get_call_401_raises_at_once_no_retry(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.return_value = _list_response([item])
+            mock_get.return_value = _http_error_response(401)
+            with pytest.raises(HTTPError):
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        mock_get.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_get_call_timeout_x3_counts_as_dropped_failed(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get, patch(
+            "tracer.services.observability_providers._sleep"
+        ) as mock_sleep:
+            mock_post.return_value = _list_response([item])
+            mock_get.side_effect = requests.Timeout("timed out")
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert page.dropped_failed == 1
+        assert mock_get.call_count == RETELL_MAX_ATTEMPTS
+        assert mock_sleep.call_args_list == [call(1), call(2)]
+
+    def test_get_call_non_json_body_counts_as_dropped_failed_others_hydrated(
+        self, no_extra_credentials
+    ):
+        """response.json() is inside the guarded region — a non-JSON 200
+        never propagates and never fails the page."""
+        provider = _provider_with_agent()
+        end = _end()
+        items = [list_item("c1", 1_000, 2_000), list_item("c2", 1_000, 2_000)]
+
+        def get_side_effect(url, **kwargs):
+            if url.endswith("/c1"):
+                response = Mock()
+                response.status_code = 200
+                response.raise_for_status = Mock()
+                response.json.side_effect = ValueError("not JSON")
+                return response
+            return _detail_response("c2", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response(items)
+            mock_get.side_effect = get_side_effect
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.dropped_failed == 1
+        assert page.dropped_missing == 0
+        assert [c["call_id"] for c in page.calls] == ["c2"]
+
+    def test_get_call_non_dict_body_counts_as_dropped_failed(
+        self, no_extra_credentials
+    ):
+        """A detail body that parses but isn't a dict is a failed
+        hydration, not a silently un-hydrated success."""
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            response = Mock()
+            response.status_code = 200
+            response.raise_for_status = Mock()
+            response.json.return_value = ["not", "a", "dict"]
+            mock_get.return_value = response
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert page.dropped_failed == 1
+        assert page.dropped_missing == 0
+
+    def test_missing_call_id_excluded_before_any_get_call(self, no_extra_credentials):
+        """No call_id means no get-call is ever attempted (never
+        ``.../get-call/None``, never a KeyError) — counted as dropped_missing:
+        permanent, like a Retell-confirmed unknown id, since no request can
+        ever make this item retrievable."""
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+        del item["call_id"]
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert page.dropped_missing == 1
+        assert page.dropped_failed == 0
+        mock_get.assert_not_called()
+
+    def test_unhashable_call_id_excluded_before_any_get_call(
+        self, no_extra_credentials
+    ):
+        """A call_id that isn't a plain string (so it could later collide with
+        the dedup dict, or simply isn't hashable) is guarded the same way as a
+        missing one: excluded before any request, counted as dropped_missing."""
+        provider = _provider_with_agent()
+        end = _end()
+        item = list_item("c1", 1_000, 2_000)
+        item["call_id"] = ["not", "hashable"]
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response([item])
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.calls == []
+        assert page.dropped_missing == 1
+        assert page.dropped_failed == 0
+        mock_get.assert_not_called()
+
+    def test_non_dict_list_item_excluded_without_raising(self, no_extra_credentials):
+        """A malformed envelope entry (not a dict) is counted and skipped
+        rather than raising AttributeError mid-hydration; well-formed items
+        around it still hydrate."""
+        provider = _provider_with_agent()
+        end = _end()
+        items = ["not-a-dict", list_item("c1", 1_000, 2_000)]
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response(items)
+            mock_get.return_value = _detail_response("c1", 1_000, 2_000)
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert page.dropped_failed == 1
+        assert [c["call_id"] for c in page.calls] == ["c1"]
+
+    def test_dedup_by_call_id_last_wins(self, no_extra_credentials):
+        provider = _provider_with_agent()
+        end = _end()
+        items = [list_item("c1", 1_000, 2_000), list_item("c1", 1_000, 2_000)]
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post, patch(
+            "tracer.services.observability_providers.requests.get"
+        ) as mock_get:
+            mock_post.return_value = _list_response(items)
+            mock_get.side_effect = [
+                _detail_response("c1", 1_000, 2_000, with_recording=False),
+                _detail_response("c1", 1_000, 2_000, with_recording=True),
+            ]
+            page = ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert len(page.calls) == 1
+        assert page.calls[0].get("recording_url") is not None
+
+
+@pytest.mark.django_db
+class TestRetellKeyResolution:
+    """§3 key resolution, transcribed literally; verified against real models."""
+
+    def _agent(
+        self,
+        test_project,
+        organization,
+        workspace,
+        *,
+        legacy_api_key="",
+        assistant_id="agent-real-1",
+    ):
+        from simulate.models.agent_definition import AgentDefinition
+        from tracer.models.observability_provider import ObservabilityProvider
+
+        provider = ObservabilityProvider.objects.create(
+            project=test_project,
+            provider=ProviderChoices.RETELL,
+            enabled=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        agent = AgentDefinition.objects.create(
+            agent_name="Retell Key Ranking Agent",
+            agent_type="voice",
+            inbound=True,
+            description="test agent for key ranking",
+            api_key=legacy_api_key,
+            assistant_id=assistant_id,
+            provider="retell",
+            organization=organization,
+            workspace=workspace,
+            observability_provider=provider,
+        )
+        return provider, agent
+
+    def test_versioned_credential_beats_legacy_row(
+        self, test_project, organization, workspace
+    ):
+        from simulate.models.agent_definition import ProviderCredentials
+
+        provider, agent = self._agent(test_project, organization, workspace)
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="legacy-row-key",
+        )
+        version = agent.create_version(description="v1", commit_message="v1")
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="versioned-key",
+        )
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == (
+            "Bearer versioned-key"
         )
 
-        mock_agent = Mock()
-        mock_agent.api_key = "valid-retell-key"
-        mock_agent.assistant_id = "agent-123"
-        mock_get_agent.return_value = mock_agent
+    def test_resolves_exactly_one_decrypt_with_multiple_candidate_rows(
+        self, test_project, organization, workspace
+    ):
+        """§5 forbids decrypting more than the chosen row — pin the count."""
+        from simulate.models.agent_definition import ProviderCredentials
 
-        response = Mock()
-        response.json.return_value = {
-            "items": [
-                {"call_id": f"call-{index}"}
-                for index in range(RETELL_CALL_HYDRATION_BOUND + 1)
-            ],
-            "has_more": False,
-        }
-        response.raise_for_status = Mock()
-        mock_requests_post.return_value = response
+        provider, agent = self._agent(test_project, organization, workspace)
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="legacy-row-key",
+        )
+        v1 = agent.create_version(description="v1", commit_message="v1")
+        ProviderCredentials.objects.create(
+            agent_version=v1,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="v1-key",
+        )
+        v2 = agent.create_version(description="v2", commit_message="v2")
+        ProviderCredentials.objects.create(
+            agent_version=v2,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="v2-key",
+        )
+        end = _end()
 
-        mock_provider = Mock()
-        mock_provider.id = "retell-provider-123"
+        with patch.object(
+            ProviderCredentials, "get_api_key", return_value="decrypted-key"
+        ) as mock_get_api_key, patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, None, end)
 
-        with pytest.raises(RuntimeError, match="hydration bound"):
-            ObservabilityService._fetch_retell_logs(mock_provider)
+        assert mock_get_api_key.call_count == 1
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == (
+            "Bearer decrypted-key"
+        )
 
-        mock_requests_get.assert_not_called()
+    def test_highest_agent_version_number_wins(
+        self, test_project, organization, workspace
+    ):
+        from simulate.models.agent_definition import ProviderCredentials
+
+        provider, agent = self._agent(test_project, organization, workspace)
+        v1 = agent.create_version(description="v1", commit_message="v1")
+        ProviderCredentials.objects.create(
+            agent_version=v1,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="v1-key",
+        )
+        v2 = agent.create_version(description="v2", commit_message="v2")
+        ProviderCredentials.objects.create(
+            agent_version=v2,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="v2-key",
+        )
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer v2-key"
+
+    def test_vapi_credential_row_is_ignored(self, test_project, organization, workspace):
+        from simulate.models.agent_definition import ProviderCredentials
+
+        provider, agent = self._agent(
+            test_project, organization, workspace, legacy_api_key="legacy-plaintext"
+        )
+        version = agent.create_version(description="v1", commit_message="v1")
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="vapi-key",
+        )
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == (
+            "Bearer legacy-plaintext"
+        )
+
+    def test_legacy_plaintext_field_is_last_resort(
+        self, test_project, organization, workspace
+    ):
+        provider, agent = self._agent(
+            test_project, organization, workspace, legacy_api_key="plain-legacy-field"
+        )
+        end = _end()
+
+        with patch(
+            "tracer.services.observability_providers.requests.post"
+        ) as mock_post:
+            mock_post.return_value = _list_response([])
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == (
+            "Bearer plain-legacy-field"
+        )
+
+    def test_decrypt_failure_raises_fixed_message_and_never_leaks_key(
+        self, test_project, organization, workspace
+    ):
+        from simulate.models.agent_definition import ProviderCredentials
+
+        provider, agent = self._agent(test_project, organization, workspace)
+        ProviderCredentials.objects.create(
+            agent_definition=agent,
+            provider_type=ProviderCredentials.ProviderType.RETELL,
+            api_key="never-should-appear-in-error",
+        )
+        end = _end()
+
+        with patch.object(
+            ProviderCredentials,
+            "get_api_key",
+            side_effect=ValueError("Failed to decrypt credentials."),
+        ):
+            with pytest.raises(RetellConfigurationError) as exc_info:
+                ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert str(exc_info.value) == "Retell credential could not be decrypted"
+        assert "never-should-appear-in-error" not in str(exc_info.value)
+
+    def test_missing_assistant_id_raises(self, test_project, organization, workspace):
+        provider, agent = self._agent(
+            test_project,
+            organization,
+            workspace,
+            legacy_api_key="some-key",
+            assistant_id="",
+        )
+        end = _end()
+
+        with pytest.raises(RetellConfigurationError, match="agent id"):
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+    def test_missing_key_raises_and_key_never_in_message(
+        self, test_project, organization, workspace
+    ):
+        provider, agent = self._agent(
+            test_project, organization, workspace, legacy_api_key=""
+        )
+        end = _end()
+
+        with pytest.raises(RetellConfigurationError) as exc_info:
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+        assert "key" in str(exc_info.value).lower()
+
+    def test_missing_linked_agent_raises_configuration_error(
+        self, test_project, organization, workspace
+    ):
+        from tracer.models.observability_provider import ObservabilityProvider
+
+        provider = ObservabilityProvider.objects.create(
+            project=test_project,
+            provider=ProviderChoices.RETELL,
+            enabled=True,
+            organization=organization,
+            workspace=workspace,
+        )
+        end = _end()
+
+        with pytest.raises(RetellConfigurationError, match="linked agent"):
+            ObservabilityService.fetch_retell_page(provider, None, end)
+
+
+class TestGetCallLogsNoLongerServesRetell:
+    def test_raises_not_implemented(self):
+        provider = Mock()
+        provider.provider = ProviderChoices.RETELL
+        with pytest.raises(NotImplementedError):
+            ObservabilityService.get_call_logs(provider, None, None)
 
 
 class TestFetchElevenLabsLogs:
@@ -1108,141 +1829,50 @@ class TestObservabilityServiceIntegration:
         assert headers.get("Authorization") == "Bearer test-vapi-api-key-12345"
 
     @patch("tracer.services.observability_providers.requests.post")
-    def test_fetch_retell_logs_returns_empty_when_no_agent(
+    def test_fetch_retell_page_raises_when_no_agent(
         self, mock_post, retell_provider_without_agent
     ):
-        """Verify _fetch_retell_logs returns empty list when no agent (graceful handling)."""
-        from tracer.services.observability_providers import ObservabilityService
+        """fetch_retell_page raises a typed configuration error with no linked agent."""
+        from datetime import UTC, datetime
 
-        result = ObservabilityService._fetch_retell_logs(retell_provider_without_agent)
+        from tracer.services.observability_providers import (
+            ObservabilityService,
+            RetellConfigurationError,
+        )
 
-        assert result == []
-        # Should not make HTTP request when validation fails
+        end = datetime(2026, 9, 3, 12, 0, 0, tzinfo=UTC)
+        with pytest.raises(RetellConfigurationError, match="linked agent"):
+            ObservabilityService.fetch_retell_page(
+                retell_provider_without_agent, None, end
+            )
+
+        # Should not make HTTP request when key resolution fails
         mock_post.assert_not_called()
 
     @patch("tracer.services.observability_providers.requests.post")
-    def test_fetch_retell_logs_makes_request_with_valid_agent(
+    def test_fetch_retell_page_makes_request_with_valid_agent(
         self, mock_post, retell_provider_with_agent
     ):
-        """Verify _fetch_retell_logs makes request when agent has API key."""
+        """fetch_retell_page makes an HTTP request when the agent has a key."""
+        from datetime import UTC, datetime
+
         from tracer.services.observability_providers import ObservabilityService
 
         mock_response = Mock()
-        mock_response.json.return_value = {"items": []}
+        mock_response.status_code = 200
+        mock_response.json.return_value = list_page([], has_more=False)
         mock_response.raise_for_status = Mock()
         mock_post.return_value = mock_response
 
-        result = ObservabilityService._fetch_retell_logs(retell_provider_with_agent)
+        end = datetime(2026, 9, 3, 12, 0, 0, tzinfo=UTC)
+        page = ObservabilityService.fetch_retell_page(
+            retell_provider_with_agent, None, end
+        )
 
         mock_post.assert_called_once()
         # Verify the Authorization header contains the API key
         call_args = mock_post.call_args
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("Authorization") == "Bearer test-retell-api-key-67890"
-
-
-class TestFetchLogsForProviderAuthErrors:
-    """Tests for fetch_logs_for_provider handling of HTTP 401/403 errors."""
-
-    @patch("tracer.utils.observability_provider.process_and_store_logs")
-    @patch("tracer.utils.observability_provider._update_last_fetched_at")
-    @patch("tracer.utils.observability_provider.ObservabilityService.get_call_logs")
-    @patch("tracer.utils.observability_provider.ObservabilityProvider.objects")
-    def test_retell_provider_skips_poll_after_initial_fetch(
-        self,
-        mock_provider_objects,
-        mock_get_call_logs,
-        mock_update_last_fetched_at,
-        mock_process_and_store_logs,
-    ):
-        """After watermark, Retell relies on webhook; scheduled poll is a no-op."""
-        from tracer.utils.observability_provider import fetch_logs_for_provider
-
-        mock_provider = Mock()
-        mock_provider.provider = ProviderChoices.RETELL
-        mock_provider.last_fetched_at = Mock()
-        mock_provider_objects.get.return_value = mock_provider
-
-        result = fetch_logs_for_provider(
-            provider_id="test-provider-id", end_time=Mock()
-        )
-
-        assert result == []
-        mock_get_call_logs.assert_not_called()
-        mock_update_last_fetched_at.assert_not_called()
-        mock_process_and_store_logs.assert_not_called()
-
-    @patch("tracer.utils.observability_provider.process_and_store_logs")
-    @patch("tracer.utils.observability_provider._update_last_fetched_at")
-    @patch("tracer.utils.observability_provider.ObservabilityService.get_call_logs")
-    @patch("tracer.utils.observability_provider.ObservabilityProvider.objects")
-    def test_retell_provider_polls_when_last_fetched_at_is_none(
-        self,
-        mock_provider_objects,
-        mock_get_call_logs,
-        mock_update_last_fetched_at,
-        mock_process_and_store_logs,
-    ):
-        """Retell bootstrap: null watermark means poll once, then webhook-primary."""
-        from tracer.utils.observability_provider import fetch_logs_for_provider
-
-        end_time = Mock()
-        mock_provider = Mock()
-        mock_provider.provider = ProviderChoices.RETELL
-        mock_provider.last_fetched_at = None
-        mock_provider_objects.get.return_value = mock_provider
-        mock_get_call_logs.return_value = []
-
-        result = fetch_logs_for_provider(
-            provider_id="test-provider-id", end_time=end_time
-        )
-
-        assert result == []
-        mock_get_call_logs.assert_called_once_with(
-            provider=mock_provider,
-            start_time=None,
-            end_time=end_time,
-        )
-        mock_update_last_fetched_at.assert_called_once_with(mock_provider, end_time)
-        mock_process_and_store_logs.assert_called_once_with([], mock_provider)
-
-    @patch("tracer.utils.observability_provider.process_and_store_logs")
-    @patch("tracer.utils.observability_provider._update_last_fetched_at")
-    @patch("tracer.utils.observability_provider.ObservabilityService.get_call_logs")
-    @patch("tracer.utils.observability_provider.ObservabilityProvider.objects")
-    def test_retell_provider_polls_when_start_time_override(
-        self,
-        mock_provider_objects,
-        mock_get_call_logs,
-        mock_update_last_fetched_at,
-        mock_process_and_store_logs,
-    ):
-        """Explicit start_time forces a Retell backfill poll even with a watermark."""
-        from tracer.utils.observability_provider import fetch_logs_for_provider
-
-        start_time = Mock()
-        end_time = Mock()
-        mock_provider = Mock()
-        mock_provider.provider = ProviderChoices.RETELL
-        mock_provider.last_fetched_at = Mock()
-        mock_provider_objects.get.return_value = mock_provider
-        mock_get_call_logs.return_value = []
-
-        result = fetch_logs_for_provider(
-            provider_id="test-provider-id",
-            start_time=start_time,
-            end_time=end_time,
-        )
-
-        assert result == []
-        mock_get_call_logs.assert_called_once_with(
-            provider=mock_provider,
-            start_time=start_time,
-            end_time=end_time,
-        )
-        mock_update_last_fetched_at.assert_called_once_with(mock_provider, end_time)
-        mock_process_and_store_logs.assert_called_once_with([], mock_provider)
-
-
-
+        assert page.calls == []
 

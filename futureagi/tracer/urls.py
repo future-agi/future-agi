@@ -32,10 +32,7 @@ from tracer.views.feed import (
 )
 from tracer.views.imagine_analysis import ImagineAnalysisView
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
-from tracer.views.observability_provider import (
-    ObservabilityProviderViewSet,
-    WebhookHandlerView,
-)
+from tracer.views.observability_provider import ObservabilityProviderViewSet
 from tracer.views.observation_span import ObservationSpanView
 from tracer.views.otlp import OTLPHealthView
 from tracer.views.project import ProjectView
@@ -165,11 +162,6 @@ urlpatterns = [
         "feed/integrations/linear/teams/",
         LinearTeamsView.as_view(),
         name="feed-linear-teams",
-    ),
-    path(
-        "webhook/",
-        WebhookHandlerView.as_view(),
-        name="webhook-handler",
     ),
     # Dashboard widget nested routes
     path(
