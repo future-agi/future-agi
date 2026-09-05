@@ -1327,29 +1327,26 @@ def contains_valid_link(text, **kwargs):
         dict: A dictionary containing the result of the link check and the reason for the result.
     """
     pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
-    link_match = re.search(pattern=pattern, string=text)
-    if link_match:
-        matched_url = link_match.group()
-        if matched_url:
-            standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except:
+    matched_urls = re.findall(pattern=pattern, string=text)
+    if not matched_urls:
+        return {"result": False, "reason": "no link found in output"}
+    invalid_urls = []
+    for matched_url in matched_urls:
+        standardized_url = _standardize_url(matched_url)
+        try:
+            response = requests.head(standardized_url)
+            if response.status_code == 200:
                 return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
+                    "result": True,
+                    "reason": f"link {matched_url} found in output and is valid",
                 }
-    return {"result": False, "reason": "no link found in output"}
+        except:
+            pass
+        invalid_urls.append(matched_url)
+    return {
+        "result": False,
+        "reason": f"link(s) {', '.join(invalid_urls)} found in output but none are valid",
+    }
 
 
 def no_invalid_links(text, **kwargs):
@@ -1363,29 +1360,27 @@ def no_invalid_links(text, **kwargs):
         dict: A dictionary containing the result of the link check and the reason for the result.
     """
     pattern = r"(?!.*@)(?:https?://)?(?:htp?://)?(?://?)?(?:http?://)?(?:www\.)?\S+\.\S+"
-    link_match = re.search(pattern=pattern, string=text)
-    if link_match:
-        matched_url = link_match.group()
-        if matched_url:
-            standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except:
-                return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
-                }
-    return {"result": True, "reason": "no invalid link found in output"}
+    matched_urls = re.findall(pattern=pattern, string=text)
+    if not matched_urls:
+        return {"result": True, "reason": "no link found in output"}
+    invalid_urls = []
+    for matched_url in matched_urls:
+        standardized_url = _standardize_url(matched_url)
+        try:
+            response = requests.head(standardized_url)
+            if response.status_code != 200:
+                invalid_urls.append(matched_url)
+        except:
+            invalid_urls.append(matched_url)
+    if invalid_urls:
+        return {
+            "result": False,
+            "reason": f"link(s) {', '.join(invalid_urls)} found in output but are invalid",
+        }
+    return {
+        "result": True,
+        "reason": f"all {len(matched_urls)} link(s) found in output are valid",
+    }
 
 
 def api_call(
