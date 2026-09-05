@@ -137,6 +137,48 @@ export const useGetNodeDetail = (graphId, versionId, nodeId, options = {}) =>
   });
 
 /**
+ * Runs a node's registered runner with test data (possibly-unsaved config
+ * plus sample inputs) and returns its output. Never persists anything —
+ * running a test has no effect on the node, the draft, or the saved
+ * workflow, so it can be called for a node being edited before it's saved.
+ *
+ * @param {Object} payload
+ * @param {string} payload.graphId - Graph ID
+ * @param {string} payload.versionId - Version ID
+ * @param {string} payload.nodeId - Node ID
+ * @param {Object} [payload.promptTemplate] - Unsaved prompt form values
+ *   (llm_prompt nodes only). Same shape as the node's saved prompt_template.
+ *   Omit to test the node's last-saved config.
+ * @param {Object} [payload.inputs] - Sample input port values (routing key -> value)
+ * @returns {Promise<{status: "SUCCESS"|"FAILED", outputs: Object, error: string|null}>}
+ */
+export const testNodeApi = async (payload) => {
+  const res = await axios.post(
+    endpoints.agentPlayground.testNode(
+      payload.graphId,
+      payload.versionId,
+      payload.nodeId,
+    ),
+    {
+      prompt_template: payload.promptTemplate ?? null,
+      inputs: payload.inputs ?? {},
+    },
+  );
+  return res.data?.result;
+};
+
+/**
+ * React Query mutation hook for test-running a node before saving it.
+ * @param {object} options - useMutation options
+ */
+export const useTestNode = (options = {}) =>
+  useMutation({
+    mutationFn: testNodeApi,
+    meta: { errorHandled: true },
+    ...options,
+  });
+
+/**
  * Fetches possible edge mappings for a node (available variables from connected nodes).
  * @param {string} graphId
  * @param {string} versionId

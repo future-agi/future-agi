@@ -40,6 +40,7 @@ vi.mock("../usePromptNodeForm", () => ({
 
 vi.mock("src/api/agent-playground/agent-playground", () => ({
   useGetPromptVersionsInfinite: () => ({ isLoading: false }),
+  useTestNode: () => ({ mutateAsync: vi.fn() }),
 }));
 
 vi.mock("src/components/custom-model-options/CreateResponseSchema", () => ({

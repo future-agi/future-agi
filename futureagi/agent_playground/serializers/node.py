@@ -407,6 +407,32 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         )
 
 
+class TestNodeRequestSerializer(serializers.Serializer):
+    """Serializer for POST /nodes/{node_id}/test/ — test a node before saving.
+
+    ``prompt_template`` carries the (possibly unsaved) prompt form values for
+    llm_prompt nodes, using the same shape accepted when creating/updating a
+    node. It is optional — omitting it tests the node's last-saved config.
+    """
+
+    prompt_template = PromptTemplateDataSerializer(
+        required=False, allow_null=True, default=None
+    )
+    inputs = serializers.JSONField(
+        required=False,
+        default=dict,
+        help_text="Sample input port values (routing key -> value) used to fill the node's variables for this test run.",
+    )
+
+
+class TestNodeResponseSerializer(serializers.Serializer):
+    """Serializer for the response of a node test run."""
+
+    status = serializers.ChoiceField(choices=["SUCCESS", "FAILED"])
+    outputs = serializers.JSONField()
+    error = serializers.CharField(allow_null=True)
+
+
 class NodeWriteSerializer(serializers.Serializer):
     """Serializer for writing node data in requests."""
 
