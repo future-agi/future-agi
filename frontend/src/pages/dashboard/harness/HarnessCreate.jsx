@@ -24,8 +24,6 @@ import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
-import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
-import { STATUS_TYPES } from "src/utils/statusUtils";
 import {
   createHarnessJob,
   listHarnessJobs,
@@ -67,8 +65,7 @@ export const canStartEndToEndRun = ({
   submitting,
   checking,
   uploadingSecretFile,
-}) =>
-  hasSource && !submitting && !checking && !uploadingSecretFile;
+}) => hasSource && !submitting && !checking && !uploadingSecretFile;
 
 function Section({ title, description, children }) {
   return (
@@ -149,6 +146,110 @@ Section.propTypes = {
   children: PropTypes.node,
 };
 
+// The three readiness gates as one rail: scan the source, provide the missing values,
+// validate that they work. It uses the same glyph vocabulary as the run stepper on the detail
+// page — a filled check for a cleared gate, a cross for a failed one — so "stage state" reads
+// the same across the product rather than as a second, wizard-style stepper.
+const STEP_GLYPH = {
+  done: { icon: "solar:check-circle-bold", color: "accent.pass" },
+  active: { icon: "solar:record-circle-bold", color: "accent.brand" },
+  error: { icon: "solar:close-circle-bold", color: "accent.fail" },
+  pending: { icon: "solar:record-circle-linear", color: "text.disabled" },
+};
+
+function ReadinessSteps({ steps }) {
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${steps.length}, 1fr)`,
+        alignItems: "start",
+      }}
+    >
+      {steps.map((step, index) => {
+        const glyph = STEP_GLYPH[step.state] || STEP_GLYPH.pending;
+        const leftDone = index > 0 && steps[index - 1].state === "done";
+        const rightDone = step.state === "done";
+        return (
+          <Box
+            key={step.label}
+            sx={{ position: "relative", textAlign: "center", px: 0.75 }}
+          >
+            {index > 0 && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 11,
+                  left: 0,
+                  right: "50%",
+                  mr: 1.5,
+                  height: 2,
+                  borderRadius: 1,
+                  bgcolor: leftDone ? "accent.pass" : "divider",
+                }}
+              />
+            )}
+            {index < steps.length - 1 && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  top: 11,
+                  left: "50%",
+                  right: 0,
+                  ml: 1.5,
+                  height: 2,
+                  borderRadius: 1,
+                  bgcolor: rightDone ? "accent.pass" : "divider",
+                }}
+              />
+            )}
+            <Box
+              sx={{
+                position: "relative",
+                display: "inline-flex",
+                bgcolor: "background.paper",
+                px: 0.5,
+              }}
+            >
+              <Iconify icon={glyph.icon} color={glyph.color} width={22} />
+            </Box>
+            <Typography
+              variant="caption"
+              sx={{ display: "block", mt: 0.5, fontWeight: 600 }}
+            >
+              {step.label}
+            </Typography>
+            {step.sub && (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  color:
+                    step.state === "error" ? "accent.fail" : "text.disabled",
+                  fontSize: 11,
+                  lineHeight: 1.3,
+                }}
+              >
+                {step.sub}
+              </Typography>
+            )}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+ReadinessSteps.propTypes = {
+  steps: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      sub: PropTypes.string,
+      state: PropTypes.oneOf(["done", "active", "error", "pending"]).isRequired,
+    }),
+  ).isRequired,
+};
+
 export default function HarnessCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -191,6 +292,11 @@ export default function HarnessCreate() {
   const [additionalEgressDomains, setAdditionalEgressDomains] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
+  // The result of the second readiness gate: whether every provided credential actually
+  // works, not merely that a value was typed. `signature` pins the result to the inputs it
+  // was taken against, so any later edit marks it stale without a verdict having to be wrong.
+  const [validation, setValidation] = useState(null);
+  const [validating, setValidating] = useState(false);
   const [error, setError] = useState("");
 
   // Switching source invalidates a preflight taken against the other one.
@@ -343,6 +449,31 @@ export default function HarnessCreate() {
     },
   });
 
+  // A fingerprint of everything a validation verdict depends on. When it changes, the last
+  // verdict is about inputs that no longer exist, so the UI treats it as stale rather than
+  // clearing it from a dozen different edit handlers.
+  const credentialSignature = useMemo(
+    () =>
+      JSON.stringify({
+        environmentValues,
+        configurationValues,
+        secretFileRefs,
+        sourceMode,
+        sourceId: uploadedSource?.source_id || "",
+        githubRepository,
+        githubVisibility,
+      }),
+    [
+      environmentValues,
+      configurationValues,
+      secretFileRefs,
+      sourceMode,
+      uploadedSource,
+      githubRepository,
+      githubVisibility,
+    ],
+  );
+
   const inspect = async () => {
     setChecking(true);
     setError("");
@@ -356,6 +487,58 @@ export default function HarnessCreate() {
       setError(errorMessage(requestError));
     } finally {
       setChecking(false);
+    }
+  };
+
+  // The second gate. Preflight says which credentials are required; this confirms the ones
+  // that were provided actually work before a run is spent on them. It runs through the same
+  // contracted preflight endpoint today, reading its per-requirement status; the moment a live
+  // credential-check endpoint reports a real "invalid" verdict, the `invalid` branch lights up
+  // and the per-row badge and pipeline reflect it with no further UI change.
+  const validate = async () => {
+    setValidating(true);
+    setError("");
+    try {
+      const checked = await preflightHarnessJob(
+        hostedPayload(pendingEnvironmentRefs()),
+      );
+      setPreflight(checked);
+      setPreflightDirty(false);
+      const checkedRequirements = checked?.credentials?.requirements || [];
+      const results = {};
+      checkedRequirements.forEach((item) => {
+        if (!item.required) return;
+        const name = item.environment_name;
+        const provided =
+          Boolean(secretFileRefs[name]) ||
+          Boolean(
+            String(
+              credentialValue(environmentValues, configurationValues, name) ||
+                "",
+            ).trim(),
+          );
+        if (item.validation_status === "invalid") {
+          results[name] = {
+            status: "invalid",
+            detail:
+              item.validation_detail ||
+              "The provider rejected this credential.",
+          };
+        } else if (item.status !== "missing" || provided) {
+          results[name] = { status: "valid" };
+        } else {
+          results[name] = { status: "needs_value" };
+        }
+      });
+      const outcomes = Object.values(results);
+      const overall =
+        outcomes.length > 0 &&
+        outcomes.every((result) => result.status === "valid");
+      setValidation({ signature: credentialSignature, results, overall });
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -479,6 +662,61 @@ export default function HarnessCreate() {
     ) && unsatisfiedChoices.length === 0;
   const requiredInputCount =
     missingRequirements.length + unsatisfiedChoices.length;
+  // Whether the run has any credential that has to be proven at all — with none, the second
+  // gate is not a prerequisite and the run is free to start once a source is set.
+  const hasRequiredCredentials = requirements.some((item) => item.required);
+  // A verdict taken against inputs that have since changed is stale, not wrong: it is kept on
+  // screen (so the findings do not vanish) but no longer clears the run.
+  const validationStale = Boolean(
+    validation && validation.signature !== credentialSignature,
+  );
+  const validationPassed = Boolean(validation?.overall) && !validationStale;
+  const validationFailed =
+    Boolean(validation) && !validation.overall && !validationStale;
+  const failedValidationCount = validation
+    ? Object.values(validation.results).filter(
+        (result) => result.status !== "valid",
+      ).length
+    : 0;
+  // The run is gated on the second check only when there is something to check.
+  const runReady = !hasRequiredCredentials || validationPassed;
+  const requiredCount = requirements.filter((item) => item.required).length;
+  const validateState = validating
+    ? "active"
+    : validationStale
+      ? "active"
+      : validationFailed
+        ? "error"
+        : validationPassed
+          ? "done"
+          : "pending";
+  const readinessSteps = [
+    {
+      label: "Scan",
+      sub: `${preflight?.credentials?.scanned_files || 0} files · ${requiredCount} required`,
+      state: preflightDirty ? "active" : "done",
+    },
+    {
+      label: "Provide values",
+      sub: requirementsConfigured
+        ? "All provided"
+        : `${requiredInputCount} to add`,
+      state: requirementsConfigured ? "done" : "active",
+    },
+    {
+      label: "Validate",
+      sub: validating
+        ? "Checking…"
+        : validationStale
+          ? "Something changed"
+          : validationFailed
+            ? `${failedValidationCount} failed`
+            : validationPassed
+              ? "All valid"
+              : "Not run yet",
+      state: validateState,
+    },
+  ];
   // Only "missing" rows take a value; everything else is read-only detail that
   // would otherwise bury them at equal visual weight.
   const requirementsNeedingValue = requirements.filter(
@@ -514,6 +752,36 @@ export default function HarnessCreate() {
   const renderCredentialRow = (item, index) => {
     const isSecret = item.kind === "secret";
     const revealed = revealedSecrets.has(item.environment_name);
+    // The per-row verdict from the last validation, shown only for credentials that are
+    // actually required and only while the verdict still matches the current inputs.
+    const validationResult =
+      validation && !validationStale
+        ? validation.results?.[item.environment_name]
+        : null;
+    const showBadge =
+      item.required && (validating || Boolean(validationResult));
+    const badge = validating
+      ? { icon: null, label: "Checking…", color: "text.secondary", busy: true }
+      : validationResult?.status === "valid"
+        ? {
+            icon: "solar:check-circle-bold",
+            label: "Valid",
+            color: "accent.pass",
+          }
+        : validationResult?.status === "invalid"
+          ? {
+              icon: "solar:close-circle-bold",
+              label: "Invalid",
+              color: "accent.fail",
+              detail: validationResult.detail,
+            }
+          : validationResult?.status === "needs_value"
+            ? {
+                icon: "solar:minus-circle-linear",
+                label: "Needs value",
+                color: "text.secondary",
+              }
+            : null;
     return (
       <Stack
         key={item.id}
@@ -597,6 +865,28 @@ export default function HarnessCreate() {
               : undefined
           }
         />
+        {showBadge && badge && (
+          <Box
+            title={badge.detail || undefined}
+            sx={{
+              width: { md: 132 },
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 0.75,
+              color: badge.color,
+            }}
+          >
+            {badge.busy ? (
+              <CircularProgress size={13} color="inherit" />
+            ) : (
+              <Iconify icon={badge.icon} width={16} />
+            )}
+            <Typography variant="caption" fontWeight={600} color="inherit">
+              {badge.label}
+            </Typography>
+          </Box>
+        )}
       </Stack>
     );
   };
@@ -912,32 +1202,68 @@ export default function HarnessCreate() {
                 </Stack>
 
                 {preflight && (
-                  <Stack spacing={1.5} sx={{ mt: 2 }}>
-                    <Stack direction="row" spacing={1} alignItems="center">
-                      <StatusChip
-                        status={
-                          // Stale beats ready: a result from before the last edit should not
-                          // claim the run is good to go.
-                          preflightDirty
-                            ? null
-                            : requirementsConfigured
-                              ? STATUS_TYPES.PASS
-                              : STATUS_TYPES.RUNNING
+                  <Stack spacing={1.5} sx={{ mt: 2.5 }}>
+                    <ReadinessSteps steps={readinessSteps} />
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "flex", alignItems: "center", gap: 0.75 }}
+                    >
+                      <Iconify icon="solar:magnifer-linear" width={13} />
+                      {preflight.credentials?.scanned_files || 0} files scanned
+                      · detected{" "}
+                      {(preflight.credentials?.detected_connectors || []).join(
+                        ", ",
+                      ) || "connector discovered after checkout"}
+                    </Typography>
+                    <Stack
+                      direction="row"
+                      spacing={1.5}
+                      alignItems="center"
+                      flexWrap="wrap"
+                      useFlexGap
+                    >
+                      <Button
+                        variant="contained"
+                        size="small"
+                        disabled={
+                          validating ||
+                          checking ||
+                          !hasRequiredCredentials ||
+                          !requirementsConfigured
                         }
-                        label={
-                          preflightDirty
-                            ? "Something changed — check again"
-                            : requirementsConfigured
-                              ? "Ready to run"
-                              : `${requiredInputCount} credential choice${requiredInputCount === 1 ? "" : "s"} needed`
+                        onClick={validate}
+                        startIcon={
+                          validating ? (
+                            <CircularProgress size={14} color="inherit" />
+                          ) : (
+                            <Iconify
+                              icon="solar:shield-check-linear"
+                              width={16}
+                            />
+                          )
                         }
-                      />
+                      >
+                        {validating
+                          ? "Validating…"
+                          : validation
+                            ? "Re-validate"
+                            : "Validate credentials"}
+                      </Button>
                       <Typography variant="caption" color="text.secondary">
-                        {preflight.credentials?.scanned_files || 0} files
-                        scanned ·{" "}
-                        {(
-                          preflight.credentials?.detected_connectors || []
-                        ).join(", ") || "connector discovered after checkout"}
+                        {!hasRequiredCredentials
+                          ? "This agent needs no credentials — nothing to validate."
+                          : !requirementsConfigured
+                            ? "Add the missing values above, then validate that every credential works."
+                            : validating
+                              ? "Checking each credential against its provider…"
+                              : validationStale
+                                ? "Inputs changed since the last check — validate again."
+                                : validationFailed
+                                  ? `${failedValidationCount} credential${failedValidationCount === 1 ? "" : "s"} did not validate. Fix, then re-validate.`
+                                  : validationPassed
+                                    ? "Every credential validated — ready to run."
+                                    : "Confirm every credential works before you start the run."}
                       </Typography>
                     </Stack>
                     {(preflight.packaging?.notes || []).map((note) => (
@@ -1217,7 +1543,9 @@ export default function HarnessCreate() {
                           }}
                         />
                       </Box>
-                      {["connect_only", "provider_import"].includes(providerMode) ? (
+                      {["connect_only", "provider_import"].includes(
+                        providerMode,
+                      ) ? (
                         <TextField
                           size="small"
                           label={
@@ -1238,16 +1566,18 @@ export default function HarnessCreate() {
                         />
                       ) : (
                         <Alert severity="info" variant="outlined">
-                          The repository must include alk.yaml with explicit provision and
-                          destroy commands. ALK supplies world URLs and the provider API key;
-                          your code owns the complete agent definition.
+                          The repository must include alk.yaml with explicit
+                          provision and destroy commands. ALK supplies world
+                          URLs and the provider API key; your code owns the
+                          complete agent definition.
                         </Alert>
                       )}
                       {!providerApiKeyConfigured && (
                         <Alert severity="warning" variant="outlined">
-                          Add {providerApiKeyName} in Environment values and click
-                          Use values before starting. ALK stores it as a run-scoped
-                          secret and never writes it into the job or bundle.
+                          Add {providerApiKeyName} in Environment values and
+                          click Use values before starting. ALK stores it as a
+                          run-scoped secret and never writes it into the job or
+                          bundle.
                         </Alert>
                       )}
                     </>
@@ -1296,7 +1626,9 @@ export default function HarnessCreate() {
                       submitting,
                       checking,
                       uploadingSecretFile,
-                    }) || !providerConnectionReady
+                    }) ||
+                    !providerConnectionReady ||
+                    !runReady
                   }
                   onClick={run}
                   startIcon={
@@ -1314,7 +1646,15 @@ export default function HarnessCreate() {
                   color="text.secondary"
                   sx={{ alignSelf: "center" }}
                 >
-                  Readiness is checked automatically.
+                  {!hasSource
+                    ? "Select an agent source to start."
+                    : !runReady
+                      ? validationFailed
+                        ? "Fix the credentials that did not validate, then re-validate."
+                        : validationStale
+                          ? "Inputs changed — re-validate before running."
+                          : "Validate every credential before you run."
+                      : "Readiness is re-checked automatically when you start."}
                 </Typography>
               </Stack>
             </Stack>
