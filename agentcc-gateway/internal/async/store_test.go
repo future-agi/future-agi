@@ -118,3 +118,74 @@ func TestStore_Count(t *testing.T) {
 		t.Errorf("Count = %d, want 2", s.Count())
 	}
 }
+
+func TestStore_GetDoesNotLeakCancelFn(t *testing.T) {
+	s := NewStore()
+	s.Put(&Job{
+		ID:       "job-1",
+		Status:   StatusProcessing,
+		CancelFn: func() {},
+	})
+
+	got := s.Get("job-1")
+	if got == nil {
+		t.Fatal("expected job snapshot, got nil")
+	}
+	if got.CancelFn != nil {
+		t.Fatal("Get snapshot leaked CancelFn")
+	}
+	got = s.GetForOrg("job-1", "")
+	if got == nil || got.CancelFn != nil {
+		t.Fatal("GetForOrg snapshot leaked CancelFn")
+	}
+}
+
+func TestStore_CancelInvokesLiveCancelFn(t *testing.T) {
+	s := NewStore()
+	called := false
+	s.Put(&Job{
+		ID:     "job-1",
+		Status: StatusProcessing,
+		CancelFn: func() {
+			called = true
+		},
+	})
+
+	// The snapshot path used by GET (and previously by DELETE) must not
+	// be enough to cancel: CancelFn is stripped.
+	snap := s.Get("job-1")
+	if snap == nil {
+		t.Fatal("expected snapshot")
+	}
+	if snap.CancelFn != nil {
+		t.Fatal("Get snapshot leaked CancelFn")
+	}
+
+	if !s.Cancel("job-1") {
+		t.Fatal("Cancel returned false for existing job")
+	}
+	if !called {
+		t.Fatal("live CancelFn was not invoked")
+	}
+	if s.Get("job-1") != nil {
+		t.Fatal("job should be removed after Cancel")
+	}
+}
+
+func TestStore_CancelMissing(t *testing.T) {
+	s := NewStore()
+	if s.Cancel("missing") {
+		t.Fatal("expected false for missing job")
+	}
+}
+
+func TestStore_CancelQueuedWithoutCancelFn(t *testing.T) {
+	s := NewStore()
+	s.Put(&Job{ID: "job-1", Status: StatusQueued})
+	if !s.Cancel("job-1") {
+		t.Fatal("Cancel queued job should succeed")
+	}
+	if s.Get("job-1") != nil {
+		t.Fatal("job should be deleted")
+	}
+}
