@@ -1320,6 +1320,9 @@ def contains_valid_link(text, **kwargs):
     """
     Check if the text contains a valid link.
 
+    Every link in the text is checked; the result is True as soon as one of
+    them resolves, so a valid link is found regardless of its position.
+
     Args:
         text (str): The text string to check for a valid link.
 
@@ -1352,6 +1355,9 @@ def contains_valid_link(text, **kwargs):
 def no_invalid_links(text, **kwargs):
     """
     Check for invalid links in the text.
+
+    Every link in the text is checked; the result is False if any one of them
+    fails to resolve, not just the first link found.
 
     Args:
         text (str): The text string to check for invalid links.
