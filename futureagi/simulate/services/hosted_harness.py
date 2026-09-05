@@ -195,8 +195,10 @@ def register_attempt(
         job.state = HostedHarnessJob.State.PROVISIONING
         # A retry is a fresh active attempt. Do not keep presenting the previous
         # attempt's terminal state while Daytona is launching (or even running)
-        # the replacement guest.
-        job.current_stage = "queued"
+        # the replacement guest. Platform-side pre-guest progress (source
+        # acquisition) is kept: the gateway records it just before this call.
+        if job.current_stage not in {"queued", "acquiring_source", "understanding_agent"}:
+            job.current_stage = "queued"
         job.failure = None
         job.terminal_at = None
         job.deadline_at = runnable_deadline
