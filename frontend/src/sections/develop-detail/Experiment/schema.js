@@ -311,6 +311,10 @@ export const getNewExperimentValidationSchema = (
                 .object({
                   toolChoice: z.string().default("auto"),
                   tools: z.array(z.any()),
+                  // Maps each prompt/agent variable to the dataset column that
+                  // feeds it, keyed by variable name. Lives here so it reaches
+                  // populate_placeholders through prompt_config.configuration.
+                  variableMapping: z.record(z.string()).optional().default({}),
                 })
                 .optional(),
               outputFormat: z.enum(["string", "json"]).optional(),
@@ -325,7 +329,7 @@ export const getNewExperimentValidationSchema = (
                 .default(0)
                 .refine((val) => val === 0, {
                   message:
-                    "Variable mismatch: The prompt variables don't match the dataset columns.",
+                    "Map every prompt variable to a dataset column before running.",
                 }),
             }),
             z.object({
