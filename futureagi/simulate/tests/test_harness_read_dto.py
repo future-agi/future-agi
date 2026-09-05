@@ -47,6 +47,13 @@ from simulate.services.hosted_harness_gateway import (
 )
 
 
+_LIVEKIT_REFS = {
+    "LIVEKIT_URL": {"key": "harness-livekit_url", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
+    "LIVEKIT_API_KEY": {"key": "harness-livekit_api_key", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
+    "LIVEKIT_API_SECRET": {"key": "harness-livekit_api_secret", "manager": "platform-vault", "purpose": "target_provider", "version": "1"},
+}
+
+
 def _v1_payload(**overrides):
     payload = {
         "schema_version": "futureagi.harness-job.v1",
@@ -57,7 +64,11 @@ def _v1_payload(**overrides):
             "commit_sha": "a" * 40,
             "visibility": "public",
         },
-        "agent": {"connector": "livekit", "config": {}, "secret_refs": {}},
+        "agent": {
+            "connector": "livekit",
+            "config": {},
+            "secret_refs": _LIVEKIT_REFS,
+        },
         "scenario_count": 2,
         "seed": 42,
         "runtime": {

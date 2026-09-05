@@ -267,7 +267,52 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"agent": "remote sources must own their target credentials"}
             )
+        if attrs["source"]["kind"] != "remote":
+            missing = _missing_provider_credentials(attrs["agent"])
+            if missing:
+                raise serializers.ValidationError(
+                    {
+                        "agent": {
+                            "secret_refs": (
+                                f"{connector} target needs {', '.join(missing)} in "
+                                "secret_refs; without them the agent can never register "
+                                "and the run fails after the 180s startup check"
+                            )
+                        }
+                    }
+                )
         return attrs
+
+
+_LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+_CONNECTOR_ALIASES = {
+    "livekit": _LIVEKIT_ALIASES,
+    "vapi": ("VAPI_API_KEY",),
+    "retell": ("RETELL_API_KEY",),
+}
+
+
+def _missing_provider_credentials(agent):
+    """Aliases the connector needs that the job does not carry.
+
+    Mirrors the gateway's connector resolution: ``auto`` is satisfied by any one complete
+    provider family, and ``LIVEKIT_URL`` may also be pinned as ``config.livekit_url``.
+    """
+    present = {str(name).upper() for name in (agent.get("secret_refs") or {})}
+    config = agent.get("config") or {}
+    if str(config.get("livekit_url") or config.get("LIVEKIT_URL") or "").strip():
+        present.add("LIVEKIT_URL")
+    connector = agent["connector"]
+    if connector == "auto":
+        if any(
+            all(alias in present for alias in aliases)
+            for aliases in _CONNECTOR_ALIASES.values()
+        ):
+            return []
+        return ["one complete provider family: " + " | ".join(
+            "+".join(aliases) for aliases in _CONNECTOR_ALIASES.values()
+        )]
+    return [alias for alias in _CONNECTOR_ALIASES[connector] if alias not in present]
 
 
 class HarnessJobActionSerializer(serializers.Serializer):
