@@ -553,6 +553,152 @@ class TestFallbackPricing:
 
 
 # =============================================================================
+# Unit Tests - Unrecognized / Placeholder Pricing Are Not Silent $0
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestUnrecognizedPricingNotSilentZero:
+    """Regression tests: pricing that is present but not priceable must NOT be
+    billed as a silent $0 with source "available_models".
+
+    Two root causes are covered:
+      (A) An unrecognized-but-present pricing structure (numeric values, but no
+          key shape the cost calculator understands) used to fall through to a
+          $0 cost while still reporting source "available_models" -- making it
+          indistinguishable from a legitimate $0. It must now fall back to a
+          real estimate and stamp a detectable source ("default"/"fallback").
+      (B) Placeholder / non-numeric pricing (e.g. azure_ai "details" strings or
+          together_ai "pay-per-token" strings) is returned as a non-None dict by
+          get_model_pricing, so the fallback never runs. get_model_pricing must
+          treat such pricing as missing (return None) so a real estimate applies.
+    """
+
+    UNRECOGNIZED_PRICING_MOD = (
+        "agentic_eval.core_evals.run_prompt.model_pricing.get_model_pricing"
+    )
+
+    # ---- (A) unrecognized-but-present numeric pricing ----------------------
+
+    def test_unrecognized_pricing_falls_back_not_silent_zero(self, monkeypatch):
+        """Unrecognized (but numeric) pricing -> fallback estimate, detectable source.
+
+        Fails on old code: old behavior returned total_cost 0.0 with
+        pricing_source "available_models".
+        """
+        # e.g. an embedding-style entry that only carries an input price, which
+        # the token cost path (needs BOTH input and output) does not recognize.
+        unrecognized = {"input_per_1M_tokens": 5.0}
+        monkeypatch.setattr(self.UNRECOGNIZED_PRICING_MOD, lambda name: unrecognized)
+
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("some-model-with-weird-pricing", token_usage)
+
+        # The whole point of the fix: not a silent $0 attributed to the catalog.
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+        # Should equal the standard default fallback estimate.
+        expected_prompt = round(
+            (1000 / 1_000_000) * DEFAULT_FALLBACK_PRICING["input_per_1M_tokens"], 6
+        )
+        expected_completion = round(
+            (500 / 1_000_000) * DEFAULT_FALLBACK_PRICING["output_per_1M_tokens"], 6
+        )
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == expected_completion
+
+    def test_unrecognized_pricing_honors_custom_fallback(self, monkeypatch):
+        """Custom fallback pricing is used (source 'fallback') on the unrecognized path."""
+        monkeypatch.setattr(
+            self.UNRECOGNIZED_PRICING_MOD, lambda name: {"per_1000_pairs": 2.0}
+        )
+        custom_fallback = {"input_per_1M_tokens": 1.0, "output_per_1M_tokens": 2.0}
+
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost(
+            "reranker-weird", token_usage, fallback_pricing=custom_fallback
+        )
+
+        assert result["pricing_source"] == "fallback"
+        assert result["prompt_cost"] == round((1000 / 1_000_000) * 1.0, 6)
+        assert result["completion_cost"] == round((500 / 1_000_000) * 2.0, 6)
+
+    def test_genuine_zero_pricing_stays_available_models(self, monkeypatch):
+        """A real $0 (recognized zero pricing) must stay source 'available_models'.
+
+        This is the distinction the fix preserves: a true $0 is detectable
+        apart from a missed/unrecognized $0.
+        """
+        monkeypatch.setattr(
+            self.UNRECOGNIZED_PRICING_MOD,
+            lambda name: {"input_per_1M_tokens": 0.0, "output_per_1M_tokens": 0.0},
+        )
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("free-model", token_usage)
+
+        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == 0.0
+
+    # ---- (B) placeholder / non-numeric pricing in the real catalog ---------
+
+    def test_has_numeric_pricing_helper(self):
+        """_has_numeric_pricing distinguishes priceable from placeholder dicts."""
+        from agentic_eval.core_evals.run_prompt.model_pricing import (
+            _has_numeric_pricing,
+        )
+
+        assert _has_numeric_pricing({"input_per_1M_tokens": 5, "output_per_1M_tokens": 15})
+        assert _has_numeric_pricing({"per_image": 0.04})
+        assert _has_numeric_pricing({"input_per_1M_tokens": 0.0})  # real $0 counts
+        # Placeholders have no numeric values:
+        assert not _has_numeric_pricing({"details": "Varies by deployment and usage"})
+        assert not _has_numeric_pricing({"per_1M_tokens": "pay-per-token"})
+        assert not _has_numeric_pricing({"per_image": "N/A"})
+        # bool must not count as numeric:
+        assert not _has_numeric_pricing({"free": True})
+
+    def test_azure_ai_details_placeholder_returns_none(self):
+        """azure_ai '{details: ...}' placeholder pricing -> None (so fallback runs)."""
+        assert get_model_pricing("azure_ai/mistral-large") is None
+
+    def test_together_ai_string_placeholder_returns_none(self):
+        """together_ai '{per_1M_tokens: "pay-per-token"}' placeholder -> None."""
+        assert get_model_pricing("together-ai-8.1b-21b") is None
+
+    def test_azure_ai_placeholder_model_routes_to_fallback(self):
+        """A catalogued placeholder model now yields a real estimate, not silent $0."""
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("azure_ai/mistral-large", token_usage)
+
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+    def test_together_ai_placeholder_model_routes_to_fallback(self):
+        """together_ai string-priced model routes to fallback estimate."""
+        token_usage = {"prompt_tokens": 1000, "completion_tokens": 500}
+        result = calculate_total_cost("together-ai-8.1b-21b", token_usage)
+
+        assert result["pricing_source"] != "available_models"
+        assert result["pricing_source"] == "default"
+        assert result["total_cost"] > 0.0
+
+    def test_real_pricing_unchanged(self):
+        """Sanity: a normally-priced model is unaffected by the fix."""
+        assert get_model_pricing("gpt-4o") == {
+            "input_per_1M_tokens": 5,
+            "output_per_1M_tokens": 15,
+        }
+        result = calculate_total_cost(
+            "gpt-4o", {"prompt_tokens": 1000, "completion_tokens": 500}
+        )
+        assert result["pricing_source"] == "available_models"
+        assert result["total_cost"] == round((1000 / 1_000_000) * 5 + (500 / 1_000_000) * 15, 6)
+
+
+# =============================================================================
 # Unit Tests - Image Model Name Parsing and Cost Calculation
 # =============================================================================
 
