@@ -3230,10 +3230,21 @@ def calculate_matthews_correlation(output, expected, **kwargs):
         else:
             mcc = (tp * tn - fp * fn) / denom
     else:
-        # Multiclass MCC (using confusion matrix)
-        n = len(labels)
-        correct = sum(1 for p, l in zip(preds, labels) if p == l)
-        mcc = (correct / n - 1 / len(categories)) / (1 - 1 / len(categories)) if len(categories) > 1 else 0.0
+        # Multiclass MCC via the confusion-matrix formulation (Gorodkin's R_K),
+        # equivalent to sklearn.metrics.matthews_corrcoef:
+        #   MCC = (c*s - sum_k p_k*t_k)
+        #         / sqrt((s^2 - sum_k p_k^2) * (s^2 - sum_k t_k^2))
+        # where s = number of samples, c = correct predictions, and t_k / p_k
+        # are the true / predicted counts of class k.
+        s = len(labels)
+        c = sum(1 for p, l in zip(preds, labels) if p == l)
+        t_counts = {cat: labels.count(cat) for cat in categories}
+        p_counts = {cat: preds.count(cat) for cat in categories}
+        sum_pt = sum(p_counts[cat] * t_counts[cat] for cat in categories)
+        sum_p2 = sum(v * v for v in p_counts.values())
+        sum_t2 = sum(v * v for v in t_counts.values())
+        denom = ((s * s - sum_p2) * (s * s - sum_t2)) ** 0.5
+        mcc = 0.0 if denom == 0 else (c * s - sum_pt) / denom
 
     # Normalize from [-1, 1] to [0, 1]
     score = (mcc + 1) / 2
