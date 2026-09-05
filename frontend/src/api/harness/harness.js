@@ -74,3 +74,18 @@ export const cancelHarnessJob = async (id, reason) => {
 };
 export const adjustHarnessJob = async (id, payload) =>
   (await axios.post(adjustPath(id), payload)).data;
+
+// Resume a failed run from the stage it stopped on, keeping the stages it already completed.
+// The backend action (`POST harness-jobs/{id}/retry/` on HarnessJobViewSet) is a cross-team
+// follow-up: it is not in the generated Swagger surface yet, so this path is composed from a
+// base segment rather than routed through `apiPath` (which rejects uncontracted paths). Once
+// the action ships and the contract regenerates, switch this to
+// `apiPath("/simulate/api/harness-jobs/{id}/retry/", { id })` like the calls above. Until then
+// it resolves at runtime and simply 404s, which the caller surfaces as a normal error.
+const HARNESS_JOBS_BASE = "/simulate/api/harness-jobs/";
+export const retryHarnessJob = async (id, { fromStage } = {}) => {
+  if (!id) throw new Error("No job id; cannot retry.");
+  const retryUrl = `${HARNESS_JOBS_BASE}${encodeURIComponent(id)}/retry/`;
+  const body = fromStage ? { from_stage: fromStage } : {};
+  return (await axios.post(retryUrl, body)).data;
+};

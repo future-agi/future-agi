@@ -8,11 +8,14 @@ import { render } from "src/utils/test-utils";
 
 const getHarnessJob = vi.fn();
 const listHarnessJobs = vi.fn();
+const retryHarnessJob = vi.fn();
 
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: (...args) => getHarnessJob(...args),
   listHarnessJobs: (...args) => listHarnessJobs(...args),
   cancelHarnessJob: vi.fn(),
+  adjustHarnessJob: vi.fn(),
+  retryHarnessJob: (...args) => retryHarnessJob(...args),
 }));
 
 vi.mock("react-router-dom", async () => {
@@ -84,6 +87,7 @@ describe("HarnessDetail run checklist", () => {
   beforeEach(() => {
     getHarnessJob.mockReset();
     listHarnessJobs.mockReset();
+    retryHarnessJob.mockReset();
     listHarnessJobs.mockResolvedValue([]);
   });
 
@@ -134,10 +138,50 @@ describe("HarnessDetail run checklist", () => {
     );
     renderDetail();
 
-    expect(await screen.findByText("Validating environment")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Validating environment"),
+    ).toBeInTheDocument();
     // Five stages preceded it, so they fold away rather than padding the column.
     expect(screen.getByText("5 stages complete")).toBeInTheDocument();
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+  });
+
+  // A failed run must offer a way forward from where it stopped, and land the reader on it.
+  it("offers retry-from-stage recovery on a failed run and calls retry with the stage", async () => {
+    const user = userEvent.setup();
+    getHarnessJob.mockResolvedValue(
+      job({
+        stage: "failed",
+        failure: {
+          stage: "building_environment",
+          domain: "environment",
+          code: "build_failed",
+          message: "Docker build exited 1.",
+          action: "Pin a resolvable pyaudio version, then retry.",
+        },
+        events: [started("environment", "2026-08-25T11:13:56Z")],
+      }),
+    );
+    retryHarnessJob.mockResolvedValue(job({ stage: "building_environment" }));
+    renderDetail();
+
+    // The failure lands on Runs, where the recovery card leads with cause and next step.
+    expect(
+      await screen.findByText(/Run failed during Building environment/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Pin a resolvable pyaudio version/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Restart from the beginning/i }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /Retry from Building environment/i }),
+    );
+    expect(retryHarnessJob).toHaveBeenCalledWith("job-1", {
+      fromStage: "building_environment",
+    });
   });
 
   it("keeps a canceled run's stopped stage on screen", async () => {

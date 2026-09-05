@@ -13,6 +13,7 @@ import {
   Tab,
   Tabs,
   Typography,
+  alpha,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
@@ -33,6 +34,7 @@ import {
   cancelHarnessJob,
   getHarnessJob,
   listHarnessJobs,
+  retryHarnessJob,
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
 
@@ -105,6 +107,7 @@ export default function HarnessDetail() {
   const lastScrollTop = useRef(0);
   const following = useRef(true);
   const [adjustError, setAdjustError] = useState("");
+  const [retryError, setRetryError] = useState("");
 
   const {
     data: current,
@@ -195,6 +198,36 @@ export default function HarnessDetail() {
     },
   });
 
+  // A failed run resumes from the stage it stopped on. The backend action is a cross-team
+  // follow-up (see retryHarnessJob), so until it ships this surfaces the error rather than
+  // moving the run — the button and its states are the deliverable, the wiring is one call.
+  const { mutate: retry, isPending: retrying } = useMutation({
+    mutationFn: () => {
+      if (!jobId) throw new Error("No job id in the route; cannot retry.");
+      return retryHarnessJob(jobId, {
+        fromStage: current?.status?.failure?.stage,
+      });
+    },
+    onMutate: () => setRetryError(""),
+    onSuccess: (value) => {
+      queryClient.setQueryData(["harness-job", jobId], value);
+      queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
+      // Follow the resumed run back into its live activity.
+      following.current = true;
+      setDetailTab("runs");
+    },
+    onError: (requestError) => {
+      // eslint-disable-next-line no-console
+      console.error("Retry run failed", {
+        jobId,
+        statusCode: requestError?.statusCode,
+        detail: requestError?.detail,
+        message: requestError?.message,
+      });
+      setRetryError(errorMessage(requestError));
+    },
+  });
+
   const status = current?.status;
   const cancellationRequested = Boolean(status?.cancel_requested_at);
   const progress = jobProgress(status);
@@ -243,14 +276,19 @@ export default function HarnessDetail() {
   const workingTab = DETAIL_TABS.find(
     (tab) => tabStates[tab.value] === TAB_STATE.WORKING,
   )?.value;
+  // A failed run has no working tab, but its recovery card, timeline and build log all live
+  // under Runs — so that is where a failure should land the reader, not the Contract tab it
+  // would otherwise default to.
+  const landingTab =
+    workingTab || (status?.stage === "failed" ? "runs" : undefined);
 
   // The page follows the run from stage to stage on its own, so watching a job does not mean
   // clicking tabs to find where the work moved. Choosing a tab that is not the live one is a
   // decision to stay put; coming back to the live one resumes the follow.
   useEffect(() => {
-    if (!following.current || !workingTab) return;
-    setDetailTab(workingTab);
-  }, [workingTab]);
+    if (!following.current || !landingTab) return;
+    setDetailTab(landingTab);
+  }, [landingTab]);
 
   // The live seconds counter is a heartbeat: it says the run is still being watched. Once
   // the run is terminal there is nothing left to watch, so the tick stops and the label
@@ -529,9 +567,7 @@ export default function HarnessDetail() {
               borderColor: "divider",
             }}
           >
-            <Typography variant="h6">
-              {environmentName(current.job)}
-            </Typography>
+            <Typography variant="h6">{environmentName(current.job)}</Typography>
             <Stack direction="row" alignItems="center" spacing={0.5}>
               <Typography variant="caption" color="text.secondary" noWrap>
                 {shortRunId(current.job?.run_id)}
@@ -825,6 +861,151 @@ export default function HarnessDetail() {
                 </Stack>
               ) : (
                 <Stack spacing={1.5}>
+                  {/* A failed run leads with recovery: what broke, the fix, and a way forward
+                      from where it stopped — one home for the action so the eye is not sent
+                      hunting between the header, the stepper and the feed. */}
+                  {status?.stage === "failed" && status?.failure && (
+                    <Paper
+                      variant="outlined"
+                      sx={{ overflow: "hidden", borderColor: "accent.fail" }}
+                    >
+                      <Box
+                        sx={{
+                          p: 2,
+                          bgcolor: (theme) =>
+                            alpha(theme.palette.accent.fail, 0.1),
+                        }}
+                      >
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          alignItems="center"
+                          sx={{ mb: 0.75 }}
+                        >
+                          <Iconify
+                            icon="solar:danger-circle-bold"
+                            color="accent.fail"
+                            width={18}
+                          />
+                          <Typography variant="subtitle2">
+                            Run failed
+                            {status.failure.stage
+                              ? ` during ${readable(status.failure.stage)}`
+                              : ""}
+                          </Typography>
+                        </Stack>
+                        <Typography variant="body2">
+                          <Box
+                            component="span"
+                            sx={{
+                              fontFamily: "monospace",
+                              color: "text.secondary",
+                            }}
+                          >
+                            {readable(status.failure.domain)} ·{" "}
+                            {status.failure.code}
+                          </Box>
+                          {status.failure.message
+                            ? ` — ${status.failure.message}`
+                            : ""}
+                        </Typography>
+                        {status.failure.action && (
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                            sx={{ mt: 0.75 }}
+                          >
+                            Next step: {status.failure.action}
+                          </Typography>
+                        )}
+                        {(status.failure.details?.packaging_type ||
+                          status.failure.details?.failed_adapter) && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            component="div"
+                            sx={{ mt: 0.75 }}
+                          >
+                            {status.failure.details.packaging_type
+                              ? `Packaging: ${readable(status.failure.details.packaging_type)}`
+                              : ""}
+                            {status.failure.details.packaging_type &&
+                            status.failure.details.failed_adapter
+                              ? " · "
+                              : ""}
+                            {status.failure.details.failed_adapter
+                              ? `Adapter: ${readable(status.failure.details.failed_adapter)}`
+                              : ""}
+                          </Typography>
+                        )}
+                        <Stack
+                          direction="row"
+                          spacing={1.25}
+                          sx={{ mt: 1.75 }}
+                          flexWrap="wrap"
+                          useFlexGap
+                        >
+                          {status.failure.stage && (
+                            <Button
+                              variant="contained"
+                              size="small"
+                              disabled={retrying}
+                              onClick={() => retry()}
+                              startIcon={
+                                retrying ? (
+                                  <CircularProgress size={14} color="inherit" />
+                                ) : (
+                                  <Iconify
+                                    icon="solar:restart-linear"
+                                    width={16}
+                                  />
+                                )
+                              }
+                            >
+                              {retrying
+                                ? "Retrying…"
+                                : `Retry from ${readable(status.failure.stage)}`}
+                            </Button>
+                          )}
+                          <Button
+                            variant="outlined"
+                            color="inherit"
+                            size="small"
+                            onClick={goToCreate}
+                            startIcon={
+                              <Iconify
+                                icon="solar:refresh-circle-linear"
+                                width={16}
+                              />
+                            }
+                          >
+                            Restart from the beginning
+                          </Button>
+                        </Stack>
+                        {doneCount > 0 && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: "block", mt: 1 }}
+                          >
+                            Retry re-runs from the failed stage and keeps the{" "}
+                            {doneCount} completed{" "}
+                            {doneCount === 1 ? "stage" : "stages"}.
+                          </Typography>
+                        )}
+                        {retryError && (
+                          <Alert
+                            severity="error"
+                            variant="outlined"
+                            onClose={() => setRetryError("")}
+                            sx={{ mt: 1.25 }}
+                          >
+                            {retryError}
+                          </Alert>
+                        )}
+                      </Box>
+                    </Paper>
+                  )}
                   {selectedOutputs.map((output) => (
                     <StageOutput key={output.id} output={output} />
                   ))}
@@ -936,39 +1117,6 @@ export default function HarnessDetail() {
                         />
                       </Paper>
                     ),
-                  )}
-                  {status?.failure && (
-                    <Alert severity="error" variant="outlined">
-                      <Typography variant="subtitle2">
-                        {readable(status.failure.domain)} ·{" "}
-                        {status.failure.code}
-                      </Typography>
-                      {status.failure.message}
-                      {status.failure.action && (
-                        <Typography variant="body2" sx={{ mt: 0.75 }}>
-                          Next step: {status.failure.action}
-                        </Typography>
-                      )}
-                      {(status.failure.details?.packaging_type ||
-                        status.failure.details?.failed_adapter) && (
-                        <Typography
-                          variant="caption"
-                          component="div"
-                          sx={{ mt: 0.75 }}
-                        >
-                          {status.failure.details.packaging_type
-                            ? `Packaging: ${readable(status.failure.details.packaging_type)}`
-                            : ""}
-                          {status.failure.details.packaging_type &&
-                          status.failure.details.failed_adapter
-                            ? " · "
-                            : ""}
-                          {status.failure.details.failed_adapter
-                            ? `Adapter: ${readable(status.failure.details.failed_adapter)}`
-                            : ""}
-                        </Typography>
-                      )}
-                    </Alert>
                   )}
                   {status?.detail && (
                     <Alert
