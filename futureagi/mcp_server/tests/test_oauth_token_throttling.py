@@ -1,12 +1,19 @@
 """Tests for MCP OAuth token endpoint throttling."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import pytest
 from django.core.cache import cache
 from django.test import override_settings
+from rest_framework.test import APIRequestFactory
 
 from mcp_server.models.oauth_client import MCPOAuthClient
 from mcp_server.models.oauth_code import MCPOAuthCode
 from mcp_server.oauth_utils import hash_client_secret
+from mcp_server.throttles import _invalid_attempt_key, record_invalid_token_attempt
+import mcp_server.throttles as throttles
+from mcp_server.views.oauth import MCPOAuthTokenView
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -170,6 +177,53 @@ def test_repeated_invalid_refresh_grants_trigger_lockout(
     assert third.status_code == 429
     assert third.data["error"] == "slow_down"
     assert int(third["Retry-After"]) > 0
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=2,
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
+    MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
+)
+def test_concurrent_invalid_attempts_set_lockout(oauth_client_app, monkeypatch):
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": "bad-refresh-token",
+        "client_id": oauth_client_app.client_id,
+        "client_secret": CLIENT_SECRET,
+    }
+
+    raw_request = APIRequestFactory().post(
+        TOKEN_URL, payload, format="json", REMOTE_ADDR="203.0.113.41"
+    )
+    request = MCPOAuthTokenView().initialize_request(raw_request)
+    attempt_key = _invalid_attempt_key(request)
+    original_add = throttles.cache.add
+    original_get = throttles.cache.get
+    cache_barrier = Barrier(2)
+
+    def synchronized_add(key, *args, **kwargs):
+        if key == attempt_key:
+            cache_barrier.wait(timeout=5)
+        return original_add(key, *args, **kwargs)
+
+    def synchronized_get(key, *args, **kwargs):
+        if key == attempt_key:
+            cache_barrier.wait(timeout=5)
+        return original_get(key, *args, **kwargs)
+
+    monkeypatch.setattr(throttles.cache, "add", synchronized_add)
+    monkeypatch.setattr(throttles.cache, "get", synchronized_get)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(
+            workers.map(
+                record_invalid_token_attempt,
+                [request, request],
+            )
+        )
+
+    assert sorted(result > 0 for result in results) == [False, True]
+    assert throttles.get_invalid_attempt_lockout_wait(request) > 0
 
 
 @override_settings(
