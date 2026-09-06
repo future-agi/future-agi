@@ -51,7 +51,6 @@ def get_invalid_attempt_lockout_wait(request) -> int:
 
 
 def record_invalid_token_attempt(request) -> int:
-    now = time.time()
     limit = int(
         getattr(
             settings,
@@ -75,16 +74,20 @@ def record_invalid_token_attempt(request) -> int:
     )
 
     attempt_key = _invalid_attempt_key(request)
-    attempts = cache.get(attempt_key, []) or []
-    cutoff = now - window_seconds
-    attempts = [ts for ts in attempts if ts > cutoff]
-    attempts.append(now)
-    cache.set(attempt_key, attempts, timeout=window_seconds)
+    if cache.add(attempt_key, 1, timeout=window_seconds):
+        attempts = 1
+    else:
+        try:
+            attempts = cache.incr(attempt_key)
+        except ValueError:
+            # Recover if the window expired between add() and incr().
+            cache.set(attempt_key, 1, timeout=window_seconds)
+            attempts = 1
 
-    if len(attempts) < limit:
+    if attempts < limit:
         return 0
 
-    locked_until = now + lockout_seconds
+    locked_until = time.time() + lockout_seconds
     cache.set(
         _invalid_lockout_key(request),
         locked_until,
