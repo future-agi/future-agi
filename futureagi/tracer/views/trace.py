@@ -4851,6 +4851,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 count_result.data[0].get("total", 0) if count_result.data else 0
             )
 
+        aggregate_query, aggregate_params = builder.build_aggregate_query()
+        aggregate_result = analytics.execute_ch_query(
+            aggregate_query,
+            aggregate_params,
+            timeout_ms=read_deadline.remaining_ms(1_200),
+            settings=TRACE_LIST_READ_SETTINGS,
+        )
+        aggregate_row = aggregate_result.data[0] if aggregate_result.data else {}
+        aggregates = {
+            "total_traces": int(aggregate_row.get("total_traces") or 0),
+            "total_cost": float(aggregate_row.get("total_cost") or 0),
+            "avg_cost": float(aggregate_row.get("avg_cost") or 0),
+            "avg_tokens": float(aggregate_row.get("avg_tokens") or 0),
+            "avg_latency": float(aggregate_row.get("avg_latency") or 0),
+        }
+
         query_count = bounded_page.query_count if bounded_page is not None else 2
         query_rows_returned = (
             bounded_page.rows_returned
@@ -6969,6 +6985,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         response = {
             "column_config": column_config,
             "metadata": metadata,
+            "aggregates": aggregates,
             "table": table_data,
         }
 

@@ -423,11 +423,20 @@ class TraceSessionListResponseSerializer(serializers.Serializer):
     result = TraceSessionListResultSerializer()
 
 
+class TraceListAggregatesSerializer(serializers.Serializer):
+    total_traces = serializers.IntegerField()
+    total_cost = serializers.FloatField()
+    avg_cost = serializers.FloatField()
+    avg_tokens = serializers.FloatField()
+    avg_latency = serializers.FloatField()
+
+
 class TracePrototypeListResultSerializer(serializers.Serializer):
     """Prototype trace list wire shape (uses ``column_config``)."""
 
     column_config = TraceObserveColumnConfigSerializer(many=True)
     metadata = TraceObserveListMetadataSerializer()
+    aggregates = TraceListAggregatesSerializer()
     table = serializers.ListField(
         child=serializers.DictField(child=JsonValueField(allow_null=True))
     )

@@ -598,6 +598,29 @@ class TestBuildCountQuery:
         assert params["project_ids"] == tuple(pids)
 
 
+@pytest.mark.unit
+class TestBuildAggregateQuery:
+    def test_aggregates_after_folding_spans_per_trace(self, project_id):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, params = builder.build_aggregate_query()
+
+        assert "WITH matching_traces AS" in query
+        assert "FROM spans FINAL" in query
+        assert "sum(cost) AS trace_cost" in query
+        assert "avg(trace_tokens) AS avg_tokens" in query
+        assert "count() AS total_traces" in query
+        assert params["project_id"] == project_id
+
+    def test_aggregates_preserve_project_identity(self):
+        project_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        builder = TraceListQueryBuilder(project_ids=project_ids)
+        query, params = builder.build_aggregate_query()
+
+        assert "SELECT DISTINCT project_id, trace_id" in query
+        assert "GROUP BY project_id, trace_id" in query
+        assert params["project_ids"] == tuple(project_ids)
+
+
 # ---------------------------------------------------------------------------
 # Outer window bounds on start_time (Card A / T0 + T1)
 # ---------------------------------------------------------------------------
