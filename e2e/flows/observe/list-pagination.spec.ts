@@ -66,6 +66,26 @@ function pagerRoot(page: Page): Locator {
   );
 }
 
+/** Picks a results-per-page value from the pager's own select.
+ *
+ * The select is disabled while the list is loading, and its root is a `<div>`,
+ * so Playwright's actionability checks never see "disabled" — a click landing
+ * a moment early is swallowed by MUI and the menu simply never opens, leaving
+ * the option locator to burn the whole test timeout. AG Grid keeps fetching
+ * after the first rows render (a next-block prefetch, and on the DRF call-log
+ * screen a probe for a page that does not exist), so that window is real and
+ * the class is the only signal MUI gives for it. Retried as a unit: the list
+ * can go back to loading between the check and the click. */
+async function selectPageSize(page: Page, size: number | string): Promise<void> {
+  const select = page.locator('[aria-label="Results per page"]:visible');
+  await expect(async () => {
+    await expect(select).not.toHaveClass(/Mui-disabled/);
+    await select.click();
+    await expect(page.getByRole('listbox')).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: UI_READY });
+  await page.getByRole('option', { name: String(size), exact: true }).click();
+}
+
 function waitForCurrentPage(page: Page, pageNumber: number) {
   return expect(
     pagerButton(page, `Go to page ${pageNumber}`).and(page.locator('[aria-current="page"]')),
@@ -354,8 +374,7 @@ test('OBS-E2E-004: trace list pager windows forward without an endless page coun
     const resized = page.waitForResponse(
       (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes('page_size=10') && r.ok(),
       { timeout: UI_READY });
-    await page.locator('[aria-label="Results per page"]:visible').click();
-    await page.getByRole('option', { name: '10', exact: true }).click();
+    await selectPageSize(page, '10');
     await resized;
     await expect(traceNames).toHaveCount(PAGE_SIZE, { timeout: UI_READY });
   });
@@ -480,8 +499,7 @@ test('OBS-E2E-004: trace list pager windows forward without an endless page coun
       (r) => r.url().includes(TRACE_LIST_PATH)
         && r.url().includes(`page_size=${RESIZED_PAGE_SIZE}`) && r.ok(),
       { timeout: UI_READY });
-    await page.locator('[aria-label="Results per page"]:visible').click();
-    await page.getByRole('option', { name: String(RESIZED_PAGE_SIZE), exact: true }).click();
+    await selectPageSize(page, String(RESIZED_PAGE_SIZE));
     await resized;
 
     await waitForCurrentPage(page, 1);
@@ -531,8 +549,7 @@ test('OBS-E2E-005: Next stays usable through a full Back-Back-Next-Next round tr
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+  await selectPageSize(page, String(SIZE));
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
@@ -621,8 +638,7 @@ test('OBS-E2E-006: an exactly-full final page ends pagination without offering a
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+  await selectPageSize(page, String(SIZE));
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
@@ -677,8 +693,7 @@ test('OBS-E2E-007: has_more without a strictly greater total promises no page nu
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+  await selectPageSize(page, String(SIZE));
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
@@ -754,8 +769,7 @@ test('OBS-E2E-008: the Next label DOM node survives ~1.5s of ancestor re-render 
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+  await selectPageSize(page, String(SIZE));
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   expect((await readPager(page)).nextDisabled).toBe(false);
@@ -822,8 +836,7 @@ test('OBS-E2E-009: a real dwell-click on Next/Back actually fires a click, not j
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+  await selectPageSize(page, String(SIZE));
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
 
@@ -890,8 +903,7 @@ test('OBS-E2E-010: changing page size changes the outbound page_size, the render
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${NEW_SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(NEW_SIZE), exact: true }).click();
+  await selectPageSize(page, String(NEW_SIZE));
   const response = await resized;
 
   // PAG-04: the request itself, not just the UI, carries the new page size.
@@ -943,8 +955,7 @@ test('OBS-E2E-011: the agent call-log pager (a plain DRF-paginated, non-cursor s
   // re-aligns them — not a fix for that mismatch (out of scope here; noted
   // in the report), just what makes this pager screen's own page count and
   // Next/Back state internally consistent for the assertions below.
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: '10', exact: true }).click();
+  await selectPageSize(page, '10');
   await expect(callRows).toHaveCount(10, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
 
@@ -996,8 +1007,7 @@ test('OBS-E2E-012: changing the date filter resets pagination to page 1 and drop
   const resized = page.waitForResponse(
     (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
     { timeout: UI_READY });
-  await page.locator('[aria-label="Results per page"]:visible').click();
-  await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+  await selectPageSize(page, String(SIZE));
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   await waitForCurrentPage(page, 1);
@@ -1086,8 +1096,7 @@ test('OBS-E2E-013: the furthest-visited page reappears as a boundary after walki
     const resized = page.waitForResponse(
       (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
       { timeout: UI_READY });
-    await page.locator('[aria-label="Results per page"]:visible').click();
-    await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+    await selectPageSize(page, String(SIZE));
     await resized;
     await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
     await waitForCurrentPage(page, 1);
