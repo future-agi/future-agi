@@ -3,6 +3,28 @@ import { describe, expect, it } from "vitest";
 
 import useCursorGridPagination from "../useCursorGridPagination";
 
+// goToPage() only moves when it can reach a live AG Grid API, and the pager
+// state has to stay correct across those moves — that is the whole point of
+// the page-aware flags below.
+const renderPagination = () => {
+  let currentPage = 0;
+  const gridRef = {
+    current: {
+      api: {
+        getRenderedNodes: () => [],
+        paginationGetCurrentPage: () => currentPage,
+        paginationGoToFirstPage: () => {
+          currentPage = 0;
+        },
+        paginationGoToPage: (nextPage) => {
+          currentPage = nextPage;
+        },
+      },
+    },
+  };
+  return renderHook(() => useCursorGridPagination(gridRef, null));
+};
+
 const publish = (result, { startRow, endRow, rows, isLastPage, metadata }) => {
   let returned;
   act(() => {
@@ -128,6 +150,122 @@ describe("useCursorGridPagination", () => {
     });
     expect(result.current.hasMore).toBe(false);
     expect(result.current.provenNext).toBe(false);
+  });
+
+  it("keeps forward navigation alive after returning from the terminal page", () => {
+    // REGRESSION GUARD (C1): the flags used to be last-write-wins, written
+    // only from inside publishPage. Returning to a cached page never
+    // re-invokes the datasource, so the terminal page's `false` stuck and
+    // Next stayed disabled until a full refresh.
+    const { result } = renderPagination();
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: {
+        total_rows: 26,
+        total_rows_is_lower_bound: true,
+        has_more: true,
+      },
+    });
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.provenNext).toBe(true);
+
+    act(() => result.current.goToPage(2));
+    publish(result, {
+      startRow: 25,
+      endRow: 50,
+      rows: 9,
+      isLastPage: true,
+      metadata: { total_rows: 34, has_more: false },
+    });
+    expect(result.current.page).toBe(2);
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.provenNext).toBe(false);
+
+    act(() => result.current.goToPage(1));
+
+    expect(result.current.page).toBe(1);
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.provenNext).toBe(true);
+  });
+
+  it("reaches an overflow page the terminal response already buffered", () => {
+    // REGRESSION GUARD (C3): isLastPage can only be false while the transport
+    // reports no further window when the response overflowed and its extra
+    // rows are already held for the next page. Those rows are proven by
+    // construction; without this they were silently unreachable.
+    const { result } = renderPagination();
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: {
+        total_rows: 25,
+        total_rows_is_lower_bound: true,
+        has_more: false,
+      },
+    });
+
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.provenNext).toBe(true);
+    expect(result.current.pageCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("ignores a background block published for another page", () => {
+    // beginPageLoad() already refuses to let a background block own the page
+    // loader; the visible page and the pager flags need the same guard.
+    const { result } = renderPagination();
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: {
+        total_rows: 26,
+        total_rows_is_lower_bound: true,
+        has_more: true,
+      },
+    });
+    act(() => result.current.goToPage(2));
+
+    publish(result, {
+      startRow: 50,
+      endRow: 75,
+      rows: 5,
+      isLastPage: true,
+      metadata: { total_rows: 55, has_more: false },
+    });
+
+    expect(result.current.page).toBe(2);
+    expect(result.current.hasMore).toBe(true);
+    // Page 2 has not published its own state yet, so nothing beyond it is
+    // proven. What matters is that the background terminal block did not get
+    // to declare the list finished on page 2's behalf.
+    expect(result.current.provenNext).toBe(false);
+  });
+
+  it("ignores a navigation to the page already on screen", () => {
+    // Without this the transition's render check can never see the rows
+    // change, so "Loading page…" spins until the transition times out.
+    const { result } = renderPagination();
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: {
+        total_rows: 26,
+        total_rows_is_lower_bound: true,
+        has_more: true,
+      },
+    });
+
+    act(() => result.current.goToPage(1));
+
+    expect(result.current.isPageLoading).toBe(false);
   });
 
   it("clears both flags on reset", () => {

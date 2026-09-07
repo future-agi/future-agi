@@ -79,6 +79,34 @@ export const paintedGridRowSignature = (api, gridElementRef) => {
     .join("\n");
 };
 
+export const EMPTY_PAGER_FRONTIER = {
+  page: 0,
+  hasMore: false,
+  provenNext: false,
+};
+
+/**
+ * Derive the pager flags for the page currently on screen from the deepest
+ * page the datasource has published. Every page below the frontier is already
+ * known to be followed by a page that has been fetched; only at the frontier
+ * itself does the last response get to decide.
+ */
+export const pagerFlagsForPage = (page, frontier = EMPTY_PAGER_FRONTIER) => ({
+  hasMore: page < frontier.page || frontier.hasMore === true,
+  provenNext: page < frontier.page + (frontier.provenNext ? 1 : 0),
+});
+
+/**
+ * `isLastPage` can only be false while the transport reports no further search
+ * window when the terminal response overflowed and its surplus rows are
+ * already buffered for the next page (listCursorPagination.js, `completeVisiblePage`
+ * / `loadExactListPage`). Those rows are proven to exist by construction —
+ * a stronger proof than any reported count — so the next page must be
+ * reachable even though nothing in the metadata says so.
+ */
+export const hasBufferedOverflowPage = (isLastPage, metadataHasMore) =>
+  isLastPage === false && metadataHasMore !== true;
+
 /**
  * Cursor-backed lists can expose only pages whose opaque cursor chain has
  * already been discovered. Keep AG Grid's synthetic row count and the visible
@@ -89,8 +117,13 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
   const [pageSize, setPageSize] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
   const [pageCount, setPageCount] = useState(1);
   const [isPageLoading, setIsPageLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [provenNext, setProvenNext] = useState(false);
+  // The deepest page published in this pagination generation and the flags the
+  // datasource reported there. Pager state has to be a function of the page
+  // being *shown*, not of whichever page happened to load last: returning to
+  // an already-cached page never re-invokes the datasource, so a
+  // last-write-wins flag from the terminal page would stay false and kill
+  // forward navigation until the next full refresh.
+  const [frontier, setFrontier] = useState(EMPTY_PAGER_FRONTIER);
   const discoveredRowCountRef = useRef(0);
   const pageLoadRequestRef = useRef(0);
   const activePageLoadRequestRef = useRef(null);
@@ -228,8 +261,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       discoveredRowCountRef.current = 0;
       setPage(1);
       setPageCount(1);
-      setHasMore(false);
-      setProvenNext(false);
+      setFrontier(EMPTY_PAGER_FRONTIER);
       if (moveGrid) {
         withLiveGridApi(gridRef?.current?.api, (api) =>
           api.paginationGoToFirstPage?.(),
@@ -255,18 +287,43 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     }
 
     const discoveredRowCount = discoveredRowCountRef.current;
-    setPage(publishedPage);
     // pageCount stays the navigation bound for goToPage. It is no longer
     // rendered; CursorGridPagination draws the window instead.
     setPageCount(Math.max(1, Math.ceil(discoveredRowCount / requestPageSize)));
+
+    // AG Grid can load a server-side block in the background while an explicit
+    // navigation is still in flight. beginPageLoad() already refuses to let
+    // such a block own the page loader; the visible page number and the pager
+    // frontier need the same guard, or another page's state lands on screen.
+    const transition = pageTransitionRef.current;
+    if (transition && transition.page !== publishedPage) {
+      return discoveredRowCount;
+    }
+
+    setPage(publishedPage);
 
     const pagerState = getListPagerState({
       metadata,
       startRow: request.startRow,
       rowCount: rows.length,
     });
-    setHasMore(isLastPage ? false : pagerState.hasMore);
-    setProvenNext(isLastPage ? false : pagerState.provenNext);
+    const bufferedOverflowPage = hasBufferedOverflowPage(
+      isLastPage,
+      pagerState.hasMore,
+    );
+    setFrontier((previous) =>
+      publishedPage < previous.page
+        ? previous
+        : {
+            page: publishedPage,
+            hasMore: isLastPage
+              ? false
+              : pagerState.hasMore || bufferedOverflowPage,
+            provenNext: isLastPage
+              ? false
+              : pagerState.provenNext || bufferedOverflowPage,
+          },
+    );
 
     return discoveredRowCount;
   }, []);
@@ -276,7 +333,11 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       if (
         !Number.isSafeInteger(nextPage) ||
         nextPage < 1 ||
-        nextPage > pageCount
+        nextPage > pageCount ||
+        // Clicking the page already on screen starts a transition whose render
+        // check can never see the rows change, leaving "Loading page…" up
+        // until the transition times out.
+        nextPage === page
       ) {
         return;
       }
@@ -311,7 +372,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
         setIsPageLoading(false);
       }
     },
-    [gridElementRef, gridRef, pageCount, scheduleRenderCheck],
+    [gridElementRef, gridRef, page, pageCount, scheduleRenderCheck],
   );
 
   useEffect(
@@ -338,8 +399,9 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     [pageSize, resetPagination],
   );
 
-  return useMemo(
-    () => ({
+  return useMemo(() => {
+    const { hasMore, provenNext } = pagerFlagsForPage(page, frontier);
+    return {
       beginPageLoad,
       hasMore,
       page,
@@ -352,20 +414,18 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       isPageLoading,
       publishPage,
       resetPagination,
-    }),
-    [
-      beginPageLoad,
-      changePageSize,
-      finishPageLoad,
-      goToPage,
-      hasMore,
-      isPageLoading,
-      page,
-      pageCount,
-      pageSize,
-      provenNext,
-      publishPage,
-      resetPagination,
-    ],
-  );
+    };
+  }, [
+    beginPageLoad,
+    changePageSize,
+    finishPageLoad,
+    frontier,
+    goToPage,
+    isPageLoading,
+    page,
+    pageCount,
+    pageSize,
+    publishPage,
+    resetPagination,
+  ]);
 }
