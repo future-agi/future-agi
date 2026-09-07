@@ -54,6 +54,8 @@ import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
+import { getListPagerState } from "../LLMTracing/listPagerState";
+import CursorGridPagination from "../LLMTracing/CursorGridPagination";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -98,6 +100,12 @@ const UsersGrid = React.memo(
     const cursorQueryKeyRef = useRef(null);
     const [readError, setReadError] = useState(null);
     const [continuationNotice, setContinuationNotice] = useState(null);
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(25);
+    const [pagerState, setPagerState] = useState({
+      hasMore: false,
+      provenNext: false,
+    });
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
       if (retryServerSideCursorLoad(gridApiRef.current?.api)) {
@@ -468,6 +476,16 @@ const UsersGrid = React.memo(
             const countIsLowerBound =
               res?.count_is_lower_bound === true ||
               res?.total_count_is_lower_bound === true;
+            const { hasMore, provenNext } = getListPagerState({
+              metadata: res,
+              startRow: request.startRow,
+              rowCount: userData.length,
+            });
+            setPagerState(
+              isLastPage
+                ? { hasMore: false, provenNext: false }
+                : { hasMore, provenNext },
+            );
             const exactTotal = countIsLowerBound ? null : total;
             const lowerBoundTotal = countIsLowerBound ? total : null;
             const gridRowCount = isLastPage
@@ -789,14 +807,14 @@ const UsersGrid = React.memo(
               theme={agTheme}
               rowSelection={{ mode: "multiRow", enableClickSelection: false }}
               pagination={true}
-              paginationPageSize={25}
+              paginationPageSize={pageSize}
+              suppressPaginationPanel={true}
               rowModelType="serverSide"
               cacheBlockSize={25}
               maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
               maxConcurrentDatasourceRequests={
                 OBSERVE_GRID_MAX_CONCURRENT_REQUESTS
               }
-              paginationPageSizeSelector={[10, 25, 50, 100]}
               defaultColDef={defaultColDef}
               onColumnHeaderClicked={onColumnHeaderClicked}
               rowStyle={{ cursor: "pointer" }}
@@ -811,10 +829,10 @@ const UsersGrid = React.memo(
               onRowSelected={onSelectionChanged}
               onGridReady={onGridReady}
               onPaginationChanged={({ api }) => {
-                const page = Number(api?.paginationGetCurrentPage?.()) + 1;
-                if (Number.isSafeInteger(page) && page > 1) {
-                  dispatchObservePageChanged(page);
-                }
+                const nextPage = Number(api?.paginationGetCurrentPage?.()) + 1;
+                if (!Number.isSafeInteger(nextPage)) return;
+                setPage(nextPage);
+                if (nextPage > 1) dispatchObservePageChanged(nextPage);
               }}
               noRowsOverlayComponent={() =>
                 continuationNotice
@@ -833,6 +851,25 @@ const UsersGrid = React.memo(
             />
           </Box>
         </Box>
+        <CursorGridPagination
+          disabled={activeListReadsRef.current > 0}
+          loading={false}
+          page={page}
+          pageSize={pageSize}
+          hasMore={pagerState.hasMore}
+          provenNext={pagerState.provenNext}
+          onPageChange={(nextPage) =>
+            withLiveGridApi(gridApiRef.current?.api, (api) =>
+              api.paginationGoToPage?.(nextPage - 1),
+            )
+          }
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            withLiveGridApi(gridApiRef.current?.api, (api) =>
+              api.setGridOption?.("paginationPageSize", size),
+            );
+          }}
+        />
       </Box>
     );
   },

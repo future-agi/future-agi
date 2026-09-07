@@ -107,6 +107,10 @@ import {
   OBSERVE_LIST_REFRESH_EVENT,
   OBSERVE_PAGE_CHANGED_EVENT,
 } from "../../observeEvents";
+import {
+  getListPagerState,
+  windowedPageNumbers,
+} from "src/sections/projects/LLMTracing/listPagerState";
 
 const usersResponse = ({
   rows = [],
@@ -214,9 +218,7 @@ describe("UsersGrid deterministic pagination", () => {
 
     expect(gridState.props.pagination).toBe(true);
     expect(gridState.props.paginationPageSize).toBe(25);
-    expect(gridState.props.paginationPageSizeSelector).toEqual([
-      10, 25, 50, 100,
-    ]);
+    expect(gridState.props.suppressPaginationPanel).toBe(true);
     expect(gridState.props.cacheBlockSize).toBe(25);
     expect(gridState.props.maxBlocksInCache).toBe(5);
     expect(gridState.props.maxConcurrentDatasourceRequests).toBe(1);
@@ -239,8 +241,10 @@ describe("UsersGrid deterministic pagination", () => {
     expect(params.api.refreshServerSide).not.toHaveBeenCalled();
     expect(pageChanged.mock.calls[0][0].detail).toEqual({ page: 2 });
 
-    gridState.props.onPaginationChanged({
-      api: { paginationGetCurrentPage: () => 1 },
+    act(() => {
+      gridState.props.onPaginationChanged({
+        api: { paginationGetCurrentPage: () => 1 },
+      });
     });
     expect(pageChanged).toHaveBeenCalledTimes(2);
     expect(pageChanged.mock.calls[1][0].detail).toEqual({ page: 2 });
@@ -701,5 +705,16 @@ describe("UsersGrid deterministic pagination", () => {
     expect(params.success).not.toHaveBeenCalled();
     expect(params.fail).not.toHaveBeenCalled();
     expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
+  });
+
+  it("does not number the next page when the users total only equals rows seen", () => {
+    // Live capture: page 1 returned total_count 25 with has_more true.
+    const state = getListPagerState({
+      metadata: { total_count: 25, count_is_lower_bound: true, has_more: true },
+      startRow: 0,
+      rowCount: 25,
+    });
+    expect(state).toMatchObject({ hasMore: true, provenNext: false });
+    expect(windowedPageNumbers({ page: 1, provenNext: false })).toEqual([1]);
   });
 });
