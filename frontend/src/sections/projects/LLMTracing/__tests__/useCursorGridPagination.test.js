@@ -109,6 +109,27 @@ describe("useCursorGridPagination", () => {
     expect(result.current.page).toBe(3);
   });
 
+  it("overrides contradictory metadata on a terminal page", () => {
+    // REGRESSION GUARD: the server can legitimately report has_more/a higher
+    // total on the same response that also sets isLastPage. isLastPage must
+    // win regardless of what the metadata says, otherwise the pager could
+    // draw a page number the cursor protocol can never serve.
+    const { result } = renderHook(() => useCursorGridPagination(null, null));
+    publish(result, {
+      startRow: 50,
+      endRow: 75,
+      rows: 9,
+      isLastPage: true,
+      metadata: {
+        total_rows: 100,
+        total_rows_is_lower_bound: true,
+        has_more: true,
+      },
+    });
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.provenNext).toBe(false);
+  });
+
   it("clears both flags on reset", () => {
     const { result } = renderHook(() => useCursorGridPagination(null, null));
     publish(result, {
