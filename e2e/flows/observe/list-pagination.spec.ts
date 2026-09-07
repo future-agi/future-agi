@@ -56,6 +56,11 @@ function waitForCurrentPage(page: Page, pageNumber: number) {
 }
 
 async function readPager(page: Page): Promise<PagerState> {
+  // The pager keeps "Loading page…" up until the datasource has published the
+  // page and AG Grid has painted it, so this is the only point at which the
+  // window, the ellipses and Next are all settled. Reading before it can catch
+  // the optimistic mid-transition state.
+  await expect(page.getByText('Loading page…')).toHaveCount(0, { timeout: UI_READY });
   const pageButtons = page.locator(VISIBLE_PAGE_BUTTONS);
   const count = await pageButtons.count();
   const numbers: number[] = [];
@@ -105,7 +110,9 @@ test('OBS-E2E-004: trace list pager windows forward without an endless page coun
             "open the project's trace list",
             'set page size to 10 through the pager control',
             'walk forward one page at a time via Next to the true last page',
-            'read the page-number window, ellipses and Next/Previous state at every page'],
+            'read the page-number window, ellipses and Next/Previous state at every page',
+            'step back from the last page and walk forward again',
+            'change the page size and confirm the API and the pager both follow'],
     backendChecks: ['all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project',
                     'project row auto-created in PG tracer_project, scoped to the actor org'],
   }),
@@ -237,6 +244,64 @@ test('OBS-E2E-004: trace list pager windows forward without an endless page coun
     expect(pager.nextDisabled).toBe(true);
     expect(pager.current).toBe(LAST_PAGE);
     await expect(traceNames).toHaveCount(LAST_PAGE_ROWS, { timeout: UI_READY });
+  });
+
+  // The pager's state used to be last-write-wins: `hasMore`/`provenNext` were
+  // set only by the page that had just been fetched, and returning to an
+  // already-cached page never re-invokes the datasource. So the terminal
+  // page's `false` stuck, and one click of Back permanently disabled forward
+  // navigation until a refresh. Page N must look the same whether it was
+  // reached walking forward or coming back.
+  await test.step('back from the terminal page: forward navigation survives', async () => {
+    const backTo = LAST_PAGE - 1;
+    const expected = EXPECTED_WINDOWS[backTo - 1];
+    await page.locator('button[aria-label="Previous page"]:visible').click();
+    await waitForCurrentPage(page, backTo);
+    await expect(traceNames).toHaveCount(expected.rows, { timeout: UI_READY });
+
+    const pager = await readPager(page);
+    expect(pager.numbers).toEqual(expected.numbers);
+    expect(pager.current).toBe(backTo);
+    expect(pager.leadingEllipsis).toBe(expected.leading);
+    // The trailing ellipsis returns: pages beyond this one are known to exist.
+    expect(pager.trailingEllipsis).toBe(true);
+    expect(pager.prevDisabled).toBe(false);
+    expect(pager.nextDisabled).toBe(false);
+
+    // Not just cosmetic — Next has to actually move forward again.
+    await page.locator('button[aria-label="Next page"]:visible').click();
+    await waitForCurrentPage(page, LAST_PAGE);
+    await expect(traceNames).toHaveCount(LAST_PAGE_ROWS, { timeout: UI_READY });
+  });
+
+  // A page-size change must reach the API, not just relabel the control, and
+  // it must restart pagination rather than leave the pager counting pages in
+  // the old units. Asserted on the outgoing request and on the pager reset
+  // that has to follow it.
+  await test.step('page size change reaches the server and resets the pager', async () => {
+    const RESIZED_PAGE_SIZE = 25;
+    const resized = page.waitForResponse(
+      (r) => r.url().includes(TRACE_LIST_PATH)
+        && r.url().includes(`page_size=${RESIZED_PAGE_SIZE}`) && r.ok(),
+      { timeout: UI_READY });
+    await page.locator('[aria-label="Results per page"]:visible').click();
+    await page.getByRole('option', { name: String(RESIZED_PAGE_SIZE), exact: true }).click();
+    await resized;
+
+    await waitForCurrentPage(page, 1);
+    await expect(traceNames).toHaveCount(RESIZED_PAGE_SIZE, { timeout: UI_READY });
+    await expect(page.locator('[aria-label="Results per page"]:visible'))
+      .toContainText(String(RESIZED_PAGE_SIZE));
+
+    // 45 rows at 25/page is two pages, so the pager is back to its page-1
+    // shape — counted in the *new* page size, not the old one.
+    const pager = await readPager(page);
+    expect(pager.numbers).toEqual([1, 2]);
+    expect(pager.current).toBe(1);
+    expect(pager.leadingEllipsis).toBe(false);
+    expect(pager.trailingEllipsis).toBe(true);
+    expect(pager.prevDisabled).toBe(true);
+    expect(pager.nextDisabled).toBe(false);
   });
 
   await req.dispose();

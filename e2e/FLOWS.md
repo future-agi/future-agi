@@ -111,7 +111,7 @@
 ### OBS-E2E-004 — trace list pager windows forward without an endless page count
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
-**Spec:** `flows/observe/list-pagination.spec.ts:99`  
+**Spec:** `flows/observe/list-pagination.spec.ts:104`  
 **Tags:** —
 
 **User steps:**
@@ -121,6 +121,8 @@
 3. set page size to 10 through the pager control
 4. walk forward one page at a time via Next to the true last page
 5. read the page-number window, ellipses and Next/Previous state at every page
+6. step back from the last page and walk forward again
+7. change the page size and confirm the API and the pager both follow
 
 **Backend state verified:**
 
