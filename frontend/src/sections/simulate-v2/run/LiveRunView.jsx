@@ -94,17 +94,70 @@ export default function LiveRunView() {
     it, the live view would flip to read-only in the same commit that finished
     it.
   */
-  const stored = envState.runs.find((r) => r.id === runId);
+  /*
+    Trial rehydration.
+
+    A trial id is `${OPT-XXXXX}-t${n}` — a self improvement's trial, which
+    is a real simulation run (the search executed the candidate against
+    this environment). If the URL points at one, look it up in the
+    environment's optimizations rather than expecting a matching row in
+    envState.runs (trials are not stored there — they are derived).
+  */
+  const trialMatch = useMemo(() => {
+    const m = /^(OPT-\d+)-t(\d+)$/.exec(runId || "");
+    if (!m) return null;
+    const opt = (envState.optimizations || []).find((o) => o.id === m[1]);
+    if (!opt) return null;
+    const trial = (opt.result?.trials || []).find((t) => t.n === Number(m[2]));
+    if (!trial) return null;
+    const sourceRun = (envState.runs || []).find((r) => r.id === opt.fromRunId);
+    return { opt, trial, sourceRun };
+  }, [runId, envState.optimizations, envState.runs]);
+
+  const stored = trialMatch
+    /* Synthesize a stored-like record pointing at the source run's seed so
+       rebuildRun can produce a task list. The trial's per-scenario outcomes
+       are folded in below. */
+    ? {
+        id: trialMatch.sourceRun?.id || runId,
+        agentVersion: trialMatch.sourceRun?.agentVersion || "trial",
+        envVersion: trialMatch.sourceRun?.envVersion,
+        scenarioIds: trialMatch.sourceRun?.scenarioIds
+          || Object.keys(trialMatch.trial.perScenario || {}),
+        repeats: trialMatch.sourceRun?.repeats || 1,
+      }
+    : envState.runs.find((r) => r.id === runId);
+
   const wasLive = useRef(false);
   useEffect(() => {
     if (phase === "running") wasLive.current = true;
   }, [phase]);
-  const readOnly = !wasLive.current && !!stored;
+  /* Trials are always read-only: the search already ran them. */
+  const readOnly = !!trialMatch || (!wasLive.current && !!stored);
 
-  const storedTasks = useMemo(
-    () => (readOnly && env ? rebuildRun(env, envState, stored) : []),
-    [readOnly, env, envState, stored],
-  );
+  const storedTasks = useMemo(() => {
+    if (!readOnly || !env || !stored) return [];
+    const base = rebuildRun(env, envState, stored);
+    if (!trialMatch) return base;
+    /*
+      Overlay the trial's per-scenario verdicts. The source run's traces are
+      what a trial's run would have looked like; the trial's outcomes are
+      what actually happened. Everything a reader clicks — Traces, Analytics,
+      Verify — reads a run whose numbers match the trial score.
+    */
+    const per = trialMatch.trial.perScenario || {};
+    return base.map((task) => {
+      const outcome = per[task.scenarioId] || per[task.id];
+      if (!outcome) return task;
+      const passed = outcome === "passed" || outcome === "fixed";
+      return {
+        ...task,
+        status: passed ? "passed" : "failed",
+        verdict: passed ? "passed" : "failed",
+        passShare: passed ? 1 : 0,
+      };
+    });
+  }, [readOnly, env, envState, stored, trialMatch]);
 
   const storedStats = useMemo(() => {
     const passed = storedTasks.filter((t) => t.status === "passed").length;

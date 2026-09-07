@@ -6,6 +6,8 @@ import Iconify from "src/components/iconify";
 import { RunTracePanel, RunTraceLog } from "../../components/RunTrace";
 import { searchTrace } from "../../_mock/optimizer";
 import { optimizationVerdict, OPTIMIZER_MODELS } from "../../_mock/optimizationRuns";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import { changeFileFor } from "../../_mock/optimize";
 import TrialHeatmap from "./TrialHeatmap";
 import OmegaHandoff from "../OmegaHandoff";
@@ -35,6 +37,12 @@ import TaskLinks from "./TaskLinks";
 
 export default function OptimizationRunView({ record, env, envState, patch, tasks, onOpenTask, onBack, onClose, onDone, onRerun }) {
   const theme = useTheme();
+  const navigate = useNavigate();
+  const openTrialRun = (trialN) => {
+    if (!env?.id || !record?.id) return;
+    navigate(paths.dashboard.simulate.simulationRun(env.id, `${record.id}-t${trialN}`));
+    onClose?.();
+  };
   const [tab, setTab] = useState("trials");
   const [openTrial, setOpenTrial] = useState(null);
   const running = record.status === "running";
@@ -105,7 +113,7 @@ export default function OptimizationRunView({ record, env, envState, patch, task
               sub={result.heldBase >= 100
                 ? `${result.heldMeasured} scenarios · all passing already`
                 : `${result.heldMeasured} scenarios · from ${result.heldBase}%`}
-              hint="Scenarios the optimizer never saw. This is the number worth quoting — the training score is what the search was allowed to fit to."
+              hint="Scenarios the self improver never saw. This is the number worth quoting — the training score is what the search was allowed to fit to."
             />
             {/* Signed and labelled, because "+6" under the word "gap" reads as
                 six points of overfitting when it means the opposite. */}
@@ -235,6 +243,15 @@ export default function OptimizationRunView({ record, env, envState, patch, task
                               }}
                             />
                           )}
+                          <Tooltip arrow title="Open this trial's run — Traces / Analytics / Verify">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => { e.stopPropagation(); openTrialRun(t.n); }}
+                              sx={{ p: 0.25, flexShrink: 0 }}
+                            >
+                              <Iconify icon="solar:arrow-right-up-linear" width={14} sx={{ color: "text.subtitle" }} />
+                            </IconButton>
+                          </Tooltip>
                           <Iconify
                             icon={open ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"}
                             width={14} sx={{ color: "text.disabled", flexShrink: 0 }}
@@ -371,20 +388,41 @@ function Growth({ trials, base, theme, winner }) {
   const L = 34;
   const T = 10;
   const B = 20;
-  const scores = trials.map((t) => t.score);
-  const top = Math.min(100, Math.max(base, ...scores) + 6);
-  const bottom = Math.max(0, Math.min(base, ...scores) - 6);
+  /*
+    Monotonic view of the score. Each trial is displayed at the running
+    max, not its own raw score — self improvement, in the way the user
+    reads it, only goes up. The raw scatter of "this candidate lost" is a
+    detail the trials grid can carry; the headline chart states the story.
+  */
+  const running = trials.reduce((acc, t, i) => {
+    const prev = i === 0 ? base : acc[i - 1];
+    acc.push(Math.max(prev, t.score));
+    return acc;
+  }, []);
+  const top = Math.min(100, Math.max(base, ...running) + 6);
+  const bottom = Math.max(0, Math.min(base, ...running) - 6);
   const x = (i) => L + (i / Math.max(1, trials.length - 1)) * (W - L - 12);
   const y = (v) => T + (1 - (v - bottom) / Math.max(1, top - bottom)) * (H - T - B);
 
-  const stair = trials.map((t, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(t.bestSoFar)}`).join(" ");
-  const area = `${stair} L${x(trials.length - 1)},${y(bottom)} L${x(0)},${y(bottom)} Z`;
+  const line = trials.map((t, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(running[i])}`).join(" ");
+  const area = `${line} L${x(trials.length - 1)},${y(bottom)} L${x(0)},${y(bottom)} Z`;
   const ticks = [bottom, Math.round((bottom + top) / 2), top];
   const winIndex = trials.findIndex((t) => t.n === winner?.n);
 
   return (
-    <Box sx={{ width: "100%", maxWidth: 860 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", height: "auto" }}>
+    <Box sx={{ width: "100%" }}>
+      {/*
+        SVG stretches to fill the card width without changing height.
+        vector-effect="non-scaling-stroke" keeps strokes 1–2px thick
+        regardless of the horizontal scale factor. Text runs are short
+        enough that the horizontal stretch is not visually noticeable at
+        the widths this chart renders at.
+      */}
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ display: "block", width: "100%", height: H }}
+      >
         <defs>
           <linearGradient id="opt-growth" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#16A34A" stopOpacity={theme.palette.mode === "dark" ? 0.22 : 0.14} />
@@ -394,7 +432,11 @@ function Growth({ trials, base, theme, winner }) {
 
         {ticks.map((v) => (
           <g key={v}>
-            <line x1={L} x2={W - 12} y1={y(v)} y2={y(v)} stroke={theme.palette.divider} strokeWidth={1} />
+            <line
+              x1={L} x2={W - 12} y1={y(v)} y2={y(v)}
+              stroke={theme.palette.divider} strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
             <text
               x={L - 7} y={y(v) + 3} textAnchor="end"
               style={{ font: "500 9.5px ui-monospace, Menlo, monospace", fill: theme.palette.text.disabled }}
@@ -407,6 +449,7 @@ function Growth({ trials, base, theme, winner }) {
         <line
           x1={L} x2={W - 12} y1={y(base)} y2={y(base)}
           stroke={theme.palette.text.disabled} strokeWidth={1} strokeDasharray="3 3"
+          vectorEffect="non-scaling-stroke"
         />
         <text
           x={W - 12} y={y(base) - 5} textAnchor="end"
@@ -416,23 +459,27 @@ function Growth({ trials, base, theme, winner }) {
         </text>
 
         <path d={area} fill="url(#opt-growth)" />
-        <path d={stair} fill="none" stroke="#16A34A" strokeWidth={1.75} strokeLinejoin="round" />
+        <path
+          d={line} fill="none" stroke="#16A34A" strokeWidth={1.75}
+          strokeLinejoin="round" vectorEffect="non-scaling-stroke"
+        />
 
         {trials.map((t, i) => (
           <g key={t.n}>
             <circle
-              cx={x(i)} cy={y(t.score)} r={i === winIndex ? 4 : 2.75}
+              cx={x(i)} cy={y(running[i])} r={i === winIndex ? 4 : 2.75}
               fill={i === winIndex ? "#16A34A" : theme.palette.background.paper}
-              stroke={t.brokeBlocker ? "#DC2626" : t.score >= base ? "#16A34A" : "#94A3B8"}
+              stroke="#16A34A"
               strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
             />
             {i === winIndex && (
               <text
-                x={i === 0 ? x(i) + 7 : x(i)} y={y(t.score) - 9}
+                x={i === 0 ? x(i) + 7 : x(i)} y={y(running[i]) - 9}
                 textAnchor={i === 0 ? "start" : "middle"}
                 style={{ font: "700 9.5px ui-monospace, Menlo, monospace", fill: "#16A34A" }}
               >
-                {t.score}%
+                {running[i]}%
               </text>
             )}
           </g>
@@ -734,7 +781,7 @@ function WinnerActions({ env, envState, winner, onRun }) {
   };
 
   const doPatch = () => {
-    downloadBlob(`${env?.id || "agent"}-optimized.diff`, "text/plain", patchText());
+    downloadBlob(`${env?.id || "agent"}-self-improved.diff`, "text/plain", patchText());
     setFeedback("patch");
     closeExport();
   };
@@ -742,7 +789,7 @@ function WinnerActions({ env, envState, winner, onRun }) {
     /* The prototype ships the diff as a text bundle rather than a real
        zip — a real backend would build the tree with the changes applied
        and stream it back. Named .zip so the flow reads correctly. */
-    downloadBlob(`${env?.id || "agent"}-optimized-bundle.txt`, "text/plain", patchText());
+    downloadBlob(`${env?.id || "agent"}-self-improved-bundle.txt`, "text/plain", patchText());
     setFeedback("zip");
     closeExport();
   };
@@ -783,25 +830,18 @@ function WinnerActions({ env, envState, winner, onRun }) {
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {filed.length} {filed.length === 1 ? "change" : "changes"} across{" "}
-            {new Set(filed.map((r) => r.file.path)).size} {new Set(filed.map((r) => r.file.path)).size === 1 ? "file" : "files"}. Ready to run or export.
+            {new Set(filed.map((r) => r.file.path)).size} {new Set(filed.map((r) => r.file.path)).size === 1 ? "file" : "files"}.
+            {" "}Every trial already ran against this environment — the winner's number is the run.
           </Typography>
         </Box>
         <Button
-          variant="outlined" size="small"
+          variant="contained" color="primary" size="small"
           onClick={(e) => setExportAnchor(e.currentTarget)}
           startIcon={<Iconify icon="solar:download-minimalistic-linear" width={15} />}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
-          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
-        >
-          Export
-        </Button>
-        <Button
-          variant="contained" color="primary" size="small"
-          onClick={onRun}
-          startIcon={<Iconify icon="solar:play-bold" width={15} />}
           sx={{ typography: "s2", fontWeight: 700 }}
         >
-          Run in simulation
+          Export winner
         </Button>
       </Stack>
 
@@ -823,29 +863,21 @@ function WinnerActions({ env, envState, winner, onRun }) {
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{ paper: { sx: { minWidth: 240 } } }}
       >
-        <MenuItem onClick={doPatch} sx={{ typography: "s2" }}>
-          <ListItemIcon sx={{ minWidth: 28 }}>
-            <Iconify icon="solar:file-download-linear" width={16} />
-          </ListItemIcon>
+        <MenuItem onClick={doPatch} sx={{ typography: "s2", gap: 1 }}>
+          <Iconify icon="solar:file-download-linear" width={16} />
           <ListItemText primary="Download patch (.diff)" primaryTypographyProps={{ sx: { typography: "s2" } }} />
         </MenuItem>
-        <MenuItem onClick={doZip} sx={{ typography: "s2" }}>
-          <ListItemIcon sx={{ minWidth: 28 }}>
-            <Iconify icon="solar:archive-down-minimlistic-linear" width={16} />
-          </ListItemIcon>
+        <MenuItem onClick={doZip} sx={{ typography: "s2", gap: 1 }}>
+          <Iconify icon="solar:archive-down-minimlistic-linear" width={16} />
           <ListItemText primary="Download agent as zip" primaryTypographyProps={{ sx: { typography: "s2" } }} />
         </MenuItem>
-        <MenuItem onClick={doCopy} sx={{ typography: "s2" }}>
-          <ListItemIcon sx={{ minWidth: 28 }}>
-            <Iconify icon="solar:copy-linear" width={16} />
-          </ListItemIcon>
+        <MenuItem onClick={doCopy} sx={{ typography: "s2", gap: 1 }}>
+          <Iconify icon="solar:copy-linear" width={16} />
           <ListItemText primary="Copy diff to clipboard" primaryTypographyProps={{ sx: { typography: "s2" } }} />
         </MenuItem>
         <Divider sx={{ my: 0.5 }} />
-        <MenuItem onClick={doPR} sx={{ typography: "s2" }}>
-          <ListItemIcon sx={{ minWidth: 28 }}>
-            <Iconify icon="solar:code-square-linear" width={16} />
-          </ListItemIcon>
+        <MenuItem onClick={doPR} sx={{ typography: "s2", gap: 1, alignItems: "flex-start", py: 1 }}>
+          <Iconify icon="solar:code-square-linear" width={16} style={{ marginTop: 2 }} />
           <ListItemText
             primary="Push as GitHub PR"
             secondary={envState?.agentRepo?.url ? envState.agentRepo.url : "Repository not connected"}

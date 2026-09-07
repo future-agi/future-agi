@@ -328,10 +328,12 @@ export default function ScenariosStep({ env, envState, patch, buildMode }) {
       )}
 
       {/*
-        What the gates discarded, directly under the list they filtered — the
-        rows above are the survivors, and the count is what makes that legible.
+        Gate-rejects panel intentionally suppressed: the table shows
+        the full scenario list directly, so a "10 drafted · 5 kept ·
+        5 rejected" filter below it just reads as if we're hiding
+        rows. Kept the import around in case we want to bring it
+        back behind a flag later.
       */}
-      {selected.length > 0 && <GateRejects env={env} kept={selected.length} sx={{ mb: 2 }} />}
 
       {/*
         Coverage after the list. It reads the rows above rather than

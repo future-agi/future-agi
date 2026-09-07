@@ -8,6 +8,17 @@ import { Verdict } from "../components/primitives";
 
 const TWIN_TINT = "#7857FC";
 
+/* Same derivations the TraceTable and CompareRuns TableView use, so a
+   number read here matches the number read on the single-run screen. */
+const hashStr = (s) => {
+  let h = 0;
+  for (let i = 0; i < String(s || "").length; i += 1) h = (h * 31 + String(s).charCodeAt(i)) >>> 0;
+  return h;
+};
+const csatOf = (t) => (t ? Math.max(1, Math.round((t.evalResults?.[0]?.score ?? 0.5) * 10) - 4) : null);
+const turnsOf = (t) => (t ? (t.steps?.length ?? 0) : null);
+const latencyOf = (t) => (t ? (t.latencyMs ?? (280 + (hashStr(t.id) % 320))) : null);
+
 /**
  * A column per agent version.
  *
@@ -49,7 +60,9 @@ export default function CompareGrid({ comparison, groups, evals, envState, view,
             >
               <Letter letter={r.letter} color={r.color} />
               <Typography noWrap sx={{ typography: "s2", fontWeight: 700, minWidth: 0 }}>
-                agent {r.agentVersion}
+                {r.kind === "trial"
+                  ? `Run ${r.trialN} · ${r.selfImprovementName}`
+                  : `agent ${r.agentVersion}`}
               </Typography>
               {r.id === baseline.id && (
                 <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>baseline</Typography>
@@ -177,6 +190,15 @@ function Cell({ cell, baselineCell, evals, envState, twinBacked, view, onOpen })
       </Typography>
 
       <Stack direction="row" spacing={2} sx={{ mb: (view.columns.scorers || twinBreakdown) ? 1.5 : 0 }} flexWrap="wrap" rowGap={1}>
+        {view.columns.csat && (
+          <Stat label="CSAT" value={cell.task ? String(csatOf(cell.task)) : "—"} />
+        )}
+        {view.columns.turns && (
+          <Stat label="Turns" value={cell.task ? String(turnsOf(cell.task)) : "—"} />
+        )}
+        {view.columns.latency && (
+          <Stat label="Latency" value={cell.task ? `${latencyOf(cell.task)}ms` : "—"} />
+        )}
         {view.columns.duration && (
           <Stat label="Duration" value={cell.task ? `${(cell.durationMs / 1000).toFixed(1)}s` : "—"} delta={cell.durationDelta} lowerIsBetter />
         )}
@@ -186,7 +208,7 @@ function Cell({ cell, baselineCell, evals, envState, twinBacked, view, onOpen })
         {view.columns.cost && (
           <Stat label="Cost" value={`$${(cell.cost || 0).toFixed(3)}`} />
         )}
-        {twinBacked && twinWrites != null && (
+        {twinBacked && twinWrites != null && !/^OPT-\d+-t\d+$/.test(cell.runId || "") && (
           <TwinWritesStat
             writes={twinWrites}
             delta={twinDelta}

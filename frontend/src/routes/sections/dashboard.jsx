@@ -310,6 +310,18 @@ const ScenarioDatasetView = lazyWithRetry(
 const SimEnvironments = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/Environments"),
 );
+const SimEnvironmentsBrowse = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/EnvironmentsBrowsePage"),
+);
+const SimTemplatesBrowse = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/TemplatesBrowsePage"),
+);
+const SimBuildEnvironment = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/BuildEnvironmentPage"),
+);
+const SimScratchBuild = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/ScratchBuildPage"),
+);
 const SimEnvironmentWorkspace = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/EnvironmentWorkspacePage"),
 );
@@ -352,6 +364,9 @@ const CreateNewAgentDefinition = lazyWithRetry(
 // );
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
+);
+const SimulatedRuns = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/SimulatedRunsPage"),
 );
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
@@ -1373,6 +1388,24 @@ export const dashboardRoutes = (
               element: <SimEnvironments />,
             },
             {
+              /* /environments/browse is legacy — the old two-column
+                 gallery it pointed at ("Build from your agent" +
+                 Templates/Twins tabs) is redundant now that the picker
+                 at /environments has "Create Environment" +
+                 "My Environments" tabs baked in. Nothing links here
+                 any more, but stale URLs and browser back stacks still
+                 do, so we redirect instead of 404-ing. */
+              path: "environments/browse",
+              element: <Navigate to="/dashboard/simulate/environments" replace />,
+            },
+            {
+              /* Full-page templates browse — reached from the "Use our
+                 template" hero on the picker. Hands off to the existing
+                 /environments/use/:templateId flow when a template is picked. */
+              path: "environments/templates",
+              element: <SimTemplatesBrowse />,
+            },
+            {
               /* Twins browse consolidated into the Environments Templates
                  tab — the standalone /twins page now just redirects. */
               path: "twins",
@@ -1386,6 +1419,21 @@ export const dashboardRoutes = (
             {
               path: "environments/new",
               element: <SimCreateEnvironment />,
+            },
+            {
+              /* Chat + derivation view — reached from any "Build
+                 environment" click in the picker. Reads
+                 location.state.presetSource and skips its intake. */
+              path: "environments/new/build",
+              element: <SimBuildEnvironment />,
+            },
+            {
+              /* Scratch flow's build-in-progress screen. PanelScratch
+                 adopts the env into the store, then routes here so the
+                 user watches the review layout stream stages before
+                 landing on the workspace. */
+              path: "environments/new/scratch-build/:envId",
+              element: <SimScratchBuild />,
             },
             {
               path: "environments/new/twin",
@@ -1463,7 +1511,20 @@ export const dashboardRoutes = (
           element: <Personas />,
         },
         {
+          /* Simulated Runs — new picker-flow-native landing that shows
+             every environment the user has created. Renders the same
+             MyEnvironmentsTable that used to live on the picker's own
+             "My Environments" tab; the picker no longer carries that
+             tab, this page owns it. */
           path: "test",
+          element: <SimulatedRuns />,
+        },
+        {
+          /* Legacy Simulated Runs (RunTests) — preserved verbatim at
+             /simulate/test/legacy so the older prototype view stays
+             one URL away. Nothing was deleted; new landing above owns
+             the nav slot. */
+          path: "test/legacy",
           element: <RunTests />,
         },
         {

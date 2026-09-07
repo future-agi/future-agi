@@ -12,7 +12,7 @@ import { paths } from "src/routes/paths";
 import { getEnvironment } from "../_mock/environments";
 import { protoRunId } from "../_mock/executionAdapter";
 import {
-  buildComparison, distributionFor, changedCount, runSummaries,
+  buildComparison, distributionFor, changedCount, runSummaries, trialSummaries, chipIdentity,
 } from "../_mock/comparison";
 import {
   emptyFilters, filterRows, sortRows, applyQuick, groupRows, defaultView,
@@ -63,6 +63,18 @@ export default function CompareRuns() {
   */
   const [viewOverride, setViewOverride] = useState(null);
   const view = viewOverride || { ...defaultView(), ...(envState.compareView || {}) };
+  /* Staging selection for the Add-run picker — the menu supports
+     multi-select via checkboxes and commits everything in one go. */
+  const [addStaging, setAddStaging] = useState([]);
+  const openAddMenu = (el) => { setAddStaging([]); setAddAnchor(el); };
+  const closeAddMenu = () => { setAddStaging([]); setAddAnchor(null); };
+  const toggleAddStaging = (id) => setAddStaging((prev) => (
+    prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+  ));
+  const commitAdd = () => {
+    if (addStaging.length) setRuns([...runIds, ...addStaging]);
+    closeAddMenu();
+  };
 
   /*
     Saved views live on the environment and the active one lives in the URL, so
@@ -85,7 +97,7 @@ export default function CompareRuns() {
 
   const applyView = (id) => {
     const v = savedViews.find((x) => x.id === id);
-    setFilters(v ? { ...v.config.filters } : emptyFilters());
+    setFilters(v ? [...(v.config.filters || [])] : emptyFilters());
     setViewOverride(v ? { ...v.config.view } : { ...defaultView(), ...(envState.compareView || {}) });
     setActiveView(id);
   };
@@ -116,10 +128,22 @@ export default function CompareRuns() {
     () => (env ? buildComparison(env, envState, runIds) : { runs: [], rows: [], evals: [] }),
     [env, envState, runIds],
   );
-  const others = useMemo(
-    () => (env ? runSummaries(env, envState).filter((r) => !runIds.includes(r.id)) : []),
-    [env, envState, runIds],
-  );
+  /* Every runnable row this environment has — manual runs plus every
+     self-improvement trial — with the unified numeric-chip identity
+     applied so the Add-run picker matches the runs list badges. */
+  const others = useMemo(() => {
+    if (!env) return [];
+    const chips = chipIdentity(env, envState);
+    const manual = runSummaries(env, envState);
+    const trials = trialSummaries(env, envState);
+    return [...manual, ...trials]
+      .filter((r) => !runIds.includes(r.id))
+      .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt))
+      .map((r) => {
+        const chip = chips.get(r.id);
+        return chip ? { ...r, letter: chip.letter, color: chip.color } : r;
+      });
+  }, [env, envState, runIds]);
 
   const evalId = comparison.evals.some((e) => e.id === pickedEval)
     ? pickedEval
@@ -297,7 +321,7 @@ export default function CompareRuns() {
           {others.length > 0 && (
             <Button
               size="small"
-              onClick={(e) => setAddAnchor(e.currentTarget)}
+              onClick={(e) => openAddMenu(e.currentTarget)}
               startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
               sx={{ typography: "s2", fontWeight: 700, color: "text.secondary", border: "1px dashed", borderColor: "divider" }}
             >
@@ -342,25 +366,85 @@ export default function CompareRuns() {
         </Stack>
       </Box>
 
-      <Menu open={!!addAnchor} anchorEl={addAnchor} onClose={() => setAddAnchor(null)}>
-        {others.map((r) => (
-          <MenuItem
-            key={r.id}
-            sx={{ typography: "s2" }}
-            onClick={() => { setRuns([...runIds, r.id]); setAddAnchor(null); }}
+      <Menu
+        open={!!addAnchor}
+        anchorEl={addAnchor}
+        onClose={closeAddMenu}
+        slotProps={{ paper: { sx: { maxHeight: 480, minWidth: 340 } } }}
+      >
+        {others.map((r) => {
+          const picked = addStaging.includes(r.id);
+          return (
+            <MenuItem
+              key={r.id}
+              sx={{ typography: "s2", gap: 0.5, py: 0.75 }}
+              onClick={() => toggleAddStaging(r.id)}
+              selected={picked}
+            >
+              <Checkbox
+                size="small"
+                checked={picked}
+                tabIndex={-1}
+                sx={{ p: 0.5, mr: 0.5, pointerEvents: "none" }}
+              />
+              <Letter letter={r.letter} color={r.color} />
+              <Box component="span" sx={{ flex: 1, minWidth: 0, ml: 1 }}>
+                {r.kind === "trial" ? (
+                  <>
+                    Run {r.trialN}
+                    <Box component="span" sx={{ color: "text.subtitle" }}>
+                      {" "}· {r.selfImprovementName}
+                    </Box>
+                  </>
+                ) : (
+                  <>
+                    Run {r.ordinal} · agent {r.agentVersion}
+                    {r.envVersion && (
+                      <Box component="span" sx={{ color: "text.subtitle" }}>
+                        {" "}× env {r.envVersion}
+                      </Box>
+                    )}
+                  </>
+                )}
+              </Box>
+              <Box component="span" sx={{ color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                {r.passRate}%
+              </Box>
+            </MenuItem>
+          );
+        })}
+        {/* Footer: staging count + commit action. Sticky so it stays put
+            while the list scrolls. */}
+        <Box
+          sx={{
+            position: "sticky", bottom: 0,
+            borderTop: "1px solid", borderColor: "divider",
+            bgcolor: "background.paper",
+            px: 1.5, py: 1, mt: 0.5,
+            display: "flex", alignItems: "center", gap: 1,
+          }}
+        >
+          <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+            {addStaging.length
+              ? `${addStaging.length} selected`
+              : "Pick runs to add"}
+          </Typography>
+          <Button
+            size="small"
+            onClick={closeAddMenu}
+            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
           >
-            <Letter letter={r.letter} color={r.color} />
-            <Box component="span" sx={{ ml: 1 }}>
-              Run {r.ordinal} · agent {r.agentVersion}
-              {r.envVersion && (
-                <Box component="span" sx={{ color: "text.subtitle" }}>
-                  {" "}× env {r.envVersion}
-                </Box>
-              )}
-              {" "}· {r.passRate}%
-            </Box>
-          </MenuItem>
-        ))}
+            Cancel
+          </Button>
+          <Button
+            size="small" variant="contained" color="primary"
+            disabled={!addStaging.length}
+            onClick={commitAdd}
+            sx={{ typography: "s2", fontWeight: 700 }}
+          >
+            Add {addStaging.length || ""}
+          </Button>
+        </Box>
       </Menu>
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
@@ -478,6 +562,7 @@ export default function CompareRuns() {
               groups={groups}
               view={view}
               rowPad={rowPad}
+              evals={comparison.evals}
               selected={selected}
               onToggle={(id) => setSelected((prev) => (
                 prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -508,13 +593,42 @@ export default function CompareRuns() {
 
 /* ── table view ──────────────────────────────────────────────────────────── */
 
-function TableView({ groups, view, rowPad, selected, onToggle, onOpen }) {
+/* Per-task synthesised metrics — same derivations the traces table uses,
+   so a value read on a single-run screen equals the value read here. */
+const hashStr = (s) => {
+  let h = 0;
+  for (let i = 0; i < String(s || "").length; i += 1) h = (h * 31 + String(s).charCodeAt(i)) >>> 0;
+  return h;
+};
+const csatOf = (t) => (t ? Math.max(1, Math.round((t.evalResults?.[0]?.score ?? 0.5) * 10) - 4) : null);
+const turnsOf = (t) => (t ? (t.steps?.length ?? 0) : null);
+const latencyOf = (t) => (t ? (t.latencyMs ?? (280 + (hashStr(t.id) % 320))) : null);
+
+function TableView({ groups, view, rowPad, selected, onToggle, onOpen, evals }) {
+  /* System-metric strip on the right of the row — same set the traces
+     table shows: CSAT, Turns, Latency, Duration, Tokens, Cost. Widens
+     with the number of active columns so nothing crushes. */
+  const metricBits = [
+    view.columns.csat && "CSAT",
+    view.columns.turns && "Turns",
+    view.columns.latency && "Latency",
+    view.columns.duration && "Duration",
+    view.columns.tokens && "Tokens",
+    view.columns.cost && "Cost",
+  ].filter(Boolean);
+  const metricColWidth = metricBits.length ? metricBits.length * 76 + (metricBits.length - 1) * 10 : 0;
+  const showScorers = view.columns.scorers && (evals?.length || 0) > 0;
+  const scorersColWidth = showScorers ? evals.length * 92 + (evals.length - 1) * 10 : 0;
+  /* System metrics before evals — matches the single-run traces table,
+     where evals live at the far right of the row. */
+  const gridTemplate = `36px 260px 1fr ${metricColWidth ? `${metricColWidth}px ` : ""}${scorersColWidth ? `${scorersColWidth}px` : ""}`.trim();
+
   return (
     <>
       <Box
         sx={{
           display: { xs: "none", lg: "grid" },
-          gridTemplateColumns: "36px 300px 1fr 190px",
+          gridTemplateColumns: gridTemplate,
           columnGap: 2,
           px: 2.5, py: 1, borderBottom: "1px solid", borderColor: "divider",
         }}
@@ -522,10 +636,28 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen }) {
         <Box />
         <ColHead>Scenario</ColHead>
         <ColHead>{view.diff ? "What changed against the baseline" : "What each run did with it"}</ColHead>
-        <ColHead sx={{ textAlign: "right" }}>
-          {[view.columns.duration && "Duration", view.columns.tokens && "Tokens", view.columns.cost && "Cost"]
-            .filter(Boolean).join(" · ")}
-        </ColHead>
+        {metricBits.length > 0 && (
+          <Box sx={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${metricBits.length}, minmax(56px, 1fr))`,
+            columnGap: 1.25,
+          }}>
+            {metricBits.map((label) => (
+              <ColHead key={label} sx={{ textAlign: "right" }}>{label}</ColHead>
+            ))}
+          </Box>
+        )}
+        {showScorers && (
+          <Box sx={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${evals.length}, minmax(72px, 1fr))`,
+            columnGap: 1.25,
+          }}>
+            {evals.map((e) => (
+              <ColHead key={e.id} sx={{ textAlign: "right" }}>{e.name}</ColHead>
+            ))}
+          </Box>
+        )}
       </Box>
 
       {groups.map((group) => (
@@ -548,7 +680,7 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen }) {
                 key={row.id}
                 sx={{
                   display: "grid",
-                  gridTemplateColumns: { xs: "1fr", lg: "36px 300px 1fr 190px" },
+                  gridTemplateColumns: { xs: "1fr", lg: gridTemplate },
                   columnGap: 2, px: 2.5, py: rowPad,
                   cursor: "pointer",
                   "&:hover": { bgcolor: "action.hover", "& .row-open": { opacity: 1 } },
@@ -612,6 +744,8 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen }) {
                   ))}
                 </Stack>
 
+                {/* System metrics column — sits before evals, matching the
+                    header order and the single-run traces table. */}
                 <Stack spacing={1.25} sx={{ display: { xs: "none", lg: "flex" }, position: "relative" }}>
                   {/* The row opens a side-by-side of the transcripts; without a
                       mark, nothing on it says that. */}
@@ -624,18 +758,88 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen }) {
                       transition: "opacity .12s", color: "text.subtitle", pointerEvents: "none",
                     }}
                   />
-                  {row.cells.map((c) => (
-                    <Stack key={c.runId} direction="row" spacing={1.5} justifyContent="flex-end">
-                      {view.columns.duration && (
-                        <Metric value={c.task ? `${(c.durationMs / 1000).toFixed(1)}s` : "—"} delta={c.durationDelta} lowerIsBetter />
-                      )}
-                      {view.columns.tokens && (
-                        <Metric value={c.task ? `${c.tokens}` : "—"} delta={c.tokensDelta} lowerIsBetter />
-                      )}
-                      {view.columns.cost && <Metric value={`$${(c.cost || 0).toFixed(3)}`} />}
-                    </Stack>
-                  ))}
+                  {(() => {
+                    const columns = [
+                      view.columns.csat && { key: "csat", get: (c) => { const v = csatOf(c.task); return v != null ? String(v) : "—"; } },
+                      view.columns.turns && { key: "turns", get: (c) => { const v = turnsOf(c.task); return v != null ? String(v) : "—"; } },
+                      view.columns.latency && { key: "latency", get: (c) => { const v = latencyOf(c.task); return v != null ? `${v}ms` : "—"; } },
+                      view.columns.duration && { key: "duration", get: (c) => c.task ? `${(c.durationMs / 1000).toFixed(1)}s` : "—" },
+                      view.columns.tokens && { key: "tokens", get: (c) => c.task ? c.tokens.toLocaleString() : "—" },
+                      view.columns.cost && { key: "cost", get: (c) => `$${(c.cost || 0).toFixed(3)}` },
+                    ].filter(Boolean);
+                    return row.cells.map((c) => (
+                      <Box
+                        key={c.runId}
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: `repeat(${columns.length}, minmax(56px, 1fr))`,
+                          columnGap: 1.25,
+                          alignItems: "baseline",
+                        }}
+                      >
+                        {columns.map((col) => (
+                          <Typography
+                            key={col.key}
+                            noWrap
+                            sx={{
+                              textAlign: "right",
+                              typography: "s2",
+                              color: "text.primary",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {col.get(c)}
+                          </Typography>
+                        ))}
+                      </Box>
+                    ));
+                  })()}
                 </Stack>
+
+                {/* Eval scores column — sits after the system metrics so
+                    the run's numbers cluster together and evals close the
+                    row on the right, mirroring the traces table. */}
+                {showScorers && (
+                  <Stack spacing={1.25} sx={{ display: { xs: "none", lg: "flex" } }}>
+                    {row.cells.map((c) => (
+                      <Box
+                        key={c.runId}
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: `repeat(${evals.length}, minmax(72px, 1fr))`,
+                          columnGap: 1.25,
+                          alignItems: "baseline",
+                        }}
+                      >
+                        {evals.map((e) => {
+                          const r = (c.task?.evalResults || []).find((x) => x.id === e.id);
+                          if (!r) {
+                            return (
+                              <Typography key={e.id} sx={{
+                                textAlign: "right",
+                                typography: "s2", color: "text.disabled",
+                                fontVariantNumeric: "tabular-nums",
+                              }}>—</Typography>
+                            );
+                          }
+                          return (
+                            <Typography
+                              key={e.id}
+                              sx={{
+                                textAlign: "right",
+                                typography: "s2", fontWeight: 700,
+                                color: r.passed ? "text.primary" : "#C2603F",
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                            >
+                              {Math.round(r.score * 100)}%
+                            </Typography>
+                          );
+                        })}
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
               </Box>
             ))}
           </Stack>
@@ -646,6 +850,7 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen }) {
 }
 TableView.propTypes = {
   groups: PropTypes.array, view: PropTypes.object, rowPad: PropTypes.number,
+  evals: PropTypes.array,
   selected: PropTypes.array, onToggle: PropTypes.func, onOpen: PropTypes.func,
 };
 

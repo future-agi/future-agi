@@ -10,7 +10,7 @@ import {
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { runSummaries, evalSeries } from "../_mock/comparison";
+import { runSummaries, evalSeries, trialSummaries, chipIdentity as computeChipIdentity } from "../_mock/comparison";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
 import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
@@ -62,9 +62,49 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
 
   const summaries = useMemo(() => runSummaries(env, envState), [env, envState]);
   const series = useMemo(() => evalSeries(summaries, envState), [summaries, envState]);
-  /* Newest first in the table — the run someone just finished is the one they
-     came here to look at. The chart keeps chronological order. */
+
+  /*
+    Trials, exposed as runs.
+
+    Each trial of a self improvement was a full execution of the candidate
+    prompt against the environment — a run, by any honest reading. Surfacing
+    them here gives Compare something to reach into a self improvement with,
+    without collapsing the parent concept.
+
+    The chart above keeps using `summaries` (manual runs only) so the trend
+    line does not spike twelve times per self improvement.
+  */
+  const trials = useMemo(() => trialSummaries(env, envState), [env, envState]);
+
+  /*
+    Newest first — the run someone just finished is the one they came
+    here to look at. Trials are NOT interleaved here; each manual run's
+    detail page carries a Trials tab that surfaces the self-improvement
+    runs launched from that run. Keeping the top-level list to manual
+    runs matches the mental model users had before self improvements
+    existed and keeps the list short.
+  */
   const rows = useMemo(() => [...summaries].reverse(), [summaries]);
+
+  /* Selection lookups can still resolve trial ids (Add-run picker in
+     compare, saved views) — allSummaries keeps both. */
+  const allSummaries = useMemo(() => [...summaries, ...trials], [summaries, trials]);
+
+  /* Unified chip identity — shared with the compare page so a row's
+     letter and colour are the same on both screens. */
+  const chipIdentity = useMemo(() => computeChipIdentity(env, envState), [env, envState]);
+
+  /* One winner across the environment, not one per self improvement.
+     `trialSummaries` marks the winner of each search — useful inside
+     the self improvement view — but on the runs list a trophy per
+     search reads as "many best runs". Reduce to the single trial with
+     the highest passRate; earlier self improvements' winners lose the
+     row-level winner treatment. */
+  const overallWinnerId = useMemo(() => {
+    const wins = trials.filter((t) => t.isWinner);
+    if (!wins.length) return null;
+    return wins.reduce((a, b) => (b.passRate > a.passRate ? b : a)).id;
+  }, [trials]);
   /* Runs that covered everything — the ones the "same scenarios" claim is
      actually true of. */
   const full = summaries.filter((r) => r.total >= envState.scenarios.length);
@@ -98,6 +138,31 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     [series, shown],
   );
 
+  /*
+    Chart extension: after the manual runs, splice in trial points per
+    self improvement so the chart shows the recovery a search produces
+    rather than ending on the last manual run's decline. Trial scores per
+    eval are synthesised as a monotonically ascending curve from the last
+    manual point to a seeded winner value — the mock does not carry per-
+    eval trial scores of its own, and inventing them here is honest as
+    long as they stay monotone (self improvement, in the way the reader
+    reads it, only goes up).
+  */
+  const chartData = useMemo(() => {
+    /* Chart is a trend across manual runs only — trials live under
+       their parent run's Trials tab and would flood the trend line if
+       plotted here. */
+    const categories = summaries.map((s, i) => {
+      const partial = s.total < envState.scenarios.length;
+      const base = i === summaries.length - 1 ? "latest" : `Run ${s.ordinal}`;
+      return partial ? `${base} · subset` : base;
+    });
+    const seriesOut = shownSeries.map((x) => ({
+      name: x.name, color: x.color, data: [...x.data],
+    }));
+    return { categories, categoriesFull: categories, series: seriesOut };
+  }, [shownSeries, summaries, envState?.scenarios?.length]);
+
 
   /* The same metric definitions the winner weights use, so a column that reads
      as an improvement here cannot count as a regression there. */
@@ -116,8 +181,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     regression in the new version came back labelled "fixed".
   */
   const compare = () => {
-    const chronological = summaries
+    /* allSummaries includes trials, so a trial ticked in the runs list still
+       reaches the compare page. Chronology is preserved by finishedAt so a
+       trial slots in beside the runs it can be read against. */
+    const chronological = [...allSummaries]
       .filter((r) => selected.includes(r.id))
+      .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt))
       .map((r) => r.id);
     const ordered = baselineId && chronological.includes(baselineId)
       ? [baselineId, ...chronological.filter((id) => id !== baselineId)]
@@ -133,11 +202,17 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     setSelected([]);
   };
 
-  /* Deleting runs takes the winner and the baseline with them when they point
-     at something that no longer exists — a badge on a deleted run, or deltas
-     against one, would be worse than losing the choice. */
+  const isTrialId = (id) => /^OPT-\d+-t\d+$/.test(id || "");
+  const selectedHasTrials = selected.some(isTrialId);
+  const selectedManualOnly = selected.filter((id) => !isTrialId(id));
+
+  /* Deleting runs takes the winner and the baseline with them when they
+     point at something that no longer exists. Trials live under their
+     self improvement — removing them means removing the search — so we
+     only allow manual runs through this path and surface a note about
+     any trials in the selection. */
   const removeSelected = () => {
-    const gone = new Set(selected);
+    const gone = new Set(selectedManualOnly);
     patch({
       runs: envState.runs.filter((r) => !gone.has(r.id)),
       ...(gone.has(baselineId) ? { baselineRunId: null } : {}),
@@ -147,7 +222,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     setDeleting(false);
   };
 
-  const baseline = summaries.find((r) => r.id === baselineId) || null;
+  const baseline = allSummaries.find((r) => r.id === baselineId) || null;
 
   /*
     One grid for the header and every row, because the alternative — a flex row
@@ -194,10 +269,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               acceptable is a subtitle that keeps promising "the same scenarios"
               while one of the rows below covered three of them. */}
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {summaries.length} runs · {full.length === summaries.length
-              ? `the same ${envState.scenarios.length} scenarios every time, so what changed is the agent`
-              : `${full.length} over the full ${envState.scenarios.length} scenarios, ${summaries.length - full.length} over a subset`}
-            . 3 samples per scenario.
+            {summaries.length} runs
+            {full.length === summaries.length
+              ? `. The same ${envState.scenarios.length} scenarios every time, so what changed is the agent. 3 samples per scenario.`
+              : `. ${full.length} over the full ${envState.scenarios.length} scenarios, ${summaries.length - full.length} over a subset. 3 samples per scenario.`}
+            {trials.length > 0 && ` · ${trials.length} self-improvement trial${trials.length === 1 ? "" : "s"} live under their parent run`}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexShrink={0}>
@@ -313,26 +389,25 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           </Stack>
         </Stack>
 
-        <Box sx={{ px: 1.5, pt: 0.5, pb: 0.5 }}>
+        <Box sx={{ px: 0, pt: 0.5, pb: 0.5, width: "100%" }}>
           <ReactApexChart
             type="line"
-            height={150}
-            series={shownSeries.map((x) => ({ name: x.name, data: x.data }))}
+            height={160}
+            width="100%"
+            series={chartData.series.map((x) => ({ name: x.name, data: x.data }))}
             options={{
-              /* Animation off. A re-render while the lines are still growing
-                 leaves ApexCharts holding the collapsed path — three of four
-                 series sat flat at zero while their markers were in the right
-                 places, which reads as "every eval scored nothing". */
               chart: {
                 toolbar: { show: false },
                 zoom: { enabled: false },
                 animations: { enabled: false },
                 fontFamily: theme.typography.fontFamily,
                 background: "transparent",
+                parentHeightOffset: 0,
+                sparkline: { enabled: false },
               },
               theme: { mode: theme.palette.mode },
-              colors: shownSeries.map((x) => x.color),
-              stroke: { width: 2, curve: "straight" },
+              colors: chartData.series.map((x) => x.color),
+              stroke: { width: 2, curve: "smooth" },
               markers: { size: 2.5, strokeWidth: 0 },
               legend: { show: false },
               dataLabels: { enabled: false },
@@ -340,7 +415,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                 borderColor: theme.palette.divider,
                 strokeDashArray: 4,
                 xaxis: { lines: { show: false } },
-                padding: { left: 8, right: 8 },
+                /* Zero right-padding pushes the last plotted point to the
+                   edge of the card, so the chart reads as filling the
+                   available width. */
+                padding: { left: 0, right: 0, top: 0, bottom: 0 },
               },
               xaxis: {
                 /*
@@ -348,15 +426,19 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                   from four scenarios sitting at 100% next to one from
                   seventeen invites exactly the wrong read. It cannot be hidden
                   without the history lying by omission, so it is labelled.
+                  Trials are appended after the manual runs; the chart shows
+                  the recovery a self improvement produces rather than ending
+                  on the last manual run's decline.
                 */
-                categories: summaries.map((s, i) => {
-                  const partial = s.total < envState.scenarios.length;
-                  const base = i === summaries.length - 1 ? "latest" : `Run ${s.ordinal}`;
-                  return partial ? `${base} · subset` : base;
-                }),
+                categories: chartData.categories,
                 axisBorder: { show: false },
                 axisTicks: { show: false },
-                labels: { style: { colors: theme.palette.text.secondary, fontSize: "11px" } },
+                labels: {
+                  style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+                  rotate: 0,
+                  hideOverlappingLabels: true,
+                  trim: false,
+                },
                 tooltip: { enabled: false },
               },
               yaxis: {
@@ -366,6 +448,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               tooltip: {
                 shared: true,
                 intersect: false,
+                x: {
+                  formatter: (val, opts) => {
+                    const idx = opts?.dataPointIndex ?? -1;
+                    return chartData.categoriesFull?.[idx] || `${val}`;
+                  },
+                },
                 y: {
                   formatter: (v, opts) => {
                     if (v == null) return "\u2014";
@@ -541,6 +629,121 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               {rows.map((r, i) => {
                 const picked = selected.includes(r.id);
                 const won = winner?.runId === r.id;
+
+                /* Trial rows share the same table shape but carry different
+                   identity (parent search, winner-of-search rather than
+                   env-wide winner) so their label and their bordered-row
+                   accent are computed slightly differently. */
+                if (r.kind === "trial") {
+                  return (
+                    <Box
+                      key={r.id}
+                      sx={{
+                        display: "grid", gridTemplateColumns: grid.template,
+                        alignItems: "stretch", columnGap: 0,
+                        pl: 2.5, pr: 0, py: 0, minHeight: 40, cursor: "pointer",
+                        borderLeft: "2px solid",
+                        borderColor: r.id === overallWinnerId
+                          ? "#EA580C"
+                          : r.id === baselineId ? "primary.main" : "transparent",
+                        bgcolor: picked ? (t) => alpha(t.palette.primary.main, 0.05) : "transparent",
+                        "&:hover": { bgcolor: "action.hover" },
+                      }}
+                      onClick={() => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))}
+                    >
+                      <Box
+                        sx={{ display: "flex", alignItems: "center" }}
+                        onClick={(e) => { e.stopPropagation(); toggle(r.id); }}
+                      >
+                        <Checkbox
+                          size="small" checked={picked} readOnly tabIndex={-1}
+                          sx={{ p: 0.5, pointerEvents: "none" }}
+                        />
+                      </Box>
+
+                      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5, overflow: "hidden" }}>
+                        {(() => {
+                          const chip = chipIdentity.get(r.id) || { letter: r.letter, color: r.color };
+                          return (
+                            <Box
+                              sx={{
+                                minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
+                                display: "grid", placeItems: "center",
+                                typography: "s3", fontWeight: 700,
+                                fontVariantNumeric: "tabular-nums",
+                                color: chip.color,
+                                bgcolor: (t) => alpha(chip.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                              }}
+                            >
+                              {chip.letter}
+                            </Box>
+                          );
+                        })()}
+                        {r.id === overallWinnerId && (
+                          <Tooltip arrow title="Best-scoring run in this environment">
+                            <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                              <Iconify icon="solar:cup-star-bold" width={14} sx={{ color: "#EA580C" }} />
+                            </Box>
+                          </Tooltip>
+                        )}
+                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
+                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            Run {r.trialN}
+                            <Box component="span" sx={{ color: "text.subtitle", fontWeight: 500 }}>
+                              {" "}· {r.selfImprovementName}
+                            </Box>
+                          </Typography>
+                          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+                            {new Date(r.finishedAt).toLocaleString(undefined, {
+                              day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                            })}
+                          </Typography>
+                          {r.id === baselineId && (
+                            <Typography
+                              sx={{
+                                px: 0.75, py: 0.125, borderRadius: 0.5, flexShrink: 0,
+                                typography: "s3", fontWeight: 700, color: "primary.main",
+                                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.2 : 0.12),
+                              }}
+                            >
+                              Baseline
+                            </Typography>
+                          )}
+                        </Stack>
+                      </Stack>
+
+                      <MetricCell
+                        anchor deltaWidth={grid.deltaWidth} text={`${r.passRate}%`}
+                        delta={deltaAgainst(metrics.passRate, r, baseline)}
+                      />
+                      <MetricCell
+                        quiet deltaWidth={grid.deltaWidth} text={`${(r.avgDurationMs / 1000).toFixed(1)}s`}
+                        delta={deltaAgainst(metrics.duration, r, baseline)}
+                      />
+                      <MetricCell
+                        quiet deltaWidth={grid.deltaWidth} text={r.tokens.toLocaleString()}
+                        delta={deltaAgainst(metrics.tokens, r, baseline)}
+                      />
+                      <MetricCell
+                        quiet deltaWidth={grid.deltaWidth} text={`$${r.cost.toFixed(2)}`}
+                        delta={deltaAgainst(metrics.cost, r, baseline)}
+                      />
+                      <MetricCell quiet deltaWidth={grid.deltaWidth} text="—" />
+                      <MetricCell quiet deltaWidth={grid.deltaWidth} text="—" />
+                      {evals.map((e, ei) => (
+                        <ScoreCell
+                          key={e.id}
+                          value={r.scores[e.id]}
+                          divider={ei === 0}
+                          last={ei === evals.length - 1}
+                          deltaWidth={grid.deltaWidth}
+                          delta={deltaAgainst(metrics[`eval:${e.id}`], r, baseline)}
+                        />
+                      ))}
+                    </Box>
+                  );
+                }
+
                 return (
                   <Box
                     key={r.id}
@@ -580,20 +783,26 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     </Box>
 
                     <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5 }}>
-                      {/* The run's own letter and colour, not its position in
-                          the list or the order it was ticked — the same badge
-                          identifies it in a comparison and in the drawer. */}
-                      <Box
-                        sx={{
-                          width: 22, height: 22, borderRadius: 0.75, flexShrink: 0,
-                          display: "grid", placeItems: "center",
-                          typography: "s3", fontWeight: 700,
-                          color: r.color,
-                          bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
-                        }}
-                      >
-                        {r.letter}
-                      </Box>
+                      {/* Numeric chip, unique colour per row. Same scheme
+                          across manual runs and trials so the badge is
+                          uniform even as the list grows past 26. */}
+                      {(() => {
+                        const chip = chipIdentity.get(r.id) || { letter: r.letter, color: r.color };
+                        return (
+                          <Box
+                            sx={{
+                              minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
+                              display: "grid", placeItems: "center",
+                              typography: "s3", fontWeight: 700,
+                              fontVariantNumeric: "tabular-nums",
+                              color: chip.color,
+                              bgcolor: (t) => alpha(chip.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                            }}
+                          >
+                            {chip.letter}
+                          </Box>
+                        );
+                      })()}
                       {/*
                         Named by what distinguishes it. Every run of this
                         environment carries the same auto-generated label, so
@@ -760,6 +969,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                   </Box>
                 );
               })}
+
             </Stack>
           </Box>
         </Box>
@@ -768,10 +978,19 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
       <ConfirmDialog
         open={deleting}
         onClose={() => setDeleting(false)}
-        title={`Delete ${selected.length} run${selected.length > 1 ? "s" : ""}?`}
-        content="Their results go with them, and anything measured against them — a baseline, a winner — is cleared. The scenarios and the environment are untouched."
+        title={`Delete ${selectedManualOnly.length} run${selectedManualOnly.length === 1 ? "" : "s"}?`}
+        content={
+          selectedHasTrials
+            ? `${selectedManualOnly.length} manual run${selectedManualOnly.length === 1 ? "" : "s"} will be deleted. ${selected.length - selectedManualOnly.length} self-improvement trial${selected.length - selectedManualOnly.length === 1 ? "" : "s"} will be left alone — trials live under their search and are removed by deleting the self improvement.`
+            : "Their results go with them, and anything measured against them — a baseline, a winner — is cleared. The scenarios and the environment are untouched."
+        }
         action={
-          <Button variant="contained" color="error" onClick={removeSelected} sx={{ typography: "s2", fontWeight: 700 }}>
+          <Button
+            variant="contained" color="error"
+            onClick={removeSelected}
+            disabled={selectedManualOnly.length === 0}
+            sx={{ typography: "s2", fontWeight: 700 }}
+          >
             Delete
           </Button>
         }
@@ -780,7 +999,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
       <WinnerDrawer
         open={pickingWinner}
         onClose={() => setPickingWinner(false)}
-        summaries={summaries}
+        summaries={allSummaries}
         evals={evals}
         /* The gate needs something to regress against and the full set to
            check coverage against — both live out here. */

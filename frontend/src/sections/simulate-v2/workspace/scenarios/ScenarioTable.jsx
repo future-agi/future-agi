@@ -1,12 +1,21 @@
 import PropTypes from "prop-types";
-import { Fragment } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
-  IconButton, Tooltip,
+  IconButton, Tooltip, Checkbox,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { subTasksFor } from "../../_mock/contract";
+
+/* Neutral white-on-selected checkbox — no primary colour, keeps the
+   table's monochrome treatment. */
+const selectableCheckboxSx = {
+  p: 0,
+  color: "text.disabled",
+  "&.Mui-checked": { color: "text.primary" },
+  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
+};
 
 /**
  * Scenarios as a table.
@@ -31,8 +40,42 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
     ? groups
     : [{ id: "all", label: null, rows: rows || [] }];
 
+  /* All scenario ids across every section — used to seed the default
+     "everything selected" state and to compute the header-checkbox
+     tri-state (checked / indeterminate / unchecked). */
+  const allIds = useMemo(
+    () => sections.flatMap((s) => (s.rows || []).map((r) => r.id)).filter(Boolean),
+    [sections],
+  );
+  const [selected, setSelected] = useState(() => new Set(allIds));
+
+  /* When the ids in the table change (row added / removed / different
+     env), grow the selection to include any newly-visible rows and
+     drop ones that no longer exist. Preserves user opt-outs on rows
+     that survived the change. */
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      let dirty = false;
+      allIds.forEach((id) => { if (!next.has(id) && !prev.has(id)) { next.add(id); dirty = true; } });
+      Array.from(next).forEach((id) => { if (!allIds.includes(id)) { next.delete(id); dirty = true; } });
+      return dirty ? next : prev;
+    });
+  }, [allIds]);
+
+  const toggle = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected((prev) => (
+    prev.size === allIds.length ? new Set() : new Set(allIds)
+  ));
+  const allChecked = allIds.length > 0 && selected.size === allIds.length;
+  const someChecked = selected.size > 0 && selected.size < allIds.length;
+
   /*
-    Column order (final): scenario, persona, situation, sub-tasks,
+    Column order (final): checkbox, scenario, persona, situation, sub-tasks,
     branch category, ideal outcome. "Conversation branch" was
     dropped — it duplicated what "Branch category" already carries at
     a scannable level, and it was the widest, monospace-heaviest
@@ -41,7 +84,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
     not a run's actual result.
   */
   const columns = [
-    "#", "Scenario", "Persona", "Situation",
+    "select", "#", "Scenario", "Persona", "Situation",
     "Sub-tasks", "Branch category", "Ideal outcome", "",
   ];
   let counter = 0;
@@ -61,22 +104,20 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                 the pinned column reads as one thing.
               */
               const isActions = i === columns.length - 1;
+              const isSelect = h === "select";
               return (
                 <TableCell
                   key={h || i}
                   align={isActions ? "right" : "left"}
+                  padding={isSelect ? "checkbox" : "normal"}
                   sx={{
                     typography: "s3", fontWeight: 700, color: "text.subtitle",
                     textTransform: "uppercase", letterSpacing: .4,
-                    /* Neutral fill restored on the column header row —
-                       without it the header floated into the body and
-                       the table lost its top edge. Group-header rows
-                       below keep the same fill so the two rows read as
-                       "the frame" and the body rows sit inside it. */
                     bgcolor: "background.neutral",
                     borderBottom: "1px solid", borderColor: "divider",
                     whiteSpace: "nowrap",
                     ...(h === "#" && { width: 44 }),
+                    ...(isSelect && { width: 44, pl: 1.5 }),
                     ...(isActions && {
                       position: "sticky", right: 0, zIndex: 2,
                       width: 96, minWidth: 96,
@@ -84,7 +125,15 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                     }),
                   }}
                 >
-                  {h}
+                  {isSelect ? (
+                    <Checkbox
+                      size="small"
+                      checked={allChecked}
+                      indeterminate={someChecked}
+                      onChange={toggleAll}
+                      sx={selectableCheckboxSx}
+                    />
+                  ) : h}
                 </TableCell>
               );
             })}
@@ -145,6 +194,14 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
 
                 return (
                   <TableRow key={row.id} hover>
+                    <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
+                      <Checkbox
+                        size="small"
+                        checked={selected.has(row.id)}
+                        onChange={() => toggle(row.id)}
+                        sx={selectableCheckboxSx}
+                      />
+                    </TableCell>
                     <TableCell sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
                       {idx}
                     </TableCell>
@@ -330,8 +387,25 @@ ClampCell.propTypes = { text: PropTypes.string };
  * the full numbered list, so a big scenario's twelve sub-tasks stay
  * discoverable without turning every table row into a scroll well.
  */
+/*
+  SubTasksCell accepts both shapes callers actually pass:
+  - `[{ id, label }, ...]` — the canonical shape produced by
+    subTasksFor() and the template scenarios
+  - `["step one", "step two", ...]` — plain-string arrays produced
+    by the scratch derivation and older mocks
+  Coerces to a common `{ id, label }` shape up front so no caller
+  silently renders bare "1. 2. 3." numbers with the label missing.
+*/
+function normaliseSubTasks(subTasks) {
+  return (subTasks || []).map((st, i) => {
+    if (typeof st === "string") return { id: `st-${i}`, label: st };
+    if (!st) return null;
+    return { id: st.id || `st-${i}`, label: st.label || st.text || st.title || "" };
+  }).filter((st) => st && st.label);
+}
+
 function SubTasksCell({ subTasks }) {
-  const list = subTasks || [];
+  const list = normaliseSubTasks(subTasks);
   if (!list.length) {
     return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>—</Typography>;
   }
@@ -340,7 +414,7 @@ function SubTasksCell({ subTasks }) {
     <TruncTooltip title={fullList}>
       <Stack spacing={0.375}>
         {list.slice(0, 3).map((st, i) => (
-          <Stack key={st.id || i} direction="row" spacing={0.75} alignItems="flex-start">
+          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start">
             <Typography sx={{
               typography: "s3", color: "text.subtitle",
               fontVariantNumeric: "tabular-nums", flexShrink: 0, mt: "1px",

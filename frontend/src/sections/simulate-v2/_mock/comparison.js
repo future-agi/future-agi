@@ -167,6 +167,151 @@ export const runSummaries = (env, envState) => {
   return ordered.map((r, i) => runSummary(env, envState, r, i));
 };
 
+/**
+ * Trials, rendered as first-class runs.
+ *
+ * A trial IS a simulation run — the search scored it by executing the
+ * candidate prompt against the environment. Surfacing trials in the runs
+ * list gives users what they already earned (a full history of every
+ * execution) and lets Compare reach into a self improvement rather than
+ * forcing them to eyeball the trials chart.
+ *
+ * The parent still exists as a first-class object — trials are grouped
+ * under it in the table — so the self improvement concept is not weakened
+ * by exposing the trials.
+ */
+const SI_TRIAL_COLORS = [
+  "#7857FC", "#0D9488", "#CA8A04", "#DB2777",
+  "#2563EB", "#16A34A", "#EA580C", "#4F46E5",
+];
+
+export const trialSummaries = (env, envState) => {
+  const opts = envState?.optimizations || [];
+  if (!opts.length) return [];
+  const evalIds = evalsOf(envState).map((e) => e.id);
+  const results = [];
+
+  opts.forEach((opt, optIdx) => {
+    if (!opt?.result?.trials?.length) return;
+    const sourceRun = (envState?.runs || []).find((r) => r.id === opt.fromRunId);
+    const baseFinishedAt = new Date(opt.completedAt || opt.createdAt || Date.now()).getTime();
+    const groupColor = SI_TRIAL_COLORS[optIdx % SI_TRIAL_COLORS.length];
+    const winnerN = opt.result.winner?.n;
+    const groupOrdinal = optIdx + 1;
+    const scenarioCount = envState?.scenarios?.length
+      || sourceRun?.total
+      || Object.keys(opt.result.trials[0]?.perScenario || {}).length
+      || 0;
+
+    /*
+      Displayed pass rate is the running max across trials in order —
+      self improvement, in the way the reader reads it, only goes up.
+      The raw candidate scores (which include losing tries) are still
+      available on the trial detail; the summary row plays the
+      monotonic story so the table matches the ascending chart above.
+    */
+    const orderedTrials = [...opt.result.trials].sort((a, b) => a.n - b.n);
+    const monotoneByN = new Map();
+    let runningMax = opt.result.base ?? 0;
+    orderedTrials.forEach((tr) => {
+      runningMax = Math.max(runningMax, tr.score);
+      monotoneByN.set(tr.n, runningMax);
+    });
+
+    opt.result.trials.forEach((trial, tIdx) => {
+      const passRate = Math.round(monotoneByN.get(trial.n) ?? trial.score);
+      /* Trials do not carry token / duration numbers of their own — the
+         mock runs the search analytically. The row still needs numbers,
+         because a hyphen in every system column reads as "broken row"
+         and the CEO's whole point is that a trial is a real run. So we
+         scale the source run's numbers by a seeded factor per trial —
+         internally consistent, honest at a glance, and never claiming a
+         precision the mock does not have. */
+      const jitter = 0.88 + (((trial.n * 37) + optIdx * 13) % 25) / 100;
+      const scores = Object.fromEntries(evalIds.map((id) => [id, passRate]));
+      const finishedAt = new Date(baseFinishedAt + tIdx * 60_000).toISOString();
+      const passed = Math.round((passRate / 100) * scenarioCount);
+
+      results.push({
+        id: `${opt.id}-t${trial.n}`,
+        kind: "trial",
+        selfImprovementId: opt.id,
+        selfImprovementName: opt.name || `Self improvement ${groupOrdinal}`,
+        selfImprovementOrdinal: groupOrdinal,
+        trialN: trial.n,
+        trialTried: trial.tried,
+        trialDelta: trial.delta,
+        trialCount: opt.result.trials.length,
+        winnerTrialN: winnerN,
+        isWinner: trial.n === winnerN,
+        brokeBlocker: !!trial.brokeBlocker,
+        heldScore: opt.result.heldScore,
+        baseScore: opt.result.base,
+        color: groupColor,
+        letter: `T${trial.n}`,
+        finishedAt,
+        agentVersion: sourceRun?.agentVersion || opt.baseAgentVersion || "trial",
+        envVersion: sourceRun?.envVersion,
+        total: scenarioCount,
+        passed,
+        flaky: 0,
+        dropped: 0,
+        measured: scenarioCount,
+        unmeasured: 0,
+        repeats: 1,
+        meanReturn: null,
+        passRate,
+        avgDurationMs: Math.round((sourceRun?.avgDurationMs || 10000) * jitter),
+        tokens: Math.round((sourceRun?.tokens || 300000) * jitter),
+        cost: Math.round((sourceRun?.cost || 5) * jitter * 100) / 100,
+        saidNotDone: 0,
+        scores,
+        /* Deliberately empty — the compare pipeline hydrates tasks per
+           trial in buildComparison (via buildRun + perScenario overlay)
+           so we don't rebuild for every summary read. Callers that need
+           real per-task data (compare grid, call detail, distribution
+           over cells) route through buildComparison; consumers that
+           only need aggregates read the summary fields above. */
+        tasks: [],
+        domains: {},
+      });
+    });
+  });
+
+  return results;
+};
+
+/**
+ * One group descriptor per self improvement.
+ *
+ * The runs list needs this to draw the parent header row above its
+ * trials — trial count, winner, best score, lift.
+ */
+export const trialGroups = (envState) => {
+  const opts = envState?.optimizations || [];
+  return opts.map((opt, i) => {
+    const trials = opt?.result?.trials || [];
+    const winner = opt?.result?.winner;
+    return {
+      id: opt.id,
+      ordinal: i + 1,
+      name: opt.name || `Self improvement ${i + 1}`,
+      color: SI_TRIAL_COLORS[i % SI_TRIAL_COLORS.length],
+      status: opt.status,
+      trialCount: trials.length,
+      winnerTrialN: winner?.n ?? null,
+      winnerScore: winner?.score ?? null,
+      heldScore: opt?.result?.heldScore ?? null,
+      baseScore: opt?.result?.base ?? null,
+      lift: opt?.result?.heldScore != null && opt?.result?.heldBase != null
+        ? opt.result.heldScore - opt.result.heldBase
+        : null,
+      fromRunId: opt.fromRunId,
+      createdAt: opt.createdAt,
+    };
+  });
+};
+
 /** One series per eval across the runs — the trend above the table. */
 export const evalSeries = (summaries, envState) =>
   evalsOf(envState).map((e) => ({
@@ -247,10 +392,135 @@ const pct = (now, before) => {
  * baseline. The first run selected is the baseline — everything else is read
  * as a change from it.
  */
+/*
+  Unified chip identity across manual runs and trials.
+
+  A single scheme for both kinds of row: chip label = the row's ordinal in
+  the combined chronological list, chip colour = deterministic hash of the
+  row's id. Both the runs list and the compare page consume this so a run
+  always renders in the same colour with the same label everywhere.
+*/
+const CHIP_PALETTE = [
+  "#7857FC", "#2563EB", "#16A34A", "#CA8A04",
+  "#EA580C", "#DB2777", "#0D9488", "#4F46E5",
+  "#9333EA", "#0891B2", "#65A30D", "#B45309",
+  "#BE185D", "#7C3AED", "#059669", "#C2410C",
+];
+
+export const chipIdentity = (env, envState) => {
+  const runs = runSummaries(env, envState);
+  const trials = trialSummaries(env, envState);
+  const combined = [...runs, ...trials]
+    .sort((a, b) => new Date(a.finishedAt) - new Date(b.finishedAt));
+  const map = new Map();
+  combined.forEach((r, i) => {
+    let h = 0;
+    for (let ch = 0; ch < r.id.length; ch += 1) {
+      h = (h * 31 + r.id.charCodeAt(ch)) >>> 0;
+    }
+    map.set(r.id, {
+      letter: String(i + 1),
+      color: CHIP_PALETTE[h % CHIP_PALETTE.length],
+    });
+  });
+  return map;
+};
+
 export const buildComparison = (env, envState, runIds) => {
-  const all = runSummaries(env, envState);
-  /* Letters and colours travel with the run, so B here is the B in the table. */
-  const runs = runIds.map((id) => all.find((r) => r.id === id)).filter(Boolean);
+  const runsByRow = runSummaries(env, envState);
+  const trialsByRow = trialSummaries(env, envState);
+  const chips = chipIdentity(env, envState);
+  /* A trial ticked in the runs list is compareable too. Trial summaries
+     carry a `tasks: []` stub — hydrate on demand from the trial's source
+     run + perScenario overlay so the comparison grid has scenarios to
+     render. */
+  const runs = runIds
+    .map((id) => {
+      const run = runsByRow.find((r) => r.id === id);
+      if (run) return run;
+      const trialM = /^(OPT-\d+)-t(\d+)$/.exec(id);
+      if (!trialM) return null;
+      const t = trialsByRow.find((r) => r.id === id);
+      if (!t) return null;
+      const opt = (envState.optimizations || []).find((o) => o.id === trialM[1]);
+      const trial = opt?.result?.trials?.find((tr) => tr.n === Number(trialM[2]));
+      const per = trial?.perScenario || {};
+      const source = (envState.runs || []).find((r) => r.id === opt?.fromRunId);
+      if (source) {
+        const baseTasks = rebuildRun(env, envState, source);
+        const tasks = baseTasks.map((task) => {
+          const outcome = per[task.scenarioId] || per[task.id];
+          if (!outcome) return task;
+          const passed = outcome === "passed" || outcome === "fixed";
+          const score = passed ? 0.95 : 0.2;
+          const evalResults = (task.evalResults || []).map((r) => ({
+            ...r, score, passed,
+          }));
+          /* When the trial's outcome differs from the source run's, the
+             source's callLog (which reports what the source agent said)
+             no longer describes what happened on the trial. Clear the
+             "Said, not done" flag on tasks the trial marked passed so
+             attribution and the Said-not-done chip don't misreport the
+             source run's failure on a trial row. */
+          const callLog = passed && task.callLog?.unsupportedClaim
+            ? { ...task.callLog, unsupportedClaim: null }
+            : task.callLog;
+          return {
+            ...task,
+            status: passed ? "passed" : "failed",
+            verdict: passed ? "passed" : "failed",
+            passShare: passed ? 1 : 0,
+            evalResults,
+            callLog,
+          };
+        });
+        return { ...t, tasks };
+      }
+      /*
+        Fallback when the source run has been deleted (or was never
+        recorded). Run the same buildRun pipeline a real stored run
+        would, seeded on the trial id so tasks come back with real
+        transcripts, tool calls, evalResults and everything else the
+        detail views need. Then overlay the trial's per-scenario
+        outcomes so the verdicts match what the trial actually saw.
+      */
+      const scenarios = envState?.scenarios || [];
+      const built = buildRun({
+        seed: id,
+        scenarios,
+        stage: getSurface(env?.surface).stage,
+        evals: evalsOf(envState),
+        tools: env?.tools || [],
+        repeats: 1,
+        phrasing: versionNumber(opt.baseAgentVersion || "v1"),
+      }).tasks.map((task) => ({ ...task, status: task.verdict }));
+      const tasks = built.map((task) => {
+        const outcome = per[task.scenarioId] || per[task.id];
+        if (!outcome) return task;
+        const passed = outcome === "passed" || outcome === "fixed";
+        const score = passed ? 0.95 : 0.2;
+        const evalResults = (task.evalResults || []).map((r) => ({
+          ...r, score, passed,
+        }));
+        return {
+          ...task,
+          status: passed ? "passed" : "failed",
+          verdict: passed ? "passed" : "failed",
+          passShare: passed ? 1 : 0,
+          evalResults,
+        };
+      });
+      return { ...t, tasks };
+    })
+    .filter(Boolean)
+    /* Overlay the unified chip identity so the letter/colour a user
+       ticked in the runs list is the same one that shows on the
+       compare page — the badge is the row's identity, and losing it
+       between screens breaks the mental model. */
+    .map((r) => {
+      const chip = chips.get(r.id);
+      return chip ? { ...r, letter: chip.letter, color: chip.color } : r;
+    });
 
   if (runs.length === 0) return { runs: [], rows: [], evals: [], coverage: null };
 
@@ -324,6 +594,9 @@ export const buildComparison = (env, envState, runIds) => {
       task: base.task,
       persona: base.persona,
       critical: base.critical,
+      /* Preserved so downstream grouping (by Goal / useCase) has a
+         scenario-level label to bucket against. */
+      useCase: base.useCase,
       cells,
       /* A row where every run agrees is not where anyone should be looking. */
       changed: verdicts.size > 1,

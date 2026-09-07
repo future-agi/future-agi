@@ -20,7 +20,6 @@ import AgentsPanel from "./AgentsPanel";
 import ScenariosStep from "./ScenariosStep";
 import EvalsStep from "./EvalsStep";
 import RunsPanel from "./RunsPanel";
-import OptimizationsPanel from "./OptimizationsPanel";
 import InstancesPanel from "./InstancesPanel";
 import FilesPanel from "./FilesPanel";
 import SettingsPanel from "./SettingsPanel";
@@ -43,13 +42,23 @@ const STEPS = [
   { id: "contract",  label: "Contract", icon: "solar:document-text-linear", group: "Setup" },
   { id: "build",     label: "How this was built", icon: "solar:history-linear", group: "Setup" },
 
+  /*
+    Personas and Actors used to live as their own tabs alongside
+    Scenarios. Personas got dropped because every persona already
+    surfaces inside the scenario it belongs to — the tab was a second
+    entry point to the same objects. Actors got folded into the
+    Contract tab: they describe the pressure/entry the environment
+    injects, which is part of the contract the agent is graded
+    against.
+  */
   { id: "scenarios", label: "Scenarios", icon: "solar:layers-minimalistic-linear", group: "The world", setup: true },
-  { id: "personas",  label: "Personas",  icon: "solar:users-group-rounded-linear", group: "The world" },
-  { id: "actors",    label: "Actors",    icon: "solar:users-group-two-rounded-linear", group: "The world" },
 
   { id: "evals",     label: "Evaluations", icon: "solar:shield-check-linear", group: "Grading", setup: true },
   { id: "runs",      label: "Runs",      icon: "solar:play-circle-linear", group: "Grading" },
-  { id: "optimizations", label: "Optimizations", icon: "solar:magic-stick-3-linear", group: "Grading" },
+  /* Self improvements are surfaced as runs in the Runs list — trials
+     ARE runs — and each self improvement's detail view is reachable
+     from a trial's "Open self improvement" banner. A separate sidebar
+     entry duplicated the destination. */
 
   { id: "instances", label: "Instances", icon: "solar:server-square-linear", group: "Environment" },
   { id: "files",     label: "Files",     icon: "solar:folder-linear", group: "Environment" },
@@ -401,20 +410,15 @@ export default function EnvironmentWorkspace() {
             <EvalsStep env={env} envState={envState} patch={patch} onGo={go} />
           ) : panel === "runs" ? (
             <RunsPanel env={env} envState={envState} onGo={go} />
-          ) : panel === "optimizations" ? (
-            <OptimizationsPanel env={env} envState={envState} />
           ) : panel === "instances" ? (
             <InstancesPanel env={env} envState={envState} onGo={go} />
           ) : panel === "files" ? (
             <FilesPanel env={env} />
           ) : panel === "contract" ? (
-            <RlContractPanel env={env} envState={envState} onGo={go} />
-          ) : panel === "actors" ? (
-            <ActorsPanel env={env} envState={envState} patch={patch} onGo={go} />
+            <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} />
           ) : panel === "build" ? (
             <BuildRecordPanel env={env} envState={envState} patch={patch} />
-          ) : panel === "personas" ? (
-            <PersonasPanel env={env} envState={envState} patch={patch} onGo={go} />) : panel === "rl" ? (
+          ) : panel === "rl" ? (
             <RlPanel env={env} envState={envState} patch={patch} />
           ) : panel === "settings" ? (
             <SettingsPanel env={env} envState={envState} patch={patch} />

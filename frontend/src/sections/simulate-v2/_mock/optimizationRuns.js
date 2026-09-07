@@ -47,7 +47,7 @@ export const optimizationsFromRun = (envState, runId) =>
   optimizationList(envState).filter((o) => o.fromRunId === runId);
 
 export const nextOptimizationName = (envState) =>
-  `Optimization run ${optimizations(envState).length + 1}`;
+  `Self improvement run ${optimizations(envState).length + 1}`;
 
 export const optimizationId = (envState) =>
   `OPT-${String(optimizations(envState).length + 1).padStart(5, "0")}`;
@@ -81,7 +81,7 @@ export const optimizationVerdict = (record) => {
     return {
       tone: "#DC2626",
       title: `${r.hollow.length} of the winner's fixes have no tool evidence`,
-      body: "The search found wording that passes the checks on scenarios that failed for a missing tool call. That is the optimizer doing its job against a check that cannot tell the difference — fix the check before shipping this prompt.",
+      body: "The search found wording that passes the checks on scenarios that failed for a missing tool call. That is the self improver doing its job against a check that cannot tell the difference — fix the check before shipping this prompt.",
     };
   }
   if (r.overruled) {

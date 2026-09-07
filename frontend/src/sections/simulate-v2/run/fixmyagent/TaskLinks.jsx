@@ -30,7 +30,11 @@ export default function TaskLinks({ ids, tasks, step, onOpen }) {
             color: "text.secondary", cursor: onOpen ? "pointer" : "default",
             "& .MuiChip-icon": { ml: 0.625, mr: -0.25, color: "text.disabled" },
             "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: 600 },
-            "&:hover": { borderColor: "text.disabled", color: "text.primary" },
+            "&:hover, &.MuiChip-clickable:hover, &:focus": {
+              bgcolor: "transparent",
+              borderColor: "text.disabled",
+              color: "text.primary",
+            },
           }}
         />
       ))}

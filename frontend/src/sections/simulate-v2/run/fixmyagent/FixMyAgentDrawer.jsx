@@ -117,6 +117,15 @@ export default function FixMyAgentDrawer({
   */
   const start = ({ name, optimizerId, model }) => {
     const result = runSearch({ env, tasks, optimizerId, seed: `${env?.id}-${optimizerId}-${records.length}` });
+    /* If the drawer opened from a trial page, `runId` is a synthetic
+       trial id that doesn't exist in envState.runs. Resolve to the
+       trial's parent source run so `fromRunId` always points at a real
+       manual run row — that's what analytics and "which run produced
+       this fix?" queries assume. */
+    const trialM = /^(OPT-\d+)-t(\d+)$/.exec(runId || "");
+    const fromRunId = trialM
+      ? (records.find((o) => o.id === trialM[1])?.fromRunId || runId)
+      : runId;
     const record = {
       id: optimizationId(envState),
       name,
@@ -124,7 +133,7 @@ export default function FixMyAgentDrawer({
       model,
       status: OPT_STATUS.RUNNING,
       createdAt: new Date().toISOString(),
-      fromRunId: runId,
+      fromRunId,
       includedIds: included.map((p) => p.id),
       /* The diagnosis this attempt was made against, kept with it — six weeks
          on, "why did we try that" is only answerable if the evidence travelled

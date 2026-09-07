@@ -50,14 +50,14 @@ export default function OptimizationsPanel({ env, envState }) {
       )}
 
       <SectionCard
-        title="Optimization runs"
+        title="Self improvement runs"
         subtitle="Prompt searches scored by this environment. The number shown is the held-out rate — what the winner did on scenarios the search never saw."
       >
         <OptimizationRunsList
           records={records}
           scope="environment"
           onOpen={(r) => r.fromRunId && navigate(paths.dashboard.simulate.simulationRun(env.id, r.fromRunId))}
-          emptyBody="Finish a run, open Fix my agent from its results, and start a search. Every optimization this environment has seen will be listed here."
+          emptyBody="Finish a run, open Fix my agent from its results, and start a search. Every self improvement this environment has seen will be listed here."
         />
       </SectionCard>
     </Stack>

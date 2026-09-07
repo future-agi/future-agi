@@ -263,7 +263,11 @@ export const ROW_HEIGHTS = [
 
 export const GROUPINGS = [
   { id: "none", label: "Nothing" },
-  { id: "mode", label: "Failure mode" },
+  /* Same set the single-run traces table offers, so a user who groups
+     by Goal there and jumps to compare finds the same buckets here. */
+  { id: "useCase", label: "Goal" },
+  { id: "pattern", label: "Failure pattern" },
+  { id: "status", label: "Status" },
   { id: "movement", label: "What moved" },
   { id: "critical", label: "Release blockers" },
 ];
@@ -287,8 +291,15 @@ export const defaultView = () => ({
   view: "table",
   rowHeight: "medium",
   showChart: true,
-  columns: { duration: true, tokens: true, cost: false, scorers: true },
-  group: "none",
+  columns: {
+    csat: true, turns: true, latency: true, tokens: true,
+    duration: false, cost: false,
+    scorers: true,
+  },
+  /* Same default as the single-run traces table — grouping by Goal
+     keeps scenarios that share a use case near each other, so the
+     reader can read one use case at a time. */
+  group: "useCase",
   quick: [],
   sort: "movement",
   diff: false,
@@ -315,8 +326,91 @@ export const applyQuick = (rows, quick) => {
  * Returns a single unlabelled group when grouping is off, so the renderer has
  * one shape to draw rather than two code paths.
  */
+/*
+  Group by the same axes the single-run traces table uses. Where a mode
+  needs a task (pattern / status), the "current" cell — the non-baseline
+  one, or the baseline itself if it's the only column — is what the
+  bucket is chosen against. That answers "how did the run being reviewed
+  handle this scenario", which is the question compare exists to answer.
+*/
+const currentTaskOf = (row) => {
+  const cells = row?.cells || [];
+  if (!cells.length) return null;
+  const nonBaseline = cells.slice(1).find((c) => c.task);
+  return (nonBaseline?.task) || cells[0]?.task || null;
+};
+
+const patternOfCompareRow = (row) => {
+  const t = currentTaskOf(row);
+  if (!t) return null;
+  if (t.status === "passed" || t.status === "unmeasured") return null;
+  if (t.status === "error") return "Errored";
+  if (row.critical) return "Critical rule broken";
+  if (t.callLog?.unsupportedClaim) return "Said, not done";
+  if ((t.evalResults || []).some((r) => !r.passed)) return "Evaluation failed";
+  return "Other failure";
+};
+
+const statusOfCompareRow = (row) => {
+  const t = currentTaskOf(row);
+  if (!t) return "Not measured";
+  if (t.status === "passed") return "Passed";
+  if (t.status === "unmeasured") return "Not measured";
+  if (t.status === "error") return "Errored";
+  return "Failed";
+};
+
+const useCaseOfCompareRow = (row) => {
+  const t = currentTaskOf(row);
+  return (row?.useCase) || (t?.useCase) || "Other";
+};
+
+const collectByLabel = (rows, labelFn) => {
+  const byLabel = new Map();
+  rows.forEach((r) => {
+    const label = labelFn(r);
+    if (!label) return;
+    if (!byLabel.has(label)) byLabel.set(label, []);
+    byLabel.get(label).push(r);
+  });
+  return byLabel;
+};
+
+const orderGroups = (byLabel, order) => {
+  const entries = Array.from(byLabel.entries());
+  if (!order) return entries.sort(([a], [b]) => a.localeCompare(b));
+  return entries.sort(([a], [b]) => {
+    const ai = order.indexOf(a);
+    const bi = order.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+};
+
+const GROUP_ORDER = {
+  pattern: ["Critical rule broken", "Said, not done", "Evaluation failed", "Errored", "Other failure"],
+  status:  ["Failed", "Errored", "Not measured", "Passed"],
+};
+
 export const groupRows = (rows, group) => {
   if (group === "none") return [{ id: "all", label: null, rows }];
+
+  if (group === "useCase") {
+    const byLabel = collectByLabel(rows, useCaseOfCompareRow);
+    return orderGroups(byLabel).map(([label, rs]) => ({ id: label, label, rows: rs }));
+  }
+
+  if (group === "pattern") {
+    const byLabel = collectByLabel(rows, patternOfCompareRow);
+    return orderGroups(byLabel, GROUP_ORDER.pattern).map(([label, rs]) => ({ id: label, label, rows: rs }));
+  }
+
+  if (group === "status") {
+    const byLabel = collectByLabel(rows, statusOfCompareRow);
+    return orderGroups(byLabel, GROUP_ORDER.status).map(([label, rs]) => ({ id: label, label, rows: rs }));
+  }
 
   if (group === "movement") {
     const buckets = [
@@ -400,7 +494,11 @@ export const summaryRows = (comparison, evals) => {
  * nothing else — no run ids, and not the search box, which is a thing you type
  * once and clear.
  */
-export const viewSnapshot = (filters, view) => ({ filters: { ...filters }, view: { ...view } });
+/* Filters are an array (see emptyFilters). Spreading with `{ ...filters }`
+   converts them into an object, which breaks `filterRows` (it calls
+   `.every()` / `.some()`) the moment a saved view round-trips through
+   the snapshot pipeline. Keep the array shape. */
+export const viewSnapshot = (filters, view) => ({ filters: [...(filters || [])], view: { ...view } });
 
 export const snapshotsEqual = (a, b) => {
   if (!a || !b) return false;

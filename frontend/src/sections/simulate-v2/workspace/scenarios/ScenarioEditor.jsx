@@ -98,6 +98,7 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
 
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
   const setCaller = (k) => (v) => setDraft((d) => ({ ...d, caller: { ...(d.caller || {}), [k]: v } }));
+  const setPersona = (k) => (v) => setDraft((d) => ({ ...d, persona: { ...(d.persona || {}), [k]: v } }));
 
   const isConversational = CONVERSATIONAL_SURFACES.includes(env?.surface);
   const isVoice = VOICE_ONLY_SURFACES.includes(env?.surface);
@@ -150,6 +151,51 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             size="small" label="Passes when" multiline minRows={2} value={draft.expected || ""}
             onChange={(e) => set("expected")(e.target.value)}
             helperText="What a pass looks like. Evals grade against this."
+            InputProps={{ sx: { typography: "s2" } }}
+          />
+
+          {/* ─── Persona ─── */}
+          {/*
+            The persona is the who — the character on the other end of
+            the run. Previously only editable on the standalone
+            Personas tab, which has been folded into scenarios. Name,
+            age group, voice and traits are all directly-editable
+            because they shape the run's surface behaviour, not the
+            underlying verified check. The persona lives ON the
+            scenario (`row.persona`), so writes here go straight to
+            the row.
+          */}
+          <SectionHeader
+            title="Persona"
+            hint="Who's on the other end of the run. Shapes tone, pacing and any traits the caller carries into the conversation."
+          />
+          <TextField
+            size="small" label="Name" value={draft.persona?.name || ""}
+            onChange={(e) => setPersona("name")(e.target.value)}
+            helperText="Display name for the caller — e.g. The Polite Senior Caller."
+            InputProps={{ sx: { typography: "s2" } }}
+          />
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+            <TextField
+              size="small" label="Age / age group" value={draft.persona?.age || draft.persona?.ageGroup || ""}
+              onChange={(e) => setPersona("age")(e.target.value)}
+              helperText="Range or number — e.g. 60-70."
+              InputProps={{ sx: { typography: "s2" } }}
+              fullWidth
+            />
+            <TextField
+              size="small" label="Voice" value={draft.persona?.voice || ""}
+              onChange={(e) => setPersona("voice")(e.target.value)}
+              helperText="Accent + gender — e.g. US female."
+              InputProps={{ sx: { typography: "s2" } }}
+              fullWidth
+            />
+          </Stack>
+          <TextField
+            size="small" label="Traits"
+            value={Array.isArray(draft.persona?.traits) ? draft.persona.traits.join(", ") : (draft.persona?.traits || "")}
+            onChange={(e) => setPersona("traits")(e.target.value.split(",").map((t) => t.trim()).filter(Boolean))}
+            helperText="Comma-separated traits the caller carries in — e.g. polite, elderly, hard of hearing."
             InputProps={{ sx: { typography: "s2" } }}
           />
 
@@ -307,7 +353,7 @@ export default function ScenarioEditor({ open, onClose, row, env, envState, onSa
             label="Sub-tasks (what the runner watches)"
             value={
               draft.subTasks?.length
-                ? `${draft.subTasks.length} steps: ${draft.subTasks.map((s) => s.label).join(" → ")}`
+                ? `${draft.subTasks.length} steps: ${draft.subTasks.map((s) => (typeof s === "string" ? s : (s?.label || s?.text || ""))).filter(Boolean).join(" → ")}`
                 : "derived from the tools + rules this scenario touches"
             }
             prompt={`rewrite the sub-tasks on ${draft.name}`}

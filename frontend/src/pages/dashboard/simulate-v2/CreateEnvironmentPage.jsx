@@ -1,13 +1,13 @@
 import { Helmet } from "react-helmet-async";
-import BuildFromAgent from "src/sections/simulate-v2/environments/BuildFromAgent";
+import StartEnvironment from "src/sections/simulate-v2/environments/StartEnvironment";
 
 export default function CreateEnvironmentPage() {
   return (
     <>
       <Helmet>
-        <title>Build environment | Future AGI</title>
+        <title>New environment | Future AGI</title>
       </Helmet>
-      <BuildFromAgent />
+      <StartEnvironment />
     </>
   );
 }

@@ -77,7 +77,7 @@ export default defineConfig({
     include: ['apexcharts', 'react-apexcharts'],
   },
   server: {
-    port: 3031,
+    port: 3044,
     hmr: {
       overlay: false,
     },
@@ -123,6 +123,6 @@ export default defineConfig({
     },
   },
   preview: {
-    port: 3031,
+    port: 3044,
   },
 });

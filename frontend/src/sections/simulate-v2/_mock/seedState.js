@@ -62,12 +62,19 @@ export function seededState() {
   const banking = { ...getEnvironment("env-chat-banking"), adoptedAt: daysAgo(1) };
   const travel = { ...getEnvironment("env-chat-travel"), adoptedAt: daysAgo(4) };
 
-  const builtScenarios = rowsFor(built, ["core", "rules"]);
+  /*
+    Seed each env with the full scenario spread — core tool coverage,
+    rule enforcement, data traps, and adversarial + edge probes. A
+    two-kind slice ("core" + "rules" only) collapsed a run into two
+    use-case buckets on the traces table, which is not what a real
+    sweep looks like. Every kind here contributes at least one group.
+  */
+  const builtScenarios = rowsFor(built, ["core", "rules", "traps", "adversarial", "edge"]);
   /* The earlier run was a rule-probe pass, not a full sweep. */
   const builtRuleProbes = rowsFor(built, ["rules"]).slice(0, 3);
-  const browserScenarios = rowsFor(browser, ["core", "traps"]);
-  const bankingScenarios = rowsFor(banking, ["core"]);
-  const travelScenarios = rowsFor(travel, ["core", "rules"]);
+  const browserScenarios = rowsFor(browser, ["core", "traps", "rules", "adversarial", "edge"]);
+  const bankingScenarios = rowsFor(banking, ["core", "rules", "traps"]);
+  const travelScenarios = rowsFor(travel, ["core", "rules", "traps", "adversarial", "edge"]);
   /* The first run only probed the entitlement rules — the expensive ones. */
   const travelRuleProbes = rowsFor(travel, ["rules"]).slice(0, 4);
 
@@ -87,14 +94,13 @@ export function seededState() {
         scenarios: builtScenarios,
         scenarioSource: "agent",
         /*
-          Kept empty so a user landing on the Evaluations tab of a
-          seeded env sees the same "Suggested (unadded) + Added
-          (empty)" layout a fresh env starts with. The workspace
-          header no longer surfaces an "Add evaluations to run" chip
-          for this (only "Live"), so an empty evals array here is
-          purely a UI state, not a broken-setup signal.
+          Every seeded env has at least Task success + Policy adherence
+          applied — a run can't happen without a grader, and leaving
+          this empty meant historical runs had no evalResults and the
+          traces table rendered no Evals columns. These two are the
+          catch-all pair every surface supports.
         */
-        evals: [],
+        evals: ["task_success", "policy_adherence"],
         agentVersions: [
           agentVersion(1, 12, "First version connected to this environment."),
           agentVersion(2, 6, "Goodwill cap moved out of the prompt and into code."),
@@ -128,14 +134,13 @@ export function seededState() {
         scenarios: travelScenarios,
         scenarioSource: "templates",
         /*
-          Kept empty so a user landing on the Evaluations tab of a
-          seeded env sees the same "Suggested (unadded) + Added
-          (empty)" layout a fresh env starts with. The workspace
-          header no longer surfaces an "Add evaluations to run" chip
-          for this (only "Live"), so an empty evals array here is
-          purely a UI state, not a broken-setup signal.
+          Every seeded env has at least Task success + Policy adherence
+          applied — a run can't happen without a grader, and leaving
+          this empty meant historical runs had no evalResults and the
+          traces table rendered no Evals columns. These two are the
+          catch-all pair every surface supports.
         */
-        evals: [],
+        evals: ["task_success", "policy_adherence"],
         agentVersions: [
           agentVersion(1, 9, "First version connected to this environment."),
           agentVersion(2, 4, "Entitlement check moved ahead of the compensation offer."),
@@ -157,14 +162,13 @@ export function seededState() {
         scenarios: browserScenarios,
         scenarioSource: "templates",
         /*
-          Kept empty so a user landing on the Evaluations tab of a
-          seeded env sees the same "Suggested (unadded) + Added
-          (empty)" layout a fresh env starts with. The workspace
-          header no longer surfaces an "Add evaluations to run" chip
-          for this (only "Live"), so an empty evals array here is
-          purely a UI state, not a broken-setup signal.
+          Every seeded env has at least Task success + Policy adherence
+          applied — a run can't happen without a grader, and leaving
+          this empty meant historical runs had no evalResults and the
+          traces table rendered no Evals columns. These two are the
+          catch-all pair every surface supports.
         */
-        evals: [],
+        evals: ["task_success", "policy_adherence"],
         agentVersions: [
           agentVersion(1, 9, "First version connected to this environment."),
           agentVersion(2, 5, "Selector strategy switched to role-based queries."),
@@ -178,14 +182,13 @@ export function seededState() {
         scenarios: bankingScenarios,
         scenarioSource: "templates",
         /*
-          Kept empty so a user landing on the Evaluations tab of a
-          seeded env sees the same "Suggested (unadded) + Added
-          (empty)" layout a fresh env starts with. The workspace
-          header no longer surfaces an "Add evaluations to run" chip
-          for this (only "Live"), so an empty evals array here is
-          purely a UI state, not a broken-setup signal.
+          Every seeded env has at least Task success + Policy adherence
+          applied — a run can't happen without a grader, and leaving
+          this empty meant historical runs had no evalResults and the
+          traces table rendered no Evals columns. These two are the
+          catch-all pair every surface supports.
         */
-        evals: [],
+        evals: ["task_success", "policy_adherence"],
         agentVersions: [],
         runs: [],
       },

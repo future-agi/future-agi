@@ -29,7 +29,7 @@ export default function OptimizationRunsList({ records = [], onOpen, onNew, scop
     return (
       <EmptyState
         icon="solar:magic-stick-3-linear"
-        title="No optimization runs yet"
+        title="No self improvement runs yet"
         body={emptyBody || "Open Fix my agent, pick the changes worth trying, and start a search."}
         action={onNew ? <Button variant="contained" color="primary" onClick={onNew} sx={{ typography: "s2", fontWeight: 700 }}>Fix my agent</Button> : undefined}
       />

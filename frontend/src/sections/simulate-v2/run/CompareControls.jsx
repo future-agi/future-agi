@@ -235,10 +235,45 @@ export default function CompareActions({
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const [actionsAnchor, setActionsAnchor] = useState(null);
+  const [groupAnchor, setGroupAnchor] = useState(null);
   const filterCount = activeFilterCount(filters);
+  const currentGroup = GROUPINGS.find((g) => g.id === (view?.group || "none")) || GROUPINGS[0];
 
   return (
     <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+      {/* Group by — hoisted out of the Display panel so the grouping
+          axis is one click, matching the single-run traces table. */}
+      <Button
+        size="small"
+        onClick={(e) => setGroupAnchor(e.currentTarget)}
+        startIcon={<Iconify icon="solar:widget-linear" width={15} />}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} sx={{ color: "text.subtitle" }} />}
+        sx={{
+          typography: "s2", fontWeight: 600, textTransform: "none",
+          color: "text.secondary", border: "1px solid", borderColor: "divider",
+        }}
+      >
+        Group by
+        <Box component="span" sx={{ mx: 0.5, color: "text.subtitle", fontWeight: 400 }}>·</Box>
+        <Box component="span" sx={{ color: "primary.main", fontWeight: 700 }}>{currentGroup.label}</Box>
+      </Button>
+      <Menu
+        anchorEl={groupAnchor}
+        open={!!groupAnchor}
+        onClose={() => setGroupAnchor(null)}
+      >
+        {GROUPINGS.map((g) => (
+          <MenuItem
+            key={g.id}
+            selected={g.id === (view?.group || "none")}
+            onClick={() => { onView({ ...view, group: g.id }); setGroupAnchor(null); }}
+            sx={{ py: 0.75, gap: 0.75 }}
+          >
+            <Typography sx={{ typography: "s2" }}>{g.label}</Typography>
+          </MenuItem>
+        ))}
+      </Menu>
+
       <Button
         size="small"
         onClick={(e) => setFilterAnchor(e.currentTarget)}
@@ -314,7 +349,7 @@ export default function CompareActions({
         />
         <ActionItem
           icon="solar:magic-stick-3-linear"
-          label="Send selected to Optimize"
+          label="Send selected to Self improve"
           disabled={!selectedCount}
           onClick={() => { setActionsAnchor(null); onOptimize(); }}
         />
@@ -461,14 +496,9 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
             {ROW_HEIGHTS.map((h) => <Tab key={h.id} value={h.id} label={h.label} />)}
           </SegmentedTabs>
         </Row>
-        <Row label="Group by">
-          <Select
-            value={view.group === "none" ? "" : view.group}
-            onChange={(v) => set({ group: v || "none" })}
-            options={GROUPINGS.filter((g) => g.id !== "none")}
-            placeholder="Nothing"
-          />
-        </Row>
+        {/* Group by lives on the toolbar as a first-class button, so it
+            is not duplicated here — two controls editing the same setting
+            invites confusion about which one wins. */}
         <Row label="Sort">
           <Select
             value={view.sort}
@@ -483,12 +513,15 @@ function DisplayPanel({ anchor, onClose, view, onView, onSaveDefault, onResetVie
 
       <Section title="Columns">
         {[
+          { id: "csat", label: "CSAT" },
+          { id: "turns", label: "Turns" },
+          { id: "latency", label: "Latency" },
           { id: "duration", label: "Duration" },
           { id: "tokens", label: "Tokens" },
           { id: "cost", label: "Cost" },
-          { id: "scorers", label: "Grader scores" },
+          { id: "scorers", label: "Eval scores" },
         ].map((c) => (
-          <Check key={c.id} label={c.label} checked={view.columns[c.id]} onChange={() => toggleColumn(c.id)} />
+          <Check key={c.id} label={c.label} checked={!!view.columns[c.id]} onChange={() => toggleColumn(c.id)} />
         ))}
       </Section>
 

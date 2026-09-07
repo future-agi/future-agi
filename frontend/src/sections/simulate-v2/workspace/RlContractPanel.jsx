@@ -10,6 +10,7 @@ import {
 import { setupGaps, gapCounts, GAP_STATUS } from "../_mock/setupGaps";
 import { getAgentType } from "../_mock/agentTypes";
 import { getSurface } from "../_mock/surfaces";
+import ActorsPanel from "./ActorsPanel";
 
 /**
  * The RL environment contract.
@@ -19,7 +20,7 @@ import { getSurface } from "../_mock/surfaces";
  * the order they have to be settled, and then whatever could not be settled
  * without asking you.
  */
-export default function RlContractPanel({ env, envState, onGo, buildMode }) {
+export default function RlContractPanel({ env, envState, patch, onGo, buildMode }) {
   const adapter = adapterOf(env, envState);
   const movedBy = modalityMovedBy(env, envState);
   const agentType = getAgentType(envState.agent?.typeId);
@@ -364,6 +365,20 @@ export default function RlContractPanel({ env, envState, onGo, buildMode }) {
           ))}
         </Stack>
       </SectionCard>
+
+      {/*
+        Actors — folded in from the old Actors tab. They describe the
+        pressure the environment applies (colleagues with competing
+        goals, adversarial callers, etc.), which is part of the
+        contract the agent's runs are scored against, not a separate
+        concern. Rendering the whole panel inline keeps the actor
+        editor / add-actor flow intact without a second tab.
+      */}
+      {patch && (
+        <Box sx={{ mt: 3 }}>
+          <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} />
+        </Box>
+      )}
     </Box>
   );
 }
@@ -371,6 +386,7 @@ export default function RlContractPanel({ env, envState, onGo, buildMode }) {
 RlContractPanel.propTypes = {
   env: PropTypes.object.isRequired,
   envState: PropTypes.object.isRequired,
+  patch: PropTypes.func,
   onGo: PropTypes.func,
   buildMode: PropTypes.bool,
 };

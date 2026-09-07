@@ -93,6 +93,10 @@ export const paths = {
       // evals, then run. The legacy routes above stay mounted so the old
       // screens remain reachable for comparison.
       environments: `${ROOTS.DASHBOARD}/simulate/environments`,
+      environmentsBrowse: `${ROOTS.DASHBOARD}/simulate/environments/browse`,
+      environmentTemplates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
+      environmentBuild: `${ROOTS.DASHBOARD}/simulate/environments/new/build`,
+      environmentScratchBuild: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/new/scratch-build/${envId}`,
       // Twins gets its own top-level nav slot — it's a discovery /
       // marketing surface for the service-twin catalog + entry point,
       // not a parallel storage layer. Twin-backed envs still live in

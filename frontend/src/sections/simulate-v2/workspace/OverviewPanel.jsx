@@ -52,6 +52,16 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
   const shown = effectiveEnv(env, envState);
   const stats = packStats(shown);
   const contract = contractFor(env);
+  /* Whether the environment already carries a world — either read
+     from a connected agent, or (for scratch envs) derived from the
+     flow description on adopt. Drives whether we show the capability
+     graph + the full downstream layout even before an agent is
+     wired, so a scratch env's Overview reads like every other env's
+     rather than a getting-started stub. */
+  const hasDerivedWorld = (env.rules?.length || 0) > 0
+    || (envState?.scenarios?.length || 0) > 0
+    || (env.tools?.length || 0) > 0;
+  const showRichOverview = agentConnected || hasDerivedWorld;
   /* Rules carry where they were found, and a rule found in prose is held back
      rather than graded — the badge is the only place that is visible here, so
      the card links through to the review queue. */
@@ -74,7 +84,15 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
           services. Nudges the user toward attaching a twin backing
           without forcing them; a one-click action provisions and
           drops them into the twin-config mini-flow. */}
-      {!envState?.twinBacking && !buildMode && agentConnected && (
+      {/* Twin suggestion banner intentionally suppressed on this
+          variation. The Create Environments picker now offers Clones as
+          a first-class starting choice, so users have already made the
+          call about whether to back the env with twins — resurfacing
+          the same nudge post-run reads as second-guessing the choice
+          they made upstream. If we later want to bring it back for envs
+          that were built from source before clones existed, re-enable
+          the render below. */}
+      {false && !envState?.twinBacking && !buildMode && agentConnected && (
         <TwinSuggestionBanner env={env} envState={envState} patch={patch} />
       )}
 
@@ -152,6 +170,18 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
       </Stack>
 
       {/*
+        Getting-started checklist for envs that haven't been seeded
+        yet (no agent, no derived rules/scenarios). Scratch envs come
+        in already carrying derived world + scenarios + eval
+        suggestions, so the same checklist would be misleading —
+        every step would render pre-complete. Skip it there and let
+        the CapabilityGraph + downstream sections do the talking.
+      */}
+      {!agentConnected && !envState?.twinBacking && !hasDerivedWorld && (
+        <NextStepsChecklist env={env} envState={envState} onGo={onGo} />
+      )}
+
+      {/*
         Twin-backed envs get their own set of sections below —
         Capabilities/The world are read from a source repo, and twin
         envs don't have one. Skipping this whole block prevents empty
@@ -174,10 +204,10 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
         two unrelated inventories; drawn together they are one object, and the
         shape of the environment is legible before any of it is read.
       */}
-      {agentConnected && !envState?.twinBacking && (
+      {showRichOverview && !envState?.twinBacking && (
         <CapabilityGraph env={env} envState={envState} onGo={onGo} />
       )}
-      <Grid container spacing={2} sx={{ mb: 3 }}>
+      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12} md={7}>
           <SectionCard
             title="Tools"
@@ -188,22 +218,29 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
             }
           >
             {!agentConnected ? (
-              <EmptyState
-                icon="solar:settings-minimalistic-linear"
-                title="No tools yet"
-                body="Tool definitions come from the agent. Connect one and they'll be listed here."
-                action={
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    size="small"
-                    onClick={() => onGo("agent")}
-                    sx={{ typography: "s2", fontWeight: 700 }}
-                  >
-                    Connect agent
-                  </Button>
-                }
-              />
+              /*
+                Compact empty state — the full EmptyState with 8-unit
+                vertical padding stretched the card past 500px, which
+                MUI Grid then propagated to the row's siblings. Slim
+                row keeps the card ~72px tall and its Grid neighbours
+                free to size to their own content.
+              */
+              <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2 }}>
+                <Iconify icon="solar:settings-minimalistic-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+                <Box flex={1} minWidth={0}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>No tools yet</Typography>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    Tool definitions come from the agent.
+                  </Typography>
+                </Box>
+                <Button
+                  size="small" variant="outlined"
+                  onClick={() => onGo("agent")}
+                  sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+                >
+                  Connect agent
+                </Button>
+              </Stack>
             ) : (
               <Stack
                 divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
@@ -247,6 +284,14 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
             }
           >
             <Stack sx={{ p: 2.5 }} spacing={1.25}>
+              {ruleProv.length === 0 && (
+                <Stack direction="row" alignItems="center" spacing={1.25}>
+                  <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+                  <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                    No rules yet — add them on the Contract tab or as the agent introduces them.
+                  </Typography>
+                </Stack>
+              )}
               {ruleProv.map((r) => (
                 <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
                   <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }} />
@@ -299,7 +344,7 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
 
       {/* ── the world it acts on ── */}
       <GroupHeading>The world</GroupHeading>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
+      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12} md={7}>
           <SectionCard title="Seeded data" subtitle={seedBlurb(totalRows)}>
             <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
@@ -949,7 +994,7 @@ function TwinBackedSections({ env, envState, onGo }) {
   return (
     <>
       <GroupHeading>Clone surface</GroupHeading>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
+      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         {/* ── services list ── */}
         <Grid item xs={12} md={7}>
           <SectionCard
@@ -1025,7 +1070,7 @@ function TwinBackedSections({ env, envState, onGo }) {
       </Grid>
 
       <GroupHeading>Starting state</GroupHeading>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
+      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         {/* ── seed prompt + resolved shape ── */}
         <Grid item xs={12} md={7}>
           <SectionCard
@@ -1082,7 +1127,7 @@ function TwinBackedSections({ env, envState, onGo }) {
       </Grid>
 
       <GroupHeading>What evals can check</GroupHeading>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
+      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12}>
           <SectionCard
             title="End-state graders"
@@ -1298,3 +1343,141 @@ function SandboxActivityRibbon({ envState, serviceId }) {
   );
 }
 SandboxActivityRibbon.propTypes = { envState: PropTypes.object, serviceId: PropTypes.string };
+
+/*
+  Getting-started checklist for a freshly minted env (usually the
+  scratch flow, but also legacy envs where no agent was ever wired).
+  Each row is one concrete step the user takes to move the env from
+  "created" to "first run": connect an agent, add scenarios, add
+  evals, run. Done rows show a green tick + strike; the current
+  actionable row gets a prominent button. Reads as an onboarding
+  card and fills the vertical space the empty capabilities sections
+  would otherwise leave grey.
+*/
+function NextStepsChecklist({ env, envState, onGo }) {
+  const scenarioCount = envState?.scenarios?.length || 0;
+  const evalCount = envState?.evals?.length || 0;
+  const runCount = envState?.runs?.length || 0;
+
+  const steps = [
+    {
+      id: "created",
+      title: "Environment created",
+      body: `${env.name} is set up and ready for configuration.`,
+      done: true,
+      action: null,
+    },
+    {
+      id: "agent",
+      title: "Connect an agent",
+      body: "Wire your agent so it can act against the environment. This flow lets you connect one after the fact.",
+      done: false,
+      cta: "Connect agent",
+      onClick: () => onGo?.("agent"),
+      icon: "solar:link-circle-linear",
+    },
+    {
+      id: "scenarios",
+      title: "Add scenarios",
+      body: "Tasks the agent has to complete. Add a few concrete cases the run will grade against.",
+      done: scenarioCount > 0,
+      cta: scenarioCount > 0 ? `${scenarioCount} added — add more` : "Add scenarios",
+      onClick: () => onGo?.("scenarios"),
+      icon: "solar:list-check-linear",
+    },
+    {
+      id: "evals",
+      title: "Add evaluations",
+      body: "Graders that decide whether each run passed. Pick from the library or author your own.",
+      done: evalCount > 0,
+      cta: evalCount > 0 ? `${evalCount} added — add more` : "Add evaluations",
+      onClick: () => onGo?.("evals"),
+      icon: "solar:target-linear",
+    },
+    {
+      id: "run",
+      title: "Run your first simulation",
+      body: "Kick off a run — you'll see the transcript, tool calls, and eval verdicts land in real time.",
+      done: runCount > 0,
+      cta: "Run simulation",
+      onClick: () => {},
+      disabled: true,
+      icon: "solar:play-circle-linear",
+    },
+  ];
+
+  const doneCount = steps.filter((s) => s.done).length;
+  const currentIdx = steps.findIndex((s) => !s.done);
+
+  return (
+    <SectionCard
+      title="Next steps"
+      subtitle={`${doneCount} of ${steps.length} complete — ${steps.length - doneCount} left to run your first simulation`}
+      sx={{ mb: 3 }}
+    >
+      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+        {steps.map((s, i) => {
+          const isCurrent = i === currentIdx;
+          return (
+            <Stack key={s.id}
+              direction="row" alignItems="center" spacing={2}
+              sx={{
+                px: 2.5, py: 1.75,
+                bgcolor: (t) => isCurrent
+                  ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.04 : 0.02)
+                  : "transparent",
+              }}
+            >
+              <Box sx={{
+                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                display: "grid", placeItems: "center",
+                bgcolor: (t) => s.done
+                  ? alpha("#16A34A", t.palette.mode === "dark" ? 0.18 : 0.12)
+                  : alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
+                color: s.done ? "#16A34A" : "text.subtitle",
+              }}>
+                <Iconify
+                  icon={s.done ? "solar:check-circle-bold" : (s.icon || "solar:circle-linear")}
+                  width={14}
+                />
+              </Box>
+              <Box flex={1} minWidth={0}>
+                <Typography sx={{
+                  typography: "s2", fontWeight: 700,
+                  color: s.done ? "text.subtitle" : "text.primary",
+                  textDecoration: s.done ? "line-through" : "none",
+                }}>
+                  {s.title}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {s.body}
+                </Typography>
+              </Box>
+              {!s.done && s.cta && (
+                <Button
+                  variant={isCurrent ? "contained" : "outlined"}
+                  color="primary"
+                  size="small"
+                  disabled={s.disabled}
+                  onClick={s.onClick}
+                  sx={{
+                    typography: "s2", fontWeight: 700, flexShrink: 0,
+                    ...(isCurrent ? {} : {
+                      color: "text.primary", borderColor: "divider",
+                      "&:hover": { borderColor: "text.disabled" },
+                    }),
+                  }}
+                >
+                  {s.cta}
+                </Button>
+              )}
+            </Stack>
+          );
+        })}
+      </Stack>
+    </SectionCard>
+  );
+}
+NextStepsChecklist.propTypes = {
+  env: PropTypes.object, envState: PropTypes.object, onGo: PropTypes.func,
+};

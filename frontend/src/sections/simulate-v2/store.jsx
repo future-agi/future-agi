@@ -23,7 +23,7 @@ import { seededState } from "./_mock/seedState";
   already holds an older (empty) cache if the key changes with them. Bump this
   whenever the seeded state or the state shape changes.
 */
-const STORAGE_KEY = "fagi.simulate.studio.v16";
+const STORAGE_KEY = "fagi.simulate.studio.v18";
 
 const emptyEnvState = () => ({
   agent: null, // source agent { typeId, values, connectedAt } — this env's contract was read from

@@ -71,7 +71,7 @@ export default function TwinReviewPage() {
       <Helmet>
         <title>{env.name} · {provisioning ? "Provisioning" : "Review"} | Future AGI</title>
       </Helmet>
-      <Box sx={{ height: "calc(100vh - 64px)" }}>
+      <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {provisioning ? (
           <TwinProvisioningView
             env={env}

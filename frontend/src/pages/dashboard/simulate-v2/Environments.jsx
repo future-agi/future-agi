@@ -1,13 +1,13 @@
 import { Helmet } from "react-helmet-async";
-import EnvironmentGallery from "src/sections/simulate-v2/environments/EnvironmentGallery";
+import StartEnvironment from "src/sections/simulate-v2/environments/StartEnvironment";
 
 export default function EnvironmentsPage() {
   return (
     <>
       <Helmet>
-        <title>RL Environments | Future AGI</title>
+        <title>Environments | Future AGI</title>
       </Helmet>
-      <EnvironmentGallery />
+      <StartEnvironment entry />
     </>
   );
 }

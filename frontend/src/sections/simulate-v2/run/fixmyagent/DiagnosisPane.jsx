@@ -87,7 +87,7 @@ export default function DiagnosisPane({
           <Iconify icon="solar:magic-stick-3-linear" width={16} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Fix my agent</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Self improve my agent</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {failing.length} failing of {measured.length} measured
             {tasks.length - measured.length ? ` · ${tasks.length - measured.length} not measured` : ""}
@@ -497,7 +497,7 @@ export default function DiagnosisPane({
               title={
                 included.length
                   ? ""
-                  : "Tick at least one change in the list above — the optimizer needs a candidate pool to search over."
+                  : "Tick at least one change in the list above — the self improver needs a candidate pool to search over."
               }
               placement="top"
             >
@@ -510,8 +510,8 @@ export default function DiagnosisPane({
                   sx={{ typography: "s2", fontWeight: 700 }}
                 >
                   {included.length
-                    ? `Optimize my agent with ${included.length} ${included.length === 1 ? "change" : "changes"}`
-                    : "Select changes to optimize my agent"}
+                    ? `Self improve my agent with ${included.length} ${included.length === 1 ? "change" : "changes"}`
+                    : "Select changes to self improve my agent"}
                 </Button>
               </Box>
             </Tooltip>

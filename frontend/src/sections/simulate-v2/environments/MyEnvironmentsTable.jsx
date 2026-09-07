@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha, keyframes } from "@mui/material/styles";
 import {
@@ -10,9 +10,45 @@ import { paths } from "src/routes/paths";
 import { DataTable } from "src/components/data-table";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import Iconify from "src/components/iconify";
-import { getAgentType } from "../_mock/agentTypes";
 import { subTasksFor } from "../_mock/contract";
 import { useSimStore } from "../store";
+
+/*
+  The old table read the raw `agentType` id off each env and looked it
+  up in AGENT_TYPES — which returned platform-specific labels like
+  "Voice platform" or "Twin-backed agent" that didn't line up with
+  the seven modalities the product actually talks about.
+
+  Categorise every env into one of the canonical modalities the CEO
+  picked — voice, chat, computer use, code, robotics, games & worlds,
+  tools & protocols. Derived from what we already know: twin backing
+  (real Slack / Notion / Salesforce clone → tools & protocols), the
+  env's surface field (voice / chat / coding / browser), and a fallback
+  keyword scan of the name + description for the rarer modalities.
+*/
+const MODALITY = {
+  voice:       { id: "voice",       label: "Voice",              icon: "solar:microphone-3-linear" },
+  chat:        { id: "chat",        label: "Chat",               icon: "solar:chat-round-line-linear" },
+  computer:    { id: "computer",    label: "Computer use",       icon: "solar:monitor-linear" },
+  code:        { id: "code",        label: "Code",               icon: "solar:code-square-linear" },
+  robotics:    { id: "robotics",    label: "Robotics",           icon: "solar:bicycling-linear" },
+  world:       { id: "world",       label: "Games & worlds",     icon: "solar:gamepad-linear" },
+  tools:       { id: "tools",       label: "Tools & protocols",  icon: "solar:widget-6-linear" },
+};
+
+const modalityForEnv = (env, envState) => {
+  const surface = String(env?.surface || "").toLowerCase();
+  const twin = envState?.twinBacking || env?.twinBacking;
+  const hay = `${env?.name || ""} ${env?.description || ""} ${env?.tagline || ""}`.toLowerCase();
+
+  if (twin) return MODALITY.tools;
+  if (surface === "voice" || /\bvoice|phone|call\b/.test(hay)) return MODALITY.voice;
+  if (surface === "browser" || /browser|screen|desktop|computer.use/.test(hay)) return MODALITY.computer;
+  if (surface === "coding" || surface === "code" || /\bcode|repo|pull request|\bpr\b|github\b/.test(hay)) return MODALITY.code;
+  if (/robot|drone|actuator|manipulator/.test(hay)) return MODALITY.robotics;
+  if (/\bgame|world|unity|unreal|npc|simulation env/.test(hay)) return MODALITY.world;
+  return MODALITY.chat;
+};
 
 /**
  * My environments, as the same DataTable the platform uses on Evals,
@@ -25,7 +61,7 @@ import { useSimStore } from "../store";
  * grid, header treatment and hover behaviour come from `DataTable`, so no
  * new house style gets introduced.
  */
-export default function MyEnvironmentsTable({ envs, onOpen }) {
+export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }) {
   const { state, dispatch } = useSimStore();
   const navigate = useNavigate();
 
@@ -60,9 +96,26 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
         env,
         name: env.name,
         description: env.description || env.tagline || "",
-        status: env.buildStatus || "ready",
+        /* Status here reflects *simulation* state, not env build state:
+           this page is Simulated Runs, so a green "Ready" pill on
+           every row is meaningless (all envs are built, that's why
+           they're listed). Roll the latest run's verdict up instead —
+           "Passed" / "Failed" for the latest run, or "Not run yet"
+           when the env has been built but never simulated. Runs still
+           in flight surface as "Running…". */
+        status: (() => {
+          const lastRun = runs[runs.length - 1];
+          if (!lastRun) return env.buildStatus === "building" ? "building" : "not_run";
+          if (lastRun.status === "running") return "running";
+          if (lastRun.status === "failed" || lastRun.gate === "failed") return "failed";
+          if (lastRun.status === "passed" || lastRun.gate === "clear") return "passed";
+          return "completed";
+        })(),
         buildProgress: env.buildProgress,
-        agentType: env.agentType,
+        /* Canonical modality — voice / chat / computer use / code / robotics
+           / games & worlds / tools & protocols. Sortable and filterable
+           because it's flattened onto the row instead of derived in cell. */
+        agentType: modalityForEnv(env, envState).id,
         tools: env.tools?.length || 0,
         subgoals: scenarios.reduce(
           (n, s) => n + (s.subTasks?.length ?? subTasksFor(s, env).length),
@@ -108,7 +161,11 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
           </Typography>
         ),
       },
-      {
+      /* Simulated Runs opts the Status column out via hideStatus — a
+         universal "Ready" pill on every row on that page just reads
+         as noise (every listed env is by definition built). Other
+         callers keep the pill. */
+      ...(hideStatus ? [] : [{
         id: "status",
         accessorKey: "status",
         header: "Status",
@@ -116,15 +173,14 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
         cell: ({ getValue, row }) => (
           <StatusPill status={getValue()} progress={row.original.buildProgress} />
         ),
-      },
+      }]),
       {
         id: "agentType",
         accessorKey: "agentType",
         header: "Agent type",
         size: 180,
         cell: ({ getValue }) => {
-          const at = getAgentType(getValue());
-          if (!at) return <Typography sx={{ typography: "s2", color: "text.subtitle" }}>—</Typography>;
+          const m = MODALITY[getValue()] || MODALITY.chat;
           return (
             <Stack direction="row" alignItems="center" spacing={0.875} sx={{ minWidth: 0 }}>
               <Box
@@ -134,9 +190,9 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
                   bgcolor: "background.neutral", color: "text.secondary",
                 }}
               >
-                <Iconify icon={at.icon} width={13} />
+                <Iconify icon={m.icon} width={13} />
               </Box>
-              <Typography noWrap sx={{ typography: "s2" }}>{at.label}</Typography>
+              <Typography noWrap sx={{ typography: "s2" }}>{m.label}</Typography>
             </Stack>
           );
         },
@@ -222,7 +278,7 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
         ),
       },
     ],
-    [],
+    [hideStatus],
   );
 
   /*
@@ -249,23 +305,8 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
     pagination bar sits flush with the last row. ResizeObserver
     keeps it accurate through resizes and sidebar toggles.
   */
-  const ROW_H = 52;
-  const HEADER_H = 40;
-  const bodyRef = useRef(null);
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(0);
-  useLayoutEffect(() => {
-    const el = bodyRef.current;
-    if (!el) return undefined;
-    const compute = () => {
-      const avail = el.clientHeight - HEADER_H;
-      setPageSize(Math.max(5, Math.floor(avail / ROW_H)));
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1));
   const pageRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const active = menuFor?.env;
@@ -273,42 +314,33 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
 
   return (
     <>
-      <Box sx={{
-        display: "flex", flexDirection: "column",
-        /*
-          Fills every pixel the parent doesn't already claim (page
-          header + tabs + filter row above; nothing below since this
-          is the last thing on the page). ResizeObserver above reads
-          this exact height and computes pageSize from it, so rows +
-          pagination together match the container height with no gap.
-        */
-        height: "calc(100vh - 220px)",
-        minHeight: 320,
-      }}>
-        <Box
-          ref={bodyRef}
-          sx={{ flex: 1, minHeight: 0 }}
-        >
-          <DataTable
-            columns={columns}
-            data={pageRows}
-            rowCount={rows.length}
-            getRowId={(row) => row.id}
-            onRowClick={(row) => onOpen?.(row.env)}
-            rowHeight={52}
-            emptyMessage="No environments yet"
-          />
-        </Box>
-        {rows.length > 0 && (
-          <DataTablePagination
-            page={currentPage}
-            pageSize={pageSize}
-            total={rows.length}
-            onPageChange={setPage}
-            onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
-          />
-        )}
-      </Box>
+      {/*
+        Datasets-page layout: DataTable flex-fills the available
+        vertical space, DataTablePagination pins to the bottom edge.
+        Parent must render this inside a flex column with a bounded
+        height (SimulatedRunsPage sets height: 100% + flex column) —
+        same shape DevelopView / EvalsListView / etc. all use, so
+        the pagination bar sits at the viewport bottom instead of
+        floating above the fold.
+      */}
+      <DataTable
+        columns={columns}
+        data={pageRows}
+        rowCount={rows.length}
+        getRowId={(row) => row.id}
+        onRowClick={(row) => onOpen?.(row.env)}
+        rowHeight={52}
+        emptyMessage="No environments yet"
+      />
+      {rows.length > 0 && (
+        <DataTablePagination
+          page={currentPage}
+          pageSize={pageSize}
+          total={rows.length}
+          onPageChange={setPage}
+          onPageSizeChange={(n) => { setPageSize(n); setPage(0); }}
+        />
+      )}
 
       {/*
         Row action menu. Menu items are kept short and named the same way
@@ -409,6 +441,7 @@ export default function MyEnvironmentsTable({ envs, onOpen }) {
 MyEnvironmentsTable.propTypes = {
   envs: PropTypes.array.isRequired,
   onOpen: PropTypes.func,
+  hideStatus: PropTypes.bool,
 };
 
 /* ── status pill ─────────────────────────────────────────────────────────── */
@@ -418,17 +451,30 @@ const pulse = keyframes`
   50%     { opacity: 1; }
 `;
 
+/*
+  Status meta reflects run state on the Simulated Runs page:
+    - building   → the env is still being derived (rare on this page)
+    - not_run    → env is built, no simulation has been run yet
+    - running    → a simulation is in flight
+    - passed     → latest run passed the gate
+    - failed     → latest run failed
+    - completed  → latest run finished without a gate verdict
+*/
 const STATUS_META = {
-  building: { label: "Building", color: "#7857FC" },
-  ready:    { label: "Ready",    color: "#16A34A" },
-  failed:   { label: "Failed",   color: "#DC2626" },
+  building:  { label: "Building",     color: "#7857FC" },
+  not_run:   { label: "Not run yet",  color: "#71717A" },
+  running:   { label: "Running…",     color: "#7857FC" },
+  passed:    { label: "Passed",       color: "#16A34A" },
+  failed:    { label: "Failed",       color: "#DC2626" },
+  completed: { label: "Completed",    color: "#71717A" },
 };
 
 function StatusPill({ status, progress }) {
-  const meta = STATUS_META[status] || STATUS_META.ready;
+  const meta = STATUS_META[status] || STATUS_META.not_run;
   const detail = status === "building" && progress
     ? `${progress.done}/${progress.total} steps`
     : "";
+  const isAnimated = status === "building" || status === "running";
 
   return (
     <Tooltip arrow title={detail}>
@@ -445,7 +491,7 @@ function StatusPill({ status, progress }) {
         <Box
           sx={{
             width: 6, height: 6, borderRadius: "50%", bgcolor: meta.color,
-            animation: status === "building" ? `${pulse} 1.4s ease-in-out infinite` : "none",
+            animation: isAnimated ? `${pulse} 1.4s ease-in-out infinite` : "none",
           }}
         />
         <Typography sx={{ typography: "s3", fontWeight: 700, color: meta.color }}>

@@ -26,7 +26,7 @@ import DynamicField from "../connect/DynamicField";
  * the file itself. All five paths end at the same output: an agent
  * record that gets attached to `envState.additionalAgents`.
  */
-export default function AddAgentDrawer({ open, onClose, env, onAdd, editing }) {
+export default function AddAgentDrawer({ open, onClose, env, onAdd, editing, newVersion }) {
   /*
     The drawer serves two flows: adding a fresh implementation, and
     editing the existing source's connection. The `editing` prop
@@ -36,7 +36,17 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing }) {
     Callers use their local state to decide whether to interpret the
     onAdd payload as an append or a replace.
   */
-  const isEditing = !!editing;
+  /*
+    Three modes:
+      - add (default): create the initial agent (empty state flow)
+      - edit (`editing` set, `newVersion` false): update the existing
+        agent's connection in place, no version bump
+      - new-version (`editing` set, `newVersion` true): draft a NEW
+        version of the same agent, seeded with the previous version's
+        values as a starting point. Old versions stay put.
+  */
+  const isEditing = !!editing && !newVersion;
+  const isNewVersion = !!editing && !!newVersion;
   const [sourceKind, setSourceKind] = useState(() => deriveSourceKind(editing) || "repo");
   const [location, setLocation] = useState(() => editing?.location || editing?.values?.repoUrl || editing?.values?.endpoint || "");
   const [refKind, setRefKind] = useState(() => editing?.ref?.kind || "branch");
@@ -121,12 +131,18 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing }) {
         >
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-              {isEditing ? "Edit connection" : "Add another agent"}
+              {isNewVersion
+                ? `Add new version${nextVersionLabel(editing) ? ` · ${nextVersionLabel(editing)}` : ""}`
+                : isEditing
+                  ? "Edit connection"
+                  : "Attach agent"}
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-              {isEditing
-                ? "Update where this environment reads its source agent from. Contract is not re-derived — use Promote for that."
-                : "Attach a second implementation. Every source is read, never typed — but they don't all carry the same things."}
+              {isNewVersion
+                ? "Point the new version at its endpoint or source. The previous version stays in the history — you can switch back any time. The environment's contract, scenarios and evaluations re-derive against the version you make active."
+                : isEditing
+                  ? "Update where this environment reads its agent from."
+                  : "Every source is read, never typed. Point us at the endpoint or the repo."}
             </Typography>
           </Box>
           <IconButton size="small" onClick={onClose}>
@@ -260,10 +276,17 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing }) {
             variant="contained" color="primary" size="small"
             disabled={!canSave}
             onClick={save}
-            startIcon={<Iconify icon={isEditing ? "solar:diskette-linear" : "solar:link-circle-linear"} width={15} />}
+            startIcon={<Iconify
+              icon={isNewVersion
+                ? "solar:add-circle-linear"
+                : isEditing ? "solar:diskette-linear" : "solar:link-circle-linear"}
+              width={15}
+            />}
             sx={{ typography: "s2", fontWeight: 700 }}
           >
-            {isEditing ? "Save changes" : "Add agent"}
+            {isNewVersion
+              ? `Create ${nextVersionLabel(editing) || "new version"}`
+              : isEditing ? "Save changes" : "Add agent"}
           </Button>
         </Stack>
       </Stack>
@@ -271,11 +294,22 @@ export default function AddAgentDrawer({ open, onClose, env, onAdd, editing }) {
   );
 }
 
+/*
+  Guess the label the next version will get, so the drawer header and
+  submit button can preview it ("Add new version · v3") without the
+  parent having to pass it in.
+*/
+function nextVersionLabel(agent) {
+  const n = (agent?.versions?.length || 0) + 1;
+  return `v${n}`;
+}
+
 AddAgentDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   env: PropTypes.object,
   onAdd: PropTypes.func,
+  newVersion: PropTypes.bool,
   editing: PropTypes.object,
 };
 

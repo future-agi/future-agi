@@ -53,7 +53,7 @@ export default function CreateOptimizationModal({ open, envState, included, spli
         sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider" }}
       >
         <Box flex={1}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Optimize my agent</Typography>
+          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Self improve my agent</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             Searches for a better prompt, scored by this environment
           </Typography>
@@ -73,7 +73,7 @@ export default function CreateOptimizationModal({ open, envState, included, spli
         </Box>
 
         <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.875 }}>Optimizer</Typography>
+          <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.875 }}>Self improver</Typography>
           <Stack direction="row" spacing={1} flexWrap="wrap" rowGap={1}>
             {OPTIMIZERS.map((o) => {
               const active = o.id === optimizerId;
@@ -113,7 +113,7 @@ export default function CreateOptimizationModal({ open, envState, included, spli
             <Typography sx={{ typography: "s2", fontWeight: 700 }}>Model</Typography>
             <Tooltip
               arrow
-              title="The model doing the optimizing — reading failures and writing candidate prompts. Not the model your agent runs on."
+              title="The model doing the self improving — reading failures and writing candidate prompts. Not the model your agent runs on."
             >
               <Box component="span" sx={{ display: "flex" }}>
                 <Iconify icon="solar:info-circle-linear" width={13} sx={{ color: "text.disabled" }} />
@@ -161,7 +161,7 @@ export default function CreateOptimizationModal({ open, envState, included, spli
             <Row
               label="Scenarios"
               value={`${split?.trainMeasured || 0} train · ${split?.heldMeasured || 0} held out`}
-              note="Release blockers are dealt into both halves. The headline number comes from the held-out set, which the optimizer never sees."
+              note="Release blockers are dealt into both halves. The headline number comes from the held-out set, which the self improver never sees."
             />
             <Row
               label="Cost"
@@ -189,7 +189,7 @@ export default function CreateOptimizationModal({ open, envState, included, spli
           startIcon={<Iconify icon="solar:play-bold" width={15} />}
           sx={{ typography: "s2", fontWeight: 700 }}
         >
-          Start optimization
+          Start self improvement
         </Button>
       </Stack>
     </Dialog>

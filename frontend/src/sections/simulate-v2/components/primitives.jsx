@@ -311,9 +311,19 @@ export function SectionCard({ title, subtitle, action, children, sx, dense }) {
           }}
         >
           <Box minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 600 }}>{title}</Typography>
+            {/*
+              component="div" so callers can pass a React element (a
+              picker, a chip row, a compound layout) as title without
+              producing invalid DOM — a div child inside a <p> triggers
+              a browser auto-close and a hydration warning.
+            */}
+            <Typography component="div" sx={{ typography: "s1", fontWeight: 600 }}>
+              {title}
+            </Typography>
             {subtitle && (
-              <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{subtitle}</Typography>
+              <Typography component="div" sx={{ typography: "s2", color: "text.subtitle" }}>
+                {subtitle}
+              </Typography>
             )}
           </Box>
           {action}
@@ -448,7 +458,7 @@ export function PersonaBadge({ persona, compact }) {
         </Typography>
         {!compact && (
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-            {[...persona.traits, persona.voice].filter(Boolean).join(" · ")}
+            {[...(persona.traits || []), persona.voice].filter(Boolean).join(" · ")}
           </Typography>
         )}
       </Box>

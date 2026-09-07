@@ -39,9 +39,17 @@ export default function CompareSummary({ comparison, evals }) {
                 {r.letter}
               </Box>
               <Box minWidth={0}>
-                <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>agent {r.agentVersion}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {r.id === baseline.id ? "baseline" : `Run ${r.index + 1}`}
+                <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>
+                  {r.kind === "trial"
+                    ? `Run ${r.trialN}`
+                    : `agent ${r.agentVersion}`}
+                </Typography>
+                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {r.id === baseline.id
+                    ? "baseline"
+                    : r.kind === "trial"
+                      ? r.selfImprovementName
+                      : `Run ${r.ordinal ?? (r.index != null ? r.index + 1 : "")}`}
                 </Typography>
               </Box>
             </Stack>

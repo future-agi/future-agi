@@ -132,6 +132,18 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
           activeVersionId: next.id,
         }),
       });
+      /*
+        A new source version implicitly re-derives the environment:
+        contract, scenarios and evaluations all re-read from the new
+        agent. Fire a builder turn so the chat panel shows this
+        happening instead of quietly swapping under the user.
+      */
+      if (onBuilderTurn) {
+        onBuilderTurn(
+          `Re-deriving environment against ${next.label}`,
+          buildVersionUpgradeSteps({ agent: source, next }),
+        );
+      }
     } else {
       const target = additional.find((a) => a.id === agentId);
       if (!target) return;
@@ -151,12 +163,31 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
     setAddingVersionFor(null);
   };
 
+  /*
+    Switching the active version is the same visible outcome as
+    adding a new one — the env now tests against a different
+    concrete build. So the same re-derivation builder-turn fires,
+    narrating what changed. Older-to-newer reads as "moving forward";
+    newer-to-older reads as a rollback (label swap only, mechanism
+    identical).
+  */
   const setActiveVersion = (agentId, versionId) => {
     if (agentId === "source") {
       if (!source) return;
+      const target = (source.versions || []).find((v) => v.id === versionId);
+      const previous = (source.versions || []).find((v) => v.id === source.activeVersionId);
       patch({
         agent: applyActiveVersion({ ...source, activeVersionId: versionId }),
       });
+      if (onBuilderTurn && target) {
+        const prevIdx = (source.versions || []).findIndex((v) => v.id === source.activeVersionId);
+        const nextIdx = (source.versions || []).findIndex((v) => v.id === versionId);
+        const isRollback = nextIdx < prevIdx;
+        onBuilderTurn(
+          `${isRollback ? "Rolling back" : "Switching"} to ${target.label} — re-deriving environment`,
+          buildVersionSwitchSteps({ agent: source, from: previous, to: target, isRollback }),
+        );
+      }
     } else {
       patch({
         additionalAgents: additional.map((a) =>
@@ -268,85 +299,64 @@ export default function AgentsPanel({ env, envState, patch, onGo, buildMode, onB
     );
   }
 
+  /*
+    Since only one agent lives per environment, `allAgents` collapses
+    to that source. Additional agents can no longer be attached — the
+    array is retained purely so any legacy env with additional agents
+    on disk doesn't crash — but the layout below is written for the
+    single-source case. Tag it with id:"source" so `addVersion` and
+    `setActiveVersion` route to the source branch (they key on that
+    string) instead of falling into the additional-agents lookup and
+    quietly no-op'ing.
+  */
+  const singleAgent = source ? { ...source, id: "source" } : null;
+
   return (
     <Box sx={{ p: 2 }}>
-      {/* ── header ── */}
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        alignItems={{ sm: "flex-end" }} spacing={2}
-        sx={{ mb: 2 }}
-      >
-        <Box flex={1}>
-          <Stack direction="row" alignItems="baseline" spacing={0.75}>
-            <Typography sx={{ typography: "m2", fontWeight: 600 }}>Agents</Typography>
-            <Typography sx={{
-              typography: "s1", fontWeight: 500, color: "text.subtitle",
-              fontVariantNumeric: "tabular-nums",
-            }}>
-              ({allAgents.length})
-            </Typography>
-          </Stack>
-          <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 720 }}>
-            The <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>source</Box>{" "}
-            defines this environment&apos;s scenarios. Runs execute against whichever agent is{" "}
-            <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>active</Box>{" "}
-            — attach more to A/B test candidates without changing the definition.
-          </Typography>
-        </Box>
-        <Button
-          variant="contained" color="primary" size="small"
-          onClick={() => setAdding(true)}
-          startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
-        >
-          Attach another agent
-        </Button>
-      </Stack>
+      {/* ── page header ── */}
+      <Box sx={{ mb: 2 }}>
+        <Typography sx={{ typography: "m2", fontWeight: 600 }}>Agent</Typography>
+        {/*
+          Trimmed to a single-line subtitle. The longer story ("latest
+          becomes the version runs execute against") is redundant with
+          the ACTIVE pill on the hero card right below.
+        */}
+        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
+          One agent per environment. New versions re-derive its contract, scenarios and evaluations.
+        </Typography>
+      </Box>
 
-      {/* ── divergence banner ── */}
-      {activeAgent && (
-        <DivergenceBanner
-          activeLabel={getAgentType(activeAgent.typeId)?.label || "this agent"}
-          onPromote={() => setPromoteFor(activeAgent)}
-          onRestore={() => setActive("source")}
-        />
-      )}
-
-      {/* ── list ── */}
-      <Stack spacing={1.25}>
-        {allAgents.map((a) => (
-          <AgentCard
-            key={a.id}
-            agent={a}
-            env={env}
-            isActive={a.isSource ? activeId == null : activeId === a.id}
-            expanded={!!expanded[a.id]}
-            onToggleExpand={() => toggleExpanded(a.id)}
-            onSetActive={() => setActive(a.id)}
-            onPromote={() => setPromoteFor(a)}
-            onRemove={() => removeAgent(a.id)}
-            onAddVersion={() => setAddingVersionFor(a)}
-            onSetActiveVersion={(vId) => setActiveVersion(a.id, vId)}
-            onGo={onGo}
-            buildMode={buildMode}
-          />
-        ))}
-      </Stack>
-
-      {/* ── add drawer (new agent) ── */}
-      <AddAgentDrawer
-        open={adding}
-        onClose={() => setAdding(false)}
-        env={env}
-        onAdd={addAgent}
+      {/* ── hero card: agent identity + primary "New version" CTA ── */}
+      <AgentHeroCard
+        agent={singleAgent}
+        onAddVersion={() => setAddingVersionFor(singleAgent)}
       />
 
-      {/* ── add drawer (new version of an existing agent) ── */}
+      {/*
+        Env credentials (test phone number, env token) live on the
+        Settings / Overview tabs — they're properties of the
+        environment, not of the agent. Keeping them here made the
+        Agents tab read as a mixed page.
+      */}
+
+      {/* ── version history ── */}
+      <Box sx={{ mt: 2 }}>
+        <VersionHistoryCard
+          agent={singleAgent}
+          onSetActiveVersion={(vId) => setActiveVersion("source", vId)}
+        />
+      </Box>
+
+      {/*
+        Add-version drawer — reused for the "New version" flow on the
+        hero card and on any version-history row's "Rollback" action.
+      */}
       <AddAgentDrawer
         open={!!addingVersionFor}
         onClose={() => setAddingVersionFor(null)}
         env={env}
         editing={addingVersionFor}
+        newVersion
         onAdd={(record) => addVersion(addingVersionFor?.id, record)}
       />
 
@@ -366,6 +376,282 @@ AgentsPanel.propTypes = {
   onGo: PropTypes.func,
   buildMode: PropTypes.bool,
   onBuilderTurn: PropTypes.func,
+};
+
+/* ── hero card ────────────────────────────────────────────────────────────── */
+
+/*
+  The environment's one agent, rendered as the focal point of the tab.
+
+  Layout: type icon on the left, name + type-line + active-version chip
+  in the middle, primary "New version" CTA on the right. A connection
+  detail strip sits underneath as a compact key/value grid — no
+  expand/collapse chrome, because with one agent there's nothing to
+  expand *away* from.
+
+  The New version button is intentionally the loudest thing on the
+  page: it's the tab's primary verb, and putting it inline on the
+  hero card means the user's eye lands on it the moment they open
+  the tab.
+*/
+function AgentHeroCard({ agent, onAddVersion }) {
+  const type = getAgentType(agent.typeId);
+  const name = deriveAgentName(agent, type);
+  const typeLine = deriveTypeLine(agent, type);
+  const versions = agent.versions || [];
+  const activeVersion = versions.find((v) => v.id === agent.activeVersionId) || versions[versions.length - 1];
+  const activeLabel = activeVersion?.label || "v1";
+  const values = agent.values || {};
+  const connectionRows = connectionRowsFor(agent, type, values);
+  const sourceRows = sourceRowsFor(agent);
+
+  return (
+    <Box sx={{
+      border: "1px solid", borderColor: "divider",
+      borderRadius: 1.5, overflow: "hidden",
+      bgcolor: "background.paper",
+    }}>
+      <Stack
+        direction="row" alignItems="center" spacing={2}
+        sx={{ px: 2.5, py: 2 }}
+      >
+        <Box sx={{
+          width: 44, height: 44, borderRadius: 1.25, flexShrink: 0,
+          display: "grid", placeItems: "center",
+          bgcolor: (t) => alpha(type?.color || t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.1),
+          color: type?.color || "text.secondary",
+        }}>
+          <Iconify icon={type?.icon || "solar:cpu-bolt-linear"} width={22} />
+        </Box>
+
+        <Box flex={1} minWidth={0}>
+          <Stack direction="row" alignItems="center" spacing={0.875} flexWrap="wrap" rowGap={0.5}>
+            <Typography noWrap sx={{
+              typography: "s1", fontWeight: 700, color: "text.primary",
+              fontFamily: "ui-monospace, Menlo, monospace",
+            }}>
+              {name}
+            </Typography>
+            <Box sx={{
+              px: 0.875, py: 0.25, borderRadius: 0.75,
+              bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.16 : 0.1),
+              color: "primary.main",
+              typography: "s3", fontWeight: 700,
+              fontFamily: "ui-monospace, Menlo, monospace",
+            }}>
+              {activeLabel}
+            </Box>
+            <Box sx={{
+              px: 0.875, py: 0.25, borderRadius: 0.75,
+              bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1),
+              color: "#16A34A",
+              typography: "s3", fontWeight: 700,
+              letterSpacing: 0.3,
+            }}>
+              ACTIVE
+            </Box>
+          </Stack>
+          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>
+            {typeLine}
+            {versions.length > 1 && (
+              <Box component="span" sx={{ ml: 1, color: "text.disabled" }}>
+                · {versions.length} version{versions.length === 1 ? "" : "s"}
+              </Box>
+            )}
+          </Typography>
+        </Box>
+
+        <Button
+          variant="contained" color="primary"
+          onClick={onAddVersion}
+          startIcon={<Iconify icon="solar:add-circle-linear" width={17} />}
+          sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
+        >
+          Add new version
+        </Button>
+      </Stack>
+
+      <Box sx={{
+        borderTop: "1px solid", borderColor: "divider",
+        p: 2.5, display: "grid", gap: 2,
+        gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+      }}>
+        <DetailBlock title="Connection" icon="solar:link-round-linear" rows={connectionRows} />
+        <DetailBlock title="Source" icon="solar:code-square-linear" rows={sourceRows} />
+      </Box>
+    </Box>
+  );
+}
+AgentHeroCard.propTypes = {
+  agent: PropTypes.object.isRequired,
+  onAddVersion: PropTypes.func.isRequired,
+};
+
+/* ── env credentials card ─────────────────────────────────────────────────── */
+
+/*
+  Test phone + env token, isolated in their own card so they read as
+  what they are — environment credentials, not "properties of the
+  active agent". Same shape the DetailBlock uses so it slots in
+  cleanly under the hero.
+*/
+function CredentialsCard() {
+  return (
+    <Box sx={{
+      border: "1px solid", borderColor: "divider",
+      borderRadius: 1.5, overflow: "hidden",
+      bgcolor: "background.paper", p: 2.5,
+    }}>
+      <DetailBlock
+        title="Environment credentials"
+        icon="solar:key-linear"
+        rows={[
+          { label: "Test phone number", value: "+1 (415) 555-0182", copy: true },
+          { label: "Environment token", value: "fagi_sim_sk_9c2f4b7ae15d8306", copy: true, mono: true },
+        ]}
+        subtitle="Rotates whenever you reset the environment"
+      />
+    </Box>
+  );
+}
+
+/* ── version history ──────────────────────────────────────────────────────── */
+
+/*
+  Timeline of every version the agent has carried. Active version is
+  highlighted (green tick + ACTIVE pill); every other row exposes a
+  "Roll back to this version" button, which uses the same set-active
+  handler underneath — rolling back and switching forward are the
+  same action, just semantically labelled by direction.
+
+  Uses a vertical rail with connected dots so the timeline reads as
+  a sequence, not a bulleted list, and the "latest at the top" order
+  keeps the current state where the eye first lands.
+*/
+function VersionHistoryCard({ agent, onSetActiveVersion }) {
+  const versions = agent.versions || [];
+  const activeId = agent.activeVersionId || versions[versions.length - 1]?.id;
+  const activeIdx = versions.findIndex((v) => v.id === activeId);
+  const ordered = versions.slice().reverse();
+
+  return (
+    <Box sx={{
+      border: "1px solid", borderColor: "divider",
+      borderRadius: 1.5, overflow: "hidden",
+      bgcolor: "background.paper",
+    }}>
+      {/*
+        Header carries the section label only. The primary "Add new
+        version" CTA lives on the hero card up top — mirroring it here
+        made the tab read as if there were two different flows.
+      */}
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.75, borderBottom: "1px solid", borderColor: "divider" }}>
+        <Iconify icon="solar:layers-minimalistic-linear" width={16} sx={{ color: "text.subtitle" }} />
+        <Typography sx={{ typography: "s2", fontWeight: 700, letterSpacing: 0.3, color: "text.subtitle", textTransform: "uppercase" }}>
+          Version history
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+          · {versions.length} version{versions.length === 1 ? "" : "s"}
+        </Typography>
+      </Stack>
+
+      <Box sx={{ px: 2.5, py: 2 }}>
+        <Stack spacing={0}>
+          {ordered.map((v, i) => {
+            const isActive = v.id === activeId;
+            const originalIdx = versions.findIndex((x) => x.id === v.id);
+            const isOlderThanActive = originalIdx < activeIdx;
+            const isLast = i === ordered.length - 1;
+            return (
+              <Stack
+                key={v.id}
+                direction="row" alignItems="flex-start" spacing={2}
+                sx={{ position: "relative", pb: isLast ? 0 : 2.5 }}
+              >
+                {/* rail */}
+                <Box sx={{ position: "relative", flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <Box sx={{
+                    width: 22, height: 22, borderRadius: "50%",
+                    display: "grid", placeItems: "center", flexShrink: 0,
+                    bgcolor: isActive
+                      ? "#16A34A"
+                      : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.1 : 0.06),
+                    color: isActive ? "#fff" : "text.subtitle",
+                    zIndex: 1,
+                  }}>
+                    {isActive ? (
+                      <Iconify icon="solar:check-circle-bold" width={14} />
+                    ) : (
+                      <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: "text.subtitle" }} />
+                    )}
+                  </Box>
+                  {!isLast && (
+                    <Box sx={{
+                      width: 2, flex: 1, minHeight: 30, mt: 0.5,
+                      bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+                    }} />
+                  )}
+                </Box>
+
+                {/* body */}
+                <Box flex={1} minWidth={0} sx={{ pt: 0.125 }}>
+                  <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" rowGap={0.5}>
+                    <Typography sx={{
+                      typography: "s2", fontWeight: 700, color: "text.primary",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                    }}>
+                      {v.label}
+                    </Typography>
+                    {isActive && (
+                      <Box sx={{
+                        px: 0.75, py: 0.125, borderRadius: 0.5,
+                        bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.18 : 0.12),
+                        color: "#16A34A",
+                        typography: "s3", fontWeight: 700, letterSpacing: 0.3,
+                      }}>
+                        ACTIVE
+                      </Box>
+                    )}
+                    {v.connectedAt && (
+                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                        {new Date(v.connectedAt).toLocaleString(undefined, {
+                          month: "short", day: "numeric", year: "numeric",
+                          hour: "2-digit", minute: "2-digit",
+                        })}
+                      </Typography>
+                    )}
+                    <Box flex={1} />
+                    {!isActive && (
+                      <Button
+                        size="small"
+                        onClick={() => onSetActiveVersion?.(v.id)}
+                        startIcon={<Iconify icon={isOlderThanActive ? "solar:rewind-back-linear" : "solar:arrow-up-linear"} width={13} />}
+                        sx={{
+                          typography: "s3", fontWeight: 700, color: "text.secondary",
+                          "&:hover": { color: "text.primary" },
+                        }}
+                      >
+                        {isOlderThanActive ? "Roll back to this" : "Set active"}
+                      </Button>
+                    )}
+                  </Stack>
+                  {v.note && v.note !== "Environment source" && (
+                    <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.375 }}>
+                      {v.note}
+                    </Typography>
+                  )}
+                </Box>
+              </Stack>
+            );
+          })}
+        </Stack>
+      </Box>
+    </Box>
+  );
+}
+VersionHistoryCard.propTypes = {
+  agent: PropTypes.object.isRequired,
+  onSetActiveVersion: PropTypes.func.isRequired,
 };
 
 /* ── one card ─────────────────────────────────────────────────────────────── */
@@ -1292,6 +1578,54 @@ function applyActiveVersion(agent) {
     connectedAt: active.connectedAt,
     note: active.note,
   };
+}
+
+/*
+  Builder-turn steps for the "new version landed → re-derive env"
+  flow. Not a full derivation; a short, believable chain that shows
+  the same shape the original agent-source derivation used, so the
+  user's chat panel narrates what the environment is now testing
+  against. Contract + scenarios + evals are the three surfaces the
+  user cares about — each gets one line.
+*/
+/*
+  Builder-turn steps for the "user switched between existing
+  versions" flow (either forward via Set active, or backward via
+  Roll back). Same shape as the version-upgrade turn — the env
+  re-derives against whichever version is now active — but the
+  narration reflects that the version already existed.
+*/
+function buildVersionSwitchSteps({ agent, from, to, isRollback }) {
+  const typeLabel = getAgentType(agent?.typeId)?.label || "the agent";
+  const fromLabel = from?.label || "the previous version";
+  const via = to?.via || to?.values?.endpoint || agent?.via || "the version's endpoint";
+  const verb = isRollback ? "Rolling back to" : "Switching to";
+  return [
+    { kind: "think", text: `${verb} ${typeLabel} · ${to.label} (previously ${fromLabel}). Re-reading it and refreshing what depends on it.` },
+    { kind: "tool", label: `read_agent(${via})`, result: `${to.label} · loaded` },
+    { kind: "tool", label: "extract_tools()", result: "12 tools · 1 signature differs from previous" },
+    { kind: "tool", label: "extract_rules()", result: "5 rules · unchanged" },
+    { kind: "note", text: `Contract regenerated against ${to.label}.` },
+    { kind: "tool", label: "re_derive_scenarios()", result: "88 kept · 2 archived (no longer solvable in this version)" },
+    { kind: "tool", label: "reevaluate_preset_evals()", result: "no changes" },
+    { kind: "note", text: `Environment now testing ${typeLabel} · ${to.label}. Runs from this point on are stamped with this version.` },
+  ];
+}
+
+function buildVersionUpgradeSteps({ agent, next }) {
+  const typeLabel = getAgentType(agent?.typeId)?.label || "the agent";
+  const via = next?.via || agent?.via || next?.values?.endpoint || "the attached agent";
+  return [
+    { kind: "think", text: `${typeLabel} · ${next.label} is now the version this environment tests against. Re-reading the agent and refreshing what depends on it.` },
+    { kind: "tool", label: `read_agent(${via})`, result: `${next.label} · loaded` },
+    { kind: "tool", label: "extract_tools()", result: "12 tools · 1 changed" },
+    { kind: "tool", label: "extract_rules()", result: "5 rules · no changes" },
+    { kind: "note", text: "Contract regenerated. Comparing against the previous version." },
+    { kind: "json", label: `contract diff · ${next.label} vs previous`, value: JSON.stringify({ tools_added: 0, tools_removed: 0, tool_signatures_changed: 1, rules_changed: 0 }, null, 2) },
+    { kind: "tool", label: "re_derive_scenarios()", result: "88 kept · 2 archived (no longer solvable)" },
+    { kind: "tool", label: "reevaluate_preset_evals()", result: "no changes" },
+    { kind: "note", text: `Environment is now testing ${typeLabel} · ${next.label}. Runs from this point on are stamped with the new version.` },
+  ];
 }
 
 function buildPromoteSteps({ from, to }) {

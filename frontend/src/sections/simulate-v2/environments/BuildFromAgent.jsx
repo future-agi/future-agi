@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, TextField, InputAdornment, MenuItem, Tooltip, IconButton, Collapse, Popover,
@@ -42,7 +42,15 @@ import DynamicField from "../workspace/connect/DynamicField";
  */
 export default function BuildFromAgent() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { dispatch } = useSimStore();
+  /* When the new "Create Environments" picker in StartEnvironment sends a
+     user here, the source they picked (kind + value + credentials + agent
+     type) rides along in location.state.presetSource. That skips the
+     modality/kind selection UI and lands the user straight in the chat
+     + derivation view. */
+  const presetSource = location.state?.presetSource || null;
+  const bootedPresetRef = useRef(false);
 
   const [modality, setModality] = useState(null);
   const [kind, setKind] = useState("repo");
@@ -197,6 +205,42 @@ export default function BuildFromAgent() {
     play(stage.title, stage.steps, stage.chips, "understand");
   };
 
+  /* Preset-source bootstrap — when a picker in StartEnvironment hands us
+     a ready-made source via location.state, seed it into local state on
+     mount and auto-fire beginBuild once source lands. That skips the
+     modality/kind picker + intake questionnaire so the user sees the
+     builder chat + derivation panels straight away — the whole point of
+     clicking "Build environment" from the new picker. */
+  useEffect(() => {
+    if (!presetSource || bootedPresetRef.current) return;
+    bootedPresetRef.current = true;
+    if (presetSource.modality) setModality(presetSource.modality);
+    if (presetSource.kind) setKind(presetSource.kind);
+    if (presetSource.provider) setProvider(presetSource.provider);
+    if (presetSource.value) setValue(presetSource.value);
+    if (presetSource.credential) setApiKey(presetSource.credential);
+    setSource(presetSource);
+  }, [presetSource]);
+
+  /* Guard: /environments/new/build is only meaningful with a presetSource
+     in location.state. If someone lands here without one (browser back
+     onto a stale URL, refresh mid-flow, hand-typed URL), bounce them to
+     the Create Environments picker instead of showing them BuildFromAgent's
+     modality picker fallback, which is dead-end in this route. */
+  useEffect(() => {
+    if (!presetSource && !source && location.pathname.endsWith("/new/build")) {
+      navigate(paths.dashboard.simulate.environments, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    /* Only fire once, once source is present, and only for preset flows. */
+    if (!presetSource || !source || intake) return;
+    beginBuild({ name: "", difficulty: "Advanced" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, presetSource]);
+
   /* Leaving the screen is checked first — it used to sit behind the stage
      lookup, which matched it and returned before ever getting here. */
   const onChip = (chip) => {
@@ -318,6 +362,25 @@ export default function BuildFromAgent() {
   */
   const adoptedRef = useRef(null);
   const readyStampedRef = useRef(false);
+  /*
+    The derived env has a stable id (`env-returns-line`), so a previous
+    session's envState — including anything the user added under
+    `evals` — persists in localStorage. Wipe `evals` once per env id
+    on mount so this flow always lands on an empty "Added evaluations"
+    list, with the preset showing up as "Suggested". User additions
+    made later in the same session are safe: this only fires the first
+    time we see this env id.
+  */
+  const evalsResetRef = useRef(null);
+  useEffect(() => {
+    if (!env?.id) return;
+    if (evalsResetRef.current === env.id) return;
+    evalsResetRef.current = env.id;
+    if ((envState.evals?.length || 0) > 0) {
+      dispatch({ type: "patchEnvState", envId: env.id, patch: { evals: [] } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env?.id]);
   useEffect(() => {
     if (!env?.id) return;
     const understandDone = done.includes("understand");
@@ -370,11 +433,14 @@ export default function BuildFromAgent() {
   }, [env?.id, done, scenarios?.length, evalIds?.length, envState.scenarios?.length, envState.evals?.length, envState.agent, source, name, difficulty, dispatch]);
 
   /* Back out of the source picker leaves the route; back out of a derivation
-     returns to the picker, so a wrong URL is one click to fix, not a reload. */
+     returns to the picker, so a wrong URL is one click to fix, not a reload.
+     Preset-source flows (arrived here from Create Environments) skip the
+     modality picker entirely — so "back" for them jumps straight to
+     /environments instead of dropping into a picker they never used. */
   const goBack = () => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
-    if (!source) return navigate(paths.dashboard.simulate.environments);
+    if (!source || presetSource) return navigate(paths.dashboard.simulate.environments);
     setSource(null);
     setTurns([]);
     setDone([]);

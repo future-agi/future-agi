@@ -451,6 +451,12 @@ export function buildRun({
       persona: sc.persona,
       expected: sc.expected,
       critical: sc.critical,
+      /* Carry the scenario's use-case sentence through so downstream
+         grouping in the traces table matches the labels the env
+         creation Scenarios tab shows. Without this a task falls back
+         to a coarse id-derived label ("Routine tasks") and the two
+         screens name the same buckets differently. */
+      useCase: sc.useCase,
       worker: i % concurrency,
       steps,
       failStep,

@@ -34,13 +34,19 @@ import EvalsStep from "../workspace/EvalsStep";
  * a scenario row without wrapping.
  */
 
+/*
+  Personas and Actors used to be their own tabs. Personas already
+  live inside every scenario they belong to — the standalone tab
+  was a second entry point to the same rows. Actors got folded into
+  the Contract tab because they describe the pressure the
+  environment injects, which is part of the contract the agent is
+  graded against.
+*/
 const TABS = [
   { id: "overview",  label: "Overview",         needs: null },
   { id: "agent",     label: "Agents",           needs: null },
   { id: "contract",  label: "Contract",         needs: "understand" },
   { id: "scenarios", label: "Scenarios",        needs: "scenarios", badge: "scenarios" },
-  { id: "personas",  label: "Personas",         needs: "scenarios", badge: "personas" },
-  { id: "actors",    label: "Actors",           needs: "scenarios", badge: "actors" },
   { id: "evals",     label: "Evaluations",      needs: null,        badge: "evals" },
 ];
 
@@ -69,10 +75,21 @@ function firstReadyTab(done) {
 }
 
 export default function DerivedPanels({
-  env, envState, patch, source, done, running, onBuilderTurn,
+  env, envState, patch, source, done, running, onBuilderTurn, onTabChange,
 }) {
   const [tab, setTab] = useState(() => firstReadyTab(done));
   const [touched, setTouched] = useState(false);
+
+  /*
+    Notify the parent whenever the active tab changes so it can react
+    to context (e.g. the review layout swaps the assistant's suggested
+    chips based on which tab you're looking at). Fires once on mount
+    with the initial pick, and after every subsequent change.
+  */
+  useEffect(() => {
+    onTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   /*
     Derivation is complete when the builder reaches the "scenarios" stage. We
@@ -151,7 +168,12 @@ export default function DerivedPanels({
               (gapsByTab[tabId] = gapsByTab[tabId] || []).push(g);
             });
             return TABS.map((t) => {
-              const count = primed ? badgeCountFor(t.badge, envState) : null;
+              /* Hide the numeric tab badges while the builder is
+                 streaming stages — the counts are moving targets
+                 mid-build (scenarios are being generated *right now*)
+                 so surfacing them reads as if the env is done. Badges
+                 come back once running settles to false. */
+              const count = (primed && !running) ? badgeCountFor(t.badge, envState) : null;
               const gapItems = gapsByTab[t.id];
               const tabLabel = (
                 <Stack direction="row" alignItems="center" spacing={0.75}>
@@ -263,6 +285,7 @@ DerivedPanels.propTypes = {
   evalIds: PropTypes.array,
   onAddEvals: PropTypes.func,
   onBuilderTurn: PropTypes.func,
+  onTabChange: PropTypes.func,
 };
 
 /* Which panels are meaningful to edit before a run. */
@@ -291,10 +314,8 @@ function renderPanel(id, ctx) {
   const { env, envState, patch, source, onBuilderTurn, onGo } = ctx;
   switch (id) {
     case "agent":     return <AgentsPanel env={env} envState={envState} patch={patch} onGo={onGo} buildMode onBuilderTurn={onBuilderTurn} />;
-    case "contract":  return <RlContractPanel env={env} envState={envState} onGo={onGo} buildMode />;
+    case "contract":  return <RlContractPanel env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
     case "scenarios": return <ScenariosStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
-    case "personas":  return <PersonasPanel env={env} envState={envState} patch={patch} onGo={onGo} />;
-    case "actors":    return <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} />;
     case "evals":     return <EvalsStep env={env} envState={envState} patch={patch} onGo={onGo} buildMode />;
     default:          return <OverviewPanel env={env} envState={envState} patch={patch} onGo={onGo} agentConnected={!!envState?.agent} source={source} buildMode />;
   }

@@ -3,9 +3,10 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, Tooltip, TextField, MenuItem, Collapse, Switch,
+  Box, Stack, Typography, Button, Tooltip, TextField, MenuItem, Collapse, Switch, Divider, Tab,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
@@ -17,7 +18,7 @@ import { checkCompatibility } from "../_mock/compatibility";
 import { runtimeTypesFor, runtimeTypeFor } from "../_mock/builder";
 import { MODALITY_FOR } from "../_mock/fidelity";
 import { useSimStore } from "../store";
-import { SectionCard, EmptyState, cardGrid } from "../components/primitives";
+import { SectionCard, EmptyState, cardGrid, CopyField } from "../components/primitives";
 import { BootSequence } from "../components/loading";
 import DynamicField from "../workspace/connect/DynamicField";
 import TwinProvisioningModal from "./TwinProvisioningModal";
@@ -42,10 +43,31 @@ export default function UseTemplate() {
   const { dispatch, state } = useSimStore();
 
   const env = useMemo(() => getEnvironment(templateId), [templateId]);
+  /* Build mode — "cloud" runs the world here (connect agent → fit check
+     → ready). "local" scaffolds the same template into the user's repo
+     via the CLI. Same template, two delivery paths; the toggle lives in
+     the header. */
+  const [mode, setMode] = useState("cloud");
   const [step, setStep] = useState(0);
   const [runtimeTypeId, setRuntimeTypeId] = useState(null);
   const [values, setValues] = useState({});
   const [showMore, setShowMore] = useState(false);
+  /* Cloud-sandbox only: env vars + egress domains the sandbox needs
+     to actually run the template against the user's agent. Local
+     scaffold doesn't need these (user manages their own .env). */
+  const [envText, setEnvText] = useState("");
+  const [egress, setEgress] = useState("");
+  const [envOpen, setEnvOpen] = useState(false);
+  const envFileRef = useRef(null);
+  const onEnvFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = String(reader.result || "");
+      setEnvText((prev) => (prev ? `${prev}\n${content}` : content));
+    };
+    reader.readAsText(file);
+  };
   const [dropBlocked, setDropBlocked] = useState(true);
   const [twinProvisioning, setTwinProvisioning] = useState(false);
   /*
@@ -190,7 +212,13 @@ export default function UseTemplate() {
         },
       });
     }
-    navigate(paths.dashboard.simulate.environmentDetail(env.id));
+    /* "Run simulation" is a one-click go — mint a new run id and
+       route straight to the live run view, which drives the run and
+       records it back into envState.runs when it settles. Landing on
+       environmentDetail instead would leave Run history empty and
+       force a second click. */
+    const runId = `run-${Date.now().toString(36)}`;
+    navigate(paths.dashboard.simulate.simulationRun(env.id, runId));
   };
 
   /*
@@ -200,7 +228,7 @@ export default function UseTemplate() {
     which either commits directly (non-twin) or opens the twin
     provisioning modal (twin templates).
   */
-  if (step === 2) {
+  if (mode === "cloud" && step === 2) {
     /*
       Wait for the adopt effect to land before mounting the review
       layout — DerivedPanels + its child panels expect the env to be
@@ -254,32 +282,62 @@ export default function UseTemplate() {
           </Typography>
         </Box>
 
-        <Stack direction="row" alignItems="flex-start" sx={{ width: 420, display: { xs: "none", lg: "flex" } }}>
-          {STEPS.map((label, i) => (
-            <Stack key={label} direction="row" alignItems="flex-start" sx={{ flex: i === STEPS.length - 1 ? "0 0 auto" : 1 }}>
-              <Box sx={{ width: 116, textAlign: "center", flexShrink: 0 }}>
-                <Iconify
-                  icon={i < step ? "solar:check-circle-bold" : "solar:circle-linear"}
-                  width={15}
-                  sx={{ color: i < step ? "#16A34A" : i === step ? "primary.main" : "text.disabled", display: "block", mx: "auto" }}
-                />
-                <Typography sx={{ typography: "s3", fontWeight: 700, color: i <= step ? "text.primary" : "text.subtitle", mt: 0.25 }}>
-                  {label}
-                </Typography>
-              </Box>
-              {i < STEPS.length - 1 && (
-                <Box sx={{ flex: 1, height: "1px", mt: "7px", bgcolor: i < step ? "#16A34A" : "divider" }} />
-              )}
-            </Stack>
-          ))}
-        </Stack>
+        {mode === "cloud" && (
+          <Stack direction="row" alignItems="flex-start" sx={{ width: 420, display: { xs: "none", lg: "flex" } }}>
+            {STEPS.map((label, i) => (
+              <Stack key={label} direction="row" alignItems="flex-start" sx={{ flex: i === STEPS.length - 1 ? "0 0 auto" : 1 }}>
+                <Box sx={{ width: 116, textAlign: "center", flexShrink: 0 }}>
+                  <Iconify
+                    icon={i < step ? "solar:check-circle-bold" : "solar:circle-linear"}
+                    width={15}
+                    sx={{ color: i < step ? "#16A34A" : i === step ? "primary.main" : "text.disabled", display: "block", mx: "auto" }}
+                  />
+                  <Typography sx={{ typography: "s3", fontWeight: 700, color: i <= step ? "text.primary" : "text.subtitle", mt: 0.25 }}>
+                    {label}
+                  </Typography>
+                </Box>
+                {i < STEPS.length - 1 && (
+                  <Box sx={{ flex: 1, height: "1px", mt: "7px", bgcolor: i < step ? "#16A34A" : "divider" }} />
+                )}
+              </Stack>
+            ))}
+          </Stack>
+        )}
       </Stack>
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1.55fr) minmax(300px, 1fr)" } }}>
           <Stack spacing={2}>
+            <SegmentedTabs
+              value={mode}
+              onChange={(_e, next) => setMode(next)}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              <Tab
+                value="cloud"
+                label={(
+                  <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Iconify icon="solar:cloud-linear" width={13} />
+                    <Box component="span">Cloud sandbox</Box>
+                  </Stack>
+                )}
+              />
+              <Tab
+                value="local"
+                label={(
+                  <Stack direction="row" alignItems="center" spacing={0.75}>
+                    <Iconify icon="solar:laptop-2-linear" width={13} />
+                    <Box component="span">Build locally</Box>
+                  </Stack>
+                )}
+              />
+            </SegmentedTabs>
+            {/* ── local · CLI scaffold ── */}
+            {mode === "local" && (
+              <LocalScaffoldCard env={env} />
+            )}
             {/* ── 1 · connect ── */}
-            {step === 0 && (
+            {mode === "cloud" && step === 0 && (
               <SectionCard
                 title="Connect your agent"
                 subtitle={`${surface.blurb} We handle the ${surface.transports.join(", ")} side.`}
@@ -329,6 +387,68 @@ export default function UseTemplate() {
                       </Collapse>
                     </Box>
                   )}
+
+                  {/* Environment values — cloud-sandbox only. Keys the
+                      template code needs to reach real APIs, plus any
+                      hardcoded egress domains the sandbox should let
+                      through. Values live in local state only. */}
+                  <Box>
+                    <Button
+                      size="small"
+                      onClick={() => setEnvOpen((o) => !o)}
+                      startIcon={<Iconify icon={envOpen ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={14} />}
+                      sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", px: 0.5 }}
+                    >
+                      {envOpen ? "Hide environment values" : "Environment values (optional)"}
+                    </Button>
+                    <Collapse in={envOpen} unmountOnExit>
+                      <Stack spacing={1.5} sx={{ mt: 1.5 }}>
+                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                          Credentials the sandbox needs to run this template against your agent. Values stay in this browser session, are sent only for preflight and run execution, and are never written to jobs, logs, or artifacts.
+                        </Typography>
+                        <Box>
+                          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
+                            <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "text.subtitle" }}>
+                              Paste .env contents
+                            </Typography>
+                            <Button
+                              size="small"
+                              onClick={() => envFileRef.current?.click()}
+                              startIcon={<Iconify icon="solar:upload-linear" width={12} />}
+                              sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", px: 0.5 }}
+                            >
+                              Upload credential file
+                            </Button>
+                            <input
+                              ref={envFileRef}
+                              type="file"
+                              hidden
+                              accept=".env,.txt,application/json"
+                              onChange={(e) => onEnvFile(e.target.files?.[0])}
+                            />
+                          </Stack>
+                          <TextField
+                            fullWidth
+                            multiline
+                            minRows={3}
+                            value={envText}
+                            onChange={(e) => setEnvText(e.target.value)}
+                            placeholder={"OPENAI_API_KEY=…\nDATABASE_URL=…"}
+                            sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+                          />
+                        </Box>
+                        <TextField
+                          fullWidth size="small"
+                          label="Additional egress domains"
+                          placeholder="api.example.com, turn.example.com"
+                          value={egress}
+                          onChange={(e) => setEgress(e.target.value)}
+                          helperText="Comma or newline-separated public hostnames the sandbox should let through. Everything else is firewalled."
+                          sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace" } }}
+                        />
+                      </Stack>
+                    </Collapse>
+                  </Box>
                 </Stack>
 
                 <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -380,10 +500,6 @@ export default function UseTemplate() {
               </Stack>
             </Box>
 
-            <Typography sx={{ typography: "s3", color: "text.subtitle", px: 0.5 }}>
-              Prefer to work locally? The same template scaffolds into your repo from the CLI —
-              see Develop locally on the template.
-            </Typography>
           </Stack>
         </Box>
       </Box>
@@ -393,9 +509,12 @@ export default function UseTemplate() {
         probeSteps={fit.probe}
         onDone={() => {
           setFitCheckOpen(false);
-          /* Advance to the review layout — user tweaks the template
-             on the left-side chat, previews it on the right, then
-             clicks Finish to commit. */
+          /* Straight to the review layout — TemplateReviewLayout owns
+             the "Setup being built" state itself (AssistantConsole
+             streams the builder turns, DerivedPanels lights up the
+             capability tabs as each stage settles, pipeline strip
+             tracks progress). Any intermediate splash here would
+             short-circuit that richer view. */
           setStep(2);
         }}
       />
@@ -410,6 +529,77 @@ export default function UseTemplate() {
     </Box>
   );
 }
+
+/* ── local scaffold — CLI steps for this template ─────────────────────── */
+
+function LocalScaffoldCard({ env }) {
+  const slug = env.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const steps = [
+    {
+      n: 1,
+      title: "Initialize",
+      body: "Scaffold the environment and its scenario packs into your repo.",
+      cmd: `fai env init ${slug} --template ${env.id}`,
+    },
+    {
+      n: 2,
+      title: "Run a simulation",
+      body: "Point it at your agent and run the core pack locally — nothing leaves your laptop.",
+      cmd: `fai sim run --env ${slug} --pack core`,
+    },
+    {
+      n: 3,
+      title: "Deploy",
+      body: "Publish when you're ready. Runs execute on our infrastructure and traces land back in the dashboard.",
+      cmd: `fai env deploy ${slug}`,
+    },
+  ];
+  return (
+    <SectionCard
+      title="Develop locally"
+      subtitle="Scaffold this template into your own repo and iterate from your terminal."
+    >
+      <Stack sx={{ p: 2.5 }} spacing={0}>
+        {steps.map((s, i) => (
+          <Stack key={s.n} direction="row" spacing={1.75}>
+            <Stack alignItems="center" sx={{ flexShrink: 0 }}>
+              <Box
+                sx={{
+                  width: 24, height: 24, borderRadius: "50%", display: "grid", placeItems: "center",
+                  border: "1px solid", borderColor: "divider",
+                  typography: "s3", fontWeight: 700, color: "text.secondary",
+                }}
+              >
+                {s.n}
+              </Box>
+              {i < steps.length - 1 && (
+                <Box sx={{ flex: 1, width: "1px", bgcolor: "divider", my: 0.75, minHeight: 24 }} />
+              )}
+            </Stack>
+            <Box sx={{ flex: 1, minWidth: 0, pb: i < steps.length - 1 ? 2.25 : 0 }}>
+              <Typography sx={{ typography: "s2", fontWeight: 700 }}>{s.title}</Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
+                {s.body}
+              </Typography>
+              <CopyField value={s.cmd} wrap />
+            </Box>
+          </Stack>
+        ))}
+      </Stack>
+      <Divider />
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.75 }}>
+        <Iconify icon="solar:book-linear" width={14} sx={{ color: "text.subtitle" }} />
+        <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+          Not installed? <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>pip install futureagi</Box>
+        </Typography>
+        <Button size="small" sx={{ typography: "s3", fontWeight: 700, color: "text.secondary" }}>
+          Docs
+        </Button>
+      </Stack>
+    </SectionCard>
+  );
+}
+LocalScaffoldCard.propTypes = { env: PropTypes.object };
 
 function Tally({ n, label, tone }) {
   return (
