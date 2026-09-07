@@ -159,9 +159,10 @@ const TraceGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      hasMore,
       page,
-      pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -533,6 +534,7 @@ const TraceGrid = React.forwardRef(
                 request,
                 rows,
                 isLastPage,
+                metadata,
               });
 
               params.success({
@@ -905,8 +907,9 @@ const TraceGrid = React.forwardRef(
           }
           loading={isPageLoading}
           page={page}
-          pageCount={pageCount}
           pageSize={pageSize}
+          hasMore={hasMore}
+          provenNext={provenNext}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
