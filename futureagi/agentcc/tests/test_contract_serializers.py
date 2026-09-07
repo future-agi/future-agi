@@ -1,3 +1,5 @@
+from rest_framework import serializers
+
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
@@ -6,6 +8,7 @@ from agentcc.serializers.contracts import (
     GatewayMCPStatusResponseSerializer,
     GatewayProviderStatusSerializer,
     OrgConfigBulkResponseSerializer,
+    ProviderModelsResponseSerializer,
 )
 from tfc.utils.api_errors import build_error_envelope
 
@@ -175,3 +178,48 @@ def test_org_config_bulk_response_is_typed_by_org_id():
     )
 
     assert serializer.is_valid(), serializer.errors
+
+
+def test_provider_models_are_declared_as_strings_not_objects():
+    """``models_list`` holds plain model IDs. Declaring the child as a JSON
+    object made every gateway config/providers response fail response-contract
+    validation in the browser, so the string typing is the contract."""
+    for serializer_class in (
+        GatewayConfigProviderSerializer,
+        GatewayProviderStatusSerializer,
+    ):
+        child = serializer_class().fields["models"].child
+        assert isinstance(child, serializers.CharField), serializer_class
+
+    serializer = GatewayProviderStatusSerializer(
+        data={
+            "id": "openai",
+            "name": "openai",
+            "status": "healthy",
+            "healthy": True,
+            "circuit_state": "closed",
+            "models": [{"id": "gpt-4o"}],
+        }
+    )
+
+    assert not serializer.is_valid()
+    assert "models" in serializer.errors
+
+
+def test_provider_models_response_declares_the_fetch_models_payload():
+    """The action used to advertise AgentccProviderCredential, whose required
+    provider_name is absent from what it actually returns."""
+    serializer = ProviderModelsResponseSerializer(
+        data={"status": True, "result": {"models": ["gpt-4o"]}}
+    )
+
+    assert serializer.is_valid(), serializer.errors
+
+    with_error = ProviderModelsResponseSerializer(
+        data={
+            "status": True,
+            "result": {"models": [], "error": "The provider did not respond."},
+        }
+    )
+
+    assert with_error.is_valid(), with_error.errors

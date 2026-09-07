@@ -14,6 +14,11 @@ API_FORMAT_HELP_TEXT = (
     "openai/anthropic/gemini/google set."
 )
 PROVIDER_KEY_HELP_TEXT = "Provider key/name used by the gateway, not a database UUID."
+PROVIDER_MODELS_HELP_TEXT = (
+    "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; "
+    "declaring the child as a JSON object made every gateway config/providers "
+    "response fail response-contract validation in the browser."
+)
 
 # Keep response wrappers explicit even when the envelope is just status/result:
 # the generated OpenAPI component names stay stable and each endpoint owns its
@@ -59,7 +64,11 @@ class GatewayListResponseSerializer(serializers.Serializer):
 class GatewayConfiguredProviderSerializer(serializers.Serializer):
     name = serializers.CharField()
     display_name = serializers.CharField(required=False, allow_blank=True)
-    models = serializers.ListField(child=serializers.JSONField(), required=False)
+    models = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=PROVIDER_MODELS_HELP_TEXT,
+    )
     status = serializers.CharField(required=False, allow_blank=True)
 
 
@@ -90,7 +99,10 @@ class GatewayConfigProviderSerializer(serializers.Serializer):
         allow_null=True,
         help_text=API_FORMAT_HELP_TEXT,
     )
-    models = serializers.ListField(child=serializers.JSONField())
+    models = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=PROVIDER_MODELS_HELP_TEXT,
+    )
     is_active = serializers.BooleanField()
     default_timeout = serializers.IntegerField(allow_null=True)
     max_concurrent = serializers.IntegerField(allow_null=True)
@@ -192,7 +204,11 @@ class GatewayProviderStatusSerializer(serializers.Serializer):
         allow_blank=True,
         help_text=API_FORMAT_HELP_TEXT,
     )
-    models = serializers.ListField(child=serializers.JSONField(), required=False)
+    models = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=PROVIDER_MODELS_HELP_TEXT,
+    )
     request_count = serializers.IntegerField(required=False)
     avg_latency = serializers.FloatField(required=False)
     error_rate = serializers.FloatField(required=False)
@@ -495,3 +511,37 @@ class SpendSummaryResultSerializer(serializers.Serializer):
 class SpendSummaryResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = SpendSummaryResultSerializer()
+
+
+class ProviderModelsRequestSerializer(serializers.Serializer):
+    """Body for ``POST /agentcc/provider-credentials/fetch_models/``.
+
+    Two modes: ``provider_name`` looks up the stored credential, or raw
+    ``api_key``/``base_url``/``api_format`` for a provider not yet saved. Every
+    field is therefore optional; the view rejects a body that satisfies neither.
+    """
+
+    provider_name = serializers.CharField(required=False, allow_blank=True)
+    base_url = serializers.CharField(required=False, allow_blank=True)
+    api_key = serializers.CharField(required=False, allow_blank=True)
+    api_format = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=API_FORMAT_HELP_TEXT,
+    )
+
+
+class ProviderModelsResultSerializer(serializers.Serializer):
+    models = serializers.ListField(child=serializers.CharField())
+    error = serializers.CharField(
+        required=False,
+        help_text=(
+            "Present when the provider could not be reached. The list is empty "
+            "and the call still returns 200 so the caller can offer manual entry."
+        ),
+    )
+
+
+class ProviderModelsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = ProviderModelsResultSerializer()
