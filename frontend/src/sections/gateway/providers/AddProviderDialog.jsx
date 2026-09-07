@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -9,6 +9,7 @@ import {
   TextField,
   Stack,
   Alert,
+  AlertTitle,
   Chip,
   Autocomplete,
   MenuItem,
@@ -132,6 +133,18 @@ const API_FORMATS = [
   "bedrock",
 ];
 
+// Human labels for the validation summary, in the order the fields appear in
+// the form so the summary reads top-to-bottom like the dialog itself.
+const FIELD_LABELS = {
+  name: "Provider Name",
+  awsAccessKeyId: "AWS Access Key ID",
+  awsSecretAccessKey: "AWS Secret Access Key",
+  baseUrl: "Base URL",
+  apiKey: "API Key",
+  models: "Models",
+  timeout: "Timeout",
+};
+
 const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const isEditMode = Boolean(provider);
 
@@ -151,6 +164,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
   // Validation state
   const [errors, setErrors] = useState({});
+  // The dialog body scrolls, so a failed Save has to bring the summary back
+  // into view — otherwise the button looks inert.
+  const contentRef = useRef(null);
 
   const updateProvider = useUpdateProvider();
   const fetchModels = useFetchProviderModels();
@@ -300,7 +316,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }
   };
 
-  const validate = () => {
+  const validate = (timeoutSeconds) => {
     const newErrors = {};
 
     if (!name.trim()) {
@@ -320,10 +336,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       const preset = PROVIDER_PRESETS[name];
       const needsBaseUrl = !preset || !preset.baseUrl;
       if (needsBaseUrl && !baseUrl.trim()) {
-        newErrors.baseUrl = "Base URL is required for this provider";
+        newErrors.baseUrl =
+          "This provider has no preset endpoint — enter its base URL, e.g. https://your-endpoint.com";
       }
-      if (baseUrl.trim() && !baseUrl.startsWith("http")) {
-        newErrors.baseUrl = "Base URL must start with http:// or https://";
+      if (baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
+        newErrors.baseUrl = `Base URL must start with http:// or https:// (got "${baseUrl.trim()}")`;
       }
 
       // API key required for new providers
@@ -343,9 +360,23 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       }
     }
 
-    // Require at least one model selected
+    // Require at least one model selected. Say why the list is empty when it
+    // is — otherwise "select a model" is impossible advice with nothing to
+    // pick from.
     if (models.length === 0) {
-      newErrors.models = "Select at least one model";
+      if (fetchError) {
+        newErrors.models = `Select at least one model. Loading this provider's models failed (${fetchError}) — type a model ID and press Enter to add it manually.`;
+      } else if (modelOptions.length === 0) {
+        newErrors.models = isEditMode
+          ? "Select at least one model. None were loaded for this provider — type a model ID and press Enter to add it manually."
+          : "Select at least one model. Enter a valid API key to load the list, or type a model ID and press Enter.";
+      } else {
+        newErrors.models = "Select at least one model from the list.";
+      }
+    }
+
+    if (timeoutVal.trim() && timeoutSeconds === null) {
+      newErrors.timeout = `Timeout must be a whole number of seconds, e.g. 30 or 30s (got "${timeoutVal.trim()}")`;
     }
 
     setErrors(newErrors);
@@ -353,14 +384,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   };
 
   const handleSave = () => {
-    if (!validate()) return;
-
     const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
-    if (timeoutVal.trim() && timeoutSeconds === null) {
-      setErrors((prev) => ({
-        ...prev,
-        timeout: "Use seconds, e.g. 30 or 30s",
-      }));
+    if (!validate(timeoutSeconds)) {
+      // scrollTo is missing in jsdom and older browsers — never let a Save
+      // handler throw on a cosmetic scroll.
+      contentRef.current?.scrollTo?.({ top: 0, behavior: "smooth" });
       return;
     }
 
@@ -404,11 +432,36 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
+  const errorList = Object.keys(FIELD_LABELS)
+    .filter((key) => errors[key])
+    .map((key) => ({ key, label: FIELD_LABELS[key], message: errors[key] }));
+
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
       <DialogTitle>{isEditMode ? "Edit Provider" : "Add Provider"}</DialogTitle>
-      <DialogContent>
+      <DialogContent ref={contentRef}>
         <Stack spacing={2} mt={1}>
+          {/* Validation summary — the body scrolls, so an inline-only error
+              under a field can sit off-screen and make Save look broken. */}
+          {errorList.length > 0 && (
+            <Alert severity="error" onClose={() => setErrors({})}>
+              <AlertTitle>
+                {errorList.length === 1
+                  ? "Fix this before saving"
+                  : `Fix ${errorList.length} issues before saving`}
+              </AlertTitle>
+              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                {errorList.map(({ key, label, message }) => (
+                  <li key={key}>
+                    <Typography variant="body2" component="span">
+                      <strong>{label}:</strong> {message}
+                    </Typography>
+                  </li>
+                ))}
+              </Box>
+            </Alert>
+          )}
+
           {/* Provider Name — dropdown for common providers */}
           {isEditMode ? (
             <TextField
@@ -417,7 +470,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               required
               value={name}
               disabled
-              helperText="Provider name cannot be changed"
+              error={!!errors.name}
+              helperText={errors.name || "Provider name cannot be changed"}
             />
           ) : (
             <TextField
@@ -512,7 +566,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 fullWidth
                 required={!preset.baseUrl}
                 value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value);
+                  setErrors((prev) => ({ ...prev, baseUrl: undefined }));
+                }}
                 placeholder={preset.baseUrl || "https://your-endpoint.com"}
                 error={!!errors.baseUrl}
                 helperText={
