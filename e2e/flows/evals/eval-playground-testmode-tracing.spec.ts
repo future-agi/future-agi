@@ -42,14 +42,12 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
       + 'and runs the test',
     steps: ['seed a trace with a root span and an llm-call child span', 'author a deterministic Code eval',
             'open the eval\'s detail page', 'switch the playground to the Tracing source tab',
-            'search for and select the seeded project',
-            'clear the auto-filled mapping and map the code\'s "output" parameter to the span\'s name',
+            'search for and select the seeded project', 'map the code\'s "span_label" parameter to the span\'s name',
             'click Test Evaluation and read the Pass verdict and reason'],
     backendChecks: ['TracingTestMode fetches the real span via getSpansForObserveProject + getTrace, not a mock',
-                    'TracingTestMode auto-maps the `output` variable onto the span\'s same-named field, '
-                      + 'and clearing that mapping re-arms the readiness gate: a loaded row alone is not enough, '
-                      + 'the variable has to be mapped before TracingTestMode reports ready '
-                      + '(TracingTestMode\'s onReadyChange -> EvalDetailPage\'s isPlaygroundReady)',
+                    'the Test Evaluation button stays disabled until the mapped variable + a loaded row make '
+                      + 'the tab ready (TracingTestMode\'s onReadyChange -> EvalDetailPage\'s isPlaygroundReady); '
+                      + 'the eval\'s variable is named so it cannot be filled by TracingTestMode\'s same-name auto-map',
                     'the eval executes in the sandboxed Python executor against the real span\'s name field'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -74,9 +72,18 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
   // two rows TracingTestMode's row navigator lands on by default (both spans
   // carry the same start timestamp in otlp.ts, so which sorts first isn't
   // something this flow controls or needs to).
-  const evaluateCode = `def evaluate(output, **kwargs): `
-    + `return {"score": 1.0, "reason": "observed name=" + str(output)} if str(output).startswith("e2e.") `
-    + `else {"score": 0.0, "reason": "unexpected name " + str(output)}`;
+  //
+  // The parameter is deliberately NOT called `output`. TestPlayground live-parses
+  // the `evaluate(...)` signature into the mapping UI's variables
+  // (frontend src/utils/codeEvalParams.js), and TracingTestMode then auto-maps any variable
+  // onto a span field of the same name. `output` is a real span field, so it
+  // would arrive pre-mapped and the readiness gate below could never be
+  // observed — it only held in the window before the span detail loaded, which
+  // is the race this flow used to lose under CI's load. `span_label` matches no
+  // span field, so it arrives unmapped and the gate is deterministic.
+  const evaluateCode = `def evaluate(span_label, **kwargs): `
+    + `return {"score": 1.0, "reason": "observed name=" + str(span_label)} if str(span_label).startswith("e2e.") `
+    + `else {"score": 0.0, "reason": "unexpected name " + str(span_label)}`;
 
   // `model` is mandatory even for a Code eval, which never calls one: the
   // playground re-saves the draft through the shared template serializer
@@ -102,23 +109,18 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
   await test.step('UI: map the variable to the span\'s name field', async () => {
     // TracingTestMode's mapping control is a real MUI Autocomplete (unlike
     // DatasetTestMode's custom ColumnTreeSelect), so a native option role
-    // is available and unambiguous.
+    // is available and unambiguous. It only renders once the variable list is
+    // known, so waiting on it is also what proves the span fields have loaded.
     const mapping = page.getByPlaceholder('Search column...');
-    // TracingTestMode auto-maps a variable onto a same-named span field, and
-    // this eval's variable is `output` — a real field on the span — so the
-    // mapping arrives already filled once the span detail loads. Asserting the
-    // readiness gate against that state only holds in the window before the
-    // fields land, which is a race the suite loses under CI's load; clearing
-    // the auto-mapping is what actually re-arms the gate.
-    await expect(mapping).toHaveValue('output', { timeout: UI_READY });
-    await page.locator('.MuiAutocomplete-root', { has: mapping })
-      .getByRole('button', { name: 'Clear' }).click();
+    await expect(mapping).toBeVisible({ timeout: UI_READY });
     // The readiness gate this flow claims: a loaded row alone is not enough,
     // the variable has to be mapped before TracingTestMode reports ready.
+    // `span_label` cannot auto-map (see evaluateCode), so this holds for as
+    // long as the mapping stays empty rather than only until the fields land.
     await expect(mapping).toHaveValue('');
     await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeDisabled();
     // The control is not freeSolo here, so typing only filters the options —
-    // `mapping` changes on the option click, not on the fill.
+    // the mapping changes on the option click, not on the fill.
     await mapping.click();
     await mapping.fill('name');
     await page.getByRole('option', { name: 'name', exact: true }).click();
