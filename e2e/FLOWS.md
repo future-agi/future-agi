@@ -108,6 +108,25 @@
 - the metrics catalog scoped to each project returns that project's eval template and not its sibling's
 - the frontend requests the catalog with project_ids set to the project being viewed
 
+### OBS-E2E-004 — trace list pager windows forward without an endless page count
+
+**Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
+**Spec:** `flows/observe/list-pagination.spec.ts:99`  
+**Tags:** —
+
+**User steps:**
+
+1. seed 45 traces into one project over OTLP
+2. open the project's trace list
+3. set page size to 10 through the pager control
+4. walk forward one page at a time via Next to the true last page
+5. read the page-number window, ellipses and Next/Previous state at every page
+
+**Backend state verified:**
+
+- all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project
+- project row auto-created in PG tracer_project, scoped to the actor org
+
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
 **Goal:** A user cannot silently overwrite an existing observability view by reusing its name  
