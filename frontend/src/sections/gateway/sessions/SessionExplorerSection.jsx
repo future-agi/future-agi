@@ -213,7 +213,7 @@ const SessionExplorerSection = () => {
                             });
                           }}
                         >
-                          {session.session_id?.substring(0, 16)}
+                          {session.session_id}
                         </Typography>
                       </Tooltip>
                     </TableCell>
