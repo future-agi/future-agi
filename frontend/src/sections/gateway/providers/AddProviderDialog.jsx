@@ -133,6 +133,21 @@ const API_FORMATS = [
   "bedrock",
 ];
 
+// The API types a provider's models as a free-form JSON list, so an entry is
+// not guaranteed to be a string. Anything non-string reaching state would make
+// .trim() throw in the Autocomplete's onChange and render an object as a React
+// child in the chips — either one takes the whole dialog down.
+const toModelId = (value) => {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object") {
+    return String(value.id ?? value.name ?? value.model ?? "").trim();
+  }
+  return value == null ? "" : String(value).trim();
+};
+
+const normalizeModels = (list) =>
+  Array.isArray(list) ? list.map(toModelId).filter(Boolean) : [];
+
 // Human labels for the validation summary, in the order the fields appear in
 // the form so the summary reads top-to-bottom like the dialog itself.
 const FIELD_LABELS = {
@@ -184,7 +199,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           : { baseUrl: url, apiKey: key, apiFormat: format },
         {
           onSuccess: (result) => {
-            const fetched = result?.models || [];
+            const fetched = normalizeModels(result?.models);
             if (fetched.length === 0 && result?.error) {
               setFetchError(result.error);
             }
@@ -210,7 +225,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setBaseUrl(c.base_url ?? c.baseUrl ?? "");
       setApiKey("");
       setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
-      setModels(Array.isArray(c.models) ? c.models : []);
+      setModels(normalizeModels(c.models));
       const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
       setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
       setMaxConcurrent(
@@ -671,7 +686,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               options={modelOptions}
               value={models}
               onChange={(_, val) => {
-                setModels(val.map((v) => v.trim()).filter(Boolean));
+                setModels(normalizeModels(val));
                 setErrors((prev) => ({ ...prev, models: undefined }));
               }}
               renderOption={(props, option, { selected }) => (
