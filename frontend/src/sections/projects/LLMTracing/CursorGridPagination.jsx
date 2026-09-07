@@ -12,6 +12,37 @@ import Iconify from "src/components/iconify";
 import { OBSERVE_LIST_PAGE_SIZE_OPTIONS } from "src/config/runtime_limits";
 import { windowedPageNumbers } from "./listPagerState";
 
+// Rendered inside the Back/Next buttons. Defined at module scope, not inline in
+// `slots`, so React sees a stable component type and reuses the DOM node. An
+// inline arrow here is a new type on every render, which remounts this element
+// and — while an ancestor re-renders in a loop — destroys the click target
+// between pointerdown and pointerup, so no click event is ever produced.
+// `pointerEvents: "none"` keeps the button itself the event target, matching
+// how MUI treats the ripple span.
+const BackLabel = () => (
+  <Box
+    display="flex"
+    alignItems="center"
+    gap={0.5}
+    sx={{ pointerEvents: "none" }}
+  >
+    <Iconify icon="octicon:chevron-left-24" width={18} />
+    Back
+  </Box>
+);
+
+const NextLabel = () => (
+  <Box
+    display="flex"
+    alignItems="center"
+    gap={0.5}
+    sx={{ pointerEvents: "none" }}
+  >
+    Next
+    <Iconify icon="octicon:chevron-right-24" width={18} />
+  </Box>
+);
+
 export default function CursorGridPagination({
   disabled = false,
   hasMore = false,
@@ -90,14 +121,7 @@ export default function CursorGridPagination({
           disabled={disabled || loading || page <= 1}
           onClick={() => onPageChange(page - 1)}
           sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-          slots={{
-            previous: () => (
-              <Box display="flex" alignItems="center" gap={0.5}>
-                <Iconify icon="octicon:chevron-left-24" width={18} />
-                Back
-              </Box>
-            ),
-          }}
+          slots={{ previous: BackLabel }}
         />
 
         {windowedPageNumbers({ page, provenNext }).map(
@@ -168,14 +192,7 @@ export default function CursorGridPagination({
           disabled={disabled || loading || !hasMore}
           onClick={() => onPageChange(page + 1)}
           sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-          slots={{
-            next: () => (
-              <Box display="flex" alignItems="center" gap={0.5}>
-                Next
-                <Iconify icon="octicon:chevron-right-24" width={18} />
-              </Box>
-            ),
-          }}
+          slots={{ next: NextLabel }}
         />
       </Stack>
     </Stack>

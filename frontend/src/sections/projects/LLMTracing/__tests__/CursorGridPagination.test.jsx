@@ -87,4 +87,37 @@ describe("CursorGridPagination", () => {
     screen.getByRole("button", { name: "Previous page" }).click();
     expect(onPageChange).toHaveBeenCalledWith(3);
   });
+
+  // Regression: the Back/Next labels used to be inline arrow functions passed to
+  // MUI's `slots`. A new function identity per render is a new component type, so
+  // React remounted the label div on every render. While an ancestor re-renders in
+  // a loop that destroys the click target between pointerdown and pointerup, and
+  // the browser never emits a click — Back/Next looked dead while the page-number
+  // buttons (which have no such child) kept working.
+  it("keeps the Back/Next label node across re-renders and lets clicks reach the button", () => {
+    const { rerender } = setup({ page: 4, hasMore: true, provenNext: true });
+    const next = screen.getByRole("button", { name: "Next page" });
+    const labelBefore = next.querySelector("div");
+    expect(labelBefore).toBeTruthy();
+
+    // any prop change; the label must be reused, not remounted
+    rerender(
+      <CursorGridPagination
+        page={4}
+        pageSize={25}
+        hasMore
+        provenNext
+        loading={false}
+        onPageChange={vi.fn()}
+        onPageSizeChange={vi.fn()}
+      />,
+    );
+
+    const labelAfter = screen
+      .getByRole("button", { name: "Next page" })
+      .querySelector("div");
+    expect(labelAfter).toBe(labelBefore);
+    // and the label must not swallow the pointer — the button is the target
+    expect(labelAfter.style.pointerEvents || "none").toBe("none");
+  });
 });
