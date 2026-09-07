@@ -201,17 +201,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [dataReady, setDataReady] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   useEffect(() => {
-    const pinned =
-      evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
-    if (pinned && !selectedVersionId && !isDirty) {
+    if (selectedVersionId || isDirty) return;
+    const pinned = evalData?.pinned_version_id ?? null;
+    if (pinned) {
       setSelectedVersionId(pinned);
+    } else if (versions.length) {
+      const def = versions.find((v) => v.is_default);
+      if (def) setSelectedVersionId(def.id);
     }
-  }, [
-    evalData?.pinned_version_id,
-    evalData?.pinnedVersionId,
-    selectedVersionId,
-    isDirty,
-  ]);
+  }, [evalData?.pinned_version_id, selectedVersionId, isDirty, versions]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
@@ -271,6 +269,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     compositeDetail?.children || [],
   );
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
+  const hydrateCompositeWeights = useCallback((children) => {
+    if (!Array.isArray(children)) return;
+    const weights = {};
+    children.forEach((c) => {
+      if (c?.child_id != null) weights[c.child_id] = c.weight ?? 1;
+    });
+    setCompositeChildWeights(weights);
+  }, []);
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
     if (!isComposite) return;
@@ -485,6 +491,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     if (config.error_localizer_enabled != null) {
       setErrorLocalizerEnabled(!!config.error_localizer_enabled);
     }
+
+    hydrateCompositeWeights(config.children);
 
     if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
     setIsDirty(false);
@@ -829,6 +837,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             : ["variables_only"],
         );
         setUseInternet(config.check_internet ?? false);
+        hydrateCompositeWeights(config.children);
         setIsDirty(false);
       }
     },
@@ -1071,6 +1080,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         templateType,
         config: fullEval?.config || evalData?.config,
         versionId: selectedVersionId,
+        isDirty,
         data_injection: dataInjection,
         error_localizer_enabled: errorLocalizerActive,
         composite_weight_overrides: compositeChildWeights,
@@ -1091,6 +1101,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       outputType,
       config: resolvedConfig,
       versionId: selectedVersionId,
+      isDirty,
       instructions,
       messages,
       pass_threshold: passThreshold,
@@ -1152,6 +1163,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     source,
     onFiltersChange,
     localFilterForm,
+    isDirty,
   ]);
 
   if (isLoading) {
@@ -1276,14 +1288,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           {versions.length > 0 && (
             <Select
               size="small"
-              value={selectedVersionId || ""}
+              value={selectedVersionId || (versions.find((v) => v.is_default)?.id ?? versions[0]?.id ?? "")}
               onChange={handleVersionChange}
-              displayEmpty
               sx={{ fontSize: "12px", minWidth: 130, height: 30 }}
             >
-              <MenuItem value="" sx={{ fontSize: "12px" }}>
-                Default version
-              </MenuItem>
               {versions.map((v) => (
                 <MenuItem key={v.id} value={v.id} sx={{ fontSize: "12px" }}>
                   V{v.version_number}
