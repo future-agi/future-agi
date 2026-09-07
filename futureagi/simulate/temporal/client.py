@@ -8,6 +8,7 @@ import asyncio
 
 import structlog
 from asgiref.sync import async_to_sync
+from temporalio.service import RPCError, RPCStatusCode
 
 from simulate.temporal.constants import (
     QUEUE_L,
@@ -288,12 +289,51 @@ async def _cancel_workflow_async(
     return await _cancel_with_retries(client, workflow_id)
 
 
+# gRPC statuses that mean "the call did not land — try again". A cancel that
+# never lands leaves the workflow running, and it later writes its own terminal
+# status over the CANCELLED row, so getting this classification right matters
+# more than it would for a read.
+_RETRYABLE_RPC_STATUSES = frozenset(
+    {
+        RPCStatusCode.UNAVAILABLE,  # frontend unreachable, connection reset, h2 GOAWAY
+        RPCStatusCode.DEADLINE_EXCEEDED,  # request timed out in flight
+        RPCStatusCode.RESOURCE_EXHAUSTED,  # rate limited / shard busy
+        RPCStatusCode.ABORTED,  # concurrency conflict; safe to repeat
+    }
+)
+
+# Transport-level failures raised before any gRPC status exists — these cover
+# the same ground the previous "timeout" and "connection reset" substrings did.
+# asyncio.TimeoutError is TimeoutError on 3.11+, and ConnectionResetError is a
+# ConnectionError, so both are matched by these two base classes.
+_RETRYABLE_TRANSPORT_ERRORS = (TimeoutError, ConnectionError)
+
+
+def _is_transient_cancel_error(exc: BaseException) -> bool:
+    """Whether a failed cancel is worth retrying.
+
+    Keyed off exception type and gRPC status rather than the text of the error.
+    Substring matching on ``str(exc)`` broke in both directions: a wording change
+    in temporalio or gRPC silently reclassified a transient failure as permanent,
+    while "timeout" also matched permanent errors whose message merely mentioned a
+    configured timeout.
+
+    Anything not listed here — NOT_FOUND (workflow already gone),
+    PERMISSION_DENIED, INVALID_ARGUMENT — is permanent, and retrying it only
+    delays the caller's fallback.
+    """
+    if isinstance(exc, RPCError):
+        return exc.status in _RETRYABLE_RPC_STATUSES
+    return isinstance(exc, _RETRYABLE_TRANSPORT_ERRORS)
+
+
 async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -> bool:
     """Cancel a workflow with retries on transient errors.
 
-    Transient errors (h2 protocol, timeout, connection reset) should be retried
-    because failing to cancel means workflows keep running and overwrite the
-    CANCELLED status in DB.
+    Transient errors (unreachable frontend, request timeout, resource exhaustion)
+    should be retried because failing to cancel means workflows keep running and
+    overwrite the CANCELLED status in DB. See _is_transient_cancel_error for how
+    that judgement is made.
     """
     last_error = None
     for attempt in range(max_retries):
@@ -304,13 +344,7 @@ async def _cancel_with_retries(client, workflow_id: str, max_retries: int = 3) -
             return True
         except Exception as e:
             last_error = e
-            error_msg = str(e).lower()
-            # Transient errors worth retrying
-            # TODO: Adding raw strings for now. Need to find better and reliable mechanisms
-            is_transient = any(
-                s in error_msg
-                for s in ["timeout", "h2 protocol", "connection reset", "unavailable"]
-            )
+            is_transient = _is_transient_cancel_error(e)
             if is_transient and attempt < max_retries - 1:
                 wait = (attempt + 1) * 2  # 2s, 4s
                 logger.warning(
