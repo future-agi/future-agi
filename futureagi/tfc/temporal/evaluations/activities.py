@@ -32,6 +32,7 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
     close_old_connections()
 
     from model_hub.models.evaluation import Evaluation, StatusChoices
+    from sdk.utils.async_evaluations import mark_evaluation_failed
 
     evaluation = None
     try:
@@ -84,8 +85,13 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
 
         evaluation.save()
 
-        # Trigger inline eval (for trace integration)
-        trigger_inline_eval(evaluation)
+        # Isolated: a trace-integration failure must not downgrade a completed run.
+        try:
+            trigger_inline_eval(evaluation)
+        except Exception:
+            logger.exception(
+                "evaluation_inline_eval_failed", evaluation_id=evaluation_id
+            )
 
         return {
             "evaluation_id": str(evaluation.id),
@@ -94,23 +100,14 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
 
     except Exception as e:
         if evaluation is None:
-            # The row was never loaded, so write the terminal status directly.
-            try:
-                Evaluation.objects.filter(id=evaluation_id).update(
-                    status=StatusChoices.FAILED, error_message=str(e)
-                )
-            except Exception:
-                logger.exception(
-                    "evaluation_terminal_status_write_failed",
-                    evaluation_id=evaluation_id,
-                )
+            mark_evaluation_failed(evaluation_id, str(e))
         else:
             evaluation.status = StatusChoices.FAILED
             evaluation.error_message = str(e)
 
         return {
             "evaluation_id": evaluation_id,
-            "status": "FAILED",
+            "status": StatusChoices.FAILED,
             "error": str(e),
         }
 
@@ -119,7 +116,11 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
             try:
                 evaluation.save()
             except Exception:
-                pass
+                logger.exception(
+                    "evaluation_status_save_failed", evaluation_id=evaluation_id
+                )
+                if evaluation.status == StatusChoices.FAILED:
+                    mark_evaluation_failed(evaluation_id, evaluation.error_message)
         close_old_connections()
 
 
@@ -166,9 +167,11 @@ async def run_single_evaluation_activity(
             f"Error running evaluation {input.evaluation_id}: {e}"
         )
 
+        from model_hub.models.evaluation import StatusChoices
+
         return RunSingleEvaluationOutput(
             evaluation_id=input.evaluation_id,
-            status="FAILED",
+            status=StatusChoices.FAILED,
             error=str(e),
         )
 

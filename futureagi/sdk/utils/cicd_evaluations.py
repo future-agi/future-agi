@@ -55,7 +55,9 @@ def create_evaluations(evaluation_run_id, organization_id, user_id, eval_data_li
                 ]
                 all_eval_ids.extend(eval_ids)
 
-            evaluations_to_link = Evaluation.objects.filter(id__in=all_eval_ids)
+            evaluations_to_link = Evaluation.no_workspace_objects.filter(
+                id__in=all_eval_ids
+            )
             evaluation_results = [
                 EvaluationResult(
                     evaluation_run=evaluation_run,

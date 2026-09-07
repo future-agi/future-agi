@@ -15,6 +15,23 @@ from model_hub.models.evaluation import Evaluation, StatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 
 
+def mark_evaluation_failed(evaluation_id: str, error_message: str) -> None:
+    """Write the terminal FAILED status for an evaluation without ever raising."""
+    try:
+        # Unscoped: the row may carry no workspace, and a scoped miss would strand it.
+        updated = Evaluation.no_workspace_objects.filter(id=evaluation_id).update(
+            status=StatusChoices.FAILED, error_message=error_message
+        )
+        if not updated:
+            logger.error(
+                "evaluation_terminal_status_not_written", evaluation_id=evaluation_id
+            )
+    except Exception:
+        logger.exception(
+            "evaluation_terminal_status_write_failed", evaluation_id=evaluation_id
+        )
+
+
 def _handle_async_eval(
     eval_template,
     inputs,
@@ -143,13 +160,13 @@ def _handle_single_async_eval(
             logger.exception(
                 f"Failed to start evaluation workflow for {evaluation_id}: {e}"
             )
-            Evaluation.objects.filter(id=evaluation_id).update(
-                status=StatusChoices.FAILED,
-                error_message=f"Evaluation workflow could not be started: {e}",
+            mark_evaluation_failed(
+                evaluation_id, f"Evaluation workflow could not be started: {e}"
             )
 
     # The worker reads this row on its own connection, so it must be committed first.
-    transaction.on_commit(_start_workflow)
+    # robust: one row's failed start must not drop the remaining rows' callbacks.
+    transaction.on_commit(_start_workflow, robust=True)
 
     return {
         "name": eval_template.name,
