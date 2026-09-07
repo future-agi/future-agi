@@ -128,3 +128,28 @@ func TestClickHouseSinkAcceptsOnlyStableProductionCatalogName(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClickHouseSinkBindsProductionToConfiguredCatalogDatabase(t *testing.T) {
+	const isolated = "th7247_catalog_prod_20260823a"
+	if _, err := NewClickHouseSink(ClickHouseSinkConfig{
+		URL: "https://clickhouse:8443", Database: isolated, ProductionDatabase: isolated,
+		Environment: ProductionEnvironment, Username: "property_writer",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, cfg := range []ClickHouseSinkConfig{
+		// The default name is no longer the production catalog once one is configured.
+		{URL: "https://clickhouse:8443", Database: "property_catalog", ProductionDatabase: isolated, Environment: ProductionEnvironment, Username: "writer"},
+		{URL: "https://clickhouse:8443", Database: isolated, Environment: ProductionEnvironment, Username: "writer"},
+		// The configured production identity must itself be a safe isolated name.
+		{URL: "https://clickhouse:8443", Database: "futureagi", ProductionDatabase: "futureagi", Environment: ProductionEnvironment, Username: "writer"},
+		{URL: "https://clickhouse:8443", Database: "Bad-Name", ProductionDatabase: "Bad-Name", Environment: ProductionEnvironment, Username: "writer"},
+		{URL: "https://clickhouse:8443", Database: "catalog;DROP", ProductionDatabase: "catalog;DROP", Environment: ProductionEnvironment, Username: "writer"},
+		// Development may never write into the configured production catalog.
+		{URL: "http://clickhouse:8123", Database: isolated, ProductionDatabase: isolated, Environment: DevelopmentEnvironment, Username: "writer"},
+	} {
+		if _, err := NewClickHouseSink(cfg); err == nil {
+			t.Fatalf("unsafe sink config accepted: %+v", cfg)
+		}
+	}
+}

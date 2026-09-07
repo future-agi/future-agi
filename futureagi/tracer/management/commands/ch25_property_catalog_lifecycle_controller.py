@@ -163,13 +163,31 @@ class CycleResult:
     failures: Mapping[str, str]
     stopped: bool
 
-    def as_dict(self) -> dict[str, Any]:
-        return {
+    def as_dict(self, *, summary: bool = False) -> dict[str, Any]:
+        result = {
             "failed": dict(sorted(self.failures.items())),
             "processed": list(self.processed),
             "skipped": list(self.skipped),
             "stopped": self.stopped,
         }
+        if summary:
+            # Bound reporting, never workspace processing. Every failure is also
+            # logged by run_cycle; a large fleet must not crash its health writer.
+            result.update(
+                failed_count=len(self.failures),
+                processed_count=len(self.processed),
+                skipped_count=len(self.skipped),
+                truncated=(
+                    max(len(self.failures), len(self.processed), len(self.skipped)) > 20
+                    or any(len(error) > 2048 for error in self.failures.values())
+                ),
+            )
+            result["failed"] = {
+                key: value[:2048] for key, value in list(result["failed"].items())[:20]
+            }
+            result["processed"] = result["processed"][:20]
+            result["skipped"] = result["skipped"][:20]
+        return result
 
 
 class Command(BaseCommand):
@@ -240,7 +258,7 @@ class Command(BaseCommand):
                         config.health_file,
                         healthy=False,
                         observed_at=observed_at,
-                        detail={"cycle_error": str(exc)},
+                        detail={"cycle_error": str(exc)[:2048]},
                     )
                     if once:
                         raise CommandError(str(exc)) from exc
@@ -255,7 +273,7 @@ class Command(BaseCommand):
                     config.health_file,
                     healthy=healthy,
                     observed_at=observed_at,
-                    detail=result.as_dict(),
+                    detail=result.as_dict(summary=True),
                 )
                 if once:
                     if result.failures:
@@ -263,7 +281,9 @@ class Command(BaseCommand):
                         raise CommandError(
                             f"production lifecycle failed for workspaces: {failed}"
                         )
-                    return canonical_json(result.as_dict(), max_bytes=256 * 1024)
+                    return canonical_json(
+                        result.as_dict(summary=True), max_bytes=256 * 1024
+                    )
                 stop.wait(config.poll_seconds)
         except (ProductionLifecycleControllerError, DevRolloutError, ValueError) as exc:
             raise CommandError(str(exc)) from exc

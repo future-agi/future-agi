@@ -859,6 +859,46 @@ def test_health_file_is_private_canonical_and_atomically_replaceable(
     assert not tuple(tmp_path.glob(".property-catalog-lifecycle-health-*"))
 
 
+def test_health_summary_handles_thousands_of_workspace_failures(tmp_path: Path) -> None:
+    import json
+
+    failures = {
+        str(index): "schema drift " + "\U0001f6a8" * 5000 for index in range(4329)
+    }
+    result = subject.CycleResult(
+        processed=tuple(failures),
+        skipped=tuple(failures),
+        failures=failures,
+        stopped=False,
+    )
+    summary = result.as_dict(summary=True)
+    path = tmp_path / "health.json"
+    subject._write_health(
+        str(path),
+        healthy=False,
+        observed_at=datetime(2026, 9, 3, tzinfo=UTC),
+        detail=summary,
+    )
+    raw = path.read_bytes()
+    assert len(raw) <= 256 * 1024
+    detail = json.loads(raw)["detail"]
+    assert (
+        detail["failed_count"]
+        == detail["processed_count"]
+        == detail["skipped_count"]
+        == 4329
+    )
+    assert detail["truncated"] is True
+    assert (
+        len(detail["failed"])
+        == len(detail["processed"])
+        == len(detail["skipped"])
+        == 20
+    )
+    assert not json.loads(raw)["healthy"]
+    assert len(result.failures) == 4329  # Reporting does not limit processing.
+
+
 def test_health_file_retries_partial_kernel_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

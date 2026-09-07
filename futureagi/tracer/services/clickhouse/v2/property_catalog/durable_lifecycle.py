@@ -379,10 +379,11 @@ class PriorActiveEvidence:
             raise ValueError("zero-depth lineage anchor is not the active revision")
         if not isinstance(self.build_plan, RevisionBuildPlan):
             raise TypeError("build_plan must be a RevisionBuildPlan")
-        if CatalogLifecycleMode(_decode_plan_scope(self.build_plan).mode.value) is not (
-            self.lifecycle_mode
-        ):
+        decoded = _decode_plan_scope(self.build_plan, allow_physical_snapshot=True)
+        if CatalogLifecycleMode(decoded.mode.value) is not self.lifecycle_mode:
             raise ValueError("active lifecycle mode differs from its build plan")
+        if decoded.physical_snapshot and self.lineage_anchor.active_revisions_since:
+            raise ValueError("physical snapshot must be its own lineage anchor")
         if not isinstance(self.streams, tuple) or any(
             not isinstance(value, ActiveStreamEvidence) for value in self.streams
         ):
@@ -1041,7 +1042,9 @@ class DurableWorkspaceCatalogLifecycle:
         # or widens the already-admitted half-open plan.
         _ = configured_bounds
         if active is not None:
-            prior_cutoffs = _decode_plan_scope(active.build_plan).cutoffs
+            prior_cutoffs = _decode_plan_scope(
+                active.build_plan, allow_physical_snapshot=True
+            ).cutoffs
             if decoded.cutoffs.snapshot_upper <= prior_cutoffs.snapshot_upper:
                 raise DurableLifecycleError(
                     "open scheduled build does not advance the active upper cutoff"
@@ -1112,7 +1115,9 @@ class DurableWorkspaceCatalogLifecycle:
                 raise DurableLifecycleError(
                     f"{mode} requires prior active checkpoint evidence"
                 )
-            active_scope = _decode_plan_scope(active.build_plan)
+            active_scope = _decode_plan_scope(
+                active.build_plan, allow_physical_snapshot=True
+            )
             span_since = (
                 active_scope.cutoffs.span_window.until
                 if mode is LifecycleRunMode.INCREMENTAL
@@ -1154,7 +1159,9 @@ class DurableWorkspaceCatalogLifecycle:
                 "scheduled source upper cutoff was not freshly frozen in UTC"
             )
         if active is not None:
-            previous = _decode_plan_scope(active.build_plan).cutoffs
+            previous = _decode_plan_scope(
+                active.build_plan, allow_physical_snapshot=True
+            ).cutoffs
             if cutoffs.snapshot_upper <= previous.snapshot_upper:
                 raise DurableLifecycleError(
                     "scheduled source upper cutoff did not strictly advance"
@@ -1221,6 +1228,7 @@ class _DecodedPlanScope:
     mode: LifecycleRunMode
     cutoffs: FrozenLifecycleCutoffs
     prior_active_revision: int | None
+    physical_snapshot: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1349,7 +1357,9 @@ class ClickHouseLifecycleStateReader:
             raise DurableLifecycleError("active revision has no persisted reservation")
         if reservation.lease.projection_version != active.projection_version:
             raise DurableLifecycleError("active reservation projection changed")
-        decoded_plan = _decode_plan_scope(reservation.lease.build_plan)
+        decoded_plan = _decode_plan_scope(
+            reservation.lease.build_plan, allow_physical_snapshot=True
+        )
         if CatalogLifecycleMode(decoded_plan.mode.value) is not active.lifecycle_mode:
             raise DurableLifecycleError("active reservation changed its lifecycle mode")
         manifest_streams = _manifest_streams(active.source_manifest_json)
@@ -1399,6 +1409,7 @@ class ClickHouseLifecycleStateReader:
                     watermark=_persisted_active_watermark(
                         checkpoint,
                         snapshot_cutoff=decoded_plan.cutoffs.snapshot_upper,
+                        physical_snapshot=decoded_plan.physical_snapshot,
                     ),
                     checkpoint_state_sha256=checkpoint.checkpoint.state_sha256,
                 )
@@ -1845,6 +1856,16 @@ def _lower_watermarks(
     result = {value.role_key: value.watermark for value in active.streams}
     if set(result) != _EXPECTED_ROLE_INVENTORY:
         raise DurableLifecycleError("active lower-watermark inventory is incomplete")
+    if _decode_plan_scope(
+        active.build_plan, allow_physical_snapshot=True
+    ).physical_snapshot:
+        # Physical snapshots prove catalog contents, not PostgreSQL keyset
+        # positions. Refresh definitions within the next frozen source budget;
+        # never interpret their opaque generation as a timestamp/cursor.
+        for key in result:
+            if key[1] is ManifestStreamRole.DEFINITIONS:
+                result[key] = ""
+        return result
     for adapter in _RELATIONAL_ADAPTERS:
         if not result[(adapter, ManifestStreamRole.DEFINITIONS)]:
             raise DurableLifecycleError(
@@ -1857,16 +1878,25 @@ def _persisted_active_watermark(
     checkpoint: CheckpointWrite,
     *,
     snapshot_cutoff: datetime,
+    physical_snapshot: bool = False,
 ) -> str:
-    """Normalize only a provably empty legacy relational checkpoint.
+    """Validate physical snapshot markers or normalize empty legacy cursors.
 
     Older reconciler builds could activate a terminal relational stream with
     an empty watermark when its frozen snapshot contained zero rows.  The
     immutable build plan retains the exact snapshot cutoff, so that one legacy
     shape can be recovered without mutating persisted control-plane evidence.
     Every other blank relational watermark remains corruption and fails closed.
+    Physical generation markers are retained verbatim as evidence; only the
+    next run's definition lower bounds are reset by ``_lower_watermarks``.
     """
 
+    if physical_snapshot:
+        if checkpoint.watermark != str(checkpoint.source_version_fence):
+            raise DurableLifecycleError(
+                "physical snapshot checkpoint watermark changed"
+            )
+        return checkpoint.watermark
     if checkpoint.watermark:
         return checkpoint.watermark
     value = checkpoint.checkpoint
@@ -2002,13 +2032,50 @@ def _planned_streams(
     )
 
 
-def _decode_plan_scope(plan: RevisionBuildPlan) -> _DecodedPlanScope:
+def _decode_plan_scope(
+    plan: RevisionBuildPlan, *, allow_physical_snapshot: bool = False
+) -> _DecodedPlanScope:
     if not isinstance(plan, RevisionBuildPlan):
         raise TypeError("plan must be a RevisionBuildPlan")
     by_role = {(value.source_adapter, value.role): value for value in plan.streams}
     _require_exact_role_inventory(tuple(by_role), label="build plan")
     if len(by_role) != len(plan.streams):
         raise DurableLifecycleError("build plan contains duplicate lifecycle roles")
+    if any(
+        value.source_cutoff_label == "physical_snapshot_r3" for value in plan.streams
+    ):
+        # Decode-only compatibility with the completed r3 physical backfill.
+        # OPEN/DRAINING recovery deliberately does not opt in: these are not
+        # executable lifecycle plans. Active reads still require the fenced
+        # reservation, matching activation manifest and ten clean checkpoints.
+        if not allow_physical_snapshot:
+            raise DurableLifecycleError(
+                "physical snapshot cannot resume as a lifecycle run"
+            )
+        if (
+            (plan.catalog_epoch, plan.catalog_revision, plan.projection_version)
+            != (1, 3, 3)
+            or {value.source_cutoff_label for value in plan.streams}
+            != {"physical_snapshot_r3"}
+            or len({value.source_version_fence for value in plan.streams}) != 1
+        ):
+            raise DurableLifecycleError("physical snapshot build plan contract changed")
+        # The generation fence is opaque (not UTC microseconds). The signed
+        # source_scope is the authoritative half-open backfill time window.
+        window = SourceWindow(
+            _micros_to_datetime(plan.source_scope.span_since_us),
+            _micros_to_datetime(plan.source_scope.span_until_us),
+        )
+        return _DecodedPlanScope(
+            LifecycleRunMode.INITIAL_BACKFILL,
+            FrozenLifecycleCutoffs(
+                snapshot_upper=window.until,
+                span_window=window,
+                span_audit_generation=plan.streams[0].source_version_fence,
+            ),
+            None,
+            physical_snapshot=True,
+        )
     prefixes = {
         value.source_cutoff_label[: -len(suffix)]
         for value in plan.streams

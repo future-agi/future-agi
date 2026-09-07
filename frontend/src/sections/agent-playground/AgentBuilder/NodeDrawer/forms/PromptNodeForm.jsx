@@ -13,7 +13,10 @@ import PromptMessageRow from "../../../components/PromptMessageRow";
 import VariableAccessInfo from "../../../components/VariableAccessInfo";
 import { enqueueSnackbar } from "notistack";
 import { usePromptNodeForm } from "./usePromptNodeForm";
-import { mapPatchResponseToStoreData } from "./promptNodeFormUtils";
+import {
+  buildPatchPayload,
+  mapPatchResponseToStoreData,
+} from "./promptNodeFormUtils";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
@@ -21,14 +24,19 @@ import {
 import usePartialNodeUpdate from "../../hooks/usePartialNodeUpdate";
 import { useSaveDraftContext } from "../../saveDraftContext";
 import useConnectedNodeVariables from "../../../hooks/useConnectedNodeVariables";
-import { useGetPromptVersionsInfinite } from "src/api/agent-playground/agent-playground";
+import {
+  useGetPromptVersionsInfinite,
+  useTestNode,
+} from "src/api/agent-playground/agent-playground";
 import NodeDrawerSkeleton from "../NodeDrawerSkeleton";
 import { PORT_DIRECTION } from "../../../utils/constants";
+import TestNodePanel from "./TestNodePanel";
 
 export default function PromptNodeForm({ nodeId }) {
   const queryClient = useQueryClient();
   const { handleSubmit, watch, setValue } = useFormContext();
   const templateFormat = watch("templateFormat") || "mustache";
+  const watchedMessages = watch("messages");
   const {
     control,
     modelConfig,
@@ -55,14 +63,20 @@ export default function PromptNodeForm({ nodeId }) {
     isLoadingQueries,
   } = usePromptNodeForm();
 
-  const { updateNodeData, clearSelectedNode, clearValidationErrorNode } =
-    useAgentPlaygroundStoreShallow((state) => ({
-      updateNodeData: state.updateNodeData,
-      clearSelectedNode: state.clearSelectedNode,
-      clearValidationErrorNode: state.clearValidationErrorNode,
-    }));
+  const {
+    updateNodeData,
+    clearSelectedNode,
+    clearValidationErrorNode,
+    currentAgent,
+  } = useAgentPlaygroundStoreShallow((state) => ({
+    updateNodeData: state.updateNodeData,
+    clearSelectedNode: state.clearSelectedNode,
+    clearValidationErrorNode: state.clearValidationErrorNode,
+    currentAgent: state.currentAgent,
+  }));
   const { partialUpdate, isPending } = usePartialNodeUpdate();
   const { ensureDraft } = useSaveDraftContext();
+  const { mutateAsync: testNode } = useTestNode();
 
   const {
     dropdownOptions,
@@ -77,6 +91,66 @@ export default function PromptNodeForm({ nodeId }) {
 
   const isFormLoading =
     isLoadingQueries || isLoadingVariables || isLoadingVersions;
+
+  // Builds the API-shaped prompt_template payload from the current (possibly
+  // unsaved) form values, mirroring what the Save button would PATCH — but
+  // this is only ever sent to the test endpoint, never persisted.
+  const buildTestPromptTemplate = (data) => {
+    const payload = buildPayload(data);
+    const nodeUpdate = {
+      config: {
+        version: data.version,
+        prompt_version_id: data.prompt_version_id,
+        prompt_template_id: data.prompt_template_id,
+        templateFormat: data.templateFormat || "mustache",
+        modelConfig: data.modelConfig,
+        messages: data.messages,
+        payload,
+      },
+    };
+    const existingConfig = useAgentPlaygroundStore
+      .getState()
+      .nodes.find((n) => n.id === nodeId)?.data?.config;
+    return buildPatchPayload(nodeUpdate, existingConfig).prompt_template;
+  };
+
+  // Runs the node with its current form values + sample inputs. Never calls
+  // ensureDraft/partialUpdate, so it can't create a draft or mutate the
+  // saved node — a test run has zero effect on the workflow.
+  const handleRunTest = async (inputs) => {
+    let testResult = null;
+    await handleSubmit(
+      async (data) => {
+        try {
+          const promptTemplate = buildTestPromptTemplate(data);
+          testResult = await testNode({
+            graphId: currentAgent?.id,
+            versionId: currentAgent?.version_id,
+            nodeId,
+            promptTemplate,
+            inputs,
+          });
+        } catch (error) {
+          testResult = {
+            status: "FAILED",
+            outputs: {},
+            error:
+              error?.response?.data?.result ||
+              error?.message ||
+              "Test run failed",
+          };
+        }
+      },
+      () => {
+        testResult = {
+          status: "FAILED",
+          outputs: {},
+          error: "Fix the highlighted fields before testing.",
+        };
+      },
+    )();
+    return testResult;
+  };
 
   if (isFormLoading) return <NodeDrawerSkeleton />;
 
@@ -156,6 +230,13 @@ export default function PromptNodeForm({ nodeId }) {
           jinjaMode={templateFormat === "jinja"}
         />
       </Box>
+
+      {/* Test this node - run with current (possibly unsaved) values */}
+      <TestNodePanel
+        messages={watchedMessages}
+        onRunTest={handleRunTest}
+        disabled={isUnsupportedOutputFormat}
+      />
 
       {/* Save Button - always at bottom */}
       <Box

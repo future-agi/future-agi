@@ -17,6 +17,10 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         # acknowledgement and uses read-only source identities plus an
         # isolated catalog writer.
         "ch25_property_catalog_oss_supervisor",
+        # Production twin of the OSS supervisor: long-running, verifies the
+        # provisioned schema, never creates databases or tables, and writes
+        # only through its own isolated catalog identity.
+        "ch25_property_catalog_lifecycle_controller",
         "check",
         "collectstatic",
         "generate_swagger",

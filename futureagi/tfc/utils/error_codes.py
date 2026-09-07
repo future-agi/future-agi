@@ -1038,6 +1038,7 @@ err_dict = {
     "FAILED_TO_CREATE_NODE_CONNECTION": ["Failed to create node connection."],
     "FAILED_TO_DELETE_NODE_CONNECTION": ["Failed to delete node connection."],
     "FAILED_TO_GET_EDGE_MAPPINGS": ["Failed to retrieve possible edge mappings"],
+    "FAILED_TO_TEST_NODE": ["Failed to test node."],
     # RBAC
     "USER_NOT_IN_ORG": ["User is not part of any organization."],
     "NOT_ORG_MEMBER": ["You are not a member of this organization."],

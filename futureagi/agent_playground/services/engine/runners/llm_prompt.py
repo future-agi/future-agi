@@ -52,9 +52,20 @@ class LLMPromptRunner(BaseNodeRunner):
         Execute LLM prompt via RunPrompt using config from PromptVersion.
 
         Args:
-            config: Node configuration (ignored — config comes from PromptVersion)
+            config: Node configuration. Normally ignored — config comes from
+                    PromptVersion — unless execution_context["test_mode"] is
+                    True and config carries a "messages" override, in which
+                    case config is used directly (see "Test mode" below).
             inputs: Input port values used to fill template variables
             execution_context: Must contain node_id, organization_id, workspace_id
+
+        Test mode:
+            When execution_context.get("test_mode") is True and config is a
+            non-empty dict containing "messages", that config is used as the
+            prompt config snapshot instead of fetching PromptTemplateNode from
+            the database. This lets callers test unsaved edits (e.g. from the
+            Agent Playground node drawer) without persisting anything or
+            requiring a linked PromptTemplateNode to already exist.
 
         Returns:
             Dict with "response" key containing LLM response
@@ -63,26 +74,35 @@ class LLMPromptRunner(BaseNodeRunner):
             ValueError: If PromptTemplateNode not found, modality unsupported,
                         model missing, or variable resolution fails
         """
-        from agent_playground.models.prompt_template_node import PromptTemplateNode
-
-        # Fetch config from PromptVersion via bridge table
         node_id = execution_context.get("node_id")
-        if not node_id:
-            raise ValueError("execution_context missing 'node_id'")
+        test_mode = bool(execution_context.get("test_mode"))
 
-        try:
-            ptn = PromptTemplateNode.no_workspace_objects.select_related(
-                "prompt_version"
-            ).get(node_id=node_id, deleted=False)
-        except PromptTemplateNode.DoesNotExist:
-            raise ValueError(
-                f"No PromptTemplateNode found for node {node_id}. "
-                "Link a prompt version to this node before execution."
+        if test_mode and config and config.get("messages"):
+            # Test-mode override: use the caller-supplied config directly
+            # instead of reading the saved PromptTemplateNode/PromptVersion.
+            prompt_config = config
+        else:
+            from agent_playground.models.prompt_template_node import (
+                PromptTemplateNode,
             )
 
-        prompt_config = ptn.prompt_version.prompt_config_snapshot
-        if not prompt_config:
-            raise ValueError("PromptVersion has empty prompt_config_snapshot")
+            # Fetch config from PromptVersion via bridge table
+            if not node_id:
+                raise ValueError("execution_context missing 'node_id'")
+
+            try:
+                ptn = PromptTemplateNode.no_workspace_objects.select_related(
+                    "prompt_version"
+                ).get(node_id=node_id, deleted=False)
+            except PromptTemplateNode.DoesNotExist:
+                raise ValueError(
+                    f"No PromptTemplateNode found for node {node_id}. "
+                    "Link a prompt version to this node before execution."
+                )
+
+            prompt_config = ptn.prompt_version.prompt_config_snapshot
+            if not prompt_config:
+                raise ValueError("PromptVersion has empty prompt_config_snapshot")
 
         configuration = prompt_config.get("configuration", {})
 

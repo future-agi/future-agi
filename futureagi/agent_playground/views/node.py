@@ -17,6 +17,8 @@ from agent_playground.serializers.edge import SourceNodeOutputPortsSerializer
 from agent_playground.serializers.node import (
     CreateNodeSerializer,
     NodeReadSerializer,
+    TestNodeRequestSerializer,
+    TestNodeResponseSerializer,
     UpdateNodeSerializer,
 )
 from agent_playground.services.dataset_bridge import sync_dataset_columns
@@ -25,6 +27,7 @@ from agent_playground.services.node_crud import (
     create_node,
     update_node,
 )
+from agent_playground.services.node_test import NodeNotTestableError, run_node_test
 from agent_playground.utils.graph import get_graph_and_version, require_draft
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -41,6 +44,7 @@ agent_playground_errors = swagger_auto_schema(
 @method_decorator(name="partial_update", decorator=agent_playground_errors)
 @method_decorator(name="destroy", decorator=agent_playground_errors)
 @method_decorator(name="possible_edge_mappings", decorator=agent_playground_errors)
+@method_decorator(name="test_run", decorator=agent_playground_errors)
 class NodeCrudViewSet(ModelViewSet):
     """Granular CRUD for nodes within a graph version."""
 
@@ -269,4 +273,58 @@ class NodeCrudViewSet(ModelViewSet):
             logger.exception("Error getting possible edge mappings", error=str(e))
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_GET_EDGE_MAPPINGS")
+            )
+
+    def test_run(self, request, pk=None, version_id=None, node_id=None):
+        """
+        POST /graphs/{pk}/versions/{version_id}/nodes/{node_id}/test/
+
+        Runs the node's registered runner with caller-supplied (possibly
+        unsaved) configuration and sample inputs, and returns its output.
+
+        This never persists anything: it does not write to Node.config,
+        create a GraphExecution/ExecutionData record, or otherwise affect
+        the saved workflow. It works regardless of version status (draft or
+        active) since nothing is mutated.
+        """
+        try:
+            graph, version = get_graph_and_version(request, pk, version_id)
+
+            node = Node.no_workspace_objects.select_related("node_template").get(
+                id=node_id, graph_version=version
+            )
+
+            serializer = TestNodeRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+
+            organization = request.organization
+            workspace = request.workspace
+
+            try:
+                result = run_node_test(
+                    node=node,
+                    prompt_template_data=serializer.validated_data.get(
+                        "prompt_template"
+                    ),
+                    inputs=serializer.validated_data.get("inputs"),
+                    organization_id=organization.id if organization else None,
+                    workspace_id=workspace.id if workspace else None,
+                )
+            except NodeNotTestableError as e:
+                return self._gm.bad_request(str(e))
+
+            response_serializer = TestNodeResponseSerializer(result)
+            return self._gm.success_response(response_serializer.data)
+
+        except Graph.DoesNotExist:
+            return self._gm.not_found(get_error_message("GRAPH_NOT_FOUND"))
+        except GraphVersion.DoesNotExist:
+            return self._gm.not_found(get_error_message("VERSION_NOT_FOUND"))
+        except Node.DoesNotExist:
+            return self._gm.not_found(get_error_message("NODE_NOT_FOUND"))
+        except Exception as e:
+            logger.exception("Error testing node", error=str(e))
+            return self._gm.internal_server_error_response(
+                get_error_message("FAILED_TO_TEST_NODE")
             )

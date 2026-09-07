@@ -6029,8 +6029,19 @@ class UpdateCellValueView(APIView):
             if not is_editable:
                 return self._gm.bad_request(edit_err)
 
-            # Check max value length
-            if isinstance(new_value, str) and len(new_value) > MAX_CELL_VALUE_LENGTH:
+            # Check max value length (skip for media types — their base64 data
+            # is uploaded to S3, not stored in the cell)
+            MEDIA_TYPES = {
+                DataTypeChoices.IMAGE.value,
+                DataTypeChoices.IMAGES.value,
+                DataTypeChoices.AUDIO.value,
+                DataTypeChoices.DOCUMENT.value,
+            }
+            if (
+                isinstance(new_value, str)
+                and len(new_value) > MAX_CELL_VALUE_LENGTH
+                and column_data_type not in MEDIA_TYPES
+            ):
                 return self._gm.bad_request(
                     f"Value exceeds maximum length of {MAX_CELL_VALUE_LENGTH} characters"
                 )

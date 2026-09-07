@@ -2077,6 +2077,11 @@ export const endpoints = {
         "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/possible-edge-mappings/",
         { id: graphId, version_id: versionId, node_id: nodeId },
       ),
+    testNode: (graphId, versionId, nodeId) =>
+      apiPath(
+        "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/test/",
+        { id: graphId, version_id: versionId, node_id: nodeId },
+      ),
   },
   mcp: {
     config: apiPath("/mcp/config/"),
