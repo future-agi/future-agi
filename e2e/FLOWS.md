@@ -202,13 +202,13 @@
 3. open the eval's detail page
 4. switch the playground to the Tracing source tab
 5. search for and select the seeded project
-6. map the code's "output" parameter to the span's name
+6. clear the auto-filled mapping and map the code's "output" parameter to the span's name
 7. click Test Evaluation and read the Pass verdict and reason
 
 **Backend state verified:**
 
 - TracingTestMode fetches the real span via getSpansForObserveProject + getTrace, not a mock
-- the Test Evaluation button stays disabled until the mapped variable + a loaded row make the tab ready (TracingTestMode's onReadyChange -> EvalDetailPage's isPlaygroundReady)
+- TracingTestMode auto-maps the `output` variable onto the span's same-named field, and clearing that mapping re-arms the readiness gate: a loaded row alone is not enough, the variable has to be mapped before TracingTestMode reports ready (TracingTestMode's onReadyChange -> EvalDetailPage's isPlaygroundReady)
 - the eval executes in the sandboxed Python executor against the real span's name field
 
 ### EVAL-E2E-011 — filter usage logs by date range and drill into a single log

@@ -42,11 +42,14 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
       + 'and runs the test',
     steps: ['seed a trace with a root span and an llm-call child span', 'author a deterministic Code eval',
             'open the eval\'s detail page', 'switch the playground to the Tracing source tab',
-            'search for and select the seeded project', 'map the code\'s "output" parameter to the span\'s name',
+            'search for and select the seeded project',
+            'clear the auto-filled mapping and map the code\'s "output" parameter to the span\'s name',
             'click Test Evaluation and read the Pass verdict and reason'],
     backendChecks: ['TracingTestMode fetches the real span via getSpansForObserveProject + getTrace, not a mock',
-                    'the Test Evaluation button stays disabled until the mapped variable + a loaded row make '
-                      + 'the tab ready (TracingTestMode\'s onReadyChange -> EvalDetailPage\'s isPlaygroundReady)',
+                    'TracingTestMode auto-maps the `output` variable onto the span\'s same-named field, '
+                      + 'and clearing that mapping re-arms the readiness gate: a loaded row alone is not enough, '
+                      + 'the variable has to be mapped before TracingTestMode reports ready '
+                      + '(TracingTestMode\'s onReadyChange -> EvalDetailPage\'s isPlaygroundReady)',
                     'the eval executes in the sandboxed Python executor against the real span\'s name field'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -97,14 +100,27 @@ test('EVAL-E2E-008: test an existing eval against a real span via the Tracing so
   });
 
   await test.step('UI: map the variable to the span\'s name field', async () => {
-    // The readiness gate this flow claims: a loaded row alone is not enough,
-    // the variable has to be mapped before TracingTestMode reports ready.
-    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeDisabled();
     // TracingTestMode's mapping control is a real MUI Autocomplete (unlike
     // DatasetTestMode's custom ColumnTreeSelect), so a native option role
     // is available and unambiguous.
-    await page.getByPlaceholder('Search column...').click();
-    await page.getByPlaceholder('Search column...').fill('name');
+    const mapping = page.getByPlaceholder('Search column...');
+    // TracingTestMode auto-maps a variable onto a same-named span field, and
+    // this eval's variable is `output` — a real field on the span — so the
+    // mapping arrives already filled once the span detail loads. Asserting the
+    // readiness gate against that state only holds in the window before the
+    // fields land, which is a race the suite loses under CI's load; clearing
+    // the auto-mapping is what actually re-arms the gate.
+    await expect(mapping).toHaveValue('output', { timeout: UI_READY });
+    await page.locator('.MuiAutocomplete-root', { has: mapping })
+      .getByRole('button', { name: 'Clear' }).click();
+    // The readiness gate this flow claims: a loaded row alone is not enough,
+    // the variable has to be mapped before TracingTestMode reports ready.
+    await expect(mapping).toHaveValue('');
+    await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeDisabled();
+    // The control is not freeSolo here, so typing only filters the options —
+    // `mapping` changes on the option click, not on the fill.
+    await mapping.click();
+    await mapping.fill('name');
     await page.getByRole('option', { name: 'name', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Test Evaluation' })).toBeEnabled({ timeout: UI_READY });
   });
