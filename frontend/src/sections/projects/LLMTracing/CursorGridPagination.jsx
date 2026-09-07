@@ -1,25 +1,27 @@
 import PropTypes from "prop-types";
 import {
   Box,
+  Button,
   CircularProgress,
+  IconButton,
   MenuItem,
-  Pagination,
-  PaginationItem,
   Select,
   Stack,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { OBSERVE_LIST_PAGE_SIZE_OPTIONS } from "src/config/runtime_limits";
+import { windowedPageNumbers } from "./listPagerState";
 
 export default function CursorGridPagination({
   disabled = false,
+  hasMore = false,
   loading = false,
   onPageChange,
   onPageSizeChange,
   page,
-  pageCount,
   pageSize,
+  provenNext = false,
 }) {
   return (
     <Stack
@@ -74,45 +76,74 @@ export default function CursorGridPagination({
         ) : null}
       </Box>
 
-      <Pagination
-        count={pageCount}
-        variant="outlined"
-        shape="rounded"
-        page={Math.min(page, pageCount)}
-        color="primary"
-        disabled={disabled || loading}
-        onChange={(_event, value) => onPageChange(value)}
-        renderItem={(item) => (
-          <PaginationItem
-            {...item}
-            sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-            slots={{
-              previous: () => (
-                <Box display="flex" alignItems="center" gap={0.5}>
-                  <Iconify icon="octicon:chevron-left-24" width={18} />
-                  Back
-                </Box>
-              ),
-              next: () => (
-                <Box display="flex" alignItems="center" gap={0.5}>
-                  Next
-                  <Iconify icon="octicon:chevron-right-24" width={18} />
-                </Box>
-              ),
-            }}
-          />
-        )}
-      />
+      <Stack direction="row" alignItems="center" gap={0.5}>
+        <IconButton
+          size="small"
+          aria-label="Previous page"
+          disabled={disabled || loading || page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          <Iconify icon="octicon:chevron-left-24" width={18} />
+        </IconButton>
+
+        {windowedPageNumbers({ page, provenNext }).map((pageNumber, index, all) => (
+          <Stack key={pageNumber} direction="row" alignItems="center" gap={0.5}>
+            {index > 0 && pageNumber > all[index - 1] + 1 ? (
+              <Typography
+                aria-hidden="true"
+                typography="s2"
+                color="text.disabled"
+                data-testid="pager-leading-ellipsis"
+              >
+                …
+              </Typography>
+            ) : null}
+            <Button
+              size="small"
+              aria-label={`Go to page ${pageNumber}`}
+              aria-current={pageNumber === page ? "page" : undefined}
+              variant={pageNumber === page ? "contained" : "outlined"}
+              color="primary"
+              disabled={disabled || loading}
+              onClick={() => onPageChange(pageNumber)}
+              sx={{ minWidth: 36, height: 36, borderRadius: "4px" }}
+            >
+              {pageNumber}
+            </Button>
+          </Stack>
+        ))}
+
+        {hasMore ? (
+          <Typography
+            aria-hidden="true"
+            typography="s2"
+            color="text.disabled"
+            data-testid="pager-trailing-ellipsis"
+          >
+            …
+          </Typography>
+        ) : null}
+
+        <IconButton
+          size="small"
+          aria-label="Next page"
+          disabled={disabled || loading || !hasMore}
+          onClick={() => onPageChange(page + 1)}
+        >
+          <Iconify icon="octicon:chevron-right-24" width={18} />
+        </IconButton>
+      </Stack>
     </Stack>
   );
 }
 
 CursorGridPagination.propTypes = {
   disabled: PropTypes.bool,
+  hasMore: PropTypes.bool,
   loading: PropTypes.bool,
   onPageChange: PropTypes.func.isRequired,
   onPageSizeChange: PropTypes.func.isRequired,
   page: PropTypes.number.isRequired,
-  pageCount: PropTypes.number.isRequired,
   pageSize: PropTypes.number.isRequired,
+  provenNext: PropTypes.bool,
 };
