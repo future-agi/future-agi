@@ -83,3 +83,42 @@ export const windowedPageNumbers = ({ page, provenNext = false } = {}) => {
   }
   return Array.from(pages).sort((left, right) => left - right);
 };
+
+export const EMPTY_PAGER_FRONTIER = Object.freeze({
+  page: 0,
+  hasMore: false,
+  provenNext: false,
+});
+
+/**
+ * Derive the pager flags for the page currently on screen from the deepest
+ * page the datasource has published. Every page below the frontier is already
+ * known to be followed by a page that has been fetched; only at the frontier
+ * itself does the last response get to decide.
+ */
+export const pagerFlagsForPage = (page, frontier = EMPTY_PAGER_FRONTIER) => ({
+  hasMore: page < frontier.page || frontier.hasMore === true,
+  provenNext: page < frontier.page + (frontier.provenNext ? 1 : 0),
+});
+
+/**
+ * `isLastPage` can only be false while the transport reports no further search
+ * window when the terminal response overflowed and its surplus rows are
+ * already buffered for the next page (listCursorPagination.js, `completeVisiblePage`
+ * / `loadExactListPage`). Those rows are proven to exist by construction —
+ * a stronger proof than any reported count — so the next page must be
+ * reachable even though nothing in the metadata says so.
+ *
+ * That proof itself rests on a precondition: `isLastPage` only degrades to
+ * this "no further window but not terminal" shape in cursor mode, where
+ * `isLastPage()` (listCursorPagination.js:805-810) reads `metadata.has_more`.
+ * In legacy/numbered mode — no `has_more` field at all — `isLastPage` instead
+ * collapses to `rowCount < pageSize`, and a full final page reads back false
+ * with nothing buffered behind it. Gate on the field's presence (the same
+ * `hasCursorContract` check above), not just its value, or a full last page
+ * in numbered mode manufactures a page that does not exist.
+ */
+export const hasBufferedOverflowPage = (isLastPage, metadata) =>
+  isLastPage === false &&
+  hasCursorContract(metadata) &&
+  metadata.has_more !== true;

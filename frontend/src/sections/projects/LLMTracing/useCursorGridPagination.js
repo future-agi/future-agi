@@ -6,7 +6,12 @@ import {
 } from "src/config/runtime_limits";
 import { withLiveGridApi } from "src/utils/gridApi";
 import { dispatchObservePageChanged } from "../observeEvents";
-import { getListPagerState } from "./listPagerState";
+import {
+  EMPTY_PAGER_FRONTIER,
+  getListPagerState,
+  hasBufferedOverflowPage,
+  pagerFlagsForPage,
+} from "./listPagerState";
 
 const requestRenderFrame = (callback) => {
   if (
@@ -78,45 +83,6 @@ export const paintedGridRowSignature = (api, gridElementRef) => {
     )
     .join("\n");
 };
-
-export const EMPTY_PAGER_FRONTIER = {
-  page: 0,
-  hasMore: false,
-  provenNext: false,
-};
-
-/**
- * Derive the pager flags for the page currently on screen from the deepest
- * page the datasource has published. Every page below the frontier is already
- * known to be followed by a page that has been fetched; only at the frontier
- * itself does the last response get to decide.
- */
-export const pagerFlagsForPage = (page, frontier = EMPTY_PAGER_FRONTIER) => ({
-  hasMore: page < frontier.page || frontier.hasMore === true,
-  provenNext: page < frontier.page + (frontier.provenNext ? 1 : 0),
-});
-
-/**
- * `isLastPage` can only be false while the transport reports no further search
- * window when the terminal response overflowed and its surplus rows are
- * already buffered for the next page (listCursorPagination.js, `completeVisiblePage`
- * / `loadExactListPage`). Those rows are proven to exist by construction —
- * a stronger proof than any reported count — so the next page must be
- * reachable even though nothing in the metadata says so.
- *
- * That proof itself rests on a precondition: `isLastPage` only degrades to
- * this "no further window but not terminal" shape in cursor mode, where
- * `isLastPage()` (listCursorPagination.js:805-810) reads `metadata.has_more`.
- * In legacy/numbered mode — no `has_more` field at all — `isLastPage` instead
- * collapses to `rowCount < pageSize`, and a full final page reads back false
- * with nothing buffered behind it. Gate on the field's presence, not just its
- * value, or a full last page in numbered mode manufactures a page that does
- * not exist.
- */
-export const hasBufferedOverflowPage = (isLastPage, metadata) =>
-  isLastPage === false &&
-  Object.prototype.hasOwnProperty.call(metadata || {}, "has_more") &&
-  metadata.has_more !== true;
 
 /**
  * Cursor-backed lists can expose only pages whose opaque cursor chain has
@@ -303,9 +269,13 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     setPageCount(Math.max(1, Math.ceil(discoveredRowCount / requestPageSize)));
 
     // AG Grid can load a server-side block in the background while an explicit
-    // navigation is still in flight. beginPageLoad() already refuses to let
-    // such a block own the page loader; the visible page number and the pager
-    // frontier need the same guard, or another page's state lands on screen.
+    // navigation is still in flight. Skip only when a transition is active
+    // and targets a different page. This is *not* the same guard as
+    // beginPageLoad(), which also rejects when no transition is active at
+    // all — a background block published while nothing is navigating still
+    // runs setPage() and advances the frontier here. That matches the
+    // pre-fix behavior, so it is intentional: without an active transition
+    // there is no "another page" for this one to lose to.
     const transition = pageTransitionRef.current;
     if (transition && transition.page !== publishedPage) {
       return discoveredRowCount;

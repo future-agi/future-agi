@@ -47,8 +47,10 @@ import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterCo
 import { applyQuickFilters } from "src/sections/projects/LLMTracing/common";
 import { OBSERVE_LIST_DEFAULT_PAGE_SIZE } from "src/config/runtime_limits";
 import { dispatchObservePageChanged } from "src/sections/projects/observeEvents";
-import { getListPagerState } from "src/sections/projects/LLMTracing/listPagerState";
-import { hasBufferedOverflowPage } from "src/sections/projects/LLMTracing/useCursorGridPagination";
+import {
+  getListPagerState,
+  hasBufferedOverflowPage,
+} from "src/sections/projects/LLMTracing/listPagerState";
 import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };

@@ -56,12 +56,12 @@ import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
-import { getListPagerState } from "../LLMTracing/listPagerState";
 import {
   EMPTY_PAGER_FRONTIER,
+  getListPagerState,
   hasBufferedOverflowPage,
   pagerFlagsForPage,
-} from "../LLMTracing/useCursorGridPagination";
+} from "../LLMTracing/listPagerState";
 import CursorGridPagination from "../LLMTracing/CursorGridPagination";
 
 const getUsersGridThemeParams = (theme) => ({
