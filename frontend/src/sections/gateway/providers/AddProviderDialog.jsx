@@ -152,7 +152,7 @@ const normalizeModels = (list) =>
 // provider rejected the key or the endpoint. The warning under Models only says
 // the list is empty, so name the likely cause on the API Key field itself.
 const KEY_FETCH_FAILED =
-  "Couldn't load any models with this key — check that it is valid for this " +
+  "Couldn't load any models with this key. Check that it is valid for this " +
   "provider, or add model IDs manually below.";
 
 // Edit mode lists models with the credential already on file, so an empty
@@ -207,9 +207,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const [keyFetchError, setKeyFetchError] = useState("");
   // A debounced fetch is armed but has not fired yet.
   const [fetchScheduled, setFetchScheduled] = useState(false);
+  const fetchSeqRef = useRef(0);
 
   const doFetchModels = useCallback(
     ({ providerName, url, key, format }) => {
+      const seq = fetchSeqRef.current + 1;
+      fetchSeqRef.current = seq;
+      const isStale = () => fetchSeqRef.current !== seq;
       setFetchError("");
       setKeyFetchError("");
       setHasFetched(false);
@@ -222,6 +226,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           : { baseUrl: url, apiKey: key, apiFormat: format },
         {
           onSuccess: (result) => {
+            if (isStale()) return;
             const fetched = normalizeModels(result?.models);
             if (fetched.length === 0) {
               setFetchError(result?.error || "Provider returned no models");
@@ -231,6 +236,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             setHasFetched(true);
           },
           onError: (err) => {
+            if (isStale()) return;
             setFetchError(err?.message || "Failed to fetch models");
             if (blameKey) setKeyFetchError(KEY_FETCH_FAILED);
             setModelOptions([]);
@@ -409,12 +415,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       }
 
       // Key validation — only block if fetch completed with zero models
-      if (
-        !isEditMode &&
-        apiKey.trim() &&
-        hasFetched &&
-        modelOptions.length === 0
-      ) {
+      if (apiKey.trim() && hasFetched && modelOptions.length === 0) {
         newErrors.apiKey = KEY_FETCH_FAILED;
       }
     }
@@ -745,6 +746,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               freeSolo
               autoSelect
               disableCloseOnSelect
+              size="small"
+              sx={{
+                "&:hover .MuiAutocomplete-input, &.Mui-focused .MuiAutocomplete-input":
+                  { minWidth: 30 },
+              }}
               options={modelOptions}
               value={models}
               onChange={(_, val) => {
@@ -779,7 +785,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                           ? "Type or paste comma-separated model IDs"
                           : "Enter API key to load models, or type manually"
                   }
-                  size="small"
                   onPaste={(e) => {
                     const pasted = e.clipboardData.getData("text");
                     if (!/[,\n]/.test(pasted)) return;
