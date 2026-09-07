@@ -380,24 +380,28 @@ class TestStandaloneEvalV2API:
         assert "k must be an integer" in str(response.json())
 
     def test_new_eval_post_async_persists_function_params(
-        self, auth_client, function_param_eval_template
+        self,
+        auth_client,
+        function_param_eval_template,
+        django_capture_on_commit_callbacks,
     ):
         from model_hub.models.evaluation import Evaluation
 
         with patch("tfc.temporal.evaluations.start_evaluation_workflow") as mock_start:
-            response = auth_client.post(
-                "/sdk/api/v1/new-eval/",
-                {
-                    "eval_name": function_param_eval_template.name,
-                    "inputs": {
-                        "hypothesis": '["A", "B"]',
-                        "reference": '["A", "C"]',
+            with django_capture_on_commit_callbacks(execute=True):
+                response = auth_client.post(
+                    "/sdk/api/v1/new-eval/",
+                    {
+                        "eval_name": function_param_eval_template.name,
+                        "inputs": {
+                            "hypothesis": '["A", "B"]',
+                            "reference": '["A", "C"]',
+                        },
+                        "config": {"params": {"k": 4}},
+                        "is_async": True,
                     },
-                    "config": {"params": {"k": 4}},
-                    "is_async": True,
-                },
-                format="json",
-            )
+                    format="json",
+                )
 
         assert response.status_code == status.HTTP_200_OK
         payload = response.json()
@@ -412,6 +416,31 @@ class TestStandaloneEvalV2API:
         evaluation = Evaluation.objects.get(id=eval_id)
         assert evaluation.eval_config.get("params", {}).get("k") == 4
         mock_start.assert_called_once()
+
+    @pytest.mark.django_db(transaction=True)
+    def test_new_eval_post_async_starts_the_workflow_before_the_response_returns(
+        self, auth_client, eval_template
+    ):
+        """Outside any open transaction the standalone path starts the workflow
+        inline, so the SDK caller waits on nothing extra."""
+        from model_hub.models.evaluation import Evaluation
+
+        with patch("tfc.temporal.evaluations.start_evaluation_workflow") as mock_start:
+            response = auth_client.post(
+                "/sdk/api/v1/new-eval/",
+                {
+                    "eval_name": eval_template.name,
+                    "inputs": {"input": "a question", "output": "an answer"},
+                    "is_async": True,
+                },
+                format="json",
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            eval_id = response.json()["result"][0]["evaluations"][0]["eval_id"]
+            mock_start.assert_called_once_with(evaluation_id=eval_id)
+
+        assert Evaluation.objects.filter(id=eval_id).exists()
 
 
 @pytest.mark.integration

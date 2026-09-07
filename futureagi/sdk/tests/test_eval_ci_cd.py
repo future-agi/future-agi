@@ -5,6 +5,8 @@ Tests for SDK CI/CD evaluation endpoints that allow running evaluations via pipe
 Note: These endpoints use APIKeyAuthentication which accepts both JWT and API key auth.
 """
 
+from unittest.mock import patch
+
 import pytest
 from rest_framework import status
 
@@ -342,3 +344,129 @@ class TestCICDEvaluationsGetAPI:
         )
         # Returns 400 because version doesn't exist, but auth succeeded
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCICDEvaluationsWorkflowDispatch:
+    """Tests for how POST /sdk/api/v1/evaluate-pipeline/ hands its rows to the worker."""
+
+    def _post_run(self, auth_client, project, version, eval_data):
+        return auth_client.post(
+            "/sdk/api/v1/evaluate-pipeline/",
+            {
+                "project_name": project.name,
+                "version": version,
+                "eval_data": eval_data,
+            },
+            format="json",
+        )
+
+    def test_workflow_starts_once_per_row_only_after_the_rows_are_committed(
+        self,
+        auth_client,
+        observe_project,
+        eval_template,
+        django_capture_on_commit_callbacks,
+    ):
+        """No workflow is started while the rows are still uncommitted, and every
+        row gets exactly one workflow once the write lands."""
+        from tracer.models.eval_ci_cd import EvaluationResult
+
+        started = []
+
+        with patch(
+            "tfc.temporal.evaluations.start_evaluation_workflow",
+            side_effect=lambda evaluation_id: started.append(evaluation_id),
+        ):
+            with django_capture_on_commit_callbacks(execute=True):
+                response = self._post_run(
+                    auth_client,
+                    observe_project,
+                    "v-dispatch-1",
+                    [
+                        {
+                            "eval_template": eval_template.name,
+                            "inputs": {
+                                "input": ["first", "second"],
+                                "output": ["one", "two"],
+                            },
+                        },
+                        {
+                            "eval_template": eval_template.name,
+                            "inputs": {
+                                "input": ["third", "fourth"],
+                                "output": ["three", "four"],
+                            },
+                        },
+                    ],
+                )
+                assert response.status_code == status.HTTP_200_OK
+                assert started == []
+
+        evaluation_run_id = response.json()["result"]["evaluation_run_id"]
+        row_ids = [
+            str(evaluation_id)
+            for evaluation_id in EvaluationResult.objects.filter(
+                evaluation_run_id=evaluation_run_id
+            ).values_list("evaluation_id", flat=True)
+        ]
+
+        assert len(row_ids) == 4
+        assert sorted(started) == sorted(row_ids)
+
+    def test_poll_reports_completed_when_the_workflow_cannot_be_started(
+        self,
+        auth_client,
+        observe_project,
+        eval_template,
+        django_capture_on_commit_callbacks,
+    ):
+        """A workflow start that blows up leaves every row terminal, so the
+        pipeline poll answers "completed" instead of "processing" forever."""
+        from model_hub.models.evaluation import Evaluation, StatusChoices
+        from sdk.utils.cicd_evaluations import are_evaluation_runs_processing
+        from tracer.models.eval_ci_cd import EvaluationRun
+
+        with patch(
+            "tfc.temporal.evaluations.start_evaluation_workflow",
+            side_effect=RuntimeError("temporal is unreachable"),
+        ):
+            with django_capture_on_commit_callbacks(execute=True):
+                response = self._post_run(
+                    auth_client,
+                    observe_project,
+                    "v-dispatch-2",
+                    [
+                        {
+                            "eval_template": eval_template.name,
+                            "inputs": {
+                                "input": ["first", "second"],
+                                "output": ["one", "two"],
+                            },
+                        }
+                    ],
+                )
+
+        assert response.status_code == status.HTTP_200_OK
+        evaluation_run = EvaluationRun.objects.get(
+            id=response.json()["result"]["evaluation_run_id"]
+        )
+
+        evaluations = list(
+            Evaluation.objects.filter(ci_cd_result__evaluation_run=evaluation_run)
+        )
+        assert len(evaluations) == 2
+        assert {row.status for row in evaluations} == {StatusChoices.FAILED}
+        assert all(
+            "temporal is unreachable" in row.error_message for row in evaluations
+        )
+
+        assert are_evaluation_runs_processing([evaluation_run]) is False
+
+        poll = auth_client.get(
+            "/sdk/api/v1/evaluate-pipeline/"
+            f"?project_name={observe_project.name}&versions={evaluation_run.version}"
+        )
+        assert poll.status_code == status.HTTP_200_OK
+        assert poll.json()["result"]["status"] == "completed"

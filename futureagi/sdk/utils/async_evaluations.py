@@ -8,9 +8,10 @@ Celery approach).
 """
 
 import structlog
+from django.db import transaction
 
 logger = structlog.get_logger(__name__)
-from model_hub.models.evaluation import Evaluation
+from model_hub.models.evaluation import Evaluation, StatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 
 
@@ -130,22 +131,30 @@ def _handle_single_async_eval(
         error_localizer_enabled=error_localizer_enabled,
     )
 
-    # Start workflow immediately instead of waiting for polling
-    try:
-        from tfc.temporal.evaluations import start_evaluation_workflow
+    evaluation_id = str(evaluation.id)
 
-        start_evaluation_workflow(evaluation_id=str(evaluation.id))
-        logger.info(f"Started evaluation workflow for {evaluation.id}")
-    except Exception as e:
-        logger.exception(
-            f"Failed to start evaluation workflow for {evaluation.id}: {e}"
-        )
-        # Don't fail the API call - evaluation will be picked up by fallback if needed
+    def _start_workflow():
+        try:
+            from tfc.temporal.evaluations import start_evaluation_workflow
+
+            start_evaluation_workflow(evaluation_id=evaluation_id)
+            logger.info(f"Started evaluation workflow for {evaluation_id}")
+        except Exception as e:
+            logger.exception(
+                f"Failed to start evaluation workflow for {evaluation_id}: {e}"
+            )
+            Evaluation.objects.filter(id=evaluation_id).update(
+                status=StatusChoices.FAILED,
+                error_message=f"Evaluation workflow could not be started: {e}",
+            )
+
+    # The worker reads this row on its own connection, so it must be committed first.
+    transaction.on_commit(_start_workflow)
 
     return {
         "name": eval_template.name,
         "output_type": eval_template.config.get("output", "score"),
-        "eval_id": str(evaluation.id),
+        "eval_id": evaluation_id,
     }
 
 

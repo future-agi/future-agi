@@ -5,6 +5,7 @@ These activities process individual Evaluation objects immediately when
 triggered, rather than being polled by a scheduled job.
 """
 
+import structlog
 from django.db import close_old_connections
 from temporalio import activity
 
@@ -13,6 +14,8 @@ from tfc.temporal.evaluations.types import (
     RunSingleEvaluationInput,
     RunSingleEvaluationOutput,
 )
+
+logger = structlog.get_logger(__name__)
 
 # =============================================================================
 # Synchronous Helper Functions
@@ -28,8 +31,10 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
     """
     close_old_connections()
 
+    from model_hub.models.evaluation import Evaluation, StatusChoices
+
+    evaluation = None
     try:
-        from model_hub.models.evaluation import Evaluation, StatusChoices
         from model_hub.tasks.user_evaluation import (
             trigger_error_localization_for_standalone,
         )
@@ -88,10 +93,20 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         }
 
     except Exception as e:
-        # Mark as failed on any error (matches original behavior)
-        evaluation.status = StatusChoices.FAILED
-        evaluation.error_message = str(e)
-        # Don't return here - let finally block save and return
+        if evaluation is None:
+            # The row was never loaded, so write the terminal status directly.
+            try:
+                Evaluation.objects.filter(id=evaluation_id).update(
+                    status=StatusChoices.FAILED, error_message=str(e)
+                )
+            except Exception:
+                logger.exception(
+                    "evaluation_terminal_status_write_failed",
+                    evaluation_id=evaluation_id,
+                )
+        else:
+            evaluation.status = StatusChoices.FAILED
+            evaluation.error_message = str(e)
 
         return {
             "evaluation_id": evaluation_id,
@@ -100,11 +115,11 @@ def _run_single_evaluation_sync(evaluation_id: str) -> dict:
         }
 
     finally:
-        # Always save (matches original finally block behavior)
-        try:
-            evaluation.save()
-        except Exception:
-            pass  # evaluation might not be defined if initial get() failed
+        if evaluation is not None:
+            try:
+                evaluation.save()
+            except Exception:
+                pass
         close_old_connections()
 
 
