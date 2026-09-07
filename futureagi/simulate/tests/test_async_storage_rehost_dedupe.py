@@ -7,7 +7,8 @@ from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
 
 def _response(audio_bytes: bytes) -> Mock:
     response = Mock()
-    response.iter_content.return_value = [audio_bytes]
+    response.content = audio_bytes
+    response.raise_for_status = Mock()
     return response
 
 
@@ -38,7 +39,7 @@ def test_repeated_rehost_reuses_detected_format_object_and_stored_size():
         "tfc.utils.storage_client.get_object_url",
         side_effect=lambda _bucket, key: f"https://fi-customer-data.s3.amazonaws.com/{key}",
     ), patch(
-        "simulate.temporal.utils.async_storage.requests.get",
+        "tfc.utils.ssrf_guard.safe_fetch",
         return_value=_response(audio_bytes),
     ) as get, patch(
         "simulate.temporal.utils.async_storage._detected_audio_extension",
@@ -83,7 +84,7 @@ def test_rehost_storage_key_isolated_by_provider():
     ), patch(
         "tfc.utils.storage_client.get_storage_client", return_value=storage_client
     ), patch(
-        "simulate.temporal.utils.async_storage.requests.get",
+        "tfc.utils.ssrf_guard.safe_fetch",
         return_value=_response(b"recording"),
     ), patch(
         "simulate.temporal.utils.async_storage._detected_audio_extension",
