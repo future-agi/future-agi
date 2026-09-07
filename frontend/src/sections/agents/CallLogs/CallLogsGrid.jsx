@@ -48,6 +48,7 @@ import { applyQuickFilters } from "src/sections/projects/LLMTracing/common";
 import { OBSERVE_LIST_DEFAULT_PAGE_SIZE } from "src/config/runtime_limits";
 import { dispatchObservePageChanged } from "src/sections/projects/observeEvents";
 import { getListPagerState } from "src/sections/projects/LLMTracing/listPagerState";
+import { hasBufferedOverflowPage } from "src/sections/projects/LLMTracing/useCursorGridPagination";
 import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
@@ -437,6 +438,45 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     advanceCursorTransport((revision) => revision + 1);
   }, [cursorContinuationPaused]);
 
+  // Project call logs speak the cursor contract; agent-definition call logs
+  // are a plain DRF PageNumberPagination list with an exact `count` and no
+  // `has_more` at all. Carry the presence of `has_more` through faithfully —
+  // getListPagerState uses it to tell the two contracts apart.
+  const reportsHasMore =
+    data != null &&
+    typeof data === "object" &&
+    Object.prototype.hasOwnProperty.call(data, "has_more");
+  // Hoist exactly the fields getListPagerState reads. Depending on `data`
+  // itself would refire the effect below on every render for any caller that
+  // rebuilds `data` (this file's own test mocks do), and each firing produces
+  // a brand-new pagerState object, so it would never settle.
+  //
+  // This field list must match reportedTotal()/isLowerBound() in
+  // src/sections/projects/LLMTracing/listPagerState.js — if that helper starts
+  // reading another field, add it here too, or this effect misses real updates.
+  const pagerMetadata = useMemo(
+    () => ({
+      count: data?.count,
+      count_is_lower_bound: data?.count_is_lower_bound,
+      total_count: data?.total_count,
+      total_count_is_lower_bound: data?.total_count_is_lower_bound,
+      total_rows: data?.total_rows,
+      total_rows_is_lower_bound: data?.total_rows_is_lower_bound,
+      ...(reportsHasMore ? { has_more: data.has_more } : null),
+    }),
+    [
+      data?.count,
+      data?.count_is_lower_bound,
+      data?.has_more,
+      data?.total_count,
+      data?.total_count_is_lower_bound,
+      data?.total_rows,
+      data?.total_rows_is_lower_bound,
+      reportsHasMore,
+    ],
+  );
+  const exactPageIsLastPage = exactPage ? exactPage.isLastPage : null;
+
   useEffect(() => {
     if (isLoading) return;
     if (!isUsableListRead) {
@@ -448,37 +488,32 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       return;
     }
     const { hasMore, provenNext } = getListPagerState({
-      metadata: data,
+      metadata: pagerMetadata,
       startRow: (page - 1) * pageLimit,
       rowCount: responseRows.length,
     });
-    setPagerState((prev) =>
-      prev.hasMore === hasMore && prev.provenNext === provenNext
-        ? prev
-        : { hasMore, provenNext },
+    // A page that is not terminal while the transport reports no further
+    // search window can only be a terminal response whose surplus rows are
+    // already buffered for the next page. Those rows are proven by
+    // construction, so they must stay reachable.
+    const bufferedOverflowPage = hasBufferedOverflowPage(
+      exactPageIsLastPage,
+      hasMore,
     );
-    // Depend on the primitive fields getListPagerState actually reads, not
-    // the `data` object itself. A caller that doesn't return a referentially
-    // stable `data` (e.g. this file's own test mocks) would otherwise refire
-    // this effect on every render and loop forever, since each firing always
-    // produces a brand-new pagerState object.
-    //
-    // This field list must match src/sections/projects/LLMTracing/
-    // listPagerState.js's reportedTotal()/isLowerBound() metadata reads
-    // (count/total_rows/total_count and their *_is_lower_bound siblings,
-    // plus has_more) — if that helper starts reading another field, add it
-    // here too, or this effect can miss a real update.
+    const nextHasMore = hasMore || bufferedOverflowPage;
+    const nextProvenNext = provenNext || bufferedOverflowPage;
+    setPagerState((prev) =>
+      prev.hasMore === nextHasMore && prev.provenNext === nextProvenNext
+        ? prev
+        : { hasMore: nextHasMore, provenNext: nextProvenNext },
+    );
   }, [
-    data?.count,
-    data?.count_is_lower_bound,
-    data?.has_more,
-    data?.total_count,
-    data?.total_rows,
-    data?.total_rows_is_lower_bound,
+    exactPageIsLastPage,
     isLoading,
     isUsableListRead,
     page,
     pageLimit,
+    pagerMetadata,
     responseRows.length,
   ]);
 

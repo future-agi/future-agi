@@ -75,6 +75,44 @@ describe("getListPagerState", () => {
     ).toEqual({ hasMore: false, seen: 0, provenNext: false, exactTotal: 0 });
   });
 
+  it("counts pages from an exact total when the list is not cursor-backed", () => {
+    // The agent-definition call-log endpoint (DRF ExtendedPageNumberPagination):
+    // exact `count`, exact `total_pages`, no has_more and no cursor.
+    expect(
+      getListPagerState({
+        metadata: { count: 137, total_pages: 6, current_page: 1, results: [] },
+        startRow: 0,
+        rowCount: 25,
+      }),
+    ).toEqual({ hasMore: true, seen: 25, provenNext: true, exactTotal: 137 });
+  });
+
+  it("ends a non-cursor list on the page its exact total runs out", () => {
+    expect(
+      getListPagerState({
+        metadata: { count: 30, total_pages: 2, current_page: 2, results: [] },
+        startRow: 25,
+        rowCount: 5,
+      }),
+    ).toEqual({ hasMore: false, seen: 30, provenNext: false, exactTotal: 30 });
+  });
+
+  it("treats the users lower-bound flag as a lower bound", () => {
+    // The users endpoint emits total_count_is_lower_bound, not
+    // count_is_lower_bound; missing it reported a guess as an exact total.
+    expect(
+      getListPagerState({
+        metadata: {
+          total_count: 25,
+          total_count_is_lower_bound: true,
+          has_more: true,
+        },
+        startRow: 0,
+        rowCount: 25,
+      }).exactTotal,
+    ).toBeNull();
+  });
+
   it("tolerates absent metadata", () => {
     expect(getListPagerState({})).toEqual({
       hasMore: false,

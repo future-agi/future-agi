@@ -17,7 +17,19 @@ const reportedTotal = (metadata) => {
 
 const isLowerBound = (metadata) =>
   metadata?.total_rows_is_lower_bound === true ||
-  metadata?.count_is_lower_bound === true;
+  metadata?.count_is_lower_bound === true ||
+  metadata?.total_count_is_lower_bound === true;
+
+/**
+ * `has_more` is the cursor contract's marker. Its absence means the response
+ * did not come from a cursor endpoint at all — the agent-definition call-log
+ * list is a plain DRF PageNumberPagination view whose `count` is the
+ * paginator's exact total (futureagi/tfc/utils/pagination.py).
+ */
+const hasCursorContract = (metadata) =>
+  metadata != null &&
+  typeof metadata === "object" &&
+  Object.prototype.hasOwnProperty.call(metadata, "has_more");
 
 /**
  * `has_more` means "more window left to search", NOT "another row exists"
@@ -30,17 +42,29 @@ export const getListPagerState = ({
   startRow = 0,
   rowCount = 0,
 } = {}) => {
-  const hasMore = metadata?.has_more === true;
   const start = Number.isFinite(Number(startRow)) ? Number(startRow) : 0;
   const rows = Number.isFinite(Number(rowCount)) ? Number(rowCount) : 0;
+  // On the sparse cursor path a page can publish fewer rows than the page
+  // size, so the true cumulative count can be lower than this. That only ever
+  // under-reports `provenNext`; it can never inflate it.
   const seen = Math.max(0, start + rows);
   const total = reportedTotal(metadata);
+  const exactTotal = total !== null && !isLowerBound(metadata) ? total : null;
 
+  // A non-cursor list reports a real total, so a further page is proven
+  // whenever that total exceeds the rows seen. The reasoning that forbids
+  // counting pages out of a cursor lower bound does not apply here.
+  if (!hasCursorContract(metadata)) {
+    const provenNext = exactTotal !== null && exactTotal > seen;
+    return { hasMore: provenNext, seen, provenNext, exactTotal };
+  }
+
+  const hasMore = metadata.has_more === true;
   return {
     hasMore,
     seen,
     provenNext: hasMore && total !== null && total > seen,
-    exactTotal: total !== null && !isLowerBound(metadata) ? total : null,
+    exactTotal,
   };
 };
 
