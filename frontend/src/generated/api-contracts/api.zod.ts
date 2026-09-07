@@ -5218,7 +5218,11 @@ export const AgentccGatewaysConfigResponse = zod.object({
           .describe(
             "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
           ),
-        models: zod.array(zod.object({}).passthrough()),
+        models: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
+          ),
         is_active: zod.boolean(),
         default_timeout: zod.number(),
         max_concurrent: zod.number(),
@@ -5282,7 +5286,12 @@ export const AgentccGatewaysHealthCheckResponse = zod.object({
         zod.object({
           name: zod.string().min(1),
           display_name: zod.string().optional(),
-          models: zod.array(zod.object({}).passthrough()).optional(),
+          models: zod
+            .array(zod.string().min(1))
+            .optional()
+            .describe(
+              "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
+            ),
           status: zod.string().optional(),
         }),
       ),
@@ -5386,7 +5395,12 @@ export const AgentccGatewaysProvidersResponse = zod.object({
           .describe(
             "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
           ),
-        models: zod.array(zod.object({}).passthrough()).optional(),
+        models: zod
+          .array(zod.string().min(1))
+          .optional()
+          .describe(
+            "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
+          ),
         request_count: zod.number().optional(),
         avg_latency: zod.number().optional(),
         error_rate: zod.number().optional(),
@@ -6918,64 +6932,30 @@ export const AgentccProviderCredentialsCreateBody = zod.object({
 - api_key + base_url + api_format: use raw values (for create-mode).
  * @summary Fetch available models from a provider's API.
  */
-export const agentccProviderCredentialsFetchModelsBodyProviderNameMax = 100;
-
-export const agentccProviderCredentialsFetchModelsBodyDisplayNameMax = 255;
-
-export const agentccProviderCredentialsFetchModelsBodyBaseUrlMax = 500;
-
-export const agentccProviderCredentialsFetchModelsBodyApiFormatMax = 50;
-
-export const agentccProviderCredentialsFetchModelsBodyDefaultTimeoutSecondsMin =
-  -2147483648;
-export const agentccProviderCredentialsFetchModelsBodyDefaultTimeoutSecondsMax = 2147483647;
-
-export const agentccProviderCredentialsFetchModelsBodyMaxConcurrentMin =
-  -2147483648;
-export const agentccProviderCredentialsFetchModelsBodyMaxConcurrentMax = 2147483647;
-
-export const agentccProviderCredentialsFetchModelsBodyConnPoolSizeMin =
-  -2147483648;
-export const agentccProviderCredentialsFetchModelsBodyConnPoolSizeMax = 2147483647;
-
 export const AgentccProviderCredentialsFetchModelsBody = zod.object({
-  provider_name: zod
-    .string()
-    .min(1)
-    .max(agentccProviderCredentialsFetchModelsBodyProviderNameMax),
-  display_name: zod
-    .string()
-    .max(agentccProviderCredentialsFetchModelsBodyDisplayNameMax)
-    .optional(),
-  base_url: zod
-    .string()
-    .url()
-    .max(agentccProviderCredentialsFetchModelsBodyBaseUrlMax)
-    .optional(),
+  provider_name: zod.string().optional(),
+  base_url: zod.string().optional(),
+  api_key: zod.string().optional(),
   api_format: zod
     .string()
-    .min(1)
-    .max(agentccProviderCredentialsFetchModelsBodyApiFormatMax)
-    .optional(),
-  models_list: zod.object({}).passthrough().optional(),
-  default_timeout_seconds: zod
-    .number()
-    .min(agentccProviderCredentialsFetchModelsBodyDefaultTimeoutSecondsMin)
-    .max(agentccProviderCredentialsFetchModelsBodyDefaultTimeoutSecondsMax)
-    .optional(),
-  max_concurrent: zod
-    .number()
-    .min(agentccProviderCredentialsFetchModelsBodyMaxConcurrentMin)
-    .max(agentccProviderCredentialsFetchModelsBodyMaxConcurrentMax)
-    .optional(),
-  conn_pool_size: zod
-    .number()
-    .min(agentccProviderCredentialsFetchModelsBodyConnPoolSizeMin)
-    .max(agentccProviderCredentialsFetchModelsBodyConnPoolSizeMax)
-    .optional(),
-  extra_config: zod.object({}).passthrough().optional(),
-  is_active: zod.boolean().optional(),
-  last_rotated_at: zod.string().datetime({ offset: true }).optional(),
+    .optional()
+    .describe(
+      "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
+    ),
+});
+
+export const AgentccProviderCredentialsFetchModelsResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    models: zod.array(zod.string().min(1)),
+    error: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Present when the provider could not be reached. The list is empty and the call still returns 200 so the caller can offer manual entry.",
+      ),
+  }),
 });
 
 export const AgentccProviderCredentialsReadParams = zod.object({

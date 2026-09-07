@@ -2588,8 +2588,6 @@ export interface GatewayBatchCancelResponseApi {
   result: GatewayBatchCancelResultApi;
 }
 
-export type GatewayConfigProviderApiModelsItem = { [key: string]: unknown };
-
 export interface GatewayConfigProviderApi {
   id: string;
   /** @minLength 1 */
@@ -2599,7 +2597,8 @@ export interface GatewayConfigProviderApi {
   base_url: string;
   /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format: string;
-  models: GatewayConfigProviderApiModelsItem[];
+  /** Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser. */
+  models: string[];
   is_active: boolean;
   default_timeout: number;
   max_concurrent: number;
@@ -2711,13 +2710,12 @@ export interface AgentccEmptyRequestApi {
   [key: string]: unknown;
 }
 
-export type GatewayConfiguredProviderApiModelsItem = { [key: string]: unknown };
-
 export interface GatewayConfiguredProviderApi {
   /** @minLength 1 */
   name: string;
   display_name?: string;
-  models?: GatewayConfiguredProviderApiModelsItem[];
+  /** Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser. */
+  models?: string[];
   status?: string;
 }
 
@@ -2758,8 +2756,6 @@ export interface GatewayMCPStatusResponseApi {
   result: GatewayMCPStatusResultApi;
 }
 
-export type GatewayProviderStatusApiModelsItem = { [key: string]: unknown };
-
 export interface GatewayProviderStatusApi {
   /**
    * Provider key/name used by the gateway, not a database UUID.
@@ -2777,7 +2773,8 @@ export interface GatewayProviderStatusApi {
   base_url?: string;
   /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format?: string;
-  models?: GatewayProviderStatusApiModelsItem[];
+  /** Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser. */
+  models?: string[];
   request_count?: number;
   avg_latency?: number;
   error_rate?: number;
@@ -3344,6 +3341,28 @@ export interface AgentccProviderCredentialApi {
   last_rotated_at?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export interface ProviderModelsRequestApi {
+  provider_name?: string;
+  base_url?: string;
+  api_key?: string;
+  /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
+  api_format?: string;
+}
+
+export interface ProviderModelsResultApi {
+  models: string[];
+  /**
+   * Present when the provider could not be reached. The list is empty and the call still returns 200 so the caller can offer manual entry.
+   * @minLength 1
+   */
+  error?: string;
+}
+
+export interface ProviderModelsResponseApi {
+  status: boolean;
+  result: ProviderModelsResultApi;
 }
 
 export type AgentccRequestLogDetailApiMetadata = { [key: string]: unknown };

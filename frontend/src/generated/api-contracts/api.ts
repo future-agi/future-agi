@@ -875,6 +875,8 @@ import type {
   PromptSimulationScenariosResponseApi,
   PromptSimulationUpdateRequestApi,
   PromptTemplateApi,
+  ProviderModelsRequestApi,
+  ProviderModelsResponseApi,
   ProviderStatusResponseApi,
   PublicConfigResponseApi,
   QueueAddItemsResponseApi,
@@ -15825,24 +15827,31 @@ export const agentccProviderCredentialsCreate = async (
   );
 };
 
-export type agentccProviderCredentialsFetchModelsResponse201 = {
-  data: AgentccProviderCredentialApi;
-  status: 201;
+export type agentccProviderCredentialsFetchModelsResponse200 = {
+  data: ProviderModelsResponseApi;
+  status: 200;
+};
+
+export type agentccProviderCredentialsFetchModelsResponse400 = {
+  data: AgentccErrorResponseApi;
+  status: 400;
 };
 
 export type agentccProviderCredentialsFetchModelsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type agentccProviderCredentialsFetchModelsResponseSuccess =
-  agentccProviderCredentialsFetchModelsResponse201 & {
+  agentccProviderCredentialsFetchModelsResponse200 & {
     headers: Headers;
   };
-export type agentccProviderCredentialsFetchModelsResponseError =
-  agentccProviderCredentialsFetchModelsResponseDefault & {
-    headers: Headers;
-  };
+export type agentccProviderCredentialsFetchModelsResponseError = (
+  | agentccProviderCredentialsFetchModelsResponse400
+  | agentccProviderCredentialsFetchModelsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type agentccProviderCredentialsFetchModelsResponse =
   | agentccProviderCredentialsFetchModelsResponseSuccess
@@ -15859,7 +15868,7 @@ export const getAgentccProviderCredentialsFetchModelsUrl = () => {
  * @summary Fetch available models from a provider's API.
  */
 export const agentccProviderCredentialsFetchModels = async (
-  agentccProviderCredentialApi: NonReadonly<AgentccProviderCredentialApi>,
+  providerModelsRequestApi: ProviderModelsRequestApi,
   options?: RequestInit,
 ): Promise<agentccProviderCredentialsFetchModelsResponse> => {
   return apiMutator<agentccProviderCredentialsFetchModelsResponse>(
@@ -15868,7 +15877,7 @@ export const agentccProviderCredentialsFetchModels = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(agentccProviderCredentialApi),
+      body: JSON.stringify(providerModelsRequestApi),
     },
   );
 };

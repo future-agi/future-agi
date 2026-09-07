@@ -7144,15 +7144,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/agentcc/provider-credentials/fetch_models/": {
       post: {
         operationId: "agentcc_provider-credentials_fetch_models",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/AgentccProviderCredential",
+          $ref: "#/definitions/ProviderModelsRequest",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/AgentccProviderCredential",
+          200: {
+            $ref: "#/definitions/ProviderModelsResponse",
+          },
+          400: {
+            $ref: "#/definitions/AgentccErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -65813,6 +65816,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ProviderModelsRequest: {
+      type: "object",
+      properties: {
+        provider_name: {
+          title: "Provider name",
+          type: "string",
+        },
+        base_url: {
+          title: "Base url",
+          type: "string",
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+        },
+        api_format: {
+          title: "Api format",
+          description:
+            "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
+          type: "string",
+        },
+      },
+    },
+    ProviderModelsResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ProviderModelsResult",
+        },
+      },
+    },
     ProviderStatusResponse: {
       required: ["status", "result"],
       type: "object",
@@ -87312,6 +87351,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ProviderModelsResult: {
+      required: ["models"],
+      type: "object",
+      properties: {
+        models: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        error: {
+          title: "Error",
+          description:
+            "Present when the provider could not be reached. The list is empty and the call still returns 200 so the caller can offer manual entry.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     ProviderStatusResult: {
       required: ["providers"],
       type: "object",
@@ -96936,9 +96995,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         models: {
+          description:
+            "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
           type: "array",
           items: {
-            type: "object",
+            type: "string",
+            minLength: 1,
           },
         },
         is_active: {
@@ -97053,9 +97115,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         models: {
+          description:
+            "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
           type: "array",
           items: {
-            type: "object",
+            type: "string",
+            minLength: 1,
           },
         },
         request_count: {
@@ -102476,9 +102541,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         models: {
+          description:
+            "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
           type: "array",
           items: {
-            type: "object",
+            type: "string",
+            minLength: 1,
           },
         },
         status: {

@@ -12855,15 +12855,21 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/AgentccProviderCredential"
+                            "$ref": "#/definitions/ProviderModelsRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AgentccProviderCredential"
+                            "$ref": "#/definitions/ProviderModelsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentccErrorResponse"
                         }
                     },
                     "default": {
@@ -12875,7 +12881,9 @@
                 },
                 "tags": [
                     "agentcc"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -82105,9 +82113,11 @@
                     "x-nullable": true
                 },
                 "models": {
+                    "description": "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "type": "string",
+                        "minLength": 1
                     }
                 },
                 "is_active": {
@@ -82401,9 +82411,11 @@
                     "type": "string"
                 },
                 "models": {
+                    "description": "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "type": "string",
+                        "minLength": 1
                     }
                 },
                 "status": {
@@ -82578,9 +82590,11 @@
                     "type": "string"
                 },
                 "models": {
+                    "description": "Model identifiers, e.g. 'gpt-4o'. ``models_list`` stores plain strings; declaring the child as a JSON object made every gateway config/providers response fail response-contract validation in the browser.",
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "type": "string",
+                        "minLength": 1
                     }
                 },
                 "request_count": {
@@ -83827,6 +83841,65 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "ProviderModelsRequest": {
+            "type": "object",
+            "properties": {
+                "provider_name": {
+                    "title": "Provider name",
+                    "type": "string"
+                },
+                "base_url": {
+                    "title": "Base url",
+                    "type": "string"
+                },
+                "api_key": {
+                    "title": "Api key",
+                    "type": "string"
+                },
+                "api_format": {
+                    "title": "Api format",
+                    "description": "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
+                    "type": "string"
+                }
+            }
+        },
+        "ProviderModelsResult": {
+            "required": [
+                "models"
+            ],
+            "type": "object",
+            "properties": {
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "description": "Present when the provider could not be reached. The list is empty and the call still returns 200 so the caller can offer manual entry.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "ProviderModelsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/ProviderModelsResult"
                 }
             }
         },
