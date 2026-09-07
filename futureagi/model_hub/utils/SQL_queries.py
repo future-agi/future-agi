@@ -81,7 +81,20 @@ MODEL_COST_CALCULATION_SQL = """
 """
 
 
-def build_sql_filters(filters=[], column_map={}):
+def _escape_like_wildcards(value):
+    """Escape ILIKE/LIKE metacharacters so they match literally.
+
+    Filter values are always bound as parameters (never interpolated into the
+    SQL text), so this is not about SQL injection -- it prevents a literal
+    ``%`` or ``_`` inside a user's value from being treated as a wildcard.
+    Callers pair the escaped value with ``ESCAPE '\\'`` on the clause.
+    """
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def build_sql_filters(filters=None, column_map=None):
+    filters = filters if filters is not None else []
+    column_map = column_map if column_map is not None else {}
     filter_clauses = []
     params = []
     for f in filters:
@@ -97,23 +110,23 @@ def build_sql_filters(filters=[], column_map={}):
 
         if data_type == "text":
             if op == "contains":
-                filter_clauses.append(f"{col} ILIKE %s")
-                params.append(f"%{values}%")
+                filter_clauses.append(f"{col} ILIKE %s ESCAPE '\\'")
+                params.append(f"%{_escape_like_wildcards(values)}%")
             elif op == "not_contains":
-                filter_clauses.append(f"{col} NOT ILIKE %s")
-                params.append(f"%{values}%")
+                filter_clauses.append(f"{col} NOT ILIKE %s ESCAPE '\\'")
+                params.append(f"%{_escape_like_wildcards(values)}%")
             elif op == "equals":
-                filter_clauses.append(f"{col} ILIKE %s")
-                params.append(values)
+                filter_clauses.append(f"{col} ILIKE %s ESCAPE '\\'")
+                params.append(_escape_like_wildcards(values))
             elif op == "not_equals":
-                filter_clauses.append(f"{col} NOT ILIKE %s")
-                params.append(values)
+                filter_clauses.append(f"{col} NOT ILIKE %s ESCAPE '\\'")
+                params.append(_escape_like_wildcards(values))
             elif op == "starts_with":
-                filter_clauses.append(f"{col} ILIKE %s")
-                params.append(f"{values}%")
+                filter_clauses.append(f"{col} ILIKE %s ESCAPE '\\'")
+                params.append(f"{_escape_like_wildcards(values)}%")
             elif op == "ends_with":
-                filter_clauses.append(f"{col} ILIKE %s")
-                params.append(f"%{values}")
+                filter_clauses.append(f"{col} ILIKE %s ESCAPE '\\'")
+                params.append(f"%{_escape_like_wildcards(values)}")
             elif op == "in":
                 placeholders = ", ".join(["%s"] * len(values))
                 filter_clauses.append(f"{col} IN ({placeholders})")
@@ -122,6 +135,10 @@ def build_sql_filters(filters=[], column_map={}):
                 placeholders = ", ".join(["%s"] * len(values))
                 filter_clauses.append(f"{col} NOT IN ({placeholders})")
                 params.extend(values)
+            else:
+                raise ValueError(
+                    f"Unsupported filter operation '{op}' for text column '{col}'"
+                )
 
         elif data_type == "number":
             if op == "between":
@@ -148,6 +165,10 @@ def build_sql_filters(filters=[], column_map={}):
             elif op == "less_than_or_equal":
                 filter_clauses.append(f"{col} <= %s")
                 params.append(values)
+            else:
+                raise ValueError(
+                    f"Unsupported filter operation '{op}' for number column '{col}'"
+                )
 
         elif data_type == "datetime":
             if isinstance(values, list) and len(values) > 1:
@@ -155,6 +176,11 @@ def build_sql_filters(filters=[], column_map={}):
             sql, dt_params = build_datetime_filter_sql(values, op, col)
             filter_clauses.append(sql)
             params.extend(dt_params)
+
+        else:
+            raise ValueError(
+                f"Unsupported filter type '{data_type}' for column '{col}'"
+            )
 
     sql_query = ""
     if filter_clauses:
