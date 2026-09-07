@@ -4,13 +4,14 @@ import json
 import uuid
 
 from drf_yasg import openapi
-from drf_yasg.utils import swagger_auto_schema
+from drf_yasg.utils import no_body, swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from simulate.harness_templates import list_templates
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
     HarnessJobAdjustmentSerializer,
@@ -21,6 +22,8 @@ from simulate.serializers.harness_job import (
     HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
+    HarnessTemplateInstantiationSerializer,
+    HarnessTemplateSerializer,
 )
 from simulate.services.harness_credentials import (
     credential_file_ref,
@@ -267,3 +270,23 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def health(self, request):
         return Response(get_harness_provider().health())
+
+    @swagger_auto_schema(responses={200: HarnessTemplateSerializer(many=True)})
+    @action(detail=False, methods=["get"])
+    def templates(self, request):
+        """List curated seed agents the create UI can start an RL environment from."""
+        return Response(list_templates())
+
+    @swagger_auto_schema(
+        request_body=no_body,
+        responses={201: HarnessTemplateInstantiationSerializer},
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path=r"templates/(?P<slug>[-\w]+)/instantiate",
+    )
+    def instantiate_template(self, request, slug=None):
+        """Pack a seed template into a caller-scoped source archive and return the
+        descriptor plus create-form defaults for the normal preflight/run flow."""
+        return get_harness_provider().instantiate_template(request, slug)

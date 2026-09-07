@@ -28,7 +28,9 @@ import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
 import {
   createHarnessJob,
+  instantiateHarnessTemplate,
   listHarnessJobs,
+  listHarnessTemplates,
   preflightHarnessJob,
   storeHarnessSecretValues,
   uploadHarnessSecretFile,
@@ -149,6 +151,82 @@ Section.propTypes = {
   children: PropTypes.node,
 };
 
+
+function TemplateTile({ template, busy, disabled, onSelect }) {
+  return (
+    <ButtonBase
+      onClick={onSelect}
+      disabled={disabled}
+      sx={(theme) => ({
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        gap: 0.75,
+        p: 1.75,
+        height: "100%",
+        borderRadius: 1,
+        textAlign: "left",
+        border: 1,
+        borderColor: "divider",
+        opacity: disabled && !busy ? 0.6 : 1,
+        transition: theme.transitions.create([
+          "border-color",
+          "background-color",
+        ]),
+        "&:hover": { borderColor: "accent.brand", bgcolor: "action.hover" },
+      })}
+    >
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="center"
+        sx={{ width: "100%" }}
+      >
+        {busy ? (
+          <CircularProgress size={20} sx={{ flexShrink: 0 }} />
+        ) : (
+          <Iconify
+            icon={template.icon}
+            width={22}
+            sx={{ flexShrink: 0, color: "accent.brand" }}
+          />
+        )}
+        <Typography variant="subtitle2" noWrap sx={{ flex: 1 }}>
+          {template.display_name}
+        </Typography>
+      </Stack>
+      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+        <Chip size="small" variant="outlined" label={template.vertical} />
+        <Chip size="small" variant="outlined" label={template.channel} />
+        <Chip size="small" variant="outlined" label={template.direction} />
+      </Stack>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          display: "-webkit-box",
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
+        {template.description}
+      </Typography>
+      <Typography variant="caption" color="text.disabled">
+        {template.phase_count} phases · {template.tool_count} tools
+      </Typography>
+    </ButtonBase>
+  );
+}
+
+TemplateTile.propTypes = {
+  template: PropTypes.object.isRequired,
+  busy: PropTypes.bool,
+  disabled: PropTypes.bool,
+  onSelect: PropTypes.func.isRequired,
+};
+
 export default function HarnessCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -161,6 +239,17 @@ export default function HarnessCreate() {
   const jobs = useMemo(
     () => (Array.isArray(listData) ? listData : []),
     [listData],
+  );
+
+  const { data: templateData } = useQuery({
+    queryKey: ["harness-templates"],
+    queryFn: listHarnessTemplates,
+    meta: { errorHandled: true },
+    staleTime: Infinity,
+  });
+  const templates = useMemo(
+    () => (Array.isArray(templateData) ? templateData : []),
+    [templateData],
   );
 
   const [sourceMode, setSourceMode] = useState("upload");
@@ -195,6 +284,7 @@ export default function HarnessCreate() {
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
+  const [instantiatingSlug, setInstantiatingSlug] = useState(null);
 
   // Switching source invalidates a preflight taken against the other one.
   const selectSource = (mode) => {
@@ -447,6 +537,31 @@ export default function HarnessCreate() {
     }
   };
 
+  // A template lands exactly like an uploaded folder: the runner reads it from
+  // the same source archive, so the create/preflight/run flow is unchanged.
+  const applyTemplate = async (slug) => {
+    setInstantiatingSlug(slug);
+    setError("");
+    try {
+      const result = await instantiateHarnessTemplate(slug);
+      setSourceMode("upload");
+      setUploadedSource({
+        source_id: result.source_id,
+        name: result.name,
+        file_count: result.file_count,
+        total_bytes: result.total_bytes,
+      });
+      setScenarioCount(result.scenario_count);
+      setConfigurationValues(result.config || {});
+      setPreflight(null);
+      setPreflightDirty(false);
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setInstantiatingSlug(null);
+    }
+  };
+
   const requirements = preflight?.credentials?.requirements || [];
   const credentialChoices = preflight?.credentials?.credential_choices || [];
   const choiceMembers = new Set(
@@ -666,6 +781,30 @@ export default function HarnessCreate() {
             }}
           >
             <Stack spacing={2}>
+              {templates.length > 0 && (
+                <Section
+                  title="Start from a template"
+                  description="Curated LiveKit agents you can stand up as an RL environment in one click — then add your keys and run."
+                >
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gap: 1.5,
+                      gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                    }}
+                  >
+                    {templates.map((template) => (
+                      <TemplateTile
+                        key={template.slug}
+                        template={template}
+                        busy={instantiatingSlug === template.slug}
+                        disabled={Boolean(instantiatingSlug)}
+                        onSelect={() => applyTemplate(template.slug)}
+                      />
+                    ))}
+                  </Box>
+                </Section>
+              )}
               <Section
                 title="Agent source"
                 description="Where ALK should read the agent from."

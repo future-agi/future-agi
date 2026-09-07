@@ -50,6 +50,42 @@ def _organization(request):
     )
 
 
+def _template_source_files(slug: str):
+    """Wrap a template's vendored files as in-memory uploads accepted by either
+    provider's source store: daytona's ``store_source_archive`` reads ``.read()``
+    while the sandbox client reads ``.file``/``.content_type``."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from simulate.harness_templates import iter_template_files
+
+    files: list[SimpleUploadedFile] = []
+    paths: list[str] = []
+    for relative, content in iter_template_files(slug):
+        files.append(
+            SimpleUploadedFile(
+                relative.rsplit("/", 1)[-1],
+                content,
+                content_type="application/octet-stream",
+            )
+        )
+        paths.append(relative)
+    return files, paths
+
+
+def _template_instantiation(
+    template: dict[str, Any], source: dict[str, Any]
+) -> dict[str, Any]:
+    """Shape the instantiate response: the stored source descriptor plus the
+    template's create-form defaults, so the UI can feed it straight into the
+    normal upload/preflight/run flow."""
+    return {
+        **source,
+        "template": template,
+        "scenario_count": template["default_scenario_count"],
+        "config": {},
+    }
+
+
 def _workspace(request):
     workspace = getattr(request, "workspace", None)
     if workspace is not None:
@@ -652,6 +688,34 @@ class DaytonaHarnessProvider:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response(result, status=status.HTTP_201_CREATED)
 
+    def instantiate_template(self, request, slug) -> Response:
+        from simulate.harness_templates import get_template
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_gateway import store_source_archive
+
+        template = get_template(slug)
+        if template is None:
+            return Response(
+                {"detail": "unknown template"}, status=status.HTTP_404_NOT_FOUND
+            )
+        organization = _organization(request)
+        if organization is None:
+            return Response(
+                {"detail": "Organization not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        files, paths = _template_source_files(slug)
+        try:
+            result = store_source_archive(
+                organization, files, paths, template["display_name"]
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(
+            _template_instantiation(template, result),
+            status=status.HTTP_201_CREATED,
+        )
+
     def health(self) -> dict[str, Any]:
         return {
             "configured": bool(
@@ -863,6 +927,34 @@ class SandboxHarnessProvider:
                 {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
         return Response(result, status=status.HTTP_201_CREATED)
+
+    def instantiate_template(self, request, slug) -> Response:
+        from simulate.harness_templates import get_template
+        from simulate.services.harness_sandbox import (
+            HarnessSandboxRejected,
+            HarnessSandboxUnavailable,
+        )
+
+        template = get_template(slug)
+        if template is None:
+            return Response(
+                {"detail": "unknown template"}, status=status.HTTP_404_NOT_FOUND
+            )
+        files, paths = _template_source_files(slug)
+        try:
+            result = self._client().upload_source(
+                files, paths, template["display_name"]
+            )
+        except HarnessSandboxRejected as exc:
+            return Response({"detail": str(exc)}, status=exc.status_code)
+        except HarnessSandboxUnavailable as exc:
+            return Response(
+                {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+        return Response(
+            _template_instantiation(template, result),
+            status=status.HTTP_201_CREATED,
+        )
 
     def health(self) -> dict[str, Any]:
         from simulate.services.harness_sandbox import HarnessSandboxUnavailable

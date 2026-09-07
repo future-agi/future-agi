@@ -1,0 +1,8 @@
+# Single-service runtime for the FutureAGI RL-environment seed agent.
+# The harness reads this to derive how to run the worker; provider keys and
+# LIVEKIT_* are injected from the harness environment, never committed here.
+name: insurance_fnol
+services:
+  agent:
+    build: .
+    restart: unless-stopped
