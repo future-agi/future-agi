@@ -8,6 +8,11 @@ from rest_framework.viewsets import ModelViewSet
 from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.serializers.contracts import (
+    AgentccErrorResponseSerializer,
+    ProviderModelsRequestSerializer,
+    ProviderModelsResponseSerializer,
+)
 from agentcc.serializers.provider_credential import (
     AgentccProviderCredentialCreateSerializer,
     AgentccProviderCredentialSerializer,
@@ -15,6 +20,7 @@ from agentcc.serializers.provider_credential import (
 )
 from agentcc.services.config_push import push_org_config
 from agentcc.services.url_safety import build_ssrf_safe_session, ensure_public_http_url
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -23,6 +29,45 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+
+_FETCH_MODELS_TIMEOUT_SECONDS = 15
+
+
+def safe_fetch_failure_reason(exc):
+    """Describe a model-listing failure without echoing the exception.
+
+    ``str(exc)`` from requests can carry the base URL or a key fragment, so only
+    the exception type and the HTTP status — neither of which leaks a secret —
+    reach the caller. The full detail is logged server-side instead.
+    """
+    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+
+    if status_code in (401, 403):
+        return (
+            f"The provider rejected the credential (HTTP {status_code}). The saved "
+            "API key may be invalid, expired, or for a different account."
+        )
+    if status_code == 404:
+        return (
+            "The provider has no model listing at that endpoint (HTTP 404). "
+            "Check the base URL."
+        )
+    if status_code == 429:
+        return "The provider rate-limited this request (HTTP 429). Try again shortly."
+    if status_code is not None and 500 <= status_code < 600:
+        return f"The provider returned HTTP {status_code}. Try again shortly."
+
+    # requests' ConnectionError/Timeout are siblings of the builtins, not
+    # subclasses, so they land here rather than in the branches above.
+    if isinstance(exc, http_requests.exceptions.Timeout):
+        return f"The provider did not respond within {_FETCH_MODELS_TIMEOUT_SECONDS}s."
+    if isinstance(exc, http_requests.exceptions.ConnectionError):
+        return (
+            "Could not connect to the provider. Check that this server has "
+            "outbound network access to it."
+        )
+
+    return "Failed to fetch models from provider."
 
 
 class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -196,6 +241,14 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             logger.exception("provider_credential_rotate_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=ProviderModelsRequestSerializer,
+        responses={
+            200: ProviderModelsResponseSerializer,
+            400: AgentccErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["post"])
     def fetch_models(self, request):
         """Fetch available models from a provider's API.
@@ -268,9 +321,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 base_url=base_url,
                 error=str(e),
             )
-            # Never expose raw exception message — may contain credentials/URLs
+            # Never expose the raw exception — it may contain credentials/URLs.
+            # A classified reason is safe and saves the caller a log dive.
             return self._gm.success_response(
-                {"models": [], "error": "Failed to fetch models from provider"}
+                {"models": [], "error": safe_fetch_failure_reason(e)}
             )
 
     def _fetch_models_from_provider(self, provider_name, base_url, api_key, api_format):
@@ -282,7 +336,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         ``provider_name`` first; falls back to ``api_format`` for custom /
         unknown providers.
         """
-        timeout = 15
+        timeout = _FETCH_MODELS_TIMEOUT_SECONDS
 
         # Validate user-supplied base_url and use safe session to prevent SSRF
         # (including DNS rebinding).

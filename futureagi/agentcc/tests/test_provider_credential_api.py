@@ -1,6 +1,8 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import requests as http_requests
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
@@ -8,6 +10,7 @@ from accounts.models.workspace import Workspace, WorkspaceMembership
 from conftest import WorkspaceAwareAPIClient
 from integrations.services.credentials import CredentialManager
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.views.provider_credential import safe_fetch_failure_reason
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 
@@ -365,3 +368,54 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         assert CredentialManager.decrypt(cred.encrypted_credentials) == {
             "api_key": raw_api_key
         }
+
+
+class TestSafeFetchFailureReason:
+    """The model-listing failure text is user-facing, so it must stay specific
+    enough to act on and free of anything the exception may have captured."""
+
+    def test_classifies_provider_rejection(self):
+        exc = http_requests.exceptions.HTTPError(
+            "401 Client Error for url: https://api.openai.com/v1/models"
+        )
+        exc.response = SimpleNamespace(status_code=401)
+
+        reason = safe_fetch_failure_reason(exc)
+
+        assert "HTTP 401" in reason
+        assert "api key may be invalid" in reason.lower()
+
+    def test_classifies_transport_failures(self):
+        assert "did not respond within 15s" in safe_fetch_failure_reason(
+            http_requests.exceptions.Timeout("timed out")
+        )
+        assert "outbound network access" in safe_fetch_failure_reason(
+            http_requests.exceptions.ConnectionError("connection refused")
+        )
+
+    def test_classifies_upstream_status_codes(self):
+        for status_code, expected in ((404, "base URL"), (429, "rate-limited")):
+            exc = http_requests.exceptions.HTTPError("boom")
+            exc.response = SimpleNamespace(status_code=status_code)
+            assert expected in safe_fetch_failure_reason(exc)
+
+        server_error = http_requests.exceptions.HTTPError("boom")
+        server_error.response = SimpleNamespace(status_code=503)
+        assert "HTTP 503" in safe_fetch_failure_reason(server_error)
+
+    def test_never_echoes_the_exception_text(self):
+        exc = http_requests.exceptions.HTTPError(
+            "401 for url: https://api.openai.com/v1/models?key=sk-super-secret"
+        )
+        exc.response = SimpleNamespace(status_code=401)
+
+        reason = safe_fetch_failure_reason(exc)
+
+        assert "sk-super-secret" not in reason
+        assert "api.openai.com" not in reason
+
+    def test_falls_back_for_an_unrecognised_failure(self):
+        assert (
+            safe_fetch_failure_reason(ValueError("weird"))
+            == "Failed to fetch models from provider."
+        )
