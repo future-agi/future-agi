@@ -260,15 +260,11 @@ export function convertNewToOld(newFilters, { rowType } = {}) {
 }
 
 // ── form filter → new panel format ──
-// One form row → one panel row. Only ops with a natural multi-value shape
-// (range, list, or string equals/not_equals just rewritten to in/not_in via
-// HYDRATE_STRING_OP) collapse same-(field, op) rows into one multi-value
-// panel row — grouping any other op (e.g. not_contains) would let the chip
-// + panel UI fold "exclude A AND exclude B" into a single "[A, B]" row.
+// Keep each AND clause separate; list values belong to their own row and
+// separate range clauses must never overwrite one another on edit-open.
 // eslint-disable-next-line react-refresh/only-export-components
 export function convertOldToNew(oldFilters, { rowType } = {}) {
   const isVoiceCalls = String(rowType || "").toLowerCase() === "voicecalls";
-  const groups = new Map();
   const result = [];
   (oldFilters || []).forEach((f) => {
     if (!f) return;
@@ -302,51 +298,22 @@ export function convertOldToNew(oldFilters, { rowType } = {}) {
       op = HYDRATE_STRING_OP[op];
     }
 
-    const isMultiValueOp =
-      RANGE_OPS.has(op) || LIST_OPS.has(op) || Boolean(hydrated);
-
-    let entry;
-    if (isMultiValueOp) {
-      const key = `${registryId || "legacy"}|${field}|${op}|${category}`;
-      entry = groups.get(key);
-      if (!entry) {
-        entry = {
-          field,
-          ...(registryId ? { registryId } : {}),
-          fieldLabel: voiceField?.label || f.fieldLabel || field,
-          fieldType,
-          fieldCategory: category,
-          apiColType:
-            voiceField?.apiColType ||
-            resolveApiColType(
-              f.apiColType || f?.filterConfig?.colType,
-              category,
-            ),
-          operator: op,
-          value: [],
-          valueTypes: [],
-        };
-        groups.set(key, entry);
-        result.push(entry);
-      }
-    } else {
-      entry = {
-        field,
-        ...(registryId ? { registryId } : {}),
-        fieldLabel: voiceField?.label || f.fieldLabel || field,
-        fieldType,
-        fieldCategory: category,
-        // Preserved so the panel re-renders the right chip on edit-open.
-        apiColType: resolveApiColType(
-          voiceField?.apiColType || f.apiColType || f?.filterConfig?.colType,
-          category,
-        ),
-        operator: op,
-        value: [],
-        valueTypes: [],
-      };
-      result.push(entry);
-    }
+    const entry = {
+      field,
+      ...(registryId ? { registryId } : {}),
+      fieldLabel: voiceField?.label || f.fieldLabel || field,
+      fieldType,
+      fieldCategory: category,
+      // Preserved so the panel re-renders the right chip on edit-open.
+      apiColType: resolveApiColType(
+        voiceField?.apiColType || f.apiColType || f?.filterConfig?.colType,
+        category,
+      ),
+      operator: op,
+      value: [],
+      valueTypes: [],
+    };
+    result.push(entry);
 
     if (NO_VALUE_OPS.has(op)) return;
 

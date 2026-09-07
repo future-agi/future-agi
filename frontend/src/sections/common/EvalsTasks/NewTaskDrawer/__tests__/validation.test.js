@@ -4,6 +4,42 @@ import { getNewTaskFilters, NewTaskValidationSchema } from "../validation";
 import { formatTaskFilters } from "../../common";
 
 describe("eval task filter payload contract", () => {
+  it("keeps a hydrated legacy span restriction on save", () => {
+    const rows = formatTaskFilters({ span_id: ["span-a", "span-b"] });
+    expect(getNewTaskFilters({ filters: rows }, "project", true)).toEqual({
+      filters: { project_id: "project", span_id: ["span-a", "span-b"] },
+      attributeFilters: [],
+    });
+  });
+
+  it.each(["SYSTEM_METRIC", "SPAN_ATTRIBUTE"])(
+    "does not turn a canonical %s span_id exclusion into a positive sibling",
+    (source) => {
+      const row = {
+        property: "span_id",
+        propertyId: "span_id",
+        apiColType: source,
+        filterConfig: {
+          filterType: "text",
+          filterOp: "not_in",
+          filterValue: ["span-a"],
+        },
+      };
+      expect(getNewTaskFilters({ filters: [row] }, "project", true)).toEqual({
+        filters: { project_id: "project" },
+        attributeFilters: [{
+          column_id: "span_id",
+          filter_config: {
+            col_type: source,
+            filter_type: "text",
+            filter_op: "not_in",
+            filter_value: ["span-a"],
+          },
+        }],
+      });
+    },
+  );
+
   it("hydrates property_id into registryId without replacing propertyId", () => {
     expect(
       formatTaskFilters({

@@ -261,7 +261,7 @@ const SpanGrid = React.forwardRef(
         headerTextColor: theme.palette.text.primary,
         rowHoverColor: "rgba(120,87,252,0.04)",
       }),
-      [theme],
+      [theme.palette.text.primary, theme.typography.fontWeightMedium],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const { observeId } = useParams();

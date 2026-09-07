@@ -47,7 +47,18 @@ export const extractAttributeFilters = (filters) => {
 const extractSiblingFilters = (filters) => {
   const out = {};
   (filters || []).forEach((f) => {
-    const beKey = TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property];
+    // Preserve old saved span links without retyping canonical or raw rows.
+    const beKey =
+      TOP_LEVEL_SIBLING_KEY_BY_PROPERTY[f?.property] ||
+      (f?.property === "span_id" &&
+      !f.propertyId &&
+      !f.apiColType &&
+      !f.filterConfig?.colType &&
+      !f.fieldCategory &&
+      !f.registryId &&
+      !f.property_id
+        ? "span_id"
+        : undefined);
     if (!beKey) return;
     const val = f?.filterConfig?.filterValue;
     const vals = Array.isArray(val)

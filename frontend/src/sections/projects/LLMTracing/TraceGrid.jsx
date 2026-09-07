@@ -127,7 +127,7 @@ const TraceGrid = React.forwardRef(
         headerTextColor: theme.palette.text.primary,
         rowHoverColor: "rgba(120,87,252,0.04)",
       }),
-      [theme],
+      [theme.palette.text.primary],
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const [dateInterval] = useUrlState("dateInterval", "day");
