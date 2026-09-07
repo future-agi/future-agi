@@ -63,6 +63,8 @@ import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
+import CustomTagInput from "./CustomTagInput";
+import { withPendingTag } from "./tagUtils";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
@@ -178,6 +180,7 @@ const EvalDetailPage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState(
@@ -807,6 +810,7 @@ const EvalDetailPage = () => {
           ? { type: "custom", custom: "" }
           : { type: summaryType };
       const tools = build_tools_payload(connectorIds);
+      const tagsToSave = withPendingTag(tags, customTagInput);
       // Update the template first
       const payload = {
         instructions:
@@ -820,7 +824,7 @@ const EvalDetailPage = () => {
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
         multi_choice: multiChoice,
         description: description || null,
-        tags,
+        tags: tagsToSave,
         check_internet: checkInternet,
         mode: evalType === "agent" ? agentMode : undefined,
         tools: evalType === "agent" ? tools : undefined,
@@ -910,6 +914,7 @@ const EvalDetailPage = () => {
     multiChoice,
     description,
     tags,
+    customTagInput,
     checkInternet,
     agentMode,
     summaryType,
@@ -1885,6 +1890,23 @@ const EvalDetailPage = () => {
                         );
                       })()}
                     </Box>
+                    {!isSystemEval && (
+                      <CustomTagInput
+                        value={customTagInput}
+                        onChange={(next) => {
+                          setCustomTagInput(next);
+                          // Save is gated on isDirty, so typing has to count or
+                          // an uncommitted tag could never be saved.
+                          markDirty();
+                        }}
+                        onAdd={(newTag) => {
+                          setTags((prev) =>
+                            prev.includes(newTag) ? prev : [...prev, newTag],
+                          );
+                          markDirty();
+                        }}
+                      />
+                    )}
                   </Box>
                 )}
               </Box>
