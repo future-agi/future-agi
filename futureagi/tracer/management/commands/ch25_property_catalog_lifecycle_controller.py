@@ -14,7 +14,7 @@ import signal
 import tempfile
 import threading
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,6 +31,9 @@ from tracer.services.clickhouse.v2.property_catalog import dev_runtime
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     canonical_json,
     canonical_uuid,
+)
+from tracer.services.clickhouse.v2.property_catalog.controller_health import (
+    ControllerHealth,
 )
 from tracer.services.clickhouse.v2.property_catalog.dev_rollout import (
     DEV_INITIAL_BACKFILL_MAX_WALL_MS,
@@ -67,7 +70,7 @@ logger = logging.getLogger(__name__)
 _MAX_PROJECTS_PER_WORKSPACE = 256
 _WORKSPACE_SCOPE_MODES = frozenset({"all", "allowlist"})
 _HEALTH_FORMAT = "futureagi.property-catalog-lifecycle-health"
-_HEALTH_VERSION = 1
+_HEALTH_VERSION = 2
 
 
 class ProductionLifecycleControllerError(RuntimeError):
@@ -221,6 +224,7 @@ class Command(BaseCommand):
         status_only = bool(options.get("status_only"))
         initial_backfill_wall_ms = options.get("initial_backfill_wall_ms")
         stop = threading.Event()
+        health_lifetime = ExitStack()
         previous_handlers = _install_signal_handlers(stop)
         try:
             config = controller_config(settings_object=settings)
@@ -230,8 +234,32 @@ class Command(BaseCommand):
                 bootstrap_enabled=config.bootstrap_enabled,
                 initial_backfill_wall_ms=initial_backfill_wall_ms,
             )
+            health = health_lifetime.enter_context(
+                ControllerHealth(
+                    lambda **snapshot: _write_health(config.health_file, **snapshot),
+                    stop=stop,
+                )
+            )
+            # Cover discovery and each workspace's admitted reconcile wall,
+            # including bounded teardown. Do not use the shorter source wall.
+            operation_timeout = (
+                max(
+                    config.scheduled_reconcile_wall_ms,
+                    initial_backfill_wall_ms or 0,
+                )
+                / 1000
+                + 120
+            )
+
+            def report_error(workspace_id: str, exc: Exception) -> None:
+                health.set_ready(False)
+                self.stderr.write(
+                    self.style.ERROR(f"workspace {workspace_id} failed safely: {exc}")
+                )
+
             while not stop.is_set():
                 observed_at = datetime.now(UTC)
+                health.progress("discovering", timeout_seconds=operation_timeout)
                 try:
                     scopes, skipped = discover_workspace_scopes(
                         config.workspace_ids
@@ -247,19 +275,21 @@ class Command(BaseCommand):
                         status_only=status_only,
                         initial_backfill_wall_ms=initial_backfill_wall_ms,
                         stop=stop,
-                        on_error=lambda workspace_id, exc: self.stderr.write(
-                            self.style.ERROR(
-                                f"workspace {workspace_id} failed safely: {exc}"
-                            )
+                        on_progress=lambda scope: health.progress(
+                            "reconciling",
+                            timeout_seconds=operation_timeout,
+                            detail={"workspace_id": scope.workspace_id},
                         ),
+                        on_error=report_error,
                     )
                 except Exception as exc:
-                    _write_health(
-                        config.health_file,
-                        healthy=False,
-                        observed_at=observed_at,
+                    health.progress(
+                        "retrying",
+                        timeout_seconds=config.failure_backoff_seconds + 120,
+                        ready=False,
                         detail={"cycle_error": str(exc)[:2048]},
                     )
+                    health.publish()
                     if once:
                         raise CommandError(str(exc)) from exc
                     logger.exception(
@@ -268,13 +298,13 @@ class Command(BaseCommand):
                     stop.wait(config.failure_backoff_seconds)
                     continue
 
-                healthy = not result.failures
-                _write_health(
-                    config.health_file,
-                    healthy=healthy,
-                    observed_at=observed_at,
+                health.progress(
+                    "idle",
+                    timeout_seconds=config.poll_seconds + 120,
+                    ready=not result.stopped and not result.failures,
                     detail=result.as_dict(summary=True),
                 )
+                health.publish()
                 if once:
                     if result.failures:
                         failed = ", ".join(sorted(result.failures))
@@ -288,7 +318,10 @@ class Command(BaseCommand):
         except (ProductionLifecycleControllerError, DevRolloutError, ValueError) as exc:
             raise CommandError(str(exc)) from exc
         finally:
-            _restore_signal_handlers(previous_handlers)
+            try:
+                health_lifetime.close()
+            finally:
+                _restore_signal_handlers(previous_handlers)
         return None
 
 
@@ -541,6 +574,7 @@ def run_cycle(
     stop: threading.Event,
     on_error: Callable[[str, Exception], None],
     initial_backfill_wall_ms: int | None = None,
+    on_progress: Callable[[WorkspaceScope], None] | None = None,
 ) -> CycleResult:
     authorized_workspaces = tuple(
         sorted((*skipped, *(scope.workspace_id for scope in scopes)))
@@ -562,6 +596,8 @@ def run_cycle(
     for scope in scopes:
         if stop.is_set():
             break
+        if on_progress is not None:
+            on_progress(scope)
         try:
             run_workspace(
                 scope=scope,
@@ -842,6 +878,10 @@ def _write_health(
     healthy: bool,
     observed_at: datetime,
     detail: Mapping[str, Any],
+    live: bool | None = None,
+    ready: bool | None = None,
+    phase: str = "idle",
+    progress_at: datetime | None = None,
 ) -> None:
     raw = (
         canonical_json(
@@ -849,6 +889,10 @@ def _write_health(
                 "detail": dict(detail),
                 "format": _HEALTH_FORMAT,
                 "healthy": healthy,
+                "live": healthy if live is None else live,
+                "ready": healthy if ready is None else ready,
+                "phase": phase,
+                "progress_at": iso_z(progress_at or observed_at),
                 "observed_at": iso_z(observed_at),
                 "version": _HEALTH_VERSION,
             },
