@@ -302,7 +302,7 @@ describe("SessionGrid cursor continuation", () => {
           rows: Array.from({ length: 25 }, (_, index) => row(index)),
           hasMore: true,
           nextCursor: "page-2",
-          totalRows: 25,
+          totalRows: 26,
           lowerBound: true,
         }),
       )
@@ -322,7 +322,9 @@ describe("SessionGrid cursor continuation", () => {
     act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
     expect(firstPage.api.refreshServerSide).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeDisabled();
 
     const secondPage = makeParams({ startRow: 25 });
     gridState.api = secondPage.api;
@@ -336,7 +338,9 @@ describe("SessionGrid cursor continuation", () => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(gridState.props.loading).toBe(false);
     });
-    expect(screen.getByRole("button", { name: "page 2" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeDisabled();
 
     secondPage.success.mockImplementation(() => {});
     secondPage.api.setPaintedRows(false);
