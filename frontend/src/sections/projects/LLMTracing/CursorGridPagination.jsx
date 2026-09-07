@@ -80,7 +80,7 @@ export default function CursorGridPagination({
           3px gutters, 4px radius, and the Back/Next text labels. Only the item
           *set* is ours — a window plus ellipses — because a cursor list has no
           total to enumerate. */}
-      <Stack direction="row" alignItems="center">
+      <Stack direction="row" alignItems="center" sx={{ userSelect: "none" }}>
         <PaginationItem
           type="previous"
           aria-label="Previous page"
@@ -114,7 +114,11 @@ export default function CursorGridPagination({
                     disabled
                     variant="outlined"
                     shape="rounded"
-                    sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+                    sx={{
+                      borderRadius: "4px",
+                      bgcolor: "background.paper",
+                      userSelect: "none",
+                    }}
                   />
                 </Box>
               ) : null}
@@ -146,7 +150,11 @@ export default function CursorGridPagination({
               disabled
               variant="outlined"
               shape="rounded"
-              sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+              sx={{
+                borderRadius: "4px",
+                bgcolor: "background.paper",
+                userSelect: "none",
+              }}
             />
           </Box>
         ) : null}
