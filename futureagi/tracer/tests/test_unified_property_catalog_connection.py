@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -8,6 +9,7 @@ from tfc.settings.settings import (
     PROPERTY_CATALOG_DEV_READ_ACKNOWLEDGEMENT,
     PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT,
     property_catalog_read_workspace_allowlist,
+    property_catalog_reads_all_production_workspaces,
 )
 from tracer.services.clickhouse.v2.attribute_catalog_connection import (
     _validate_catalog_query,
@@ -16,6 +18,8 @@ from tracer.services.clickhouse.v2.property_catalog.connection import (
     PROPERTY_CATALOG_TABLES,
     PropertyCatalogConnectionConfig,
     PropertyCatalogReadExecutor,
+    get_property_catalog_read_client,
+    reset_property_catalog_read_client,
     validate_property_catalog_database,
     validate_property_catalog_read_admission,
 )
@@ -52,6 +56,7 @@ def _read_settings(**overrides):
         "PROPERTY_CATALOG_CH_PASSWORD": "not-logged",
         "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST": ("workspace-1",),
         "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": (),
+        "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE": "allowlist",
         "CLICKHOUSE_V2": {"CH25_USER": "source_v2"},
         "CLICKHOUSE": {"CH_USERNAME": "source_v1"},
     }
@@ -92,6 +97,26 @@ class FakeClient:
     def execute_read(self, query, params, *, timeout_ms, settings):
         self.calls.append((query, params, timeout_ms, settings))
         return [("ok",)], [("status", "String")], None
+
+
+def test_property_catalog_client_keeps_server_readonly_and_sends_bounded_settings(
+    monkeypatch,
+):
+    from tracer.services.clickhouse.v2.property_catalog import connection
+
+    client_factory = Mock()
+    monkeypatch.setattr(connection, "ClickHouseClient", client_factory)
+    reset_property_catalog_read_client()
+    try:
+        get_property_catalog_read_client(CONFIG)
+    finally:
+        reset_property_catalog_read_client()
+
+    assert client_factory.call_args.kwargs["server_enforced_readonly"] is True
+    assert (
+        client_factory.call_args.kwargs["allow_query_settings_with_server_readonly"]
+        is True
+    )
 
 
 def test_property_catalog_table_allowlist_is_exact():
@@ -171,6 +196,43 @@ def test_property_catalog_connection_accepts_maximum_production_allowlist():
     assert PropertyCatalogConnectionConfig.from_settings(source).database == (
         "property_catalog"
     )
+
+
+def test_property_catalog_connection_accepts_global_production_workspace_scope():
+    source = _prod_settings(
+        PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE="all",
+        PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST=(),
+        PROPERTY_CATALOG_READ_DEPLOYMENT="prod",
+    )
+
+    assert PropertyCatalogConnectionConfig.from_settings(source).database == (
+        "property_catalog"
+    )
+    assert property_catalog_reads_all_production_workspaces(source) is True
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {
+            "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE": "all",
+            "PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST": ("workspace-1",),
+        },
+        {"PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE": "invalid"},
+    ),
+)
+def test_property_catalog_connection_rejects_invalid_global_production_scope(
+    overrides,
+):
+    with pytest.raises(ValueError):
+        PropertyCatalogConnectionConfig.from_settings(_prod_settings(**overrides))
+
+
+def test_property_catalog_connection_rejects_global_scope_in_dev():
+    with pytest.raises(ValueError, match="production-only"):
+        PropertyCatalogConnectionConfig.from_settings(
+            _read_settings(PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE="all")
+        )
 
 
 def test_property_catalog_read_workspace_allowlist_is_deployment_bound():
@@ -432,8 +494,8 @@ def test_property_catalog_executor_uses_one_shrinking_wall():
         "SELECT status FROM `property_catalog_dev_clean`.property_catalog_activations"
     )
 
-    executor.execute(query, {}, timeout_ms=2_000, settings={"max_result_rows": 1})
-    executor.execute(query, {}, timeout_ms=2_000, settings={"max_result_rows": 1})
+    executor.execute(query, {}, timeout_ms=10_000, settings={"max_result_rows": 1})
+    executor.execute(query, {}, timeout_ms=10_000, settings={"max_result_rows": 1})
 
     assert client.calls[1][2] < client.calls[0][2]
 

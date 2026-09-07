@@ -169,16 +169,26 @@ def _with_op(op, value):
 class TestUnicodeSafeStringEquality:
     """Text equality/IN must preserve the lowerUTF8 public contract."""
 
-    def test_equals_does_not_apply_ascii_only_value_bloom(self):
+    def test_equals_adds_exhaustive_legacy_value_bloom(self):
         sql, params = _v2_sql(STR_EQ_FILTER)
         assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
-        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
+        assert {
+            value
+            for key, value in params.items()
+            if key.startswith("latest_filter_legacy_index_")
+        } == {"checkout flow", "chec\N{KELVIN SIGN}out flow"}
         assert "checkout flow" in [v for v in params.values() if isinstance(v, str)]
 
-    def test_in_does_not_apply_ascii_only_value_bloom(self):
+    def test_in_adds_exhaustive_legacy_value_bloom(self):
         sql, params = _v2_sql(_with_op("in", ["Checkout Flow", "ONBOARDING"]))
         assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
-        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
+        assert {
+            value
+            for key, value in params.items()
+            if key.startswith("latest_filter_legacy_index_")
+        } == {"checkout flow", "chec\N{KELVIN SIGN}out flow", "onboarding"}
         assert any(
             isinstance(value, tuple) and value == ("checkout flow", "onboarding")
             for value in params.values()
@@ -192,7 +202,12 @@ class TestUnicodeSafeStringEquality:
         sql, params = _v2_sql(_with_op("equals", "K"))
 
         assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
-        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
+        assert {
+            value
+            for key, value in params.items()
+            if key.startswith("latest_filter_legacy_index_")
+        } == {"k", stored}
         assert "k" in [value for value in params.values() if isinstance(value, str)]
 
     def test_not_equals_has_no_companion(self):

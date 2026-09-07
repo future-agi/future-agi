@@ -1952,12 +1952,13 @@ def test_span_mixed_structured_anchor_uses_only_the_indexed_typed_map_leaf():
     assert (
         "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in anchor_query
     )
-    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in anchor_query
+    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in anchor_query
     assert (
         "lowerUTF8(toString(attrs_string[%(latest_filter_key_0)s])) = "
         "%(latest_filter_param_0)s" in anchor_query
     )
     assert anchor_params["latest_filter_param_0"] == "rejected"
+    assert anchor_params["latest_filter_legacy_index_0_0"] == "rejected"
     assert "JSONExtract" not in anchor_query
     assert "inbound" not in anchor_params.values()
 
@@ -2050,7 +2051,7 @@ def test_text_map_key_subcolumn_is_only_an_optional_list_anchor(
     assert (
         "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in anchor_query
     )
-    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in anchor_query
+    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in anchor_query
     assert anchor_params["latest_filter_param_0"] == (
         "rejected" if filter_op == "equals" else ("rejected", "approved")
     )
@@ -2061,6 +2062,15 @@ def test_text_map_key_subcolumn_is_only_an_optional_list_anchor(
     else:
         assert "latest_filter_index_0_0" not in anchor_params
         assert "latest_filter_index_0_1" not in anchor_params
+    assert {
+        item
+        for key, item in anchor_params.items()
+        if key.startswith("latest_filter_legacy_index_0_")
+    } == (
+        {"rejected"}
+        if filter_op == "equals"
+        else {"rejected", "approved"}
+    )
     assert "Rejected" not in anchor_params.values()
     assert "Approved" not in anchor_params.values()
 
@@ -3666,18 +3676,40 @@ def test_public_graph_wrappers_use_exact_snapshot_without_inline_reads(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("fetch_name", "reader_name"),
+    ("fetch_name", "reader_name", "expected_exact", "expected_provenance"),
     [
-        ("fetch_system_metric_graph_ch", "read_exact_system_graph"),
-        ("fetch_user_system_metric_graph_ch", "read_exact_user_system_graph"),
-        ("fetch_eval_graph_ch", "read_exact_eval_graph"),
-        ("fetch_annotation_graph_ch", "read_exact_annotation_graph"),
+        (
+            "fetch_system_metric_graph_ch",
+            "_fetch_direct_raw_system_metric_graph",
+            False,
+            "bounded_candidates",
+        ),
+        (
+            "fetch_user_system_metric_graph_ch",
+            "read_exact_user_system_graph",
+            True,
+            "exact_snapshot",
+        ),
+        (
+            "fetch_eval_graph_ch",
+            "read_exact_eval_graph",
+            True,
+            "exact_snapshot",
+        ),
+        (
+            "fetch_annotation_graph_ch",
+            "read_exact_annotation_graph",
+            True,
+            "exact_snapshot",
+        ),
     ],
 )
-def test_public_primary_graph_wrappers_use_inline_exact_snapshot_reads(
+def test_public_primary_graph_wrappers_use_inline_reads(
     monkeypatch,
     fetch_name,
     reader_name,
+    expected_exact,
+    expected_provenance,
 ):
     calls = []
 
@@ -3689,6 +3721,8 @@ def test_public_primary_graph_wrappers_use_inline_exact_snapshot_reads(
             "query_complete": True,
             "query_status": "complete",
             "query_sampled": False,
+            "query_exact": expected_exact,
+            "query_provenance": expected_provenance,
         }
 
     monkeypatch.setattr(graph_dispatch, reader_name, direct_reader)
@@ -3734,10 +3768,8 @@ def test_public_primary_graph_wrappers_use_inline_exact_snapshot_reads(
     assert response["query_status"] == "complete"
     assert response["query_complete"] is True
     assert response["query_sampled"] is False
-    assert response["query_exact"] is True
-    # exact_snapshot is the generated public enum; the single patched call
-    # above proves the implementation remains synchronous and request-owned.
-    assert response["query_provenance"] == "exact_snapshot"
+    assert response["query_exact"] is expected_exact
+    assert response["query_provenance"] == expected_provenance
 
 
 @pytest.mark.unit

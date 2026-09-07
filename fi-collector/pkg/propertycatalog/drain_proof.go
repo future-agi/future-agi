@@ -14,7 +14,7 @@ const (
 	drainProofFormat   = "futureagi.property-catalog-drain-proof"
 	drainProofVersion  = uint16(2)
 	drainProofFileName = "producer-drain-proof-v2.json"
-	maxDrainProofBytes = 1 << 20
+	maxDrainProofBytes = 64 << 20
 )
 
 // DrainProof is the producer-owned durable side of the hot-stream handoff.
@@ -314,8 +314,8 @@ func (r *HotRuntime) loadDrainSafety() error {
 	if err != nil || !bytes.Equal(canonical, body) {
 		return errors.New("propertycatalog: drain proof is not canonical JSON")
 	}
-	if document.Format != drainProofFormat || document.Version != drainProofVersion || len(document.Proofs) > maxRevisionFenceEntries {
-		return errors.New("propertycatalog: drain proof format/version/count is invalid")
+	if document.Format != drainProofFormat || document.Version != drainProofVersion {
+		return errors.New("propertycatalog: drain proof format/version is invalid")
 	}
 	seen := make(map[streamKey]struct{}, len(document.Proofs))
 	for index, proof := range document.Proofs {

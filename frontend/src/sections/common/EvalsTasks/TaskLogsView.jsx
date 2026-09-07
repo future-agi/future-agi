@@ -20,6 +20,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { enrichErrorGroups } from "./classifyTaskError";
 import { readEvalTaskLogs } from "./task_log_read";
+import { warningMessage, warningTypeLabel } from "./warningTypes";
 
 // ── Stat Card ──
 
@@ -353,9 +354,8 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const emptyKeys = group.empty_keys || [];
   const filledKeys = group.filled_keys || [];
-  const message =
-    group.message ||
-    "Eval ran with some inputs empty. Result may be less reliable. Ignore if this is intentional.";
+  const message = warningMessage(group);
+  const hasKeyBreakdown = emptyKeys.length > 0 || filledKeys.length > 0;
 
   return (
     <Box
@@ -376,9 +376,9 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
           alignItems: "flex-start",
           gap: 1.25,
           p: 1.5,
-          cursor: "pointer",
+          cursor: hasKeyBreakdown ? "pointer" : "default",
         }}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => hasKeyBreakdown && setExpanded((v) => !v)}
       >
         <Box
           sx={(t) => ({
@@ -413,7 +413,7 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
               fontWeight={600}
               sx={{ fontSize: "13px" }}
             >
-              Partial inputs
+              {warningTypeLabel(group.type)}
             </Typography>
             <Chip
               label={`${group.count} ${
@@ -433,19 +433,21 @@ const WarningGroupCard = ({ group, defaultExpanded = false }) => {
             {message}
           </Typography>
         </Box>
-        <IconButton size="small" sx={{ p: 0.25, mt: 0.25, flexShrink: 0 }}>
-          <Iconify
-            icon={
-              expanded
-                ? "solar:alt-arrow-up-linear"
-                : "solar:alt-arrow-down-linear"
-            }
-            width={14}
-            sx={{ color: "text.disabled" }}
-          />
-        </IconButton>
+        {hasKeyBreakdown && (
+          <IconButton size="small" sx={{ p: 0.25, mt: 0.25, flexShrink: 0 }}>
+            <Iconify
+              icon={
+                expanded
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
+              }
+              width={14}
+              sx={{ color: "text.disabled" }}
+            />
+          </IconButton>
+        )}
       </Box>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse in={expanded && hasKeyBreakdown} unmountOnExit>
         <Divider sx={{ borderColor: alpha("#000", 0) }} />
         <Box sx={{ px: 1.5, pb: 1.5, pt: 0.5 }}>
           <Typography
@@ -647,6 +649,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
   const hasErrors = errorGroups.length > 0;
   const hasWarnings = warningGroups.length > 0;
+  // Groups sort by count, and a group with no key breakdown cannot expand, so
+  // auto-expand the largest one that actually has something behind it.
+  const firstExpandableWarningGroup = warningGroups.find(
+    (group) =>
+      (group.empty_keys || []).length > 0 || (group.filled_keys || []).length > 0,
+  );
   const processedCount = successCount + errorsCount + skippedCount;
   const isDrained = totalCount > 0 && processedCount >= totalCount;
   const isHighErrorRate = errorRate > 50;
@@ -739,7 +747,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         {warningsCount > 0 && (
           <StatCard
             icon="solar:danger-triangle-linear"
-            label="Partial Inputs"
+            label="Runs with warnings"
             value={warningsCount}
             color="warning.main"
             bgColor={alpha(theme.palette.warning.main, 0.1)}
@@ -834,7 +842,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           >
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
-                Partial Input Warnings
+                Warnings
               </Typography>
               <Chip
                 label={`${warningGroups.length} ${
@@ -851,8 +859,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               color="text.disabled"
               sx={{ fontSize: "11px" }}
             >
-              {warningsCount} total warning
-              {warningsCount !== 1 ? "s" : ""} — grouped by missing variables
+              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with
+              warnings, grouped by type below
             </Typography>
           </Box>
           {warningGroupsTruncated && (
@@ -884,11 +892,11 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
             </Box>
           )}
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {warningGroups.map((group, index) => (
+            {warningGroups.map((group) => (
               <WarningGroupCard
                 key={`${group.type}-${(group.empty_keys || []).join(",")}`}
                 group={group}
-                defaultExpanded={index === 0}
+                defaultExpanded={group === firstExpandableWarningGroup}
               />
             ))}
           </Box>

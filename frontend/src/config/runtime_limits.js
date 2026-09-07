@@ -73,7 +73,7 @@ export function readAggregationPollTimeout({
 } = {}) {
   return readBoundedRuntimeInteger(
     "VITE_AGGREGATION_POLL_TIMEOUT_MS",
-    120_000,
+    220_000,
     {
       minimum: requestTimeoutMs,
       maximum: 600_000,
@@ -84,8 +84,8 @@ export function readAggregationPollTimeout({
 }
 
 // Exact reads are server-owned jobs. Keep each HTTP attempt interactive while
-// allowing the browser to observe a healthy long-running job long enough for
-// wide-range (for example 12M) filters to finish without a manual refresh.
+// allowing the browser to observe a healthy 180-second worker after the
+// preceding 30-second foreground attempt and one final polling interval.
 export const AGGREGATION_POLL_TIMEOUT_MS = readAggregationPollTimeout();
 
 export const FILTER_VALUE_REQUEST_TIMEOUT_MS = readBoundedRuntimeInteger(

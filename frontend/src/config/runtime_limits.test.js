@@ -134,7 +134,7 @@ describe("runtime limit relationships", () => {
         runtimeConfig: { VITE_AGGREGATION_POLL_TIMEOUT_MS: "50000" },
         envConfig: { VITE_AGGREGATION_POLL_TIMEOUT_MS: "59000" },
       }),
-    ).toBe(120_000);
+    ).toBe(220_000);
   });
 
   it("keeps frontend request page defaults inside the shared maximum", () => {

@@ -21,7 +21,9 @@ while its spans columns still need the v2 rewrite.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.dashboard import (
     AGGREGATIONS,
@@ -51,6 +53,67 @@ _USAGE_CDC_COLUMN_RE = re.compile(
     r"\b(?P<alias>e|ev_(?:bd|f)\d+|usage_[A-Za-z0-9_]+)\."
     r"(?P<column>_peerdb_is_deleted|_peerdb_version)\b"
 )
+
+_SIMPLE_METRIC_QUERY_RE = re.compile(
+    r"\A\s*SELECT\s+(?P<select>.*?)\nFROM\s+(?P<tail>.*?)"
+    r"\nSETTINGS\s+(?P<settings>.*)\s*\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_VALUE_ALIAS_RE = re.compile(
+    r"\A(?P<expression>.*)\s+AS\s+value\s*\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_SELECT_ALIAS_RE = re.compile(r"\s+AS\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*\Z")
+_EXACT_QUANTILE_RE = re.compile(
+    r"\AquantileExact\((?P<level>[^)]+)\)\((?P<column>.*)\)\Z",
+    flags=re.DOTALL,
+)
+_SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+
+
+@dataclass(frozen=True)
+class DashboardMetricGroupQuery:
+    """One statement carrying every compatible trace metric."""
+
+    sql: str
+    params: dict[str, Any]
+    metrics: tuple[dict[str, Any], ...]
+    value_columns: tuple[str, ...]
+    has_breakdown: bool
+
+
+def _split_select_expressions(fragment: str) -> tuple[str, ...]:
+    """Split a SELECT list without splitting nested function arguments."""
+
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    quote = False
+    index = 0
+    while index < len(fragment):
+        char = fragment[index]
+        if quote:
+            if char == "'":
+                if index + 1 < len(fragment) and fragment[index + 1] == "'":
+                    index += 1
+                else:
+                    quote = False
+        elif char == "'":
+            quote = True
+        elif char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+            if depth < 0:
+                raise ValueError("dashboard metric SELECT is unbalanced")
+        elif char == "," and depth == 0:
+            parts.append(fragment[start:index].strip())
+            start = index + 1
+        index += 1
+    if quote or depth != 0:
+        raise ValueError("dashboard metric SELECT is unbalanced")
+    parts.append(fragment[start:].strip())
+    return tuple(part for part in parts if part)
 
 
 def _protect_usage_cdc_columns(sql: str) -> str:
@@ -97,10 +160,10 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
     # makes root metric queries ineligible for proj_root_spans.
     _spans_partitioned_by_created_at: bool = False
 
-    # Aggregate values are customer-visible totals. Always collapse the
-    # direct-write ReplacingMergeTree explicitly; background merges and
-    # query-local settings are not correctness boundaries.
-    _latest_state_spans_required: bool = True
+    # Dashboard charts prioritize bounded interactive reads over waiting for a
+    # table-wide ReplacingMergeTree collapse. An unmerged replacement can
+    # temporarily overcount a historical bucket until the background merge.
+    _latest_state_spans_required: bool = False
 
     _v2_rewrite_exclude = frozenset({"build_metric_query", "build_all_queries"})
 
@@ -140,7 +203,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         The witness narrows immutable identities only. The replay source still
         resolves the latest physical row for every candidate, and the ordinary
         dashboard WHERE clause reapplies every filter exactly. Filter shapes
-        without an exhaustive raw value witness keep the existing ``FINAL``
+        without an exhaustive raw value witness use the ordinary raw spans
         source.
         """
 
@@ -150,10 +213,8 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
                 continue
             canonical_filter = item.get("canonical_filter")
             if (
-                (item.get("metric_type") or item.get("type"))
-                != "custom_attribute"
-                or not isinstance(canonical_filter, dict)
-            ):
+                item.get("metric_type") or item.get("type")
+            ) != "custom_attribute" or not isinstance(canonical_filter, dict):
                 continue
             try:
                 plans = compile_span_filter_plans([canonical_filter])
@@ -167,9 +228,7 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         return min(
             candidates,
             key=lambda plan: (
-                plan.raw_witness_rank
-                if plan.raw_witness_rank is not None
-                else 10_000
+                plan.raw_witness_rank if plan.raw_witness_rank is not None else 10_000
             ),
         )
 
@@ -261,6 +320,14 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         alias: str,
         params: dict[str, object] | None = None,
     ) -> str:
+        if not self._latest_state_spans_required:
+            return super()._spans_source(
+                metric_name,
+                per_metric_filters,
+                alias,
+                params=params,
+            )
+
         # ID-remapped user/session dimensions need the dedicated resolved
         # source. Keep that exact path unchanged until it has an equivalent
         # immutable-identity proof.
@@ -299,15 +366,21 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
         per_metric_filters: list[dict],
         params: dict,
     ) -> tuple[str, dict]:
-        """Stream the common numeric custom-metric shape without ``FINAL``.
+        """Resolve custom metrics through the selected spans snapshot mode.
 
-        ``FINAL`` over a wide window materializes every physical span version
-        before the Map key can be reduced.  For a metric with no filters or
-        breakdowns, collapse versions in table sort-key order instead and
-        carry only the requested numeric value.  Mutable predicates remain
-        outside ``argMax`` so a later tombstone or key removal wins exactly.
-        More complex shapes keep the general builder path.
+        Interactive dashboard reads use the base builder's one-pass raw
+        aggregation. The candidate/replay path remains available only when a
+        caller explicitly requests latest-state span semantics.
         """
+
+        if not self._latest_state_spans_required:
+            return super()._build_custom_attr_query(
+                metric,
+                aggregation,
+                bucket_fn,
+                per_metric_filters,
+                params,
+            )
 
         if (
             metric.get("attribute_type", "number") != "number"
@@ -447,6 +520,311 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
             ORDER BY time_bucket
         """
         return sql, params
+
+    def _build_metric_query_for_snapshot_mode(
+        self,
+        metric: dict[str, Any],
+        *,
+        latest_state: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build one metric while locally selecting raw or latest-state spans."""
+
+        previous = self._latest_state_spans_required
+        self._latest_state_spans_required = bool(latest_state)
+        try:
+            return self.build_metric_query(metric)
+        finally:
+            self._latest_state_spans_required = previous
+
+    @staticmethod
+    def _parse_simple_metric_query(
+        sql: str,
+    ) -> tuple[tuple[str, ...], str, str, str] | None:
+        """Return dimensions, value expression, FROM tail, and settings.
+
+        The optimizer intentionally accepts only the ordinary one-level metric
+        statement emitted by the existing builder. CTE-heavy identity, user,
+        eval, annotation, and candidate-replay paths keep their established
+        query unchanged.
+        """
+
+        match = _SIMPLE_METRIC_QUERY_RE.match(sql)
+        if match is None:
+            return None
+        try:
+            select_parts = _split_select_expressions(match.group("select"))
+        except ValueError:
+            return None
+        value_matches = [
+            (index, _VALUE_ALIAS_RE.match(part))
+            for index, part in enumerate(select_parts)
+            if _VALUE_ALIAS_RE.match(part) is not None
+        ]
+        if len(value_matches) != 1:
+            return None
+        value_index, value_match = value_matches[0]
+        assert value_match is not None
+        dimensions = tuple(
+            part for index, part in enumerate(select_parts) if index != value_index
+        )
+        aliases = []
+        for expression in dimensions:
+            alias_match = _SELECT_ALIAS_RE.search(expression)
+            if alias_match is None:
+                return None
+            aliases.append(alias_match.group("alias"))
+        if not aliases or aliases[0] != "time_bucket":
+            return None
+        if aliases[1:] not in ([], ["breakdown_value"]):
+            return None
+        return (
+            dimensions,
+            value_match.group("expression").strip(),
+            match.group("tail").strip(),
+            match.group("settings").strip(),
+        )
+
+    @staticmethod
+    def _render_metric_group_sql(
+        *,
+        dimensions: tuple[str, ...],
+        value_expressions: tuple[str, ...],
+        tail: str,
+        query_settings: str,
+    ) -> tuple[str, tuple[str, ...]]:
+        """Render one scan and share exact percentile state where possible."""
+
+        value_columns = tuple(
+            f"dashboard_metric_value_{index}" for index in range(len(value_expressions))
+        )
+        quantile_groups: dict[str, list[tuple[int, str]]] = {}
+        for index, expression in enumerate(value_expressions):
+            match = _EXACT_QUANTILE_RE.match(expression)
+            if match is not None:
+                quantile_groups.setdefault(match.group("column"), []).append(
+                    (index, match.group("level").strip())
+                )
+        shared_groups = {
+            column: members
+            for column, members in quantile_groups.items()
+            if len(members) > 1
+        }
+        if not shared_groups:
+            values = [
+                f"{expression} AS {value_columns[index]}"
+                for index, expression in enumerate(value_expressions)
+            ]
+            return (
+                "SELECT "
+                + ", ".join([*dimensions, *values])
+                + "\nFROM "
+                + tail
+                + "\nSETTINGS "
+                + query_settings,
+                value_columns,
+            )
+
+        order_marker = "\nORDER BY "
+        if order_marker not in tail:
+            raise ValueError("dashboard metric query has no stable output order")
+        grouped_tail, order_by = tail.rsplit(order_marker, 1)
+        shared_members = {
+            metric_index
+            for members in shared_groups.values()
+            for metric_index, _level in members
+        }
+        inner_values = [
+            f"{expression} AS {value_columns[index]}"
+            for index, expression in enumerate(value_expressions)
+            if index not in shared_members
+        ]
+        shared_index: dict[int, tuple[str, int]] = {}
+        for group_index, (column, members) in enumerate(shared_groups.items()):
+            alias = f"dashboard_metric_quantiles_{group_index}"
+            levels: list[str] = []
+            for _metric_index, level in members:
+                if level not in levels:
+                    levels.append(level)
+            inner_values.append(
+                f"quantilesExact({', '.join(levels)})({column}) AS {alias}"
+            )
+            for metric_index, level in members:
+                shared_index[metric_index] = (alias, levels.index(level) + 1)
+
+        dimension_aliases = [
+            _SELECT_ALIAS_RE.search(expression).group("alias")
+            for expression in dimensions
+        ]
+        outer_values = []
+        for index, column in enumerate(value_columns):
+            if index in shared_index:
+                alias, array_index = shared_index[index]
+                outer_values.append(f"{alias}[{array_index}] AS {column}")
+            else:
+                outer_values.append(column)
+        inner_sql = (
+            "SELECT "
+            + ", ".join([*dimensions, *inner_values])
+            + "\nFROM "
+            + grouped_tail
+        )
+        return (
+            "SELECT "
+            + ", ".join([*dimension_aliases, *outer_values])
+            + "\nFROM (\n"
+            + inner_sql
+            + "\n) AS dashboard_metric_group\nORDER BY "
+            + order_by
+            + "\nSETTINGS "
+            + query_settings,
+            value_columns,
+        )
+
+    def build_compatible_metric_group_query(
+        self,
+        *,
+        latest_state: bool,
+    ) -> DashboardMetricGroupQuery | None:
+        """Combine all compatible span metrics into one physical scan.
+
+        Returning ``None`` is deliberate and fail-closed. The caller then uses
+        the unchanged one-query-per-metric path; this optimizer never guesses
+        across different filters, metric keys, relation joins, or row scopes.
+        """
+
+        metrics = tuple(self.metrics)
+        if len(metrics) < 2 or any(
+            metric.get("type", "system_metric")
+            not in {"system_metric", "custom_attribute"}
+            for metric in metrics
+        ):
+            return None
+        if any(breakdown.get("type") == "annotation" for breakdown in self.breakdowns):
+            return None
+
+        reference_dimensions: tuple[str, ...] | None = None
+        reference_tail: str | None = None
+        reference_settings: str | None = None
+        reference_params: dict[str, Any] | None = None
+        value_expressions: list[str] = []
+        for metric in metrics:
+            sql, params = self._build_metric_query_for_snapshot_mode(
+                metric,
+                latest_state=latest_state,
+            )
+            parsed = self._parse_simple_metric_query(sql)
+            if parsed is None:
+                return None
+            dimensions, value_expression, tail, query_settings = parsed
+            if reference_dimensions is None:
+                reference_dimensions = dimensions
+                reference_tail = tail
+                reference_settings = query_settings
+                reference_params = dict(params)
+            elif (
+                dimensions != reference_dimensions
+                or tail != reference_tail
+                or query_settings != reference_settings
+                or params != reference_params
+            ):
+                return None
+            value_expressions.append(value_expression)
+
+        assert reference_dimensions is not None
+        assert reference_tail is not None
+        assert reference_settings is not None
+        assert reference_params is not None
+        sql, value_columns = self._render_metric_group_sql(
+            dimensions=reference_dimensions,
+            value_expressions=tuple(value_expressions),
+            tail=reference_tail,
+            query_settings=reference_settings,
+        )
+        return DashboardMetricGroupQuery(
+            sql=sql,
+            params=reference_params,
+            metrics=metrics,
+            value_columns=value_columns,
+            has_breakdown=len(reference_dimensions) == 2,
+        )
+
+    def build_raw_metric_group_query(
+        self,
+        *,
+        replica_shard_cluster: str = "",
+        replica_shard_count: int = 1,
+    ) -> DashboardMetricGroupQuery | None:
+        """Return one raw scan, optionally split over physical replicas."""
+
+        raw = self.build_compatible_metric_group_query(latest_state=False)
+        if raw is None:
+            return None
+        cluster = str(replica_shard_cluster or "").strip()
+        if cluster and _SAFE_CLUSTER_NAME_RE.fullmatch(cluster) is None:
+            raise ValueError("invalid dashboard replica-shard cluster")
+        if not 1 <= int(replica_shard_count) <= 16:
+            raise ValueError("invalid dashboard replica-shard count")
+        if not cluster:
+            return raw
+
+        body, separator, query_settings = raw.sql.rpartition("\nSETTINGS ")
+        if not separator or body.count("\nFROM spans\n") != 1:
+            return None
+        params = dict(raw.params)
+        params["dashboard_replica_shard_count"] = int(replica_shard_count)
+        body = body.replace(
+            "\nFROM spans\n",
+            f"\nFROM cluster('{cluster}', currentDatabase(), spans) AS spans\n",
+            1,
+        )
+        group_marker = "\nGROUP BY "
+        if "\nWHERE " not in body or group_marker not in body:
+            return None
+        body = body.replace(
+            group_marker,
+            " AND modulo(toRelativeDayNum(start_time), "
+            "%(dashboard_replica_shard_count)s) = shardNum() - 1" + group_marker,
+            1,
+        )
+        return DashboardMetricGroupQuery(
+            sql=body + "\nSETTINGS " + query_settings,
+            params=params,
+            metrics=raw.metrics,
+            value_columns=raw.value_columns,
+            has_breakdown=raw.has_breakdown,
+        )
+
+    def metric_group_results(
+        self,
+        plan: DashboardMetricGroupQuery,
+        rows: list[dict[str, Any]],
+    ) -> tuple[bool, list[tuple[dict[str, Any], list[dict[str, Any]]]]]:
+        """Split a combined statement back into the established metric shape."""
+
+        metric_results = []
+        for metric, value_column in zip(plan.metrics, plan.value_columns, strict=True):
+            metric_info = self.metric_info(metric)
+            metric_info.update(
+                {
+                    "source": "traces",
+                    "query_complete": True,
+                    "query_status": "complete",
+                    "query_sampled": False,
+                }
+            )
+            metric_rows = []
+            for row in rows:
+                if value_column not in row or "time_bucket" not in row:
+                    raise ValueError("dashboard metric group result is malformed")
+                metric_row = {
+                    "time_bucket": row["time_bucket"],
+                    "value": row[value_column],
+                }
+                if plan.has_breakdown:
+                    metric_row["breakdown_value"] = row.get("breakdown_value")
+                metric_rows.append(metric_row)
+            metric_results.append((metric_info, metric_rows))
+        return True, metric_results
 
     def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         sql, params = super().build_metric_query(metric)

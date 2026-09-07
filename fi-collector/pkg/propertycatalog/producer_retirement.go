@@ -18,8 +18,7 @@ const (
 	producerRetirementVersion   = uint16(1)
 	producerRetirementFileName  = "producer-state-retirements-v1.json"
 	producerRetirementSHADomain = "futureagi.property-catalog.producer-state-retirement.v1"
-	maxProducerRetirements      = 256
-	maxProducerRetirementBytes  = 8 << 20
+	maxProducerRetirementBytes  = 64 << 20
 )
 
 type producerRetirementDocument struct {
@@ -120,7 +119,7 @@ func loadProducerRetirements(directory string) (map[producerRetirementTenant]Pro
 		return nil, errors.New("propertycatalog: producer retirement proof is not canonical JSON")
 	}
 	if document.Format != producerRetirementFormat || document.Version != producerRetirementVersion ||
-		len(document.Retirements) == 0 || len(document.Retirements) > maxProducerRetirements {
+		len(document.Retirements) == 0 {
 		return nil, errors.New("propertycatalog: producer retirement proof format/version/count is invalid")
 	}
 	if !sort.SliceIsSorted(document.Retirements, func(i, j int) bool {

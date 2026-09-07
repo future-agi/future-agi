@@ -636,11 +636,10 @@ class DashboardQueryBuilder:
     # eligible queries from reading the root-span projection.
     _spans_partitioned_by_created_at: bool = True
 
-    # Direct-write CH25 spans are a ReplacingMergeTree. The V2 subclass flips
-    # this on so every aggregate reads one latest physical row per span rather
-    # than relying on background merges. Keeping FINAL in the SQL (instead of a
-    # query-local setting) also preserves exactness on server-locked read-only
-    # connections, which intentionally strip client settings.
+    # Direct-write CH25 spans are a ReplacingMergeTree. Callers may opt into a
+    # latest-state source where correctness requires version collapse; the
+    # latency-sensitive dashboard path keeps this off and reports that raw
+    # physical-window provenance explicitly.
     _latest_state_spans_required: bool = False
 
     _DIRECT_USER_METRIC_EXPRESSIONS = {
@@ -726,6 +725,7 @@ class DashboardQueryBuilder:
             template_id = configs.values_list("eval_template_id", flat=True).first()
         elif decoded["property_kind"] == "eval_template":
             from django.db.models import Q
+
             from model_hub.models.choices import OwnerChoices
             from model_hub.models.evals_metric import EvalTemplate
 

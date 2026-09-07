@@ -55,6 +55,34 @@ export const normalizeAlertListRow = (row = {}) => ({
   filters: normalizeAlertFilters(row?.filters),
 });
 
+export const normalizeAlertDetail = (detail = {}) => ({
+  ...detail,
+  createdBy: detail?.createdBy ?? detail?.created_by?.name,
+  createdAt: detail?.createdAt ?? detail?.created_at,
+  lastTriggered:
+    detail?.lastTriggered ??
+    detail?.last_triggered_at ??
+    detail?.last_checked_at,
+  metricType: detail?.metricType ?? detail?.metric_type,
+  metricName: detail?.metricName ?? detail?.metric_name,
+  thresholdType: detail?.thresholdType ?? detail?.threshold_type,
+  thresholdOperator: detail?.thresholdOperator ?? detail?.threshold_operator,
+  thresholdMetricValue:
+    detail?.thresholdMetricValue ?? detail?.threshold_metric_value,
+  criticalThresholdValue:
+    detail?.criticalThresholdValue ?? detail?.critical_threshold_value,
+  warningThresholdValue:
+    detail?.warningThresholdValue ?? detail?.warning_threshold_value,
+  alertFrequency: detail?.alertFrequency ?? detail?.alert_frequency,
+  autoThresholdTimeWindow:
+    detail?.autoThresholdTimeWindow ?? detail?.auto_threshold_time_window,
+  notificationEmails: detail?.notificationEmails ?? detail?.notification_emails,
+  slackWebhookUrl: detail?.slackWebhookUrl ?? detail?.slack_webhook_url,
+  slackNotes: detail?.slackNotes ?? detail?.slack_notes,
+  isMute: detail?.isMute ?? detail?.is_mute ?? false,
+  filters: normalizeAlertFilters(detail?.filters),
+});
+
 export const isAlertMuted = (row) => Boolean(row?.isMute ?? row?.is_mute);
 
 export const getAlertFilterValue = (data) => {

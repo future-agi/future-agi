@@ -79,8 +79,9 @@ def test_exact_graph_workers_have_a_larger_bounded_wall_than_http_reads():
     values = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
 
     assert values["INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS"] == 30_000
-    assert values["GRAPH_BACKGROUND_WALL_MS"] == 120_000
-    assert values["CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS"] == 120_000
+    assert values["VOICE_CONTENT_MIN_REMAINING_MS"] == 30_000
+    assert values["GRAPH_BACKGROUND_WALL_MS"] == 180_000
+    assert values["CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS"] == 180_000
     validate_interactive_read_settings(values)
 
 

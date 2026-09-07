@@ -94,6 +94,14 @@ del _runtime_numeric_setting_specs
 _validate_runtime_numeric_settings(_runtime_numeric_settings)
 globals().update(_runtime_numeric_settings)
 
+# Optional ClickHouse cluster whose entries intentionally expose each physical
+# replica as one read shard. Dashboard heavy reads use it only after validating
+# the identifier in the query builder; an empty value keeps the local-table
+# fallback for OSS and single-node installations.
+DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER = os.getenv(
+    "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER", ""
+).strip()
+
 SIMULATOR_PHONE_NUMBERS = tuple(
     _split_env(
         "SIMULATOR_PHONE_NUMBERS",
@@ -860,6 +868,9 @@ get_started_url = f"{_ssl}{APP_URL}/dashboard/get-started"
 default_error_next_url = f"{_ssl}{APP_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
 
+# APP_URL is a bare host; each region is its own deployment with its own value.
+APP_BASE_URL = f"{_ssl}{APP_URL}" if APP_URL else ""
+
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
 AUTH0_ALGORITHM = "RS256"
@@ -1174,9 +1185,8 @@ PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT = (
     "I_ACKNOWLEDGE_PROD_READ_ONLY_UNIFIED_PROPERTY_CATALOG"
 )
 PROPERTY_CATALOG_MAX_READ_WORKSPACES = 256
-PROPERTY_CATALOG_PRODUCTION_DATABASE_ENV = (
-    "PROPERTY_CATALOG_PRODUCTION_DATABASE"
-)
+PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODES = frozenset({"allowlist", "all"})
+PROPERTY_CATALOG_PRODUCTION_DATABASE_ENV = "PROPERTY_CATALOG_PRODUCTION_DATABASE"
 PROPERTY_CATALOG_DEFAULT_PRODUCTION_DATABASE = "property_catalog"
 _PROPERTY_CATALOG_DATABASE_IDENTIFIER = re.compile(r"\A[a-z][a-z0-9_]*\Z")
 _PROPERTY_CATALOG_RESERVED_DATABASES = {
@@ -1243,8 +1253,7 @@ def validate_property_catalog_database(
     if (
         not production_database
         or len(production_database.encode("utf-8")) > 128
-        or _PROPERTY_CATALOG_DATABASE_IDENTIFIER.fullmatch(production_database)
-        is None
+        or _PROPERTY_CATALOG_DATABASE_IDENTIFIER.fullmatch(production_database) is None
         or production_database in _PROPERTY_CATALOG_RESERVED_DATABASES
     ):
         raise ValueError(
@@ -1314,6 +1323,7 @@ def validate_property_catalog_read_admission(
     source_users: object,
     dev_workspace_allowlist: object,
     prod_workspace_allowlist: object,
+    prod_workspace_scope_mode: object = "allowlist",
 ) -> str | None:
     """Fail closed unless one bounded DEV or production read is admitted."""
 
@@ -1332,12 +1342,22 @@ def validate_property_catalog_read_admission(
         cross_wired_acknowledgement = prod_acknowledgement
         workspace_allowlist = dev_workspace_allowlist
         cross_wired_workspace_allowlist = prod_workspace_allowlist
+        workspace_scope_mode = "allowlist"
+        if prod_workspace_scope_mode != "allowlist":
+            raise ValueError(
+                "global property catalog workspace scope is production-only"
+            )
     else:
         acknowledgement = prod_acknowledgement
         expected_acknowledgement = PROPERTY_CATALOG_PROD_READ_ACKNOWLEDGEMENT
         cross_wired_acknowledgement = dev_acknowledgement
         workspace_allowlist = prod_workspace_allowlist
         cross_wired_workspace_allowlist = dev_workspace_allowlist
+        workspace_scope_mode = prod_workspace_scope_mode
+        if workspace_scope_mode not in PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODES:
+            raise ValueError(
+                "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE must be allowlist or all"
+            )
     if (
         acknowledgement != expected_acknowledgement
         or cross_wired_acknowledgement not in {None, ""}
@@ -1376,6 +1396,12 @@ def validate_property_catalog_read_admission(
         raise ValueError(
             "property catalog workspace allowlist must contain 1 to 256 entries"
         ) from exc
+    if workspace_scope_mode == "all":
+        if workspaces:
+            raise ValueError(
+                "global property catalog workspace scope requires an empty allowlist"
+            )
+        return deployment
     if not 1 <= len(workspaces) <= PROPERTY_CATALOG_MAX_READ_WORKSPACES or any(
         not isinstance(workspace, str) or not workspace.strip()
         for workspace in workspaces
@@ -1400,6 +1426,20 @@ def property_catalog_read_workspace_allowlist(source: object) -> tuple[object, .
         return tuple(configured)
     except TypeError:
         return ()
+
+
+def property_catalog_reads_all_production_workspaces(source: object) -> bool:
+    """Return whether admitted production reads use authenticated workspace scope."""
+
+    return (
+        getattr(source, "PROPERTY_CATALOG_READ_DEPLOYMENT", None) == "prod"
+        and getattr(
+            source,
+            "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
+            "allowlist",
+        )
+        == "all"
+    )
 
 
 PROPERTY_CATALOG_READ_MODE = (
@@ -1566,6 +1606,14 @@ PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = tuple(
         }
     )
 )
+PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE = (
+    os.getenv(
+        "PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE",
+        "allowlist",
+    )
+    .strip()
+    .lower()
+)
 try:
     PROPERTY_CATALOG_CH_PORT = (
         int(_property_catalog_ch_port_raw) if _property_catalog_ch_port_raw else 0
@@ -1680,6 +1728,15 @@ PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_USER = os.getenv(
 PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PASSWORD = os.getenv(
     "PROPERTY_CATALOG_LIFECYCLE_WRITE_CH_PASSWORD", ""
 )
+PROPERTY_CATALOG_ACTIVATION_CONTROL_ACK = os.getenv(
+    "PROPERTY_CATALOG_ACTIVATION_CONTROL_ACK", ""
+).strip()
+PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_USER = os.getenv(
+    "PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_USER", ""
+).strip()
+PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_PASSWORD = os.getenv(
+    "PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_PASSWORD", ""
+)
 PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAME = os.getenv(
     "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAME", ""
 ).strip()
@@ -1731,6 +1788,11 @@ PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY = os.getenv(
 PROPERTY_CATALOG_LIFECYCLE_HEALTH_FILE = os.getenv(
     "PROPERTY_CATALOG_LIFECYCLE_HEALTH_FILE", ""
 ).strip()
+PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE = (
+    os.getenv("PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE", "allowlist")
+    .strip()
+    .lower()
+)
 PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST = tuple(
     sorted(
         {
@@ -1808,6 +1870,7 @@ PROPERTY_CATALOG_READ_DEPLOYMENT = validate_property_catalog_read_admission(
     - {""},
     dev_workspace_allowlist=PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST,
     prod_workspace_allowlist=PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST,
+    prod_workspace_scope_mode=PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE,
 )
 PROPERTY_CATALOG_READ_WORKSPACE_ALLOWLIST = (
     PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST

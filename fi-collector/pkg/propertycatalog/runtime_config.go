@@ -67,7 +67,6 @@ const (
 	maxRuntimeArrayMembers         = 16_384
 	maxRuntimeSpoolFiles           = 1_000_000
 	maxRuntimeSpoolBytes     int64 = 1 << 40
-	maxWorkspaceAllowlist          = 256
 	maxRuntimeCandidateSpans       = 20_000
 
 	// MaxKafkaBrokers is the reviewed producer/consumer broker-list bound.
@@ -317,10 +316,9 @@ func (c RuntimeConfig) validateKafka() error {
 }
 
 func (c RuntimeConfig) validateStaticWorkspaceAllowlist() error {
-	if len(c.WorkspaceAllowlist) == 0 || len(c.WorkspaceAllowlist) > maxWorkspaceAllowlist {
-		return fmt.Errorf(
-			"propertycatalog: enabled runtime requires 1..%d allowlisted workspaces",
-			maxWorkspaceAllowlist,
+	if len(c.WorkspaceAllowlist) == 0 {
+		return errors.New(
+			"propertycatalog: enabled runtime requires at least one allowlisted workspace",
 		)
 	}
 	if !slices.IsSorted(c.WorkspaceAllowlist) {

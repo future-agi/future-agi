@@ -2224,6 +2224,37 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             after_trace_id=after_trace_id,
         )
 
+    def exact_graph_candidate_witness_replays_global_membership(self) -> bool:
+        """Whether the optional graph candidate probe scans retained history."""
+
+        return self._positive_typed_map_candidate_plan() is not None
+
+    def exact_graph_candidate_witness_has_deployed_value_index(self) -> bool:
+        """Whether the all-history witness has a proven deployed value index.
+
+        Short root windows normally avoid replaying retained child history.
+        The exception is a scalar equality/IN witness whose compiled predicate
+        includes either the deployed numeric value bloom or the exhaustive
+        Unicode-safe companion for the deployed ASCII string-value bloom.
+        Key-only, boolean, range, and non-ASCII string witnesses stay on the
+        request-window fallback until their own production path is proven.
+        """
+
+        plan = self._positive_typed_map_candidate_plan()
+        if plan is None:
+            return False
+        predicate = self._exact_graph_authoritative_raw_witness(plan)
+        if not predicate:
+            return False
+        return any(
+            fragment in predicate
+            for fragment in (
+                "arrayMap(x -> lower(x), mapValues(span_attr_str))",
+                "has(mapValues(span_attr_num)",
+                "hasAny(mapValues(span_attr_num)",
+            )
+        )
+
     def _exact_graph_authoritative_anchor_plan(
         self,
     ) -> LatestFilterPredicate | None:
@@ -2277,24 +2308,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         return self._exact_graph_authoritative_anchor_plan() is not None
 
     def build_exact_graph_anchor_scan_bounds(self) -> tuple[str, dict[str, Any]]:
-        """Freeze the physical time range required by the authoritative lane."""
+        """Freeze a conservative physical range without scanning tenant rows.
+
+        The authoritative lane needs bounds that cover every retained physical
+        version, but they do not need to be project-local extrema. Active-part
+        metadata is exact for the table's physical coverage and a global range
+        can only add empty project slices; it cannot omit a project row. This
+        avoids spending the interactive request budget aggregating all retained
+        spans before the real filtered read begins.
+        """
 
         if self._exact_graph_authoritative_anchor_plan() is None:
             return "", {}
-        params: dict[str, Any] = {**self.params}
-        project_version_fragment = ""
-        if self.project_version_id:
-            params["project_version_id"] = self.project_version_id
-            project_version_fragment = "AND project_version_id = %(project_version_id)s"
-        query = f"""
+        query = """
         SELECT
-            min(start_time) AS min_start_time,
-            max(start_time) AS max_start_time
-        FROM {self.TABLE}
-        PREWHERE {self.project_filter_sql()}
-          {project_version_fragment}
+            minOrNull(min_time) AS min_start_time,
+            maxOrNull(max_time) AS max_start_time
+        FROM system.parts
+        WHERE active
+          AND database = currentDatabase()
+          AND table = 'spans'
         """
-        return query, params
+        return query, {}
 
     def build_exact_graph_latest_anchor_partition(
         self,

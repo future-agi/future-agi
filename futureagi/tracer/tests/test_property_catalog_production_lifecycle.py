@@ -46,6 +46,10 @@ from tracer.services.clickhouse.v2.property_catalog.revision_fence_registry impo
 ORG = "11111111-1111-4111-8111-111111111111"
 WORKSPACE = "22222222-2222-4222-8222-222222222222"
 PROJECT = "33333333-3333-4333-8333-333333333333"
+SECOND_ORG = "44444444-4444-4444-8444-444444444444"
+SECOND_WORKSPACE = "55555555-5555-4555-8555-555555555555"
+SECOND_PROJECT = "66666666-6666-4666-8666-666666666666"
+LEGACY_PROJECT = "77777777-7777-4777-8777-777777777777"
 
 
 def _production_request(**overrides: Any) -> ProductionRolloutRequest:
@@ -75,6 +79,7 @@ def _settings(tmp_path: Path, **overrides: Any) -> SimpleNamespace:
         "PROPERTY_CATALOG_LIFECYCLE_IDENTITY": ("prod:property-catalog-lifecycle"),
         "PROPERTY_CATALOG_LIFECYCLE_SOURCE_DATABASE": "spans",
         "PROPERTY_CATALOG_LIFECYCLE_TARGET_DATABASE": "property_catalog",
+        "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE": "allowlist",
         "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST": (WORKSPACE,),
         "PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY": str(tmp_path),
         "PROPERTY_CATALOG_LIFECYCLE_HEALTH_FILE": str(tmp_path / "health.json"),
@@ -322,9 +327,67 @@ def test_controller_config_is_production_exact_and_bootstrap_off(
 ) -> None:
     config = subject.controller_config(settings_object=_settings(tmp_path))
     assert config.target_database == "property_catalog"
+    assert config.workspace_scope_mode == "allowlist"
     assert config.workspace_ids == (WORKSPACE,)
     assert config.revision_fence_file == str(tmp_path / "revision-fence.json")
     assert config.bootstrap_enabled is False
+
+
+def test_global_discovery_batches_projects_and_preserves_exact_tenancy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeQuery:
+        def __init__(self, rows: tuple[tuple[object, ...], ...]) -> None:
+            self.rows = rows
+            self.filters: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        def filter(self, *args: object, **kwargs: object) -> FakeQuery:
+            self.filters.append((args, kwargs))
+            return self
+
+        def order_by(self, *_fields: str) -> FakeQuery:
+            return self
+
+        def values_list(self, *_fields: str) -> tuple[tuple[object, ...], ...]:
+            return self.rows
+
+    workspace_query = FakeQuery(
+        (
+            (WORKSPACE, ORG, True),
+            (SECOND_WORKSPACE, SECOND_ORG, False),
+        )
+    )
+    project_query = FakeQuery(
+        (
+            (PROJECT, ORG, WORKSPACE),
+            (LEGACY_PROJECT, ORG, None),
+            (SECOND_PROJECT, SECOND_ORG, SECOND_WORKSPACE),
+            ("88888888-8888-4888-8888-888888888888", SECOND_ORG, WORKSPACE),
+        )
+    )
+    monkeypatch.setattr(
+        subject,
+        "Workspace",
+        SimpleNamespace(no_workspace_objects=workspace_query),
+    )
+    monkeypatch.setattr(
+        subject,
+        "Project",
+        SimpleNamespace(no_workspace_objects=project_query),
+    )
+
+    scopes, skipped = subject.discover_workspace_scopes(None)
+
+    assert workspace_query.filters == [((), {"is_active": True})]
+    assert len(project_query.filters) == 1
+    assert tuple(scope.workspace_id for scope in scopes) == (
+        WORKSPACE,
+        SECOND_WORKSPACE,
+    )
+    assert scopes[0].project_ids == (PROJECT, LEGACY_PROJECT)
+    assert scopes[0].legacy_project_ids == (LEGACY_PROJECT,)
+    assert scopes[1].project_ids == (SECOND_PROJECT,)
+    assert skipped == ()
 
 
 def test_mutating_cycle_reconciles_exact_workspace_inventory_first(
@@ -366,6 +429,62 @@ def test_mutating_cycle_reconciles_exact_workspace_inventory_first(
     assert calls[0][2] == config.workspace_ids
 
 
+def test_global_cycle_reconciles_discovered_workspace_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_object = _settings(
+        tmp_path,
+        PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE="all",
+        PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST=(),
+    )
+    config = subject.controller_config(settings_object=settings_object)
+    calls: list[tuple[str, ...]] = []
+
+    class FakeFenceFile:
+        def __init__(self, _path: str, *, now: object) -> None:
+            assert now is not None
+
+        def reconcile_authorized_workspaces(
+            self,
+            workspace_ids: tuple[str, ...],
+        ) -> int:
+            calls.append(workspace_ids)
+            return 0
+
+    monkeypatch.setattr(subject, "AtomicMultiTenantFenceFile", FakeFenceFile)
+    monkeypatch.setattr(subject, "run_workspace", lambda **_kwargs: {})
+    result = subject.run_cycle(
+        scopes=(_scope(),),
+        skipped=(),
+        settings_object=settings_object,
+        config=config,
+        now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+        status_only=False,
+        stop=threading.Event(),
+        on_error=lambda _workspace_id, _exc: None,
+    )
+
+    assert config.workspace_scope_mode == "all"
+    assert config.workspace_ids == ()
+    assert result.processed == (WORKSPACE,)
+    assert calls == [(WORKSPACE,)]
+
+
+def test_allowlist_scope_has_no_fixed_workspace_count_cap(tmp_path: Path) -> None:
+    workspace_ids = tuple(
+        f"00000000-0000-4000-8000-{index:012x}" for index in range(1, 301)
+    )
+    config = subject.controller_config(
+        settings_object=_settings(
+            tmp_path,
+            PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST=workspace_ids,
+        )
+    )
+
+    assert config.workspace_ids == workspace_ids
+
+
 def test_status_only_cycle_does_not_reconcile_fence_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -403,7 +522,21 @@ def test_status_only_cycle_does_not_reconcile_fence_file(
             {"PROPERTY_CATALOG_LIFECYCLE_TARGET_DATABASE": "default"},
             "configured production database",
         ),
-        ({"PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST": ()}, "1..256"),
+        (
+            {"PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST": ()},
+            "non-empty unique",
+        ),
+        (
+            {"PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE": "invalid"},
+            "must equal allowlist or all",
+        ),
+        (
+            {
+                "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_SCOPE_MODE": "all",
+                "PROPERTY_CATALOG_LIFECYCLE_WORKSPACE_ALLOWLIST": (WORKSPACE,),
+            },
+            "requires an empty workspace allowlist",
+        ),
     ),
 )
 def test_controller_config_fails_closed(
@@ -472,6 +605,93 @@ def test_execute_request_requires_explicit_expired_revision_repair_gate(
 
     assert execute.repair_expired_incomplete is True
     assert status.repair_expired_incomplete is False
+
+
+def test_initial_backfill_requires_one_shot_bootstrap_gate() -> None:
+    with pytest.raises(
+        subject.ProductionLifecycleControllerError,
+        match="requires --once",
+    ):
+        subject._validate_initial_backfill_mode(  # noqa: SLF001
+            once=False,
+            status_only=False,
+            bootstrap_enabled=True,
+            initial_backfill_wall_ms=120_000,
+        )
+    with pytest.raises(
+        subject.ProductionLifecycleControllerError,
+        match="bootstrap gate",
+    ):
+        subject._validate_initial_backfill_mode(  # noqa: SLF001
+            once=True,
+            status_only=False,
+            bootstrap_enabled=False,
+            initial_backfill_wall_ms=120_000,
+        )
+
+
+def test_bootstrap_request_receives_explicit_initial_wall(tmp_path: Path) -> None:
+    settings_object = _settings(
+        tmp_path,
+        PROPERTY_CATALOG_LIFECYCLE_BOOTSTRAP_ENABLED=True,
+    )
+    config = subject.controller_config(settings_object=settings_object)
+    overlay = subject.workspace_settings_overlay(
+        settings_object=settings_object,
+        config=config,
+        scope=_scope(),
+        now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+    )
+
+    request = subject.rollout_request(
+        scope=_scope(),
+        proxy=overlay,
+        config=config,
+        initial_backfill_wall_ms=120_000,
+    )
+
+    assert request.initial_backfill_wall_ms == 120_000
+
+
+def test_bootstrap_retry_does_not_create_incremental_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_object = _settings(
+        tmp_path,
+        PROPERTY_CATALOG_LIFECYCLE_BOOTSTRAP_ENABLED=True,
+    )
+    config = subject.controller_config(settings_object=settings_object)
+
+    @contextmanager
+    def fake_runtime(**_kwargs: Any):
+        yield object()
+
+    evidence = {"schema_ready": True, "active": True, "catalog_revision": 1}
+    monkeypatch.setattr(subject, "managed_runtime", fake_runtime)
+    monkeypatch.setattr(
+        subject,
+        "run_configured_production_rollout",
+        lambda **_kwargs: SimpleNamespace(
+            evidence=(SimpleNamespace(evidence=evidence),)
+        ),
+    )
+    monkeypatch.setattr(
+        subject,
+        "run_workspace_reconcile",
+        lambda **_kwargs: pytest.fail("bootstrap retry reconciled active workspace"),
+    )
+
+    result = subject.run_workspace(
+        scope=_scope(),
+        settings_object=settings_object,
+        config=config,
+        now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+        status_only=False,
+        initial_backfill_wall_ms=120_000,
+    )
+
+    assert result == evidence
 
 
 def test_active_workspace_runs_incremental_reconcile(

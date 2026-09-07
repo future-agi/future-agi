@@ -56,7 +56,11 @@ def test_exact_observe_lane_owns_fresh_background_client(monkeypatch):
         with exact_aggregation._exact_observe_analytics() as analytics:
             services.append(analytics)
             analytics.execute_ch_query("SELECT 1", {}, timeout_ms=12_345)
-            analytics.execute_ch_query("SELECT 2", {}, timeout_ms=120_000)
+            analytics.execute_ch_query(
+                "SELECT 2",
+                {},
+                timeout_ms=settings.GRAPH_BACKGROUND_WALL_MS,
+            )
             assert not analytics.ch_client.closed
 
     first, second = _DedicatedClient.instances

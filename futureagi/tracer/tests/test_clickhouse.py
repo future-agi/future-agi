@@ -2907,6 +2907,97 @@ class TestTimeSeriesQueryBuilder:
             2026, 8, 1, tzinfo=UTC
         ) + timedelta(days=1)
 
+    def test_direct_raw_filtered_trace_graph_is_one_sharded_scan_without_argmax(self):
+        """The interactive append-only route keeps one-pass trace semantics."""
+        from datetime import UTC, datetime
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "customer_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "customer-42",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ],
+            interval="day",
+            exact_snapshot=True,
+            resolve_span_versions=False,
+            raw_replica_shard_cluster="all-sharded",
+            raw_replica_shard_count=3,
+            observe_type="trace",
+            start_date=datetime(2026, 7, 1, tzinfo=UTC),
+            end_date=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+
+        query, params = builder.build()
+
+        assert query.count("cluster('all-sharded', currentDatabase(), spans)") == 1
+        assert "FROM spans FINAL" not in query
+        assert "argMax(" not in query
+        assert "AS graph_physical_versions" not in query
+        assert "AS graph_raw_spans" in query
+        assert "max(graph_bucket_match_0) AS graph_match_0" in query
+        assert "graph_match_0 = 1" in query
+        assert "attrs_string" in query
+        assert "modulo(toRelativeDayNum(start_time)," in query
+        assert params["graph_replica_shard_count"] == 3
+
+    def test_direct_raw_trace_graph_can_prune_with_exhaustive_candidate_witness(self):
+        """A cost-approved witness narrows IDs but leaves outer matching intact."""
+        from datetime import UTC, datetime
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "customer_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "customer-42",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ],
+            interval="day",
+            exact_snapshot=True,
+            resolve_span_versions=False,
+            raw_replica_shard_cluster="all-sharded",
+            raw_replica_shard_count=3,
+            raw_trace_candidate_predicate=(
+                "has(span_attr_str.values, %(graph_seed_customer)s)"
+            ),
+            raw_trace_candidate_params={
+                "graph_seed_customer": "customer-42",
+            },
+            observe_type="trace",
+            start_date=datetime(2026, 7, 1, tzinfo=UTC),
+            end_date=datetime(2026, 8, 1, tzinfo=UTC),
+        )
+
+        query, params = builder.build()
+
+        assert query.count("cluster('all-sharded', currentDatabase(), spans)") == 2
+        assert "trace_id GLOBAL IN" in query
+        assert "AS graph_seed_spans" in query
+        assert "PREWHERE project_id = toUUID(%(project_id)s)" in query
+        assert "has(span_attr_str.values, %(graph_seed_customer)s)" in query
+        assert "max(graph_bucket_match_0) AS graph_match_0" in query
+        assert "graph_match_0 = 1" in query
+        assert "FINAL" not in query.upper()
+        assert "argMax(" not in query
+        assert params["graph_seed_customer"] == "customer-42"
+        assert params["graph_replica_shard_count"] == 3
+
     def test_exact_trace_graph_keeps_structured_witnesses_in_output_window(self):
         """Scalar witnesses are adjacent; array/map witnesses stay exact-window."""
         from datetime import UTC, datetime

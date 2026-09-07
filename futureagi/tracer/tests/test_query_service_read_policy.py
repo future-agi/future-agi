@@ -67,7 +67,7 @@ def test_application_query_service_supplies_memory_policy_when_omitted():
             settings.GRAPH_BACKGROUND_WALL_MS,
             settings.GRAPH_BACKGROUND_WALL_MS,
         ),
-        (120_000, settings.GRAPH_BACKGROUND_WALL_MS),
+        (120_000, 120_000),
         (None, settings.GRAPH_BACKGROUND_WALL_MS),
     ],
 )

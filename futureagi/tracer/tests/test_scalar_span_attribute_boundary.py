@@ -215,7 +215,7 @@ def test_final_status_plan_is_typed_map_only_with_bound_key_and_value() -> None:
         "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))"
         in plan.seed_predicate
     )
-    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in (
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" in (
         plan.seed_predicate
     )
     assert "span_attributes_raw" not in plan.seed_predicate
@@ -224,6 +224,7 @@ def test_final_status_plan_is_typed_map_only_with_bound_key_and_value() -> None:
     assert "Rejected" not in plan.seed_predicate
     assert plan.params["latest_filter_key_0"] == "final_status"
     assert plan.params["latest_filter_param_0"] == "rejected"
+    assert plan.params["latest_filter_legacy_index_0_0"] == "rejected"
 
 
 @pytest.mark.parametrize(
@@ -251,13 +252,14 @@ def test_final_status_v2_seed_respects_trace_any_span_scope(
         assert (
             "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in sql
         )
-        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
         assert (
             "lowerUTF8(toString(attrs_string[%(latest_filter_key_0)s])) = "
             "%(latest_filter_param_0)s" in sql
         )
         assert params["latest_filter_key_0"] == "final_status"
         assert params["latest_filter_param_0"] == "rejected"
+        assert params["latest_filter_legacy_index_0_0"] == "rejected"
     else:
         assert "mapContains(attrs_string" not in sql
         assert "mapValues(attrs_string)" not in sql

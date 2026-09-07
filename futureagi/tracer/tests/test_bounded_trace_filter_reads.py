@@ -349,6 +349,14 @@ def test_dispatched_v2_query_service_uses_split_host_without_legacy_singleton() 
         assert service.ch_client.user == "direct-write-user"
         assert service.ch_client.password == ""
         assert service.ch_client.database == "direct-write-db"
+        assert (
+            service.ch_client.read_timeout_ceiling_ms
+            == settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
+        )
+        assert (
+            service.read_timeout_ceiling_ms
+            == settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+        )
         assert V2AnalyticsQueryService().ch_client is service.ch_client
         legacy_client.assert_not_called()
     finally:
@@ -376,10 +384,11 @@ def test_customer_final_status_trace_query_uses_indexed_any_span_anchor() -> Non
     assert "has(span_attr_str.keys, %(latest_filter_key_0)s)" in seed_sql
     assert "indexHint(has(mapKeys(span_attr_str), %(latest_filter_key_0)s))" in seed_sql
     assert "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))" in seed_sql
-    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" not in seed_sql
+    assert "arrayMap(x -> lower(x), mapValues(span_attr_str))" in seed_sql
     assert seed_params["latest_filter_key_0"] == "final_status"
     assert seed_params["latest_filter_param_0"] == ("rejected",)
     assert seed_params["latest_filter_index_0_0"] == "rejected"
+    assert seed_params["latest_filter_legacy_index_0_0"] == "rejected"
     assert "parent_span_id IS NULL" not in seed_sql
     assert "id AS matched_span_id" in seed_sql
     assert " FINAL" not in seed_sql
@@ -3554,10 +3563,11 @@ def test_v2_span_seed_uses_typed_value_witness_before_exact_replay() -> None:
     assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in sql
     assert "indexHint(has(mapKeys(attrs_string), %(latest_filter_key_0)s))" in sql
     assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in sql
-    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
     assert params["latest_filter_key_0"] == "final_status"
     assert params["latest_filter_param_0"] == ("rejected",)
     assert params["latest_filter_index_0_0"] == "rejected"
+    assert params["latest_filter_legacy_index_0_0"] == "rejected"
 
     prompt_builder = SpanListQueryBuilderV2(
         project_id=PROJECT_ID,
@@ -3576,9 +3586,12 @@ def test_v2_span_seed_uses_typed_value_witness_before_exact_replay() -> None:
         "indexHint(has(mapKeys(attrs_string), %(latest_filter_key_0)s))" in prompt_sql
     )
     assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in prompt_sql
-    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in prompt_sql
+    assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in prompt_sql
     assert prompt_params["latest_filter_param_0"] == "agent_2_identity_disclosure"
     assert prompt_params["latest_filter_key_0"] == "prompt_slug"
+    assert prompt_params["latest_filter_legacy_index_0_0"] == (
+        "agent_2_identity_disclosure"
+    )
 
 
 @pytest.mark.parametrize(

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -26,7 +27,11 @@ import {
   useUpdateSavedView,
   useDeleteSavedView,
   useReorderSavedViews,
+  getOwnViewNames,
+  DEFAULT_VIEW_NAME,
+  findOwnDefaultView,
 } from "src/api/project/saved-views";
+import { useAuthContext } from "src/auth/hooks";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
 import LeftPanelSplit from "./TraceLeftPanel";
@@ -237,8 +242,15 @@ const TraceDetailDrawerV2 = ({
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
 
-  const customViews =
-    savedViewsData?.customViews || savedViewsData?.custom_views || [];
+  // The list endpoint returns `custom_views`; memoized so it's a stable dep for
+  // the callbacks below (a fresh `|| []` array each render would defeat them).
+  const customViews = useMemo(
+    () => savedViewsData?.custom_views ?? [],
+    [savedViewsData],
+  );
+  const { user } = useAuthContext();
+  // Inline duplicate-guard input: the current user's own view names.
+  const ownViewNames = getOwnViewNames(customViews, user?.id);
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("trace");
   const [deleteTabId, setDeleteTabId] = useState(null);
@@ -361,39 +373,56 @@ const TraceDetailDrawerV2 = ({
 
   // "Set default for everyone" — make current view project-visible
   const handleSetDefaultView = useCallback(() => {
+    const onDone = {
+      onSuccess: () =>
+        enqueueSnackbar("View set as default for everyone", {
+          variant: "success",
+        }),
+      onError: (err) =>
+        enqueueSnackbar(
+          getRequestErrorMessage(err, "Failed to set view as default"),
+          { variant: "error" },
+        ),
+    };
+
     if (activeDrawerTab !== "trace") {
-      // Update existing custom view to project visibility
-      updateSavedView(
-        { id: activeDrawerTab, visibility: "project" },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
-      );
-    } else {
-      // Create a new project-level view from current config
-      const config = {
-        display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
-        filters: spanFilters,
-      };
-      createSavedView(
-        {
-          project_id: projectId,
-          name: "Default View",
-          tab_type: "traces",
-          visibility: "project",
-          config,
-        },
-        {
-          onSuccess: () =>
-            enqueueSnackbar("View set as default for everyone", {
-              variant: "success",
-            }),
-        },
-      );
+      // Flip visibility only. This branch handles non-"trace" (imagine) tabs,
+      // whose config is a different shape — resending the trace-shaped config
+      // below would corrupt it (the same reason auto-save skips imagine tabs).
+      updateSavedView({ id: activeDrawerTab, visibility: "project" }, onDone);
+      return;
     }
+
+    const config = {
+      display: { viewMode, spanTypeFilter, visibleMetrics, showAgentGraph },
+      filters: spanFilters,
+    };
+
+    // Adopt the user's own default for this drawer's tab_type ("traces").
+    // Scoped to the current user so we never overwrite a teammate's shared
+    // default (a blind create would 400 on the name).
+    const existingDefault = findOwnDefaultView(customViews, {
+      tabType: "traces",
+      userId: user?.id,
+    });
+    if (existingDefault) {
+      updateSavedView(
+        { id: existingDefault.id, visibility: "project", config },
+        onDone,
+      );
+      return;
+    }
+
+    createSavedView(
+      {
+        project_id: projectId,
+        name: DEFAULT_VIEW_NAME,
+        tab_type: "traces",
+        visibility: "project",
+        config,
+      },
+      onDone,
+    );
   }, [
     activeDrawerTab,
     viewMode,
@@ -402,6 +431,8 @@ const TraceDetailDrawerV2 = ({
     showAgentGraph,
     spanFilters,
     projectId,
+    customViews,
+    user,
     updateSavedView,
     createSavedView,
   ]);
@@ -437,8 +468,10 @@ const TraceDetailDrawerV2 = ({
             setSaveViewAnchor(null);
             setIsSavingView(false);
           },
-          onError: () => {
-            enqueueSnackbar("Failed to create view", { variant: "error" });
+          onError: (err) => {
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
+              variant: "error",
+            });
             setIsSavingView(false);
           },
         },
@@ -1467,6 +1500,7 @@ const TraceDetailDrawerV2 = ({
         onClose={() => setSaveViewAnchor(null)}
         onSave={handleSaveViewConfirm}
         isLoading={isSavingView}
+        existingNames={ownViewNames}
       />
 
       {/* Delete tab confirmation dialog */}

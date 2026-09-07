@@ -7,6 +7,13 @@ from tracer.services.clickhouse.v2.property_catalog.runtime_limits import (
 )
 
 
+def test_interactive_reader_defaults_leave_headroom_for_complete_catalog_pages():
+    limits = load_property_catalog_runtime_limits(SimpleNamespace())
+
+    assert limits.query_wall_ms == 10_000
+    assert limits.read_transport_timeout_seconds == 10.0
+
+
 def test_runtime_limits_accept_bounded_operator_overrides():
     limits = load_property_catalog_runtime_limits(
         SimpleNamespace(

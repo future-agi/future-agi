@@ -1,6 +1,9 @@
-import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import { AGGREGATION_POLL_TIMEOUT_MS } from "src/config/runtime_limits";
 
-export const WIDGET_PREVIEW_MAX_WAIT_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
+// A preview can move from one bounded foreground read to a server-owned heavy
+// refresh. Keep its visible preparing state for the same finite observation
+// window used by the polling controller.
+export const WIDGET_PREVIEW_MAX_WAIT_MS = AGGREGATION_POLL_TIMEOUT_MS;
 
 export const getWidgetEditorLoadState = ({
   isEditing,

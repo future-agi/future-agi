@@ -248,6 +248,31 @@ class TestClickHouseFilterBuilderV2:
         assert meta["number"][0] == cols.ATTRS_NUMBER
         assert meta["boolean"][0] == cols.ATTRS_BOOL
 
+    def test_ascii_text_equality_keeps_unicode_semantics_and_uses_value_index(self):
+        builder = ClickHouseFilterBuilderV2(table="spans")
+        sql, params = builder.translate(
+            [
+                {
+                    "column_id": "prompt_slug",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "Agent_K",
+                    },
+                }
+            ]
+        )
+
+        assert "lowerUTF8(toString(attrs_string['prompt_slug'])) =" in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
+        assert params["attr_1"] == "agent_k"
+        assert {
+            value
+            for key, value in params.items()
+            if key.startswith("latest_filter_legacy_index_")
+        } == {"agent_k", "agent_\N{KELVIN SIGN}"}
+
 
 class TestEndUserDimensionSource:
     """Pin the v1→v2 end-user dimension swap on the user/user_id filter path.

@@ -67,12 +67,20 @@ from tracer.serializers.eval_task import (
     EvalTaskUsageQuerySerializer,
     EvalTaskUsageResponseSerializer,
 )
+from model_hub.utils.eval_input_validation import (
+    PARTIAL_INPUT_MESSAGE,
+    PARTIAL_INPUT_WARNING_TYPE,
+)
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
+)
+from tracer.utils.eval import (
+    GROUND_TRUTH_NOT_APPLIED_MESSAGE,
+    GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE,
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
@@ -380,7 +388,16 @@ def _bounded_usage_text(value):
     return f"{text[:_USAGE_DETAIL_TEXT_MAX_CHARS]} [truncated]"
 
 
-def _extract_partial_input_warnings(output_metadata):
+# Warnings persist as a bare type on the row; the copy lives here so a
+# 300-char string is not written to every EvalLogger and APICallLog.
+_WARNING_FALLBACK_MESSAGES = {
+    PARTIAL_INPUT_WARNING_TYPE: PARTIAL_INPUT_MESSAGE,
+    GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE: GROUND_TRUTH_NOT_APPLIED_MESSAGE,
+}
+
+
+def _extract_run_warnings(output_metadata):
+    """Every typed warning on one EvalLogger row, whatever its type."""
     if not isinstance(output_metadata, dict):
         return []
     warnings = output_metadata.get("warnings") or []
@@ -390,7 +407,7 @@ def _extract_partial_input_warnings(output_metadata):
         return []
     result = []
     for warning in warnings:
-        if not isinstance(warning, dict) or warning.get("type") != "partial_input":
+        if not isinstance(warning, dict) or not warning.get("type"):
             continue
 
         def bounded_keys(value):
@@ -408,7 +425,7 @@ def _extract_partial_input_warnings(output_metadata):
             message = ""
         result.append(
             {
-                "type": "partial_input",
+                "type": str(warning["type"])[:_EVAL_TASK_WARNING_KEY_MAX_CHARS],
                 "empty_keys": bounded_keys(warning.get("empty_keys")),
                 "filled_keys": bounded_keys(warning.get("filled_keys")),
                 "message": message[:_EVAL_TASK_WARNING_MESSAGE_MAX_CHARS],
@@ -798,21 +815,18 @@ def _build_eval_task_warning_groups(rows, *, group_limit):
             warning_text_truncated = True
             continue
         warnings = _parse_usage_json_preview(preview, original_length)
-        for warning in _extract_partial_input_warnings({"warnings": warnings}):
+        for warning in _extract_run_warnings({"warnings": warnings}):
+            warning_type = warning["type"]
             empty_keys = warning["empty_keys"]
             filled_keys = warning["filled_keys"]
-            key = tuple(empty_keys)
+            key = (warning_type, tuple(empty_keys))
             if key not in warning_groups_by_key:
                 warning_groups_by_key[key] = {
-                    "type": "partial_input",
+                    "type": warning_type,
                     "empty_keys": empty_keys,
                     "filled_keys": filled_keys,
                     "message": warning["message"]
-                    or (
-                        "Eval ran with some inputs empty. "
-                        "Result may be less reliable. "
-                        "Ignore if this is intentional."
-                    ),
+                    or _WARNING_FALLBACK_MESSAGES.get(warning_type, ""),
                     "count": 0,
                 }
             warning_groups_by_key[key]["count"] += 1
@@ -2108,10 +2122,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # was absent). Counted separately so it stays out of the
                 # success and failure tallies.
                 skipped_count=Count("id", filter=Q(status=EvalEntryStatus.SKIPPED)),
-                # Partial-input warnings live in
-                # output_metadata.warnings as a JSON array. has_key on
-                # the JSONField gives us a cheap "any warnings?" filter
-                # without scanning the contents.
+                # Rows carrying at least one warning. A row can carry more
+                # than one, so this is not the sum of the group counts; the
+                # UI labels it "runs with warnings" for that reason.
                 warnings_count=Count(
                     "id",
                     filter=Q(
@@ -2581,8 +2594,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             if log.trace_id
                             else None
                         ),
+                        # Off the row's own FK column: the target FKs are
+                        # unconstrained, so a run can reference a session with
+                        # no PG row and must still report what it evaluated.
                         "session_id": (
-                            str(trace_session.id) if trace_session else None
+                            str(log.trace_session_id) if log.trace_session_id else None
                         ),
                         "eval_id": str(config.id) if config else None,
                         "eval_name": config.name if config else None,
@@ -2618,7 +2634,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                                 else None
                             ),
                             "session_id": (
-                                str(trace_session.id) if trace_session else None
+                                str(log.trace_session_id)
+                                if log.trace_session_id
+                                else None
                             ),
                             "session_name": (
                                 trace_session.name if trace_session else None

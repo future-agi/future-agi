@@ -378,16 +378,20 @@ def test_exact_graph_anchor_partition_requires_ordered_whole_hour_bounds(
 
 
 @pytest.mark.unit
-def test_exact_graph_anchor_scan_bounds_are_project_scoped_and_filter_free():
+def test_exact_graph_anchor_scan_bounds_use_active_part_metadata():
     builder = _builder(_attribute_filter())
 
     sql, params = builder.build_exact_graph_anchor_scan_bounds()
     compact = _compact(sql)
 
-    assert "min(start_time)" in compact
-    assert "max(start_time)" in compact
-    assert "project_id" in compact
-    assert params["project_id"] == PROJECT_ID
+    assert "minOrNull(min_time) AS min_start_time" in compact
+    assert "maxOrNull(max_time) AS max_start_time" in compact
+    assert "FROM system.parts" in compact
+    assert "WHERE active" in compact
+    assert "database = currentDatabase()" in compact
+    assert "table = 'spans'" in compact
+    assert "project_id" not in compact
+    assert params == {}
     assert "attrs_string" not in compact
     assert "latest_filter_key_0" not in compact
     assert "latest_filter_param_0" not in compact
@@ -451,6 +455,8 @@ def test_exact_graph_root_partition_reduces_versions_before_live_window_filter()
 def test_exact_graph_raw_candidate_page_stays_finite_and_keyset_ordered():
     builder = _builder(_attribute_filter())
 
+    assert builder.exact_graph_candidate_witness_replays_global_membership() is True
+    assert builder.exact_graph_candidate_witness_has_deployed_value_index() is True
     sql, params = builder.build_exact_graph_candidate_witness_probe(limit=1_001)
     compact = _compact(sql)
 
@@ -467,6 +473,44 @@ def test_exact_graph_raw_candidate_page_stays_finite_and_keyset_ordered():
     assert "trace_id > %(exact_graph_candidate_after_trace_id)s" in _compact(next_sql)
     assert next_params["exact_graph_candidate_after_trace_id"] == (
         "11111111-1111-4111-8111-111111111111"
+    )
+
+    assert (
+        _builder(_system_filter()).exact_graph_candidate_witness_replays_global_membership()
+        is False
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("filter_type", "operation", "value", "expected"),
+    [
+        ("text", "equals", "customer-45142993", True),
+        ("text", "in", ["customer-45142993", "customer-7"], True),
+        ("text", "equals", "\N{LATIN CAPITAL LETTER I WITH DOT ABOVE}stanbul", False),
+        ("text", "contains", "4514", False),
+        ("number", "equals", 7, True),
+        ("number", "in", [7, 9], True),
+        ("number", "greater_than", 7, False),
+        ("boolean", "equals", True, False),
+    ],
+)
+def test_exact_graph_candidate_reports_only_deployed_value_indexes(
+    filter_type: str,
+    operation: str,
+    value: Any,
+    expected: bool,
+):
+    builder = _builder(
+        _attribute_filter(
+            filter_type=filter_type,
+            operation=operation,
+            value=value,
+        )
+    )
+
+    assert (
+        builder.exact_graph_candidate_witness_has_deployed_value_index() is expected
     )
 
 
@@ -590,6 +634,146 @@ def test_authoritative_anchor_route_skips_request_under_30_days(monkeypatch):
     assert result is None
     assert builder.partition_calls == []
     assert builder.root_calls == []
+
+
+@pytest.mark.unit
+def test_short_window_skips_global_candidate_before_root_cursor(monkeypatch):
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
+    request_start = datetime(2026, 8, 1, 0, 0)
+    request_end = request_start + timedelta(minutes=5)
+
+    class Builder:
+        def __init__(self, **kwargs: Any):
+            del kwargs
+
+        @staticmethod
+        def supports_bounded_filter_scan() -> bool:
+            return True
+
+        @staticmethod
+        def parse_time_range(_filters: list[dict[str, Any]]):
+            return request_start, request_end
+
+        @staticmethod
+        def exact_graph_filter_witness_range():
+            return request_start, request_end
+
+        @staticmethod
+        def exact_graph_supports_authoritative_anchor_partition() -> bool:
+            return True
+
+        @staticmethod
+        def exact_graph_candidate_witness_replays_global_membership() -> bool:
+            return True
+
+        @staticmethod
+        def exact_graph_candidate_witness_has_deployed_value_index() -> bool:
+            return False
+
+        @staticmethod
+        def build_exact_graph_candidate_witness_probe(**_kwargs: Any):
+            raise AssertionError("short windows must not scan retained history")
+
+        @staticmethod
+        def build_filter_ordered_seed_page(**_kwargs: Any):
+            return "request-window-roots", {}
+
+    class Analytics:
+        calls: list[str] = []
+
+        @classmethod
+        def execute_ch_query(cls, query: str, _params: dict[str, Any], **_kwargs: Any):
+            cls.calls.append(query)
+            return SimpleNamespace(data=[], query_time_ms=1.0)
+
+    monkeypatch.setattr(
+        exact_module,
+        "EXACT_GRAPH_TRACE_ANCHOR_MIN_REQUEST_WIDTH",
+        timedelta(days=30),
+    )
+    monkeypatch.setattr(exact_module, "TraceListQueryBuilderV2", Builder)
+
+    result = exact_module._enumerate_exact_trace_ids(
+        analytics=Analytics(),
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), _attribute_filter(key="prompt_slug")],
+        annotation_label_ids=None,
+        started=monotonic(),
+    )
+
+    assert result == ([], 1, 0)
+    assert Analytics.calls == ["request-window-roots"]
+
+
+@pytest.mark.unit
+def test_short_window_uses_proven_indexed_global_candidate(monkeypatch):
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
+    request_start = datetime(2026, 8, 1, 0, 0)
+    request_end = request_start + timedelta(minutes=5)
+
+    class Builder:
+        def __init__(self, **kwargs: Any):
+            del kwargs
+
+        @staticmethod
+        def supports_bounded_filter_scan() -> bool:
+            return True
+
+        @staticmethod
+        def parse_time_range(_filters: list[dict[str, Any]]):
+            return request_start, request_end
+
+        @staticmethod
+        def exact_graph_filter_witness_range():
+            return request_start, request_end
+
+        @staticmethod
+        def exact_graph_supports_authoritative_anchor_partition() -> bool:
+            return True
+
+        @staticmethod
+        def exact_graph_candidate_witness_replays_global_membership() -> bool:
+            return True
+
+        @staticmethod
+        def exact_graph_candidate_witness_has_deployed_value_index() -> bool:
+            return True
+
+        @staticmethod
+        def build_exact_graph_candidate_witness_probe(**_kwargs: Any):
+            return "indexed-global-candidate", {}
+
+        @staticmethod
+        def build_filter_ordered_seed_page(**_kwargs: Any):
+            raise AssertionError("indexed candidate must precede the root cursor")
+
+    class Analytics:
+        calls: list[str] = []
+
+        @classmethod
+        def execute_ch_query(cls, query: str, _params: dict[str, Any], **_kwargs: Any):
+            cls.calls.append(query)
+            return SimpleNamespace(data=[], query_time_ms=1.0)
+
+    monkeypatch.setattr(
+        exact_module,
+        "EXACT_GRAPH_TRACE_ANCHOR_MIN_REQUEST_WIDTH",
+        timedelta(days=30),
+    )
+    monkeypatch.setattr(exact_module, "TraceListQueryBuilderV2", Builder)
+
+    result = exact_module._enumerate_exact_trace_ids(
+        analytics=Analytics(),
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), _attribute_filter(key="customer_id")],
+        annotation_label_ids=None,
+        started=monotonic(),
+    )
+
+    assert result == ([], 1, 0)
+    assert Analytics.calls == ["indexed-global-candidate"]
 
 
 @pytest.mark.unit
@@ -742,9 +926,15 @@ def test_authoritative_anchor_compatibility_root_verifier_chunks_at_512():
 
 
 @pytest.mark.unit
-def test_authoritative_anchor_orchestrator_intersects_partitioned_latest_roots():
-    from tracer.services.clickhouse.exact_graph_reads import (
-        _enumerate_authoritative_anchor_trace_ids,
+def test_authoritative_anchor_orchestrator_intersects_partitioned_latest_roots(
+    monkeypatch,
+):
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
+    monkeypatch.setattr(
+        exact_module,
+        "EXACT_GRAPH_TRACE_ROOT_VERIFY_BATCH_SIZE",
+        1,
     )
 
     builder = _PartitionedRootBuilderFake()
@@ -788,7 +978,7 @@ def test_authoritative_anchor_orchestrator_intersects_partitioned_latest_roots()
                 )
             raise AssertionError(f"unexpected fake query: {query}")
 
-    result = _enumerate_authoritative_anchor_trace_ids(
+    result = exact_module._enumerate_authoritative_anchor_trace_ids(
         analytics=Analytics(),
         builder=builder,
         request_start=request_start,
@@ -815,6 +1005,11 @@ def test_authoritative_anchor_orchestrator_exhausts_partitioned_root_cursor(
     from tracer.services.clickhouse import exact_graph_reads as exact_module
 
     monkeypatch.setattr(exact_module, "EXACT_GRAPH_TRACE_ANCHOR_RESULT_SENTINEL", 3)
+    monkeypatch.setattr(
+        exact_module,
+        "EXACT_GRAPH_TRACE_ROOT_VERIFY_BATCH_SIZE",
+        1,
+    )
 
     class RootCursorBuilder(_PartitionedRootBuilderFake):
         def build_exact_graph_latest_root_partition(
@@ -890,6 +1085,53 @@ def test_authoritative_anchor_orchestrator_exhausts_partitioned_root_cursor(
     assert [call[4] for call in builder.root_partition_calls] == [None, "trace-c"]
     assert [call[5] for call in builder.root_partition_calls] == [3, 3]
     assert builder.root_calls == []
+
+
+@pytest.mark.unit
+def test_authoritative_anchor_uses_finite_root_verifier_for_small_candidates():
+    from tracer.services.clickhouse.exact_graph_reads import (
+        _enumerate_authoritative_anchor_trace_ids,
+    )
+
+    builder = _PartitionedRootBuilderFake()
+
+    class Analytics:
+        @staticmethod
+        def execute_ch_query(query: str, params: dict[str, Any], **kwargs: Any):
+            del params, kwargs
+            if query == "bounds":
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "min_start_time": datetime(2026, 7, 27, 0, 15),
+                            "max_start_time": datetime(2026, 7, 27, 0, 45),
+                        }
+                    ],
+                    columns=["min_start_time", "max_start_time"],
+                )
+            if query == "partition:first":
+                return SimpleNamespace(
+                    data=[{"trace_id": "trace-a"}, {"trace_id": "trace-b"}],
+                    columns=["trace_id"],
+                )
+            if query == "roots":
+                return SimpleNamespace(
+                    data=[{"trace_id": "trace-b"}],
+                    columns=["trace_id"],
+                )
+            raise AssertionError(f"unexpected fake query: {query}")
+
+    result = _enumerate_authoritative_anchor_trace_ids(
+        analytics=Analytics(),
+        builder=builder,
+        request_start=WINDOW_START,
+        request_end=WINDOW_END,
+        started=monotonic(),
+    )
+
+    assert result == (["trace-b"], 3, 4)
+    assert builder.root_calls == [(["trace-a", "trace-b"], WINDOW_START, WINDOW_END)]
+    assert builder.root_partition_calls == []
 
 
 @pytest.mark.unit

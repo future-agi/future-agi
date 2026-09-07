@@ -116,14 +116,18 @@ def _exact_observe_analytics() -> Iterator[Any]:
 
 
 def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
+    from django.conf import settings
+
     from tracer.services.clickhouse.exact_graph_reads import (
         read_exact_agent_graph,
         read_exact_all_system_metrics,
         read_exact_annotation_graph,
         read_exact_eval_graph,
         read_exact_session_system_graph,
-        read_exact_system_graph,
         read_exact_user_system_graph,
+    )
+    from tracer.services.clickhouse.graph_dispatch import (
+        _fetch_direct_raw_system_metric_graph,
     )
 
     _reauthorize_exact_observe_project(identity)
@@ -141,10 +145,11 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
             "interval": str(identity["interval"]),
         }
         if namespace == "observe-system-graph":
-            return read_exact_system_graph(
+            return _fetch_direct_raw_system_metric_graph(
                 **common,
                 metric_id=str(identity.get("metric_id") or ""),
                 observe_type=str(identity.get("observe_type") or "trace"),
+                timeout_ms=int(settings.GRAPH_BACKGROUND_WALL_MS),
             )
         if namespace == "observe-all-system-graphs":
             return read_exact_all_system_metrics(**common)
