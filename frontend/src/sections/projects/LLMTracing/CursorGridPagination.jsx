@@ -45,6 +45,10 @@ const NextLabel = () => (
 
 export default function CursorGridPagination({
   disabled = false,
+  // "Is the end of the list still unknown?" — distinct from `hasMore`, which
+  // answers "can you move forward from here". Consumers holding a pagination
+  // frontier pass this; those that do not omit it and keep the old behaviour.
+  endUnknown,
   hasMore = false,
   loading = false,
   onPageChange,
@@ -53,6 +57,7 @@ export default function CursorGridPagination({
   pageSize,
   provenNext = false,
 }) {
+  const showTrailingEllipsis = endUnknown === undefined ? hasMore : endUnknown;
   return (
     <Stack
       direction="row"
@@ -163,7 +168,7 @@ export default function CursorGridPagination({
           ),
         )}
 
-        {hasMore ? (
+        {showTrailingEllipsis ? (
           <Box
             component="span"
             data-testid="pager-trailing-ellipsis"
@@ -201,6 +206,7 @@ export default function CursorGridPagination({
 
 CursorGridPagination.propTypes = {
   disabled: PropTypes.bool,
+  endUnknown: PropTypes.bool,
   hasMore: PropTypes.bool,
   loading: PropTypes.bool,
   onPageChange: PropTypes.func.isRequired,

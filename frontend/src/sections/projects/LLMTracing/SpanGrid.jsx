@@ -280,6 +280,7 @@ const SpanGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      endUnknown,
       hasMore,
       page,
       pageSize,
@@ -1006,6 +1007,7 @@ const SpanGrid = React.forwardRef(
           loading={isPageLoading}
           page={page}
           pageSize={pageSize}
+          endUnknown={endUnknown}
           hasMore={hasMore}
           provenNext={provenNext}
           onPageChange={goToPage}

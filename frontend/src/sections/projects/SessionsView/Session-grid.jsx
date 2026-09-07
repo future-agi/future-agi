@@ -112,6 +112,7 @@ const SessionGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      endUnknown,
       hasMore,
       page,
       pageSize,
@@ -766,6 +767,7 @@ const SessionGrid = React.forwardRef(
               loading={isPageLoading}
               page={page}
               pageSize={pageSize}
+              endUnknown={endUnknown}
               hasMore={hasMore}
               provenNext={provenNext}
               onPageChange={goToPage}

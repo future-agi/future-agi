@@ -450,8 +450,11 @@ test('OBS-E2E-004: trace list pager windows forward without an endless page coun
     expect(pager.numbers).toEqual(expected.numbers);
     expect(pager.current).toBe(backTo);
     expect(pager.leadingEllipsis).toBe(expected.leading);
-    // The trailing ellipsis returns: pages beyond this one are known to exist.
-    expect(pager.trailingEllipsis).toBe(true);
+    // The trailing ellipsis does NOT return. It means "the end of the list is
+    // unknown", and by now the walk has reached the terminal page, so it is
+    // known. Next stays enabled — you can still move forward — but the two are
+    // separate questions and only Next is about navigability.
+    expect(pager.trailingEllipsis).toBe(false);
     expect(pager.prevDisabled).toBe(false);
     expect(pager.nextDisabled).toBe(false);
 

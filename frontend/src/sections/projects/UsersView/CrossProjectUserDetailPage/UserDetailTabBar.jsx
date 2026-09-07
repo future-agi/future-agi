@@ -204,9 +204,12 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -251,9 +254,12 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
         { id: viewId, name: newName },
         {
           onError: (err) =>
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
-              variant: "error",
-            }),
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to rename view"),
+              {
+                variant: "error",
+              },
+            ),
         },
       );
       // Always exit edit mode — a lingering rename state would re-submit on blur.

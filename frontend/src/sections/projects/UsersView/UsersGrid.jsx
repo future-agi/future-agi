@@ -798,6 +798,9 @@ const UsersGrid = React.memo(
     // that has been fetched; only at the frontier itself does the last read
     // get to decide whether anything follows.
     const pagerFlags = pagerFlagsForPage(page, pagerFrontier);
+    // See useCursorGridPagination: the trailing ellipsis asks whether the end
+    // is still unknown, which only the frontier can answer.
+    const endUnknown = pagerFrontier.page > 0 && pagerFrontier.hasMore === true;
 
     // Mirrors changePageSize() in useCursorGridPagination: the new size has to
     // reach the request — AG Grid derives it from cacheBlockSize — and the
@@ -923,6 +926,7 @@ const UsersGrid = React.memo(
           loading={isPageReadPending}
           page={page}
           pageSize={pageSize}
+          endUnknown={endUnknown}
           hasMore={pagerFlags.hasMore}
           provenNext={pagerFlags.provenNext}
           onPageChange={(nextPage) =>

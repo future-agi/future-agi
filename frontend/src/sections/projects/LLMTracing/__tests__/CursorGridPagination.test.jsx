@@ -120,4 +120,27 @@ describe("CursorGridPagination", () => {
     // and the label must not swallow the pointer — the button is the target
     expect(labelAfter.style.pointerEvents || "none").toBe("none");
   });
+
+  // Regression: the trailing ellipsis used to be driven by `hasMore`, which
+  // answers "can you move forward from here". After walking to the last page
+  // and returning to page 1, `hasMore` is true again (you can go forward), so
+  // the ellipsis reappeared and read as if new pages had arrived. It must be
+  // driven by whether the END is still unknown, which is a separate question.
+  it("hides the trailing ellipsis once the end is known, even where Next is still enabled", () => {
+    setup({ page: 1, hasMore: true, provenNext: true, endUnknown: false });
+    expect(screen.queryByTestId("pager-trailing-ellipsis")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
+  });
+
+  it("shows the trailing ellipsis while the end is still unknown", () => {
+    setup({ page: 1, hasMore: true, provenNext: true, endUnknown: true });
+    expect(screen.getByTestId("pager-trailing-ellipsis")).toBeTruthy();
+  });
+
+  it("falls back to hasMore when a consumer passes no endUnknown", () => {
+    setup({ page: 1, hasMore: true, provenNext: true });
+    expect(screen.getByTestId("pager-trailing-ellipsis")).toBeTruthy();
+  });
 });

@@ -302,4 +302,48 @@ describe("useCursorGridPagination", () => {
     expect(result.current.provenNext).toBe(false);
     expect(result.current.page).toBe(1);
   });
+
+  // The bug this split exists for: walk to the terminal page, go back, and the
+  // trailing ellipsis returned — because `hasMore` is true again once you are
+  // behind the frontier. Navigability and "is the end known" are different
+  // questions and must not share a flag.
+  it("keeps endUnknown false after the terminal page, while Next stays usable", () => {
+    const { result } = renderHook(() => useCursorGridPagination(null, null));
+
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: { total_rows: 26, has_more: true },
+    });
+    expect(result.current.endUnknown).toBe(true);
+
+    publish(result, {
+      startRow: 25,
+      endRow: 50,
+      rows: 11,
+      isLastPage: true,
+      metadata: {
+        total_rows: 36,
+        total_rows_is_lower_bound: false,
+        has_more: false,
+      },
+    });
+    expect(result.current.endUnknown).toBe(false);
+
+    // Back on page 1: `hasMore` is true again (you can move forward to the
+    // frontier), but the end is still known. This is the discriminating case —
+    // deriving endUnknown from hasMore makes this assertion fail.
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: { total_rows: 26, has_more: true },
+    });
+    expect(result.current.page).toBe(1);
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.endUnknown).toBe(false);
+  });
 });

@@ -71,7 +71,7 @@ export function buildAddEvalsDraft({
   // create page a guess it can only make on calendar-day granularity. An
   // incoming window with no label is absolute; the fallback above is ours.
   const datePreset = dateFilter?.dateFilter
-    ? (dateFilter?.dateOption ?? "Custom")
+    ? dateFilter?.dateOption ?? "Custom"
     : "12M";
 
   const values = {

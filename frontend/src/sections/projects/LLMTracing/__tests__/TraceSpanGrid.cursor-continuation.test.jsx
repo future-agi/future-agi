@@ -439,9 +439,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     expect(
       screen.getByRole("button", { name: "Go to page 2" }),
     ).toHaveAttribute("aria-current", "page");
-    expect(
-      screen.getByRole("button", { name: "Go to page 2" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeDisabled();
     // The page button itself does not prefetch; AG Grid requests page two only
     // after performing the explicit pagination transition.
     expect(getMock).toHaveBeenCalledTimes(1);
@@ -520,9 +518,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
     await getRows(firstPage);
     await userEvent.click(screen.getByRole("button", { name: "Go to page 2" }));
     expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
-    expect(
-      screen.getByRole("button", { name: "Go to page 2" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeDisabled();
 
     const secondPage = makeParams(25, 50);
     gridState.api = secondPage.api;
@@ -536,9 +532,7 @@ describe.each(["trace", "span"])("%s grid explicit pagination", (kind) => {
       expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
       expect(gridState.props.loading).toBe(false);
     });
-    expect(
-      screen.getByRole("button", { name: "Go to page 2" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeDisabled();
 
     const renderedSecondPageRow =
       kind === "trace"

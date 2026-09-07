@@ -23,7 +23,11 @@ const FIELD_CASES = [
 
 describe("normalizeFilterRowOperator sanitizes legacy is/is_not", () => {
   it("ID_ONLY_FIELDS is the expected set", () => {
-    expect([...ID_ONLY_FIELDS].sort()).toEqual(["session", "span_id", "trace_id"]);
+    expect([...ID_ONLY_FIELDS].sort()).toEqual([
+      "session",
+      "span_id",
+      "trace_id",
+    ]);
   });
 
   for (const legacyOp of ["is", "is_not"]) {

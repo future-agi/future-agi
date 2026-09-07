@@ -379,8 +379,15 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
 
   return useMemo(() => {
     const { hasMore, provenNext } = pagerFlagsForPage(page, frontier);
+    // `hasMore` answers "can you move forward from here", which is what Next
+    // needs. The trailing ellipsis asks a different question — "is the end of
+    // the list still unknown" — and only the frontier can answer it. Deriving
+    // the ellipsis from `hasMore` makes it reappear on page 1 after the user
+    // has already walked to the last page, which reads as new pages arriving.
+    const endUnknown = frontier.page > 0 && frontier.hasMore === true;
     return {
       beginPageLoad,
+      endUnknown,
       hasMore,
       page,
       pageCount,

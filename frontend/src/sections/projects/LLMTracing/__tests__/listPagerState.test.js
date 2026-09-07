@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  getListPagerState,
-  windowedPageNumbers,
-} from "../listPagerState";
+import { getListPagerState, windowedPageNumbers } from "../listPagerState";
 
 describe("getListPagerState", () => {
   // Captured from the local API on 2026-09-07, project 501e948b.
