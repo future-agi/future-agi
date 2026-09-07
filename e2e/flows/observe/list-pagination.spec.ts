@@ -255,11 +255,14 @@ async function assertAncestorIsChurning(page: Page): Promise<void> {
 
 // Pinned off the running app (2026-09-07 capture against Sessions, 136 rows at
 // page size 25, walked to its true last page): the window is `{1} ∪
-// {current-1..current+1 or current+proven-next}`, at most four numbers,
-// always including page 1; a leading gap opens once the window first leaves
-// page 1's neighbourhood; the trailing ellipsis and Next both disappear only
-// on the true last page. With 45 rows at page size 10 that walk is 5 pages
-// long and the gap opens on page 4.
+// {current-1..current+1 or current+proven-next}`, at most four numbers during
+// a forward walk (a fifth, right-hand boundary number is drawn only once a
+// walk returns to an earlier page than the furthest one reached — not
+// exercised by this forward-only walk, see OBS-E2E-013), always including
+// page 1; a leading gap opens once the window first leaves page 1's
+// neighbourhood; the trailing ellipsis and Next both disappear only on the
+// true last page. With 45 rows at page size 10 that walk is 5 pages long and
+// the gap opens on page 4.
 const EXPECTED_WINDOWS: Array<{
   page: number; numbers: number[]; leading: boolean; trailing: boolean;
   prevDisabled: boolean; nextDisabled: boolean; rows: number;
@@ -388,9 +391,12 @@ test('OBS-E2E-004: trace list pager windows forward without an endless page coun
 
       const pager = await readPager(page);
 
-      // Assertion 2: the window never exceeds four page numbers and always
-      // includes page 1.
-      expect(pager.numbers.length).toBeLessThanOrEqual(4);
+      // Assertion 2: the window never exceeds five page numbers (four plus
+      // the furthest-visited-page boundary) and always includes page 1. A
+      // pure forward walk never actually reaches five — the frontier always
+      // equals the current page here — so this is the same bound `<= 4` would
+      // give for this walk; the wider cap is what OBS-E2E-013 exercises.
+      expect(pager.numbers.length).toBeLessThanOrEqual(5);
       expect(pager.numbers).toContain(1);
       // Assertion 5: the highest page number offered never exceeds currentPage + 1.
       expect(Math.max(...pager.numbers)).toBeLessThanOrEqual(expected.page + 1);
@@ -1052,11 +1058,102 @@ test('OBS-E2E-012: changing the date filter resets pagination to page 1 and drop
   await req.dispose();
 });
 
-// NOTE for future work: the window cap asserted throughout this file (at most
-// four page numbers — PAG-01/NEG-02, `pager.numbers.length` <= 4, and the
-// `formulaWindow`/EXPECTED_WINDOWS shapes) is pinned to the *current*
-// `windowedPageNumbers` formula in listPagerState.js. There is an approved
-// follow-up to widen the window to five numbers to make room for a frontier
-// boundary (`1 … 4 [5] 6 … 11 …`) — a separate branch, not done here. Every
-// hard-coded "4" / window-shape assertion above will need updating when that
-// lands; nothing in this file pre-empts it.
+test('OBS-E2E-013: the furthest-visited page reappears as a boundary after walking back to page 1', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({
+    id: 'OBS-E2E-013', area: 'observe',
+    userGoal: 'A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on',
+    steps: ['seed 45 traces into one project over OTLP',
+            "open the project's trace list at page size 10 (5 pages)",
+            'walk forward via Next to the true last page (page 5)',
+            'jump directly back to page 1 via the pager',
+            'confirm page 5 is offered as a right-hand boundary button, is clickable, and navigating to it lands on the true last page again'],
+    backendChecks: ['all 45 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project'],
+  }),
+}, async ({ page, actor, probe }, testInfo) => {
+  test.setTimeout(180_000);
+  const req = await request.newContext();
+  const TOTAL = 45;
+  const SIZE = 10;
+  const LAST = 5;
+  const projectId = await seedTraceProject(req, probe, actor, TOTAL, 'pag13');
+  const traceNames = page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]');
+
+  await openObserveList(page, `/dashboard/observe/${projectId}/llm-tracing?tab=traces&selectedTab=trace`);
+  await expect(traceNames).toHaveCount(25, { timeout: UI_READY });
+
+  await test.step('drop to page size 10 (5 pages)', async () => {
+    const resized = page.waitForResponse(
+      (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`page_size=${SIZE}`) && r.ok(),
+      { timeout: UI_READY });
+    await page.locator('[aria-label="Results per page"]:visible').click();
+    await page.getByRole('option', { name: String(SIZE), exact: true }).click();
+    await resized;
+    await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
+    await waitForCurrentPage(page, 1);
+  });
+
+  await test.step('walk forward to the true last page', async () => {
+    for (const target of [2, 3, 4, LAST]) {
+      const advanced = page.waitForResponse(
+        (r) => r.url().includes(TRACE_LIST_PATH) && r.url().includes(`project_id=${projectId}`) && r.ok(),
+        { timeout: UI_READY });
+      // eslint-disable-next-line no-await-in-loop
+      await pagerButton(page, 'Next page').click();
+      // eslint-disable-next-line no-await-in-loop
+      await advanced;
+      // eslint-disable-next-line no-await-in-loop
+      await waitForCurrentPage(page, target);
+    }
+    const pager = await readPager(page);
+    expect(pager.current).toBe(LAST);
+    expect(pager.nextDisabled).toBe(true);
+    expect(pager.trailingEllipsis).toBe(false);
+  });
+
+  await test.step('jump straight back to page 1', async () => {
+    // Page 1 was fetched during the initial load and is still cached
+    // client-side, so this click is not guaranteed to hit the wire — wait on
+    // the pager's own DOM state, not a response (same reasoning as the
+    // cached-page legs in OBS-E2E-005/OBS-E2E-009/OBS-E2E-011).
+    await pagerButton(page, 'Go to page 1').click();
+    await waitForCurrentPage(page, 1);
+    await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
+  });
+
+  await test.step(`page ${LAST} reappears as a boundary, is clickable, and navigates`, async () => {
+    const boundary = pagerButton(page, `Go to page ${LAST}`);
+    await expect(boundary).toBeVisible();
+    await expect(boundary).toBeEnabled();
+    // The boundary sits beyond the ordinary `{1} ∪ {cur-1, cur, cur+1}`
+    // window (here just `[1, 2]`), so its gap must be the dedicated
+    // boundary-ellipsis test id, not the leading-ellipsis one PAG-01 uses.
+    await expect(page.getByTestId('pager-boundary-ellipsis').filter({ visible: true }))
+      .toHaveCount(1);
+    await expect(page.getByTestId('pager-leading-ellipsis').filter({ visible: true }))
+      .toHaveCount(0);
+
+    // Page 5 was also fetched during the forward walk and is cached, so this
+    // click too is not guaranteed to hit the wire (same reasoning as above).
+    await boundary.click();
+    await waitForCurrentPage(page, LAST);
+    await expect(traceNames).toHaveCount(TOTAL - SIZE * (LAST - 1), { timeout: UI_READY });
+
+    const finalPager = await readPager(page);
+    expect(finalPager.current).toBe(LAST);
+    expect(finalPager.nextDisabled).toBe(true);
+    expect(finalPager.trailingEllipsis).toBe(false);
+  });
+
+  await req.dispose();
+});
+
+// NOTE: the window cap asserted throughout this file (PAG-01/NEG-02,
+// `pager.numbers.length` <= 5, and the `formulaWindow`/EXPECTED_WINDOWS
+// shapes) is pinned to the *current* `windowedPageNumbers` formula in
+// listPagerState.js, which now also draws the furthest-visited page as a
+// fifth, right-hand boundary (`1 … 4 [5] 6 … 11`) once a walk returns to an
+// earlier page. `EXPECTED_WINDOWS` itself needed no change: during a forward
+// walk the frontier always equals the current page, so the boundary sits
+// inside the window the formula already produces — the widened cap and the
+// boundary-return behaviour are covered separately by OBS-E2E-013 below.
