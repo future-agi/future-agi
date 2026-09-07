@@ -1228,9 +1228,8 @@ class TestTestExecutionBulkDeleteView:
         assert data["deleted_count"] == 2
         assert len(data["deleted_ids"]) == 2
 
-        # Verify they're actually deleted
+        # Default managers hide the soft-deleted executions and calls.
         assert TestExecution.objects.filter(run_test=run_test).count() == 0
-        # Verify cascade deleted call executions
         assert (
             CallExecution.objects.filter(test_execution__run_test=run_test).count() == 0
         )
@@ -1260,6 +1259,13 @@ class TestTestExecutionBulkDeleteView:
         # test_execution_2 should still exist
         assert TestExecution.objects.filter(id=test_execution_2.id).exists()
         assert not TestExecution.objects.filter(id=test_execution.id).exists()
+
+        deleted_execution = TestExecution.all_objects.get(id=test_execution.id)
+        deleted_call = CallExecution.all_objects.get(id=call_execution.id)
+        assert deleted_execution.deleted is True
+        assert deleted_execution.deleted_at is not None
+        assert deleted_call.deleted is True
+        assert deleted_call.deleted_at is not None
 
     def test_delete_select_all_with_exclusion(
         self,
