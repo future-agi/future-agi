@@ -344,6 +344,35 @@ class HarnessSourceUploadResponseSerializer(serializers.Serializer):
     total_bytes = serializers.IntegerField()
 
 
+class HarnessTemplateSerializer(serializers.Serializer):
+    """Read-only summary of one curated seed agent shown in the create gallery."""
+
+    slug = serializers.CharField()
+    display_name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    channel = serializers.CharField()
+    direction = serializers.CharField()
+    languages = serializers.ListField(child=serializers.CharField())
+    vertical = serializers.CharField()
+    icon = serializers.CharField()
+    default_scenario_count = serializers.IntegerField()
+    phase_count = serializers.IntegerField()
+    tool_count = serializers.IntegerField()
+
+
+class HarnessTemplateInstantiationSerializer(serializers.Serializer):
+    """Response of instantiating a template: an uploaded-source descriptor plus
+    the create-form defaults the UI should apply."""
+
+    source_id = serializers.UUIDField()
+    name = serializers.CharField()
+    file_count = serializers.IntegerField()
+    total_bytes = serializers.IntegerField()
+    scenario_count = serializers.IntegerField()
+    config = serializers.DictField()
+    template = HarnessTemplateSerializer()
+
+
 class HarnessSecretFileUploadResponseSerializer(serializers.Serializer):
     environment_name = serializers.RegexField(r"^[A-Za-z_][A-Za-z0-9_]*$")
     secret_ref = SecretReferenceSerializer()

@@ -13,6 +13,9 @@ const secretFilesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-files/");
 const secretValuesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-values/");
+const templatesPath = () => apiPath("/simulate/api/harness-jobs/templates/");
+const instantiateTemplatePath = (slug) =>
+  apiPath("/simulate/api/harness-jobs/templates/{slug}/instantiate/", { slug });
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
 
@@ -74,3 +77,7 @@ export const cancelHarnessJob = async (id, reason) => {
 };
 export const adjustHarnessJob = async (id, payload) =>
   (await axios.post(adjustPath(id), payload)).data;
+export const listHarnessTemplates = async () =>
+  (await axios.get(templatesPath())).data;
+export const instantiateHarnessTemplate = async (slug) =>
+  (await axios.post(instantiateTemplatePath(slug), {})).data;
