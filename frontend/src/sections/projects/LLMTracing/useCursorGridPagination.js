@@ -6,6 +6,7 @@ import {
 } from "src/config/runtime_limits";
 import { withLiveGridApi } from "src/utils/gridApi";
 import { dispatchObservePageChanged } from "../observeEvents";
+import { getListPagerState } from "./listPagerState";
 
 const requestRenderFrame = (callback) => {
   if (
@@ -88,6 +89,8 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
   const [pageSize, setPageSize] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
   const [pageCount, setPageCount] = useState(1);
   const [isPageLoading, setIsPageLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [provenNext, setProvenNext] = useState(false);
   const discoveredRowCountRef = useRef(0);
   const pageLoadRequestRef = useRef(0);
   const activePageLoadRequestRef = useRef(null);
@@ -225,6 +228,8 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       discoveredRowCountRef.current = 0;
       setPage(1);
       setPageCount(1);
+      setHasMore(false);
+      setProvenNext(false);
       if (moveGrid) {
         withLiveGridApi(gridRef?.current?.api, (api) =>
           api.paginationGoToFirstPage?.(),
@@ -234,7 +239,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     [gridRef, stopRenderCheck],
   );
 
-  const publishPage = useCallback(({ request, rows, isLastPage }) => {
+  const publishPage = useCallback(({ request, rows, isLastPage, metadata }) => {
     const requestPageSize = request.endRow - request.startRow;
     const terminalRowCount = request.startRow + rows.length;
     const nextPageSentinelRowCount = request.endRow + 1;
@@ -251,7 +256,18 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
 
     const discoveredRowCount = discoveredRowCountRef.current;
     setPage(publishedPage);
+    // pageCount stays the navigation bound for goToPage. It is no longer
+    // rendered; CursorGridPagination draws the window instead.
     setPageCount(Math.max(1, Math.ceil(discoveredRowCount / requestPageSize)));
+
+    const pagerState = getListPagerState({
+      metadata,
+      startRow: request.startRow,
+      rowCount: rows.length,
+    });
+    setHasMore(isLastPage ? false : pagerState.hasMore);
+    setProvenNext(isLastPage ? false : pagerState.provenNext);
+
     return discoveredRowCount;
   }, []);
 
@@ -325,9 +341,11 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
   return useMemo(
     () => ({
       beginPageLoad,
+      hasMore,
       page,
       pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -340,10 +358,12 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       changePageSize,
       finishPageLoad,
       goToPage,
+      hasMore,
       isPageLoading,
       page,
       pageCount,
       pageSize,
+      provenNext,
       publishPage,
       resetPagination,
     ],
