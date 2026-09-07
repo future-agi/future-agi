@@ -16,6 +16,7 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+from django.db import IntegrityError
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
@@ -478,8 +479,9 @@ class TestScenarioDetailView:
         assert "prompts" in data
         assert "dataset_rows" in data
 
-
-    def test_get_scenario_detail_dataset_column_config_shape_and_null(self, auth_client, scenario, user):
+    def test_get_scenario_detail_dataset_column_config_shape_and_null(
+        self, auth_client, scenario, user
+    ):
         # 1. Test null branch when scenario has no dataset
         scenario.dataset = None
         scenario.save()
@@ -513,7 +515,9 @@ class TestScenarioDetailView:
         assert str(col1.id) in config
         assert config[str(col1.id)] == {"name": "Age", "type": "integer"}
 
-    def test_get_scenario_detail_dataset_column_ordering(self, auth_client, scenario, user):
+    def test_get_scenario_detail_dataset_column_ordering(
+        self, auth_client, scenario, user
+    ):
         dataset = Dataset.no_workspace_objects.create(
             name="test",
             organization=scenario.organization,
@@ -522,10 +526,16 @@ class TestScenarioDetailView:
             source=DatasetSourceChoices.SCENARIO.value,
         )
         col1 = Column.objects.create(
-            name="Col1", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+            name="Col1",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
         )
         col2 = Column.objects.create(
-            name="Col2", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+            name="Col2",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
         )
 
         # Declare in reverse order of creation
@@ -542,7 +552,9 @@ class TestScenarioDetailView:
         keys = list(config.keys())
         assert keys == [str(col2.id), str(col1.id)]
 
-    def test_get_scenario_detail_dataset_column_isolation(self, auth_client, scenario, user):
+    def test_get_scenario_detail_dataset_column_isolation(
+        self, auth_client, scenario, user
+    ):
         dataset = Dataset.no_workspace_objects.create(
             name="test",
             organization=scenario.organization,
@@ -551,7 +563,10 @@ class TestScenarioDetailView:
             source=DatasetSourceChoices.SCENARIO.value,
         )
         col1 = Column.objects.create(
-            name="Valid", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+            name="Valid",
+            data_type="text",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
         )
 
         # Create a foreign column in another dataset
@@ -563,7 +578,10 @@ class TestScenarioDetailView:
             source=DatasetSourceChoices.SCENARIO.value,
         )
         col_foreign = Column.objects.create(
-            name="Foreign", data_type="text", dataset=other_dataset, source=SourceChoices.OTHERS.value,
+            name="Foreign",
+            data_type="text",
+            dataset=other_dataset,
+            source=SourceChoices.OTHERS.value,
         )
 
         # Pollute column_order with foreign column ID
@@ -1022,6 +1040,186 @@ class TestCreateScenarioView:
         assert_unknown_field_error(response, "legacy_extra")
         mock_workflow.assert_not_called()
 
+    def test_create_scenario_duplicate_name(
+        self, auth_client, agent_definition, dataset, scenario
+    ):
+        """Test creating a scenario with a name that already exists returns 400."""
+        payload = {
+            "name": scenario.name,
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+            "agent_definition_id": str(agent_definition.id),
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "already exists" in response.json()["details"]["name"][0]
+
+    def test_create_scenario_duplicate_name_case_insensitive(
+        self, auth_client, agent_definition, dataset, scenario
+    ):
+        """Case-insensitive duplicate check must reject names that differ only in case."""
+        payload = {
+            "name": scenario.name.upper(),  # "TEST SCENARIO" vs "Test Scenario"
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+            "agent_definition_id": str(agent_definition.id),
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "already exists" in response.json()["details"]["name"][0]
+
+    def test_view_integrity_error_catch_returns_400(
+        self, auth_client, agent_definition, dataset, scenario
+    ):
+        """When the serializer pre-check is bypassed (TOCTOU), the view
+        catches IntegrityError and returns a 400 with a field-level error.
+
+        This proves the view's IntegrityError → DRFValidationError path works
+        end-to-end and the custom exception handler wraps the response so the
+        frontend can read the error from ``details.name``.
+        """
+        from simulate.serializers.requests.scenarios import (
+            ScenarioCreateRequestSerializer,
+        )
+
+        payload = {
+            "name": scenario.name,
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+            "agent_definition_id": str(agent_definition.id),
+        }
+
+        with patch.object(
+            ScenarioCreateRequestSerializer,
+            "validate_name",
+            return_value=scenario.name,  # bypass the duplicate pre-check
+        ):
+            response = auth_client.post(
+                "/simulate/scenarios/create/", payload, format="json"
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "already exists" in response.json()["details"]["name"][0]
+
+
+# ============================================================================
+# Database-Level Uniqueness Constraint Tests
+# ============================================================================
+
+
+class TestDatabaseUniqueConstraint:
+    """Tests proving the DB constraint prevents duplicates at the lowest
+    level — even when the serializer and view checks are bypassed."""
+
+    def test_duplicate_name_raises_integrity_error(self, db, organization, workspace):
+        """Creating two scenarios with the same name+org directly via ORM
+        raises IntegrityError from the partial unique index.
+
+        This proves the DB is the ultimate enforcer — even if two concurrent
+        API requests both pass the serializer's duplicate check before either
+        write lands, only one INSERT can succeed.
+        """
+        common = {
+            "name": "Checkout Flow",
+            "description": "Test",
+            "source": "Test",
+            "scenario_type": Scenarios.ScenarioTypes.DATASET,
+            "organization": organization,
+            "workspace": workspace,
+            "status": StatusType.COMPLETED.value,
+        }
+
+        # First create succeeds.
+        Scenarios.objects.create(**common)
+
+        # Second create with the same (org, name) must fail.
+        with pytest.raises(IntegrityError):
+            Scenarios.objects.create(**common)
+
+    def test_case_insensitive_enforced_at_db_level(self, db, organization, workspace):
+        """DB constraint uses LOWER(name) — different-case names collide.
+
+        Even when the serializer is bypassed (curl, admin), the functional
+        unique index on LOWER(name) prevents 'Checkout' and 'checkout'
+        from coexisting."""
+        Scenarios.objects.create(
+            name="Checkout Flow",
+            description="Test",
+            source="Test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            status=StatusType.COMPLETED.value,
+        )
+
+        with pytest.raises(IntegrityError):
+            Scenarios.objects.create(
+                name="checkout flow",  # different case, same name
+                description="Test",
+                source="Test",
+                scenario_type=Scenarios.ScenarioTypes.DATASET,
+                organization=organization,
+                workspace=workspace,
+                status=StatusType.COMPLETED.value,
+            )
+
+    def test_soft_deleted_scenario_does_not_block_new(
+        self, db, organization, workspace
+    ):
+        """A soft-deleted scenario must not block recreating with the same name."""
+        common = {
+            "name": "Soft Deleted",
+            "description": "Test",
+            "source": "Test",
+            "scenario_type": Scenarios.ScenarioTypes.DATASET,
+            "organization": organization,
+            "workspace": workspace,
+            "status": StatusType.COMPLETED.value,
+        }
+
+        existing = Scenarios.objects.create(**common)
+        existing.delete()  # soft-delete: sets deleted=True
+
+        # Recreating with the same name must succeed (deleted=False condition).
+        new_scenario = Scenarios.objects.create(**common)
+        assert new_scenario.id != existing.id
+        assert new_scenario.deleted is False
+
+    def test_same_name_different_org_allowed(self, db, organization, workspace):
+        """Different organizations can each have a scenario with the same name."""
+        from accounts.models.organization import Organization
+
+        other_org = Organization.objects.create(name="Other Org")
+
+        Scenarios.objects.create(
+            name="Shared Name",
+            description="Test",
+            source="Test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            status=StatusType.COMPLETED.value,
+        )
+
+        # Same name, different org — must succeed.
+        scenario2 = Scenarios.objects.create(
+            name="Shared Name",
+            description="Test",
+            source="Test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=other_org,
+            status=StatusType.COMPLETED.value,
+        )
+        assert scenario2.organization == other_org
+
 
 # ============================================================================
 # EditScenarioView Tests
@@ -1202,6 +1400,30 @@ class TestEditScenarioView:
         )
 
         assert_unknown_field_error(response, "legacy_extra")
+
+    def test_edit_scenario_duplicate_name(
+        self, auth_client, scenario, organization, workspace
+    ):
+        """Test editing a scenario to a name that already exists returns 400."""
+        # Create a second scenario with a different name.
+        other = Scenarios.objects.create(
+            name="Other Scenario",
+            description="Another scenario",
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            status=StatusType.COMPLETED.value,
+        )
+
+        payload = {"name": scenario.name}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{other.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "already exists" in response.json()["details"]["name"][0]
 
 
 # ============================================================================

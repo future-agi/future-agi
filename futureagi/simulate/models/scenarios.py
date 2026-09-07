@@ -2,6 +2,7 @@ import uuid
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Lower
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
@@ -121,6 +122,14 @@ class Scenarios(BaseModel):
         verbose_name = "Scenario"
         verbose_name_plural = "Scenarios"
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                "organization",
+                condition=models.Q(deleted=False),
+                name="unique_scenario_name_per_org",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name}"
