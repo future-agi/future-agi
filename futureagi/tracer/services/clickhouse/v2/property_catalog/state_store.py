@@ -16,6 +16,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from .activation import (
+    ActivationHistory,
     ActivationManifest,
     ActivationRecord,
     ActivationStatus,
@@ -25,7 +26,7 @@ from .activation import (
     RevisionBuildPlan,
     RevisionLease,
 )
-from .codec import framed_sha256, require_sha256
+from .codec import canonical_uuid, framed_sha256, require_sha256
 from .models import (
     CanonicalDefinition,
     PropertyBindingRow,
@@ -60,6 +61,7 @@ _SOURCE_STREAM_TABLE = "property_catalog_source_streams"
 _CONTROL_WRITE_TABLES = frozenset({_CHECKPOINT_TABLE, _ACTIVATION_TABLE})
 _MAX_ACTIVE_LINEAGE_REVISIONS = RUNTIME_LIMITS.max_lineage_revisions
 _MAX_STATE_VARIANTS = MAX_LOGICAL_STATE_VARIANTS
+_MAX_CHECKPOINT_STREAMS = len(SourceAdapter) + 3  # Four roles for span_attribute.
 _MAX_DELIVERIES = MAX_DELIVERIES_PER_REVISION
 _MAX_DELIVERY_REPLAYS = MAX_DELIVERY_REPLAYS
 
@@ -416,6 +418,13 @@ class ClickHouseCatalogStateStore(ActivationStore):
 
     def _append_checkpoint(self, value: CheckpointWrite) -> None:
         checkpoint = value.checkpoint
+        prepared = None
+        recover = getattr(self._client, "recover_checkpoint_dependencies", None)
+        if recover is not None:
+            prepared = recover(
+                _checkpoint_row(value, now=datetime.now(UTC), version=1),
+                timeout_ms=_remaining(self._deadline, self._timeout_ms),
+            )
         existing = self._load_latest_checkpoint_rows(
             organization_id=checkpoint.organization_id,
             workspace_id=checkpoint.workspace_id,
@@ -438,18 +447,36 @@ class ClickHouseCatalogStateStore(ActivationStore):
         if latest is not None and _row_identity(
             latest, _CHECKPOINT_LOGICAL_COLUMNS
         ) == _row_identity(row, _CHECKPOINT_LOGICAL_COLUMNS):
+            version = _uint(latest["_version"], "_version")
+            token = _checkpoint_token(checkpoint, version)
+            if prepared is not None and prepared != (version, token):
+                raise PropertyCatalogStateConflict(
+                    "visible checkpoint cannot bypass another pending version/token"
+                )
+            self._confirm_checkpoint_receipt(
+                latest,
+                token,
+            )
             return
         if next_version >= 1 << 64:
             raise PropertyCatalogStateError("checkpoint version exhausted UInt64")
+        token = _checkpoint_token(checkpoint, next_version)
+        if prepared is not None and prepared != (next_version, token):
+            raise PropertyCatalogStateConflict(
+                "pending checkpoint version/token differs; cannot allocate around it"
+            )
+        restore = getattr(self._client, "restore_insert_metadata", None)
+        if restore is not None:
+            row = restore(
+                _qualified(self._database, _CHECKPOINT_TABLE),
+                (row,),
+                columns=_CHECKPOINT_COLUMNS,
+                deduplication_token=token,
+            )[0]
         self._insert(
             _CHECKPOINT_TABLE,
             row,
-            deduplication_token=(
-                "property-catalog-checkpoint-v1:"
-                f"{checkpoint.build_token}:{checkpoint.source_adapter}:"
-                f"{checkpoint.producer_stream_id}:{next_version}:"
-                f"{checkpoint.state_sha256}"
-            ),
+            deduplication_token=token,
         )
         persisted = self._load_latest_checkpoint_rows(
             organization_id=checkpoint.organization_id,
@@ -474,6 +501,19 @@ class ClickHouseCatalogStateStore(ActivationStore):
         ):
             raise PropertyCatalogStateConflict(
                 "checkpoint append was not preserved as the unique latest state"
+            )
+        self._confirm_checkpoint_receipt(verified, token)
+
+    def _confirm_checkpoint_receipt(self, row, token):
+        confirm = getattr(self._client, "confirm_insert", None)
+        if confirm is not None:
+            _validate_client(self._client, self._database)
+            confirm(
+                _qualified(self._database, _CHECKPOINT_TABLE),
+                (row,),
+                columns=_CHECKPOINT_COLUMNS,
+                timeout_ms=_remaining(self._deadline, self._timeout_ms),
+                deduplication_token=token,
             )
 
     def _load_latest_checkpoint_rows(
@@ -721,6 +761,101 @@ class ClickHouseCatalogStateStore(ActivationStore):
         )
         return None if latest is None else _checkpoint_write(latest)
 
+    def load_checkpoint_writes(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+        catalog_revision: int,
+        build_token: str,
+        stream_pairs: Sequence[tuple[SourceAdapter, str]],
+    ) -> Mapping[tuple[SourceAdapter, str], CheckpointWrite]:
+        """Read one build's explicit streams without hiding latest raw variants."""
+        if (
+            not isinstance(stream_pairs, (tuple, list))
+            or not 1 <= len(stream_pairs) <= _MAX_CHECKPOINT_STREAMS
+            or any(
+                not isinstance(pair, (tuple, list)) or len(pair) != 2
+                for pair in stream_pairs
+            )
+        ):
+            raise ValueError("checkpoint batch requires bounded explicit stream pairs")
+        pairs = tuple(
+            (SourceAdapter(adapter), canonical_uuid(stream, field="producer_stream_id"))
+            for adapter, stream in stream_pairs
+        )
+        if len(set(pairs)) != len(pairs):
+            raise ValueError("checkpoint batch contains duplicate streams")
+        scope = {
+            "organization_id": canonical_uuid(organization_id, field="organization_id"),
+            "workspace_id": canonical_uuid(workspace_id, field="workspace_id"),
+            "catalog_epoch": _uint(catalog_epoch, "catalog_epoch"),
+            "catalog_revision": _uint(catalog_revision, "catalog_revision"),
+            "build_token": canonical_uuid(build_token, field="build_token"),
+        }
+        if not 0 < scope["catalog_epoch"] < 1 << 16 or scope["catalog_revision"] == 0:
+            raise ValueError("checkpoint batch requires a positive epoch/revision")
+        row_cap = len(pairs) * _MAX_STATE_VARIANTS
+        rows = self._query(
+            f"SELECT {', '.join(_CHECKPOINT_COLUMNS)} FROM ("
+            f"SELECT {', '.join(_CHECKPOINT_COLUMNS)}, "
+            "max(_version) OVER (PARTITION BY source_adapter, producer_stream_id) "
+            "AS latest_version "
+            f"FROM {_qualified(self._database, _CHECKPOINT_TABLE)} "
+            "WHERE organization_id=%(organization_id)s AND workspace_id=%(workspace_id)s "
+            "AND catalog_epoch=%(catalog_epoch)s AND catalog_revision=%(catalog_revision)s "
+            "AND build_token=%(build_token)s "
+            "AND (source_adapter, producer_stream_id) IN %(stream_pairs)s) "
+            "WHERE _version=latest_version "
+            "ORDER BY source_adapter, producer_stream_id, _version DESC "
+            "LIMIT %(row_limit)s",
+            {
+                **scope,
+                "stream_pairs": tuple(
+                    (str(adapter), stream) for adapter, stream in pairs
+                ),
+                "row_limit": row_cap + 1,
+            },
+        )
+        _require_below_row_cap(rows, cap=row_cap, label="checkpoint batch")
+        grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
+        allowed = set(pairs)
+        for row in rows:
+            if any(
+                (
+                    _uint(row.get(field), field)
+                    if field in {"catalog_epoch", "catalog_revision"}
+                    else _text(row.get(field))
+                )
+                != expected
+                for field, expected in scope.items()
+            ):
+                raise PropertyCatalogStateConflict(
+                    "checkpoint batch changed build scope"
+                )
+            key = (
+                _text(row.get("source_adapter")),
+                _text(row.get("producer_stream_id")),
+            )
+            if key not in allowed:
+                raise PropertyCatalogStateConflict(
+                    "checkpoint batch returned an unrequested stream"
+                )
+            grouped[key].append(row)
+        result = {}
+        for pair in pairs:
+            values = grouped[pair]
+            _require_below_row_cap(
+                values, cap=_MAX_STATE_VARIANTS, label="checkpoint stream"
+            )
+            latest = _latest_row(
+                values, logical_columns=_CHECKPOINT_LOGICAL_COLUMNS, label="checkpoint"
+            )
+            if latest is not None:
+                result[pair] = _checkpoint_write(latest)
+        return result
+
     def append_hot_checkpoint_from_proof(
         self,
         *,
@@ -849,6 +984,89 @@ class ClickHouseCatalogStateStore(ActivationStore):
 
         return self._serializer.serialize(key, append_serialized)
 
+    def load_activation_history(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+    ) -> ActivationHistory:
+        from .codec import canonical_uuid
+
+        if not isinstance(organization_id, (str, UUID)) or not isinstance(
+            workspace_id, (str, UUID)
+        ):
+            raise TypeError("activation history scope requires UUIDs")
+        organization_id = canonical_uuid(organization_id, field="organization_id")
+        workspace_id = canonical_uuid(workspace_id, field="workspace_id")
+        if type(catalog_epoch) is not int or not 1 <= catalog_epoch < (1 << 16):
+            raise ValueError("catalog_epoch must be a positive UInt16")
+        rows = self.list_activation_rows(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            catalog_epoch=catalog_epoch,
+        )
+        logical = tuple(
+            column for column in _ACTIVATION_COLUMNS if column != "_version"
+        )
+        latest_by_key = _latest_activations(rows, logical_columns=logical)
+        # Resolve every status before filtering or consuming allocation marks.
+        # An invalidated build still owns its positive revision and sequence.
+        revisions: dict[int, str] = {}
+        sequences: dict[int, tuple[int, str]] = {}
+        maximum_revision = maximum_sequence = 0
+        active_records = []
+        for key in sorted(latest_by_key):
+            row = latest_by_key[key]
+            scope = {}
+            for field in ("organization_id", "workspace_id", "build_token"):
+                value = row.get(field)
+                if not isinstance(value, (str, UUID)):
+                    raise PropertyCatalogStateError(f"{field} is not a UUID")
+                try:
+                    scope[field] = canonical_uuid(str(value), field=field)
+                except (TypeError, ValueError) as exc:
+                    raise PropertyCatalogStateError(f"{field} is not a UUID") from exc
+            for field in ("catalog_epoch", "projection_version"):
+                value = _uint(row.get(field), field)
+                if not 1 <= value < (1 << 16):
+                    raise PropertyCatalogStateError(f"{field} is not a positive UInt16")
+            if (
+                scope["organization_id"] != organization_id
+                or scope["workspace_id"] != workspace_id
+                or row["catalog_epoch"] != catalog_epoch
+            ):
+                raise PropertyCatalogStateConflict(
+                    "activation history is outside scope"
+                )
+            revision = _uint(row.get("catalog_revision"), "catalog_revision")
+            sequence = _uint(row.get("activation_sequence"), "activation_sequence")
+            if not revision or not sequence:
+                raise PropertyCatalogStateError(
+                    "activation history revision and sequence must be positive"
+                )
+            token = scope["build_token"]
+            owner = (revision, token)
+            if revision in revisions and revisions[revision] != token:
+                raise PropertyCatalogStateConflict(
+                    "multiple builds claim the same catalog_revision"
+                )
+            revisions[revision] = token
+            if sequence in sequences and sequences[sequence] != owner:
+                raise PropertyCatalogStateConflict(
+                    "multiple activations claim the same activation_sequence"
+                )
+            sequences[sequence] = owner
+            maximum_revision = max(maximum_revision, revision)
+            maximum_sequence = max(maximum_sequence, sequence)
+            if _text(row["status"]) == str(ActivationStatus.ACTIVE):
+                active_records.append(_activation(row))
+        return ActivationHistory(
+            active_records=tuple(active_records),
+            maximum_revision=maximum_revision,
+            maximum_sequence=maximum_sequence,
+        )
+
     def list_activations(
         self,
         *,
@@ -856,30 +1074,13 @@ class ClickHouseCatalogStateStore(ActivationStore):
         workspace_id: str,
         catalog_epoch: int,
     ) -> Sequence[ActivationRecord]:
-        rows = self.list_activation_rows(
+        """Compatibility accessor; allocation must use load_activation_history."""
+
+        return self.load_activation_history(
             organization_id=organization_id,
             workspace_id=workspace_id,
             catalog_epoch=catalog_epoch,
-        )
-        grouped: dict[tuple[int, str], list[Mapping[str, Any]]] = defaultdict(list)
-        for row in rows:
-            grouped[
-                (
-                    _uint(row["catalog_revision"], "catalog_revision"),
-                    _text(row["build_token"]),
-                )
-            ].append(row)
-        records: list[ActivationRecord] = []
-        logical = tuple(
-            column for column in _ACTIVATION_COLUMNS if column != "_version"
-        )
-        for key in sorted(grouped):
-            latest = _latest_row(
-                grouped[key], logical_columns=logical, label=f"activation:{key}"
-            )
-            assert latest is not None
-            records.append(_activation(latest))
-        return tuple(records)
+        ).active_records
 
     def append_active(
         self,
@@ -887,6 +1088,7 @@ class ClickHouseCatalogStateStore(ActivationStore):
         *,
         fence_sha256: str,
         checkpoint_state_sha256s: tuple[str, ...],
+        write_scope=None,
     ) -> ActivationRecord:
         key = (
             f"activation:{self._database}:{record.organization_id}:"
@@ -898,6 +1100,7 @@ class ClickHouseCatalogStateStore(ActivationStore):
                 record,
                 fence_sha256=fence_sha256,
                 checkpoint_state_sha256s=checkpoint_state_sha256s,
+                write_scope=write_scope,
             ),
         )
 
@@ -907,6 +1110,7 @@ class ClickHouseCatalogStateStore(ActivationStore):
         *,
         fence_sha256: str,
         checkpoint_state_sha256s: tuple[str, ...],
+        write_scope=None,
     ) -> ActivationRecord:
         if record.revision_fence_sha256 != fence_sha256:
             raise ValueError("activation fence digest mismatch")
@@ -959,6 +1163,7 @@ class ClickHouseCatalogStateStore(ActivationStore):
                 "property-catalog-activation-v1:"
                 f"{record.build_token}:{record.activation_sha256}"
             ),
+            write_scope=write_scope,
         )
         persisted = self._activation_rows(record)
         verified_by_key = _latest_activations(persisted, logical_columns=logical)
@@ -991,25 +1196,14 @@ class ClickHouseCatalogStateStore(ActivationStore):
         workspace_id: str,
         catalog_epoch: int,
     ) -> Sequence[Mapping[str, Any]]:
-        """Return conflict-visible latest rows for the newest bounded lineage."""
+        """Return latest rows of every status for the newest bounded lineage.
+
+        Callers must resolve same-version conflicts before filtering ACTIVE.
+        Disabled rows also retain their consumed revision/sequence for appends.
+        """
 
         return self._query(
-            f"SELECT {', '.join(f'activation.{column}' for column in _ACTIVATION_COLUMNS)} "
-            f"FROM {_qualified(self._database, _ACTIVATION_TABLE)} AS activation "
-            "INNER JOIN (SELECT catalog_revision, build_token, max(_version) AS latest_version, "
-            "max(activation_sequence) AS latest_activation_sequence "
-            f"FROM {_qualified(self._database, _ACTIVATION_TABLE)} "
-            "WHERE organization_id=%(organization_id)s AND workspace_id=%(workspace_id)s "
-            "AND catalog_epoch=%(catalog_epoch)s AND status='active' "
-            "GROUP BY catalog_revision, build_token "
-            "ORDER BY latest_activation_sequence DESC, catalog_revision DESC LIMIT 4096) "
-            "AS recent USING (catalog_revision, build_token) "
-            "WHERE activation.organization_id=%(organization_id)s "
-            "AND activation.workspace_id=%(workspace_id)s "
-            "AND activation.catalog_epoch=%(catalog_epoch)s "
-            "AND activation.status='active' AND activation._version=recent.latest_version "
-            "ORDER BY activation.activation_sequence DESC, activation.catalog_revision DESC, "
-            "activation.build_token",
+            activation_latest_rows_sql(self._database),
             {
                 "organization_id": organization_id,
                 "workspace_id": workspace_id,
@@ -1031,6 +1225,7 @@ class ClickHouseCatalogStateStore(ActivationStore):
         row: Mapping[str, Any],
         *,
         deduplication_token: str,
+        write_scope=None,
     ) -> None:
         if table not in _CONTROL_WRITE_TABLES:
             raise PropertyCatalogStateError("forbidden property catalog control table")
@@ -1041,6 +1236,7 @@ class ClickHouseCatalogStateStore(ActivationStore):
             columns=tuple(row),
             timeout_ms=_remaining(self._deadline, self._timeout_ms),
             deduplication_token=deduplication_token,
+            **({"write_scope": write_scope} if write_scope is not None else {}),
         )
 
 
@@ -1100,25 +1296,7 @@ class ClickHouseCurrentBindingReader(CurrentBindingReader):
             )
         activation_rows = tuple(
             self._client.query(
-                f"SELECT {', '.join(f'activation.{column}' for column in _ACTIVATION_COLUMNS)} "
-                f"FROM {_qualified(self._database, _ACTIVATION_TABLE)} AS activation "
-                "INNER JOIN (SELECT catalog_revision, build_token, "
-                "max(_version) AS latest_version, "
-                "max(activation_sequence) AS latest_activation_sequence "
-                f"FROM {_qualified(self._database, _ACTIVATION_TABLE)} "
-                "WHERE organization_id=%(organization_id)s "
-                "AND workspace_id=%(workspace_id)s AND catalog_epoch=%(catalog_epoch)s "
-                "AND catalog_revision<=%(catalog_revision)s "
-                "GROUP BY catalog_revision, build_token "
-                "ORDER BY latest_activation_sequence DESC, catalog_revision DESC LIMIT 4096) "
-                "AS recent USING (catalog_revision, build_token) "
-                "WHERE activation.organization_id=%(organization_id)s "
-                "AND activation.workspace_id=%(workspace_id)s "
-                "AND activation.catalog_epoch=%(catalog_epoch)s "
-                "AND activation.catalog_revision<=%(catalog_revision)s "
-                "AND activation._version=recent.latest_version "
-                "ORDER BY activation.activation_sequence DESC, "
-                "activation.catalog_revision DESC, activation.build_token",
+                activation_latest_rows_sql(self._database, through_revision=True),
                 {
                     "organization_id": context.organization_id,
                     "workspace_id": context.workspace_id,
@@ -1213,6 +1391,47 @@ def _qualified(database: str, table: str) -> str:
     return f"`{database}`.`{table}`"
 
 
+def activation_latest_rows_sql(database: str, *, through_revision: bool = False) -> str:
+    """Exact complete-result query shared by activation and lineage readers.
+
+    The inner LIMIT selects the newest logical window, not a physical-row
+    overflow sentinel. The outer result retains every latest-version variant;
+    callers validate conflicts before filtering status. Native read agreement
+    may ignore exact duplicates only after each member's raw result is bounded.
+    """
+    if type(through_revision) is not bool:
+        raise TypeError("through_revision must be a boolean")
+    table = _qualified(database, _ACTIVATION_TABLE)
+    inner_cutoff = (
+        "AND catalog_revision<=%(catalog_revision)s " if through_revision else ""
+    )
+    outer_cutoff = (
+        "AND activation.catalog_revision<=%(catalog_revision)s "
+        if through_revision
+        else ""
+    )
+    return (
+        f"SELECT {', '.join(f'activation.{column}' for column in _ACTIVATION_COLUMNS)} "
+        f"FROM {table} AS activation "
+        "INNER JOIN (SELECT catalog_revision, build_token, max(_version) AS latest_version, "
+        "max(activation_sequence) AS latest_activation_sequence "
+        f"FROM {table} "
+        "WHERE organization_id=%(organization_id)s AND workspace_id=%(workspace_id)s "
+        "AND catalog_epoch=%(catalog_epoch)s "
+        f"{inner_cutoff}"
+        "GROUP BY catalog_revision, build_token "
+        "ORDER BY latest_activation_sequence DESC, catalog_revision DESC LIMIT 4096) "
+        "AS recent USING (catalog_revision, build_token) "
+        "WHERE activation.organization_id=%(organization_id)s "
+        "AND activation.workspace_id=%(workspace_id)s "
+        "AND activation.catalog_epoch=%(catalog_epoch)s "
+        f"{outer_cutoff}"
+        "AND activation._version=recent.latest_version "
+        "ORDER BY activation.activation_sequence DESC, activation.catalog_revision DESC, "
+        "activation.build_token"
+    )
+
+
 def _remaining(deadline: SharedCatalogDeadline | None, timeout_ms: int) -> int:
     return timeout_ms if deadline is None else deadline.remaining_ms(cap_ms=timeout_ms)
 
@@ -1270,8 +1489,16 @@ def _latest_activations(
             label=f"activation:{key[0]}:{key[1]}",
         )
         assert latest is not None
+        _validate_activation_status(latest)
         result[key] = latest
     return result
+
+
+def _validate_activation_status(row: Mapping[str, Any]) -> None:
+    if _text(row.get("status")) not in {"building", "active", "disabled"}:
+        raise PropertyCatalogStateConflict(
+            "activation has an unsupported latest status"
+        )
 
 
 def _active_lineage(
@@ -1301,6 +1528,7 @@ def _active_lineage(
             grouped[key], logical_columns=logical, label=f"activation-lineage:{key}"
         )
         assert latest is not None
+        _validate_activation_status(latest)
         if _text(latest.get("status")) != str(ActivationStatus.ACTIVE):
             continue
         try:
@@ -1412,6 +1640,14 @@ def _row_identity(row: Mapping[str, Any], columns: Sequence[str]) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
         allow_nan=False,
+    )
+
+
+def _checkpoint_token(checkpoint, version):
+    return (
+        "property-catalog-checkpoint-v1:"
+        f"{checkpoint.build_token}:{checkpoint.source_adapter}:"
+        f"{checkpoint.producer_stream_id}:{version}:{checkpoint.state_sha256}"
     )
 
 

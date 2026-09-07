@@ -124823,7 +124823,8 @@
                     "enum": [
                         "complete",
                         "sampled",
-                        "degraded"
+                        "degraded",
+                        "pending"
                     ]
                 },
                 "query_error_code": {
@@ -124927,7 +124928,8 @@
                     "title": "Query provenance",
                     "type": "string",
                     "enum": [
-                        "activated_property_catalog"
+                        "activated_property_catalog",
+                        "property_catalog_bootstrap"
                     ]
                 }
             }
@@ -125154,14 +125156,16 @@
                     "title": "Query status",
                     "type": "string",
                     "enum": [
-                        "complete"
+                        "complete",
+                        "pending"
                     ]
                 },
                 "query_provenance": {
                     "title": "Query provenance",
                     "type": "string",
                     "enum": [
-                        "activated_property_catalog"
+                        "activated_property_catalog",
+                        "property_catalog_bootstrap"
                     ]
                 }
             }

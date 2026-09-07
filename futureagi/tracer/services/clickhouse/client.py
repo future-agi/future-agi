@@ -446,6 +446,8 @@ class ClickHouseClient:
         params: dict[str, Any] | None = None,
         with_column_types: bool = False,
         settings: dict[str, Any] | None = None,
+        *,
+        query_id: str | None = None,
     ) -> list[tuple]:
         """
         Execute a query and return results.
@@ -457,10 +459,20 @@ class ClickHouseClient:
             settings: Optional per-query ClickHouse settings (e.g.
                 {"data_type_default_nullable": 0} for DDL that must not be
                 auto-wrapped in Nullable when the server profile sets it to 1)
+            query_id: Optional caller-owned identifier for observing this exact
+                statement in server completion evidence. It is not a deduplication
+                token and does not authorize a retry after an uncertain result.
 
         Returns:
             List of result tuples, or (results, column_types) if with_column_types=True
         """
+        if query_id is not None and (
+            not isinstance(query_id, str)
+            or not query_id
+            or len(query_id.encode("utf-8")) > 1024
+            or any(c in query_id for c in "\x00\r\n")
+        ):
+            raise ValueError("ClickHouse query_id must be one bounded identifier")
         if self.server_enforced_readonly:
             query = without_query_settings(query)
             ensure_read_statement(query)
@@ -475,6 +487,7 @@ class ClickHouseClient:
                 params or {},
                 with_column_types=with_column_types,
                 settings=settings,
+                **({"query_id": query_id} if query_id is not None else {}),
             )
 
             query_time_ms = (time.monotonic() - t_start) * 1000

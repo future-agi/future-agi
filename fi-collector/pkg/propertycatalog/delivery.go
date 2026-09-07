@@ -30,6 +30,8 @@ const (
 type DeliverySink interface {
 	InsertPropertyCatalog(context.Context, Table, []map[string]any) error
 	InsertPropertyCatalogDelivery(context.Context, []map[string]any) error
+	BeginPropertyCatalogDelivery(context.Context, WireEnvelope) error
+	VerifyPropertyCatalogDelivery(context.Context, WireEnvelope) error
 }
 
 // DeliveryLeaseRequest is the complete immutable identity that must still be
@@ -210,12 +212,13 @@ func (h *DeliveryHandler) deliver(ctx context.Context, delivery Delivery) error 
 		}
 		decoded = append(decoded, decodedChunk{table: chunk.Table, index: chunk.Index, rows: mapped})
 	}
-	// SequenceValidator only sets ExactDuplicate after proving the complete
-	// durable ledger identity for this stream position. A replay of that exact
-	// record is already committed catalog state, so it must remain ACK-able
-	// after the build lease is fenced and must never refresh data or ledger rows.
+	// A ledger seed proves sequence identity, not all-replica completion. Even
+	// fenced duplicates must cross the durable proof boundary, without writes.
 	if delivery.ExactDuplicate {
-		return ctx.Err()
+		return h.sink.VerifyPropertyCatalogDelivery(ctx, delivery.Envelope)
+	}
+	if err := h.sink.BeginPropertyCatalogDelivery(ctx, delivery.Envelope); err != nil {
+		return err
 	}
 
 	for _, chunk := range decoded {
@@ -233,7 +236,8 @@ func (h *DeliveryHandler) deliver(ctx context.Context, delivery Delivery) error 
 		); err != nil {
 			return err
 		}
-		if err := h.sink.InsertPropertyCatalog(ctx, chunk.table, chunk.rows); err != nil {
+		chunkCtx := withCatalogWriteIdentity(ctx, snapshot.EnvelopeID, fmt.Sprintf("chunk:%d", chunk.index), false)
+		if err := h.sink.InsertPropertyCatalog(chunkCtx, chunk.table, chunk.rows); err != nil {
 			return fmt.Errorf("propertycatalog: insert %s chunk %d: %w", chunk.table, chunk.index, err)
 		}
 	}
@@ -288,10 +292,11 @@ func (h *DeliveryHandler) deliver(ctx context.Context, delivery Delivery) error 
 		"delivered_at":            deliveredAt.Format(dateTime64Layout),
 		"_version":                uint64(deliveredAt.UnixNano()),
 	}
-	if err := h.sink.InsertPropertyCatalogDelivery(ctx, []map[string]any{row}); err != nil {
+	ledgerCtx := withCatalogWriteIdentity(ctx, snapshot.EnvelopeID, "delivery", false)
+	if err := h.sink.InsertPropertyCatalogDelivery(ledgerCtx, []map[string]any{row}); err != nil {
 		return fmt.Errorf("propertycatalog: insert delivery ledger: %w", err)
 	}
-	return ctx.Err()
+	return h.sink.VerifyPropertyCatalogDelivery(ctx, delivery.Envelope)
 }
 
 // validateDeliveryRolePayload binds the authoritative build-plan role to both

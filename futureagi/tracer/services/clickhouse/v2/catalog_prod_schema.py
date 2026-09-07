@@ -19,6 +19,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS property_catalog_activation_control_events
     projection_version       UInt16,
     control_sequence         UInt64,
     request_id               UUID,
-    action                   Enum8('activate' = 1, 'disable' = 2, 'rollback' = 3),
+    action                   Enum8('activate' = 1, 'disable' = 2, 'rollback' = 3, 'follow' = 4),
     target_catalog_revision  UInt64,
     target_build_token       UUID,
     target_activation_sha256 FixedString(64),
@@ -1065,7 +1066,32 @@ def _create_query_tokens(value: str) -> tuple[str, ...]:
     return tuple(tokens)
 
 
+_CREATE_TOKEN_CACHE_MAX_CHARS = 16_384
+
+
 def _canonical_create_tokens(
+    value: str,
+    *,
+    target_database: str,
+    expected_table: str,
+    cluster: str,
+) -> tuple[str, ...]:
+    # Only memoize immutable pure parsing, never source files or observations.
+    # Bound retained keys as well as entry count; larger SQL keeps the same parser.
+    inputs = (value, target_database, expected_table, cluster)
+    parse = _cached_canonical_create_tokens
+    if sum(map(len, inputs)) > _CREATE_TOKEN_CACHE_MAX_CHARS:
+        parse = parse.__wrapped__
+    return parse(
+        value,
+        target_database=target_database,
+        expected_table=expected_table,
+        cluster=cluster,
+    )
+
+
+@lru_cache(maxsize=64)
+def _cached_canonical_create_tokens(
     value: str,
     *,
     target_database: str,

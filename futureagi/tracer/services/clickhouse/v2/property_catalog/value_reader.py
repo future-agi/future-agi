@@ -27,6 +27,7 @@ from tracer.services.clickhouse.v2.property_catalog.activation_control import (
     ActivationControlSelector,
     ActivationControlTarget,
     ActivationControlUnavailable,
+    select_reader_activation,
 )
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     MAX_DEFINITION_JSON_BYTES,
@@ -50,6 +51,7 @@ from tracer.services.clickhouse.v2.property_catalog.reader import (
     _control_target_matches_activation,
     property_catalog_activation_sql,
     require_property_catalog_activation_coverage,
+    selected_property_catalog_project_ids,
     verify_property_catalog_activation,
 )
 from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
@@ -111,6 +113,10 @@ class PropertyCatalogValueUnavailable(PropertyCatalogUnavailable):
 
 class PropertyCatalogValueNotReady(PropertyCatalogValueUnavailable):
     """Typed signal permitting the explicit legacy/native routing fallback."""
+
+
+class PropertyCatalogValuePending(PropertyCatalogValueUnavailable):
+    """Managed coverage is being prepared; never permits a native fallback."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +342,17 @@ _DEFINITION_PROOF_SUFFIX = """
 SELECT
     (
         SELECT count()
+        FROM active_lineage
+        WHERE catalog_revision = %(catalog_revision)s
+          AND build_token = %(catalog_build_token)s
+    ) AS selected_activation_rows,
+    (
+        SELECT count()
+        FROM active_lineage
+        WHERE catalog_revision = %(catalog_lineage_anchor_revision)s
+    ) AS anchor_activation_rows,
+    (
+        SELECT count()
         FROM lineage_states
         WHERE latest_state_variants != 1
     ) AS activation_state_conflicts,
@@ -413,7 +430,7 @@ SELECT
     )
         AS definition_json,
     anyIf(
-        resolved_property.definition_sha256,
+        toString(resolved_property.definition_sha256),
         resolved_property.property_id = %(catalog_property_id)s
         AND resolved_property.live_binding_count > 0
     )
@@ -748,7 +765,7 @@ class PropertyCatalogValueReader:
                 raise ValueError("catalog value window must be non-empty")
 
         budget = _ReadBudget.start(self._clock)
-        activation = self._activation(
+        activation, follows_latest = self._activation(
             scope=checked_scope,
             cursor=cursor,
             budget=budget,
@@ -793,12 +810,26 @@ class PropertyCatalogValueReader:
             scope=checked_scope,
             activation=activation,
             unavailable_type=PropertyCatalogValueUnavailable,
+            pending_type=(
+                PropertyCatalogValuePending
+                if follows_latest and cursor is None
+                else None
+            ),
         )
         if (
             covered_window_start_us < retained_span_since_us
             or covered_window_end_us > retained_span_until_us
         ):
             raise PropertyCatalogValueUnavailable("activation_scope_incomplete")
+
+        if not selected_property_catalog_project_ids(checked_scope, activation):
+            return self._empty_page(
+                activation=activation,
+                window_start=checked_window_start,
+                window_end=checked_window_end,
+                active_types=(),
+                budget=budget,
+            )
 
         base_params = self._base_params(
             scope=checked_scope,
@@ -812,6 +843,7 @@ class PropertyCatalogValueReader:
             params=base_params,
             decoded=decoded,
             budget=budget,
+            allow_absent=cursor is None,
         )
         requested_type = checked_query["attribute_type"]
         if requested_type and requested_type not in active_types:
@@ -938,16 +970,34 @@ class PropertyCatalogValueReader:
         scope: dict[str, Any],
         cursor: PropertyCatalogValueCursor | None,
         budget: _ReadBudget,
-    ) -> PropertyCatalogActivation:
+    ) -> tuple[PropertyCatalogActivation, bool]:
         target: ActivationControlTarget | None = None
+        follows_latest = False
+        previous_cursor = False
         if self._activation_selector is not None:
             try:
-                target = self._activation_selector.select_target(
+                selection = select_reader_activation(
+                    self._activation_selector,
                     scope=scope,
                     timeout_ms=budget.remaining_ms(),
                 )
+                target = selection.target
+                follows_latest = selection.follows_latest
+                previous_cursor = (
+                    cursor is not None
+                    and selection.allows_previous_revision(
+                        epoch=cursor.catalog_epoch, revision=cursor.catalog_revision
+                    )
+                )
                 budget.query_count += 1
             except ActivationControlUnavailable as exc:
+                from .activation_control import ActivationControlBootstrapPending
+
+                if (
+                    isinstance(exc, ActivationControlBootstrapPending)
+                    and cursor is None
+                ):
+                    raise PropertyCatalogValuePending(exc.reason) from exc
                 raise PropertyCatalogValueUnavailable(exc.reason) from exc
         rows = self._execute(
             self._activation_sql,
@@ -958,14 +1008,18 @@ class PropertyCatalogValueReader:
                     target is not None or cursor is not None
                 ),
                 "catalog_epoch": (
-                    target.catalog_epoch
+                    cursor.catalog_epoch
+                    if previous_cursor
+                    else target.catalog_epoch
                     if target is not None
                     else cursor.catalog_epoch
                     if cursor
                     else 0
                 ),
                 "catalog_revision": (
-                    target.catalog_revision
+                    cursor.catalog_revision
+                    if previous_cursor
+                    else target.catalog_revision
                     if target is not None
                     else cursor.catalog_revision
                     if cursor
@@ -981,12 +1035,19 @@ class PropertyCatalogValueReader:
             cursor_present=target is not None or cursor is not None,
             unavailable_type=PropertyCatalogValueUnavailable,
         )
-        if target is not None and not _control_target_matches_activation(
-            target,
-            activation,
+        if previous_cursor and (
+            activation.catalog_epoch != cursor.catalog_epoch
+            or activation.catalog_revision != cursor.catalog_revision
+            or activation.projection_version != target.projection_version
         ):
             raise PropertyCatalogValueUnavailable("control_target_mismatch")
-        return activation
+        if (
+            target is not None
+            and not previous_cursor
+            and not _control_target_matches_activation(target, activation)
+        ):
+            raise PropertyCatalogValueUnavailable("control_target_mismatch")
+        return activation, follows_latest
 
     def _definition(
         self,
@@ -994,6 +1055,7 @@ class PropertyCatalogValueReader:
         params: dict[str, Any],
         decoded: dict[str, str],
         budget: _ReadBudget,
+        allow_absent: bool = False,
     ) -> tuple[str, ...]:
         rows = self._execute(
             self._definition_sql,
@@ -1025,7 +1087,47 @@ class PropertyCatalogValueReader:
             or _strict_uint(row.get("definition_conflicts"), "definition_conflicts")
         ):
             raise PropertyCatalogValueUnavailable("definition_conflict")
-        if _strict_uint(row.get("property_rows"), "property_rows") != 1:
+        if (
+            _strict_uint(
+                row.get("selected_activation_rows"), "selected_activation_rows"
+            )
+            != 1
+            or _strict_uint(row.get("anchor_activation_rows"), "anchor_activation_rows")
+            != 1
+        ):
+            raise PropertyCatalogValueUnavailable("definition_activation_missing")
+        property_rows = _strict_uint(row.get("property_rows"), "property_rows")
+        if (
+            property_rows == 0
+            and allow_absent
+            and decoded["property_kind"] == "custom_attribute"
+            and all(
+                _strict_uint(row.get(field), field) == 0
+                for field in (
+                    "property_definition_variants",
+                    "live_binding_count",
+                    "project_binding_count",
+                )
+            )
+            and all(
+                row.get(field) == ""
+                for field in (
+                    "property_kind",
+                    "source_adapter",
+                    "primary_source",
+                    "value_adapter",
+                    "name",
+                    "definition_json",
+                    "definition_sha256",
+                )
+            )
+        ):
+            # A qualified, scoped snapshot can legitimately have no binding for
+            # a never-observed or deleted custom attribute. This is not a native
+            # adapter fallback and must not query hot values. Missing lineage,
+            # conflicting metadata or a disappearing cursor binding still fail.
+            return ()
+        if property_rows != 1:
             raise PropertyCatalogValueUnavailable("definition_missing")
         if (
             _strict_uint(
@@ -1189,7 +1291,7 @@ class PropertyCatalogValueReader:
         window_start: datetime,
         window_end: datetime,
     ) -> dict[str, Any]:
-        projects = tuple(scope["project_ids"])
+        projects = selected_property_catalog_project_ids(scope, activation)
         return {
             "catalog_organization_id": scope["organization_id"],
             "catalog_workspace_id": scope["workspace_id"],
@@ -1205,6 +1307,7 @@ class PropertyCatalogValueReader:
             "catalog_include_all_projects": 0,
             "catalog_epoch": activation.catalog_epoch,
             "catalog_revision": activation.catalog_revision,
+            "catalog_build_token": activation.build_token,
             "catalog_lineage_anchor_revision": activation.lineage_anchor_revision,
             "catalog_property_id": query["property_id"],
             "catalog_source_kind": decoded["property_kind"],
@@ -1252,6 +1355,8 @@ class PropertyCatalogValueReader:
 
     @staticmethod
     def _validate_scope(scope: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(scope.get("project_ids"), (list, tuple)):
+            raise ValueError("an explicit project inventory is required")
         normalized = normalize_property_catalog_scope(scope)
         if not normalized["principal_id"] or not normalized["auth_type"]:
             raise ValueError("authenticated principal scope is required")
@@ -1318,6 +1423,7 @@ __all__ = [
     "PROPERTY_CATALOG_VALUE_ADAPTER",
     "PropertyCatalogValue",
     "PropertyCatalogValueNotReady",
+    "PropertyCatalogValuePending",
     "PropertyCatalogValuePage",
     "PropertyCatalogValueReader",
     "PropertyCatalogValueUnavailable",

@@ -1046,24 +1046,23 @@ def test_catalog_reader_workspace_system_manifest_query_keeps_workspace_visibili
     assert params["catalog_project_ids"] == (PROJECT_ID,)
 
 
-def test_catalog_reader_rejects_partial_workspace_activation_coverage(settings):
+def test_catalog_reader_keeps_qualified_workspace_data_while_new_project_builds(settings):
     settings.SECRET_KEY = "property-reader-secret"
-    executor = FakeExecutor([[_activation_row()]])
+    executor = FakeExecutor([[_activation_row()], [_conflict_row()], []])
 
-    with pytest.raises(PropertyCatalogUnavailable) as exc_info:
-        PropertyCatalogReader(
-            executor, catalog_database="property_catalog_dev_test"
-        ).read_page(
-            scope=_scope(
-                project_ids=(PROJECT_ID, OTHER_PROJECT_ID),
-                workspace_scope=True,
-            ),
-            query=QUERY,
-            page_size=50,
-        )
-
-    assert exc_info.value.reason == "activation_scope_incomplete"
-    assert len(executor.calls) == 1
+    PropertyCatalogReader(
+        executor, catalog_database="property_catalog_dev_test"
+    ).read_page(
+        scope=_scope(
+            project_ids=(PROJECT_ID, OTHER_PROJECT_ID), workspace_scope=True
+        ),
+        query=QUERY,
+        page_size=50,
+    )
+    params = executor.calls[1]["params"]
+    assert params["catalog_project_ids"] == (PROJECT_ID,)
+    assert params["catalog_include_all_projects"] == 0
+    assert params["catalog_include_workspace_default"] == 1
 
 
 def test_catalog_reader_accepts_workspace_scope_with_deleted_project_tombstones(

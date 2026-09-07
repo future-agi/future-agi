@@ -49,10 +49,12 @@ import {
   useDashboardQuery,
   useDashboardMetricsPaginated,
   usePropertyCatalog,
+  isPropertyCatalogBootstrapPending,
   validatePropertyCatalogPage,
   useWidgetQuery,
   usePreviewQuery,
   useDashboardFilterValues,
+  isFilterValueBootstrapPending,
   useDatasetColumnValues,
   buildFilterValueRetryScope,
   buildPropertyRegistryId,
@@ -422,6 +424,95 @@ describe("usePropertyCatalog", () => {
     query_status: "complete",
     query_provenance: "activated_property_catalog",
     ...overrides,
+  });
+
+  const bootstrap = (overrides = {}) => ({
+    metrics: [],
+    total: null,
+    total_is_exact: false,
+    category_counts_exact: false,
+    page_size: 50,
+    has_more: false,
+    next_cursor: null,
+    query_complete: false,
+    query_exact: false,
+    query_status: "pending",
+    query_provenance: "property_catalog_bootstrap",
+    ...overrides,
+  });
+
+  it("polls initialization automatically without treating it as an empty catalog", async () => {
+    mocks.get
+      .mockResolvedValueOnce({ data: { result: bootstrap() } })
+      .mockResolvedValue({ data: { result: page() } });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result, unmount } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+    try {
+      await waitFor(() =>
+        expect(result.current.isCatalogBootstrapPending).toBe(true),
+      );
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.queryReadState).toBe("pending");
+      expect(result.current.cursorChainStopped).toBe(false);
+      expect(result.current.categoryCountsExact).toBe(false);
+      expect(result.current.hasNextPage).toBe(false);
+      await waitFor(() => expect(result.current.metrics).toHaveLength(1), {
+        timeout: 6500,
+      });
+      expect(result.current.queryReadState).toBe("complete");
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.isCatalogBootstrapPending).toBe(false);
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+      // The successful request is a fresh first page, not a fabricated cursor.
+      expect(mocks.get.mock.calls[1][1].params).not.toHaveProperty("cursor");
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
+  it.each([
+    { metrics: [{ property_id: "must-not-be-visible" }] },
+    { catalog_epoch: 1 },
+    { catalog_revision: 1 },
+    { activation_fingerprint: "a".repeat(64) },
+    { category_counts: {} },
+    { query_exact: true },
+    { has_more: true },
+    { next_cursor: "cursor" },
+    { page_size: 0 },
+    { query_provenance: "unknown" },
+  ])("rejects malformed initialization response %j", (overrides) => {
+    expect(isPropertyCatalogBootstrapPending(bootstrap(overrides))).toBe(false);
+  });
+
+  it("does not accept initialization as a later page of an active catalog", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: { result: page({ has_more: true, next_cursor: "next" }) },
+      })
+      .mockResolvedValueOnce({ data: { result: bootstrap() } });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result, unmount } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(queryClient),
+    });
+    try {
+      await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+      await act(async () => result.current.fetchNextPage());
+      await waitFor(() => expect(result.current.cursorChainStopped).toBe(true));
+      expect(result.current.isCatalogBootstrapPending).toBe(false);
+      expect(result.current.queryReadState).toBe("degraded");
+      expect(result.current.metrics).toEqual([]);
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
   });
 
   it("reports a cached remote search refetch as pending", async () => {
@@ -856,7 +947,7 @@ describe("useDashboardFilterValues bounded-read state", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    return renderHook(
+    const rendered = renderHook(
       () =>
         useDashboardFilterValues({
           metricName: "final_status",
@@ -868,7 +959,230 @@ describe("useDashboardFilterValues bounded-read state", () => {
         }),
       { wrapper: createQueryWrapper(queryClient) },
     );
+    return { ...rendered, queryClient };
   };
+
+  const pendingValues = (overrides = {}) => ({
+    values: [],
+    query_complete: false,
+    query_status: "pending",
+    query_provenance: "property_catalog_bootstrap",
+    has_more: false,
+    next_cursor: null,
+    ...overrides,
+  });
+
+  const completeValues = (overrides = {}) => ({
+    values: [{ value: "ready", type: "string" }],
+    query_complete: true,
+    query_status: "complete",
+    has_more: false,
+    next_cursor: null,
+    ...overrides,
+  });
+
+  const pollInterval = (queryClient) => {
+    const query = queryClient.getQueryCache().getAll()[0];
+    return query.options.refetchInterval(query);
+  };
+
+  it("keeps bootstrap values loading and polls a fresh first page every five seconds", async () => {
+    mocks.get
+      .mockResolvedValueOnce({ data: { result: pendingValues() } })
+      .mockResolvedValue({ data: { result: completeValues() } });
+    const { result, unmount, queryClient } = renderValues();
+    try {
+      await waitFor(() =>
+        expect(result.current.isCatalogBootstrapPending).toBe(true),
+      );
+      expect(result.current.data).toEqual([]);
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.isPending).toBe(true);
+      expect(result.current.queryReadState).toBe("pending");
+      expect(result.current.cursorChainStopped).toBe(false);
+      expect(result.current.hasNextPage).toBe(false);
+      expect(result.current.continuationKey).toBe(null);
+      expect(pollInterval(queryClient)).toBe(5000);
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+      await waitFor(
+        () => expect(result.current.data).toEqual(completeValues().values),
+        { timeout: 6500 },
+      );
+      expect(result.current.queryReadState).toBe("complete");
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.isPending).toBe(false);
+      expect(result.current.isCatalogBootstrapPending).toBe(false);
+      expect(pollInterval(queryClient)).toBe(false);
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+      expect(mocks.get.mock.calls[1][1].params).not.toHaveProperty("cursor");
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
+  it.each([
+    { values: ["must-not-be-admitted"] },
+    { values: null },
+    { values: undefined },
+    { catalog_epoch: 1 },
+    { catalog_revision: null },
+    { activation_fingerprint: "a".repeat(64) },
+    { query_complete: true },
+    { query_status: "complete" },
+    { query_provenance: "native_fallback" },
+    { query_error_code: "corruption" },
+    { query_exact: true },
+    { has_more: true },
+    { has_more: undefined },
+    { next_cursor: "next" },
+    { next_cursor: undefined },
+    { browse_status: "exhausted" },
+  ])("rejects a noncanonical values bootstrap payload %j", (overrides) => {
+    expect(isFilterValueBootstrapPending(pendingValues())).toBe(true);
+    expect(isFilterValueBootstrapPending(pendingValues(overrides))).toBe(false);
+  });
+
+  it("does not normalize malformed pending into exact exhaustion or poll it", async () => {
+    mocks.get.mockResolvedValue({
+      data: {
+        result: pendingValues({
+          values: ["untrusted"],
+          has_more: true,
+          next_cursor: "must-not-follow",
+          browse_status: "exhausted",
+        }),
+      },
+    });
+    const { result, unmount, queryClient } = renderValues({
+      metricType: "system_metric",
+    });
+    try {
+      await waitFor(() => expect(result.current.cursorChainStopped).toBe(true));
+      expect(result.current.data).toEqual([]);
+      expect(result.current.queryReadState).toBe("degraded");
+      expect(result.current.isCatalogBootstrapPending).toBe(false);
+      expect(result.current.isLoading).toBe(false);
+      expect(pollInterval(queryClient)).toBe(false);
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
+  it("rejects pending on an explicit value continuation without starting bootstrap polling", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: completeValues({ has_more: true, next_cursor: "next" }),
+        },
+      })
+      .mockResolvedValue({ data: { result: pendingValues() } });
+    const { result, unmount, queryClient } = renderValues();
+    try {
+      await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+      await act(async () => result.current.fetchNextPage());
+      await waitFor(() => expect(result.current.cursorChainStopped).toBe(true));
+      expect(result.current.queryReadState).toBe("degraded");
+      expect(result.current.isCatalogBootstrapPending).toBe(false);
+      expect(result.current.hasNextPage).toBe(false);
+      expect(result.current.data).toEqual(completeValues().values);
+      expect(pollInterval(queryClient)).toBe(false);
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
+  it("rejects pending inside automatic sparse system-value continuation", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: completeValues({
+            values: [],
+            has_more: true,
+            next_cursor: "next",
+          }),
+        },
+      })
+      .mockResolvedValue({ data: { result: pendingValues() } });
+    const { result, unmount, queryClient } = renderValues({
+      metricType: "system_metric",
+    });
+    try {
+      await waitFor(() => expect(result.current.cursorChainStopped).toBe(true));
+      expect(result.current.pageCount).toBe(1);
+      expect(result.current.queryReadState).toBe("degraded");
+      expect(result.current.isCatalogBootstrapPending).toBe(false);
+      expect(result.current.hasNextPage).toBe(false);
+      expect(pollInterval(queryClient)).toBe(false);
+      expect(mocks.get).toHaveBeenCalledTimes(2);
+      expect(mocks.get.mock.calls[1][1].params.cursor).toBe("next");
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
+  it("does not merge stale values into a fresh pending retry", async () => {
+    mocks.get
+      .mockResolvedValueOnce({ data: { result: completeValues() } })
+      .mockResolvedValue({ data: { result: pendingValues() } });
+    const { result, unmount, queryClient } = renderValues();
+    try {
+      await waitFor(() =>
+        expect(result.current.data).toEqual(completeValues().values),
+      );
+      await act(async () => result.current.retryFreshPage());
+      await waitFor(() =>
+        expect(result.current.isCatalogBootstrapPending).toBe(true),
+      );
+      expect(result.current.data).toEqual([]);
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.queryReadState).toBe("pending");
+      expect(pollInterval(queryClient)).toBe(5000);
+      expect(mocks.get.mock.calls[1][1].params).not.toHaveProperty("cursor");
+    } finally {
+      unmount();
+      queryClient.clear();
+    }
+  });
+
+  it.each([
+    { statusCode: 401, code: "unauthorized" },
+    { statusCode: 403, code: "forbidden" },
+    { statusCode: 400, code: "invalid_cursor" },
+    { statusCode: 503, code: "property_catalog_unavailable" },
+  ])(
+    "does not poll, swallow or fallback from request failure %j",
+    async (failure) => {
+      mocks.get
+        .mockResolvedValueOnce({ data: { result: pendingValues() } })
+        .mockRejectedValue(failure);
+      const { result, unmount, queryClient } = renderValues();
+      try {
+        await waitFor(() =>
+          expect(result.current.isCatalogBootstrapPending).toBe(true),
+        );
+        const query = queryClient.getQueryCache().getAll()[0];
+        // Exercise the same query refetch used by interval polling without four
+        // additional five-second waits. Errors must stop that interval.
+        await act(async () => query.fetch().catch(() => {}));
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(result.current.error).toEqual(failure);
+        expect(result.current.queryReadState).toBe("error");
+        expect(result.current.isCatalogBootstrapPending).toBe(false);
+        expect(result.current.isLoading).toBe(false);
+        expect(pollInterval(queryClient)).toBe(false);
+        expect(mocks.get).toHaveBeenCalledTimes(2);
+      } finally {
+        unmount();
+        queryClient.clear();
+      }
+    },
+  );
 
   it("uses one namespaced registry identity for every native value adapter", () => {
     expect(

@@ -218,15 +218,42 @@ func validateProducerRetirement(value ProducerStateRetirement) error {
 		return err
 	}
 	prefix := value.LifecycleMode + "_"
+	lifecycleMatches := true
 	for _, stream := range plan.Streams {
 		if !strings.HasPrefix(stream.SourceCutoff.Label, prefix) {
-			return errors.New("retirement lifecycle mode differs from its build plan")
+			lifecycleMatches = false
+			break
 		}
+	}
+	if !lifecycleMatches && !isPhysicalSnapshotRetirement(value, plan) {
+		return errors.New("retirement lifecycle mode differs from its build plan")
 	}
 	if value.RetirementSHA256 != producerRetirementSHA256(value) {
 		return errors.New("retirement digest does not match its fields")
 	}
 	return nil
+}
+
+func isPhysicalSnapshotRetirement(
+	value ProducerStateRetirement, validatedPlan buildPlanDocumentJSON,
+) bool {
+	// validateProducerRetirement must first validate the plan's format, complete
+	// role/adapter inventory, exact lease identity, and digest with validateBuildPlan.
+	// Stream cardinality belongs to that format contract, not this compatibility
+	// check. Physical snapshots additionally require an initial build with one
+	// revision-scoped label and one nonzero opaque generation across all streams.
+	if value.LifecycleMode != "initial_backfill" || len(validatedPlan.Streams) == 0 {
+		return false
+	}
+	label := fmt.Sprintf("physical_snapshot_r%d", value.CatalogRevision)
+	generation := validatedPlan.Streams[0].SourceCutoff.Value
+	for _, stream := range validatedPlan.Streams {
+		if stream.SourceCutoff.Label != label ||
+			stream.SourceCutoff.Value != generation {
+			return false
+		}
+	}
+	return generation != 0
 }
 
 func (r *HotRuntime) compactProducerState(ctx context.Context, fences []RevisionFence) error {

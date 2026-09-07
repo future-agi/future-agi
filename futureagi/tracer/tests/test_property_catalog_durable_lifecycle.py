@@ -22,6 +22,7 @@ from tracer.services.clickhouse.v2.property_catalog.codec import (
 from tracer.services.clickhouse.v2.property_catalog.durable_lifecycle import (
     _ACTIVATION_COLUMNS,
     _RESERVATION_COLUMNS,
+    MAX_ACTIVE_REVISIONS_SINCE_ANCHOR,
     ActiveStreamEvidence,
     ClickHouseLifecycleStateReader,
     ConfiguredSourceBounds,
@@ -66,6 +67,7 @@ HOT_STREAM = "55555555-5555-4555-8555-555555555555"
 TOKEN_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 TOKEN_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 TOKEN_C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+TOKEN_D = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
@@ -457,14 +459,47 @@ class _Coordinator:
         return lease
 
 
+@dataclass
+class _RecoveryCoordinator(_Coordinator):
+    """In-memory contract stub, not the durable supersession implementation."""
+
+    recovery_calls: int = 0
+    activation_in_flight: bool = False
+    uncertain_control_write: bool = False
+    retired: list[PersistedReservation] = field(default_factory=list)
+
+    def replace_expired(
+        self,
+        *,
+        expired_reservation: PersistedReservation,
+        prior_active: PriorActiveEvidence | None,
+        **allocation: Any,
+    ) -> RevisionLease:
+        self.recovery_calls += 1
+        if self.activation_in_flight or self.uncertain_control_write:
+            raise DurableLifecycleError("activation or control write is unresolved")
+        if self.state.reservation != expired_reservation:
+            raise DurableLifecycleError("reservation changed during recovery")
+        if self.state.active != prior_active:
+            raise DurableLifecycleError("active lineage changed during recovery")
+        assert expired_reservation.status in {
+            ReservationStatus.OPEN,
+            ReservationStatus.DRAINING,
+        }
+        assert expired_reservation.lease.expires_at <= allocation["now"]
+        self.retired.append(expired_reservation)
+        return self.allocate(**allocation)
+
+
 def _lifecycle(
     *,
     state: _State,
     clock: _Clock,
     freezer: _Freezer,
     tokens: list[str],
+    coordinator: _Coordinator | None = None,
 ) -> DurableWorkspaceCatalogLifecycle:
-    coordinator = _Coordinator(state)
+    coordinator = coordinator or _Coordinator(state)
     return DurableWorkspaceCatalogLifecycle(
         state_reader=state,
         coordinator=coordinator,  # type: ignore[arg-type]
@@ -696,7 +731,7 @@ def test_checked_in_freezer_uses_clock_not_static_until_for_schedule() -> None:
     ]
 
 
-def test_checked_in_freezer_bounds_aged_full_repair_to_366_days() -> None:
+def test_checked_in_freezer_preserves_full_repair_origin_beyond_366_days() -> None:
     clock = _Clock(INITIAL_UNTIL + timedelta(days=367, hours=3))
 
     class _Reader:
@@ -720,7 +755,7 @@ def test_checked_in_freezer_bounds_aged_full_repair_to_366_days() -> None:
         configured_until=None,
         prior_active=None,
     )
-    expected_since = clock.current - timedelta(days=366)
+    expected_since = INITIAL_SINCE
 
     assert frozen.snapshot_upper == clock.current
     assert frozen.span_window == SourceWindow(expected_since, clock.current)
@@ -777,6 +812,7 @@ def test_expired_project_inventory_drift_requires_and_honors_explicit_repair() -
         clock=clock,
         freezer=freezer,
         tokens=[TOKEN_A, TOKEN_B, TOKEN_C],
+        coordinator=_RecoveryCoordinator(state),
     )
     original_scope = replace(_scope(), project_ids=(PROJECT_A,))
     initial = lifecycle.prepare(
@@ -798,6 +834,7 @@ def test_expired_project_inventory_drift_requires_and_honors_explicit_repair() -
             scope=_scope(),
             mode=LifecycleRunMode.FULL_REPAIR,
             configured_bounds=_bounds(),
+            allow_expired_repair=False,
         )
 
     repaired = lifecycle.prepare(
@@ -922,7 +959,10 @@ def test_incremental_resume_uses_checkpoint_instead_of_prior_lower_watermark() -
     assert untouched.lower_watermark
 
 
-def test_fenced_crash_recovers_terminal_revision_without_reopening_sources() -> None:
+@pytest.mark.parametrize("allow_expired_repair", [False, True])
+def test_fenced_crash_recovers_terminal_revision_without_reopening_sources(
+    allow_expired_repair: bool,
+) -> None:
     clock = _Clock(INITIAL_UNTIL)
     state = _State()
     freezer = _Freezer(clock)
@@ -954,6 +994,7 @@ def test_fenced_crash_recovers_terminal_revision_without_reopening_sources() -> 
             scope=_scope(),
             mode=LifecycleRunMode.AUTO,
             configured_bounds=_bounds(),
+            allow_expired_repair=allow_expired_repair,
         )
 
     state.resumes = _complete_checkpoints(first)
@@ -966,6 +1007,7 @@ def test_fenced_crash_recovers_terminal_revision_without_reopening_sources() -> 
         scope=_scope(),
         mode=LifecycleRunMode.AUTO,
         configured_bounds=_bounds(),
+        allow_expired_repair=allow_expired_repair,
     )
 
     assert restarted.resumed
@@ -977,16 +1019,21 @@ def test_fenced_crash_recovers_terminal_revision_without_reopening_sources() -> 
     assert tokens == [TOKEN_B]
 
 
-def test_expired_incomplete_revision_requires_explicit_fresh_revision() -> None:
+@pytest.mark.parametrize("status", [ReservationStatus.OPEN, ReservationStatus.DRAINING])
+def test_expired_incomplete_revision_requires_explicit_fresh_revision(
+    status: ReservationStatus,
+) -> None:
     clock = _Clock(INITIAL_UNTIL)
     state = _State()
     freezer = _Freezer(clock)
     tokens = [TOKEN_A, TOKEN_B]
+    coordinator = _RecoveryCoordinator(state)
     lifecycle = _lifecycle(
         state=state,
         clock=clock,
         freezer=freezer,
         tokens=tokens,
+        coordinator=coordinator,
     )
     first = lifecycle.prepare(
         scope=_scope(),
@@ -994,6 +1041,7 @@ def test_expired_incomplete_revision_requires_explicit_fresh_revision() -> None:
         configured_bounds=_bounds(),
     )
     expired_lease = first.lease
+    state.reservation = PersistedReservation(expired_lease, status)
     state.resumes = (_running_checkpoint(first),)
     clock.current = expired_lease.expires_at + timedelta(seconds=1)
 
@@ -1002,6 +1050,7 @@ def test_expired_incomplete_revision_requires_explicit_fresh_revision() -> None:
             scope=_scope(),
             mode=LifecycleRunMode.INITIAL_BACKFILL,
             configured_bounds=_bounds(),
+            allow_expired_repair=False,
         )
 
     repaired = lifecycle.prepare(
@@ -1019,6 +1068,7 @@ def test_expired_incomplete_revision_requires_explicit_fresh_revision() -> None:
     assert expired_lease.build_token == TOKEN_A
     assert expired_lease.expires_at < repaired.lease.issued_at
     assert tokens == []
+    assert coordinator.retired == [PersistedReservation(expired_lease, status)]
 
     class ReservationReader(ClickHouseLifecycleStateReader):
         def __init__(self, stale: PersistedReservation) -> None:
@@ -1075,7 +1125,10 @@ def test_expired_no_active_repair_rejects_implicit_auto_mode() -> None:
         )
 
 
-def test_expired_full_repair_can_fall_back_to_fresh_incremental() -> None:
+@pytest.mark.parametrize("status", [ReservationStatus.OPEN, ReservationStatus.DRAINING])
+def test_expired_full_repair_can_fall_back_to_fresh_incremental(
+    status: ReservationStatus,
+) -> None:
     clock = _Clock(INITIAL_UNTIL)
     state = _State()
     freezer = _Freezer(clock)
@@ -1084,6 +1137,7 @@ def test_expired_full_repair_can_fall_back_to_fresh_incremental() -> None:
         clock=clock,
         freezer=freezer,
         tokens=[TOKEN_A, TOKEN_B, TOKEN_C],
+        coordinator=_RecoveryCoordinator(state),
     )
     initial = lifecycle.prepare(
         scope=_scope(),
@@ -1098,6 +1152,7 @@ def test_expired_full_repair_can_fall_back_to_fresh_incremental() -> None:
         configured_bounds=_bounds(),
     )
     clock.current = failed_repair.lease.expires_at + timedelta(seconds=1)
+    state.reservation = PersistedReservation(failed_repair.lease, status)
 
     recovered = lifecycle.prepare(
         scope=_scope(),
@@ -1113,6 +1168,474 @@ def test_expired_full_repair_can_fall_back_to_fresh_incremental() -> None:
     )
     assert recovered.cutoffs.span_window.since == initial.cutoffs.span_window.until
     assert recovered.prior_active == state.active
+
+
+def _expired_repair_case(
+    *,
+    with_active: bool = True,
+    coordinated: bool = True,
+) -> tuple[
+    DurableWorkspaceCatalogLifecycle,
+    _State,
+    _Clock,
+    _Freezer,
+    _Coordinator,
+    list[str],
+    PreparedLifecycleRevision,
+]:
+    clock = _Clock(INITIAL_UNTIL)
+    state = _State()
+    freezer = _Freezer(clock)
+    tokens = [TOKEN_A, TOKEN_B, TOKEN_C]
+    coordinator = _RecoveryCoordinator(state) if coordinated else _Coordinator(state)
+    lifecycle = _lifecycle(
+        state=state,
+        clock=clock,
+        freezer=freezer,
+        tokens=tokens,
+        coordinator=coordinator,
+    )
+    build = lifecycle.prepare(
+        scope=_scope(),
+        mode=LifecycleRunMode.INITIAL_BACKFILL,
+        configured_bounds=_bounds(),
+    )
+    if with_active:
+        state.activate(build, at=clock.current)
+        clock.current += timedelta(minutes=2)
+        build = lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.FULL_REPAIR,
+            configured_bounds=_bounds(),
+        )
+    clock.current = build.lease.expires_at
+    return lifecycle, state, clock, freezer, coordinator, tokens, build
+
+
+@pytest.mark.parametrize("status", [ReservationStatus.OPEN, ReservationStatus.DRAINING])
+@pytest.mark.parametrize("with_active", [False, True])
+@pytest.mark.parametrize("has_checkpoint", [False, True])
+def test_expiry_and_flag_cannot_replace_writer_revocation(
+    status: ReservationStatus, with_active: bool, has_checkpoint: bool
+) -> None:
+    lifecycle, state, _, freezer, coordinator, tokens, build = _expired_repair_case(
+        with_active=with_active, coordinated=False
+    )
+    state.reservation = PersistedReservation(build.lease, status)
+    state.resumes = (_running_checkpoint(build),) if has_checkpoint else ()
+    before = (state.active, state.reservation, state.resumes, tuple(tokens))
+    allocations = coordinator.allocate_calls
+    freezes = len(freezer.calls)
+
+    with pytest.raises(DurableLifecycleError, match="coordinated activation revocation"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=(
+                LifecycleRunMode.AUTO
+                if with_active
+                else LifecycleRunMode.INITIAL_BACKFILL
+            ),
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+
+    assert (state.active, state.reservation, state.resumes, tuple(tokens)) == before
+    assert coordinator.allocate_calls == allocations
+    assert len(freezer.calls) == freezes
+
+
+def test_concrete_clickhouse_coordinator_cannot_supersede_on_expiry_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tracer.services.clickhouse.v2.property_catalog.coordinator import (
+        PropertyCatalogCoordinatorError,
+    )
+    from tracer.tests.test_property_catalog_hot_drain import (
+        _coordinator,
+        _CoordinatorClient,
+        _FenceSink,
+    )
+
+    lifecycle, state, _, _, _, tokens, _ = _expired_repair_case()
+    client, sink = _CoordinatorClient(), _FenceSink()
+    # These are in-memory transport doubles around the actual coordinator.
+    # Failing before either transport is used also excludes an allocate fallback.
+    monkeypatch.setattr(lifecycle, "_coordinator", _coordinator(client, sink))
+    before = (state.active, state.reservation)
+    with pytest.raises(PropertyCatalogCoordinatorError, match="shared durable journal"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert (state.active, state.reservation) == before
+    assert client.queries == [] and client.stream_rows == []
+    assert sink.assignments == []
+
+
+@pytest.mark.parametrize("status", [ReservationStatus.OPEN, ReservationStatus.DRAINING])
+def test_expired_older_reservation_is_not_silently_ignored(
+    status: ReservationStatus,
+) -> None:
+    lifecycle, state, clock, freezer, coordinator, tokens, build = (
+        _expired_repair_case()
+    )
+    assert state.active is not None
+    old_plan = state.active.build_plan
+    old_lease = RevisionLease(
+        organization_id=old_plan.organization_id,
+        workspace_id=old_plan.workspace_id,
+        catalog_epoch=old_plan.catalog_epoch,
+        catalog_revision=old_plan.catalog_revision,
+        projection_version=old_plan.projection_version,
+        build_token=old_plan.build_token,
+        build_plan_json=old_plan.canonical_json,
+        build_lease_sha256=old_plan.sha256,
+        issued_at=INITIAL_UNTIL,
+        expires_at=INITIAL_UNTIL + timedelta(minutes=10),
+    )
+    state.activate(build, at=clock.current)
+    state.reservation = PersistedReservation(old_lease, status)
+    before = (state.active, state.reservation, tuple(tokens))
+    allocations, freezes = coordinator.allocate_calls, len(freezer.calls)
+    with pytest.raises(DurableLifecycleError, match="unfenced older reservation"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert (state.active, state.reservation, tuple(tokens)) == before
+    assert coordinator.allocate_calls == allocations
+    assert len(freezer.calls) == freezes
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "gap_count",
+        "poison_count",
+        "conflict_count",
+        "gap",
+        "terminal",
+        "scope",
+        "duplicate",
+        "unplanned",
+    ],
+)
+def test_expired_repair_preserves_checkpoint_integrity_gates(fault: str) -> None:
+    lifecycle, state, _, freezer, coordinator, tokens, build = _expired_repair_case()
+    checkpoint = _running_checkpoint(build)
+    if fault.endswith("_count"):
+        checkpoint = replace(
+            checkpoint,
+            checkpoint=replace(checkpoint.checkpoint, **{fault: 1}),
+            gap_reasons=("missing source",) if fault == "gap_count" else (),
+        )
+    elif fault == "gap":
+        checkpoint = replace(
+            checkpoint,
+            checkpoint=replace(checkpoint.checkpoint, status=CheckpointStatus.GAP),
+        )
+    elif fault == "terminal":
+        checkpoint = replace(
+            checkpoint,
+            checkpoint=replace(checkpoint.checkpoint, status=CheckpointStatus.COMPLETE),
+        )
+    elif fault == "scope":
+        checkpoint = replace(
+            checkpoint, checkpoint=replace(checkpoint.checkpoint, build_token=TOKEN_A)
+        )
+    elif fault == "unplanned":
+        checkpoint = replace(
+            checkpoint,
+            checkpoint=replace(checkpoint.checkpoint, producer_stream_id=TOKEN_C),
+        )
+    state.resumes = (checkpoint, checkpoint) if fault == "duplicate" else (checkpoint,)
+    before = (state.active, state.reservation, state.resumes, tuple(tokens))
+    freezes = len(freezer.calls)
+
+    with pytest.raises(DurableLifecycleError, match="checkpoint"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+
+    assert (state.active, state.reservation, state.resumes, tuple(tokens)) == before
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    assert coordinator.recovery_calls == 0
+    assert len(freezer.calls) == freezes
+
+
+@pytest.mark.parametrize("unresolved", ["activation_in_flight", "uncertain_control_write"])
+def test_expired_repair_does_not_fall_back_past_unresolved_control_state(
+    unresolved: str,
+) -> None:
+    lifecycle, state, _, _, coordinator, tokens, _ = _expired_repair_case()
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    setattr(coordinator, unresolved, True)
+    before = (state.active, state.reservation, state.resumes)
+    allocations = coordinator.allocate_calls
+    # A later tick must also reach the coordinator's durable uncertainty gate,
+    # even with a new proposed token and no checkpoint for the ambiguous write.
+    tokens[:] = [TOKEN_C, TOKEN_D]
+    for _ in range(2):
+        with pytest.raises(DurableLifecycleError, match="unresolved"):
+            lifecycle.prepare(
+                scope=_scope(),
+                mode=LifecycleRunMode.AUTO,
+                configured_bounds=_bounds(),
+                allow_expired_repair=True,
+            )
+        assert (state.active, state.reservation, state.resumes) == before
+        assert coordinator.allocate_calls == allocations
+        assert coordinator.retired == []
+    assert coordinator.recovery_calls == 2
+
+
+@pytest.mark.parametrize("over_bound", [False, True])
+def test_expired_repair_counts_abandoned_revision_ids_toward_reader_bound(
+    over_bound: bool,
+) -> None:
+    lifecycle, state, _, _, _, _, build = _expired_repair_case()
+    active = state.active
+    assert active is not None and state.reservation is not None
+    # No additional activations occurred, but failed attempts consumed IDs.
+    revision = (
+        active.lineage_anchor.catalog_revision
+        + MAX_ACTIVE_REVISIONS_SINCE_ANCHOR
+        - 1
+        + int(over_bound)
+    )
+    plan = replace(build.lease.build_plan, catalog_revision=revision)
+    state.reservation = replace(
+        state.reservation,
+        lease=replace(
+            build.lease,
+            catalog_revision=revision,
+            build_plan_json=plan.canonical_json,
+            build_lease_sha256=plan.sha256,
+        ),
+    )
+    result = lifecycle.prepare(
+        scope=_scope(), mode=LifecycleRunMode.AUTO, configured_bounds=_bounds()
+    )
+    assert result.lease.catalog_revision == revision + 1
+    assert result.mode is (
+        LifecycleRunMode.FULL_REPAIR if over_bound else LifecycleRunMode.INCREMENTAL
+    )
+    assert result.lineage_anchor_revision == (
+        result.lease.catalog_revision
+        if over_bound
+        else active.lineage_anchor.catalog_revision
+    )
+    assert state.active == active
+
+
+@pytest.mark.parametrize("changed", ["reservation", "active"])
+def test_expired_repair_compares_expected_state_after_source_freeze(
+    changed: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lifecycle, state, _, _, coordinator, _, _ = _expired_repair_case()
+    allocations = coordinator.allocate_calls
+    freeze = lifecycle._cutoff_freezer
+
+    def racing_freeze(**kwargs: Any) -> FrozenLifecycleCutoffs:
+        cutoffs = freeze(**kwargs)
+        if changed == "reservation":
+            assert state.reservation is not None
+            state.reservation = replace(
+                state.reservation, status=ReservationStatus.FENCED
+            )
+        else:
+            assert state.active is not None
+            state.active = replace(state.active, activation_sha256=SHA_C)
+        return cutoffs
+
+    monkeypatch.setattr(lifecycle, "_cutoff_freezer", racing_freeze)
+    with pytest.raises(DurableLifecycleError, match="changed during recovery"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert coordinator.allocate_calls == allocations
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    assert coordinator.retired == []
+
+
+@pytest.mark.parametrize("token", [TOKEN_A, TOKEN_B])
+def test_expired_repair_rejects_reused_active_or_failed_token(token: str) -> None:
+    lifecycle, state, _, _, coordinator, tokens, _ = _expired_repair_case()
+    tokens[:] = [token]
+    before = (state.active, state.reservation)
+    with pytest.raises(DurableLifecycleError, match="fresh build token"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert (state.active, state.reservation) == before
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    assert coordinator.recovery_calls == 0
+
+
+def test_expired_repair_propagates_uncertain_replacement_without_allocate_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lifecycle, state, _, _, coordinator, _, _ = _expired_repair_case()
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    replace_expired = coordinator.replace_expired
+    allocations = coordinator.allocate_calls
+    active = state.active
+
+    def uncertain_replacement(**kwargs: Any) -> RevisionLease:
+        replace_expired(**kwargs)
+        raise TimeoutError("replacement reservation acknowledgement lost")
+
+    monkeypatch.setattr(coordinator, "replace_expired", uncertain_replacement)
+    with pytest.raises(TimeoutError, match="acknowledgement lost"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert coordinator.allocate_calls == allocations + 1
+    assert coordinator.recovery_calls == 1
+    assert state.active == active
+    assert (
+        state.reservation is not None and state.reservation.lease.build_token == TOKEN_C
+    )
+
+
+def test_expired_repair_rejects_old_lease_returned_by_recovery_coordinator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lifecycle, state, _, _, coordinator, _, build = _expired_repair_case()
+    before = (state.active, state.reservation)
+    monkeypatch.setattr(coordinator, "replace_expired", lambda **_: build.lease)
+    with pytest.raises(DurableLifecycleError, match="invalid replacement lease"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert (state.active, state.reservation) == before
+
+
+def test_expired_repair_rechecks_active_before_exposing_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lifecycle, state, _, _, coordinator, _, _ = _expired_repair_case()
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    replace_expired = coordinator.replace_expired
+
+    def changed_lineage(**kwargs: Any) -> RevisionLease:
+        lease = replace_expired(**kwargs)
+        assert state.active is not None
+        state.active = replace(state.active, activation_sha256=SHA_C)
+        return lease
+
+    monkeypatch.setattr(coordinator, "replace_expired", changed_lineage)
+    with pytest.raises(
+        DurableLifecycleError, match="active lineage changed during expired repair"
+    ):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+
+
+@pytest.mark.parametrize("fault", ["missing", "draining", "fenced", "checkpoint"])
+def test_expired_repair_requires_pristine_durable_replacement(
+    fault: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lifecycle, state, _, _, coordinator, _, build = _expired_repair_case()
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    replace_expired = coordinator.replace_expired
+    active = state.active
+
+    def changed_reservation(**kwargs: Any) -> RevisionLease:
+        lease = replace_expired(**kwargs)
+        assert state.reservation is not None
+        if fault == "missing":
+            state.reservation = None
+        elif fault == "checkpoint":
+            checkpoint = _running_checkpoint(build)
+            state.resumes = (checkpoint,)
+        else:
+            state.reservation = replace(
+                state.reservation, status=ReservationStatus(fault)
+            )
+        return lease
+
+    monkeypatch.setattr(coordinator, "replace_expired", changed_reservation)
+    with pytest.raises(DurableLifecycleError, match="reservation"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert state.active == active
+
+
+@pytest.mark.parametrize("fault", ["overlap", "future", "expired", "revision", "token"])
+def test_expired_repair_rejects_invalid_replacement_identity_or_lifetime(
+    fault: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lifecycle, state, clock, _, coordinator, _, build = _expired_repair_case()
+    assert isinstance(coordinator, _RecoveryCoordinator)
+    replace_expired = coordinator.replace_expired
+    active = state.active
+
+    def invalid_lease(**kwargs: Any) -> RevisionLease:
+        lease = replace_expired(**kwargs)
+        if fault == "overlap":
+            return replace(
+                lease, issued_at=build.lease.expires_at - timedelta(seconds=1)
+            )
+        if fault == "future":
+            return replace(lease, issued_at=clock.current + timedelta(seconds=1))
+        if fault == "expired":
+            clock.current = lease.expires_at
+            return lease
+        plan = replace(
+            lease.build_plan,
+            **(
+                {"catalog_revision": build.lease.catalog_revision}
+                if fault == "revision"
+                else {"build_token": TOKEN_D}
+            ),
+        )
+        return replace(
+            lease,
+            catalog_revision=plan.catalog_revision,
+            build_token=plan.build_token,
+            build_plan_json=plan.canonical_json,
+            build_lease_sha256=plan.sha256,
+        )
+
+    monkeypatch.setattr(coordinator, "replace_expired", invalid_lease)
+    with pytest.raises(DurableLifecycleError, match="invalid replacement lease"):
+        lifecycle.prepare(
+            scope=_scope(),
+            mode=LifecycleRunMode.AUTO,
+            configured_bounds=_bounds(),
+            allow_expired_repair=True,
+        )
+    assert state.active == active
 
 
 def test_auto_schedule_selects_incremental_then_due_full_repair() -> None:

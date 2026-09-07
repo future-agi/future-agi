@@ -20142,6 +20142,7 @@ export const DashboardFilterValuesResultApiQueryStatus = {
   complete: "complete",
   sampled: "sampled",
   degraded: "degraded",
+  pending: "pending",
 } as const;
 
 export type DashboardFilterValuesResultApiQueryErrorCode =
@@ -20198,6 +20199,7 @@ export type DashboardFilterValuesResultApiQueryProvenance =
 
 export const DashboardFilterValuesResultApiQueryProvenance = {
   activated_property_catalog: "activated_property_catalog",
+  property_catalog_bootstrap: "property_catalog_bootstrap",
 } as const;
 
 export interface DashboardFilterValuesResultApi {
@@ -20311,6 +20313,7 @@ export type DashboardMetricsCatalogResultApiQueryStatus =
 
 export const DashboardMetricsCatalogResultApiQueryStatus = {
   complete: "complete",
+  pending: "pending",
 } as const;
 
 export type DashboardMetricsCatalogResultApiQueryProvenance =
@@ -20318,6 +20321,7 @@ export type DashboardMetricsCatalogResultApiQueryProvenance =
 
 export const DashboardMetricsCatalogResultApiQueryProvenance = {
   activated_property_catalog: "activated_property_catalog",
+  property_catalog_bootstrap: "property_catalog_bootstrap",
 } as const;
 
 export type DashboardMetricsCatalogResultApiCategoryCounts = {

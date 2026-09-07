@@ -52,6 +52,7 @@ from tracer.services.clickhouse.v2.property_catalog.dev_runtime import (
     NativeSchemaClient,
     PostgresDevIdentity,
     PostgresProjectTenantBinding,
+    PostgresWorkspaceProjectInventory,
     ProjectTenantAuthorization,
     PropertyCatalogDevRuntimeError,
     PropertyCatalogDevRuntimeFactory,
@@ -156,17 +157,22 @@ def _project_bindings(
     organization_id: str = ORG,
     workspace_id: str | None = WORKSPACE,
     workspace_organization_id: str | None = None,
-) -> tuple[PostgresProjectTenantBinding, ...]:
+) -> PostgresWorkspaceProjectInventory:
     if workspace_organization_id is None and workspace_id is not None:
         workspace_organization_id = organization_id
-    return tuple(
-        PostgresProjectTenantBinding(
-            project_id=project_id,
-            organization_id=organization_id,
-            workspace_id=workspace_id,
-            workspace_organization_id=workspace_organization_id,
-        )
-        for project_id in project_ids
+    return PostgresWorkspaceProjectInventory(
+        ORG,
+        WORKSPACE,
+        False,
+        tuple(
+            PostgresProjectTenantBinding(
+                project_id=project_id,
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                workspace_organization_id=workspace_organization_id,
+            )
+            for project_id in project_ids
+        ),
     )
 
 
@@ -308,6 +314,12 @@ def _unit_runtime_config(
 class _PostgresResult:
     adapter_results: tuple[object, ...] = (object(),)
     postgres_snapshot_opened: bool = True
+
+
+def test_runtime_config_accepts_retained_history_older_than_one_year(tmp_path):
+    config = _unit_runtime_config(str(tmp_path))
+    widened = replace(config, span_since=config.span_since - timedelta(days=800))
+    assert widened.span_until - widened.span_since > timedelta(days=800)
 
 
 class _Runtime:
@@ -659,8 +671,8 @@ def test_management_command_status_uses_checked_in_factory_with_fake_clients(
     )
     monkeypatch.setattr(
         dev_runtime,
-        "_postgres_project_tenant_bindings",
-        _project_bindings,
+        "_postgres_workspace_project_inventory",
+        lambda projects, identity, **_scope: _project_bindings(projects, identity),
     )
     stdout = StringIO()
     with override_settings(**settings_override):
@@ -1160,7 +1172,11 @@ def test_project_tenant_authorization_rejects_missing_or_foreign_bindings(
             request=request,
             config=config,
             observation=_provenance_observation(),
-            bindings=bindings,
+            bindings=(
+                PostgresWorkspaceProjectInventory(ORG, WORKSPACE, False, bindings)
+                if isinstance(bindings, tuple)
+                else bindings
+            ),
             authorized_at=ATTESTED_AT,
         )
 
@@ -1175,7 +1191,10 @@ def test_project_tenant_authorization_is_canonical_bound_and_redacted() -> None:
         request=request,
         config=config,
         observation=_provenance_observation(),
-        bindings=tuple(reversed(_project_bindings(config.project_ids))),
+        bindings=replace(
+            _project_bindings(config.project_ids),
+            bindings=tuple(reversed(_project_bindings(config.project_ids).bindings)),
+        ),
         authorized_at=ATTESTED_AT,
     )
 
@@ -1457,7 +1476,7 @@ def test_postgres_project_binding_probe_is_one_bounded_readonly_statement(
         _provenance_observation().postgres,
     )
 
-    assert result == _project_bindings((PROJECT,))
+    assert result == _project_bindings((PROJECT,)).bindings
     assert len(statements) == 4
     assert "REPEATABLE READ, READ ONLY" in statements[0][0]
     assert "statement_timeout" in statements[1][0]
@@ -2305,10 +2324,22 @@ def test_runtime_source_budget_matches_the_explicit_reconcile_mode(
     assert source_budget.postgres.scheduled_reconcile is scheduled_reconcile
 
 
+@pytest.mark.parametrize(
+    "capture_mode", ["legacy", "captured", "backpressure", "invalid"]
+)
 def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
+    capture_mode: str,
 ) -> None:
+    from tracer.services.clickhouse.v2.property_catalog.source_capture import (
+        SourceCaptureError,
+    )
+    from tracer.services.clickhouse.v2.property_catalog.source_capture_reservations import (
+        SourceCaptureBackpressure,
+    )
+
+    capture_enabled = capture_mode != "legacy"
     now = datetime(2026, 8, 14, 12, tzinfo=UTC)
     shared = str(tmp_path)
     config = DevRuntimeConfig(
@@ -2336,8 +2367,8 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
         revision_fence_file=f"{shared}/fence.json",
         drain_proof_file=f"{shared}/producer-drain-proof-v2.json",
         producer_retirement_file=(f"{shared}/producer-state-retirements-v1.json"),
-        span_since=now,
-        span_until=now + timedelta(hours=1),
+        span_since=now - timedelta(hours=1),
+        span_until=now,
         sidecar_acknowledgement=DEV_SIDECAR_ACK,
         provenance_expectation=_provenance_expectation(),
         rollout_wall_ms=100_000,
@@ -2347,6 +2378,11 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
         catalog_database = "property_catalog_dev_unit"
 
     class SpanReader:
+        def parts_snapshot(self):
+            if capture_enabled:
+                events.append("live_baseline")
+            return ()
+
         def freeze(self, **kwargs: Any) -> FrozenSpanSource:
             assert kwargs == {
                 "project_ids": config.project_ids,
@@ -2361,6 +2397,20 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
             )
 
     events: list[str] = []
+    captured_reader = object()
+
+    class Capture:
+        def bind(self, prepared, *, coordinator):
+            assert coordinator is not None
+            assert prepared.lease.build_token == "55555555-5555-4555-8555-555555555555"
+            assert events[0] == "allocate"
+            assert not any(e.startswith("open:") for e in events)
+            events.append("capture")
+            if capture_mode == "backpressure":
+                raise SourceCaptureBackpressure("slots busy")
+            if capture_mode == "invalid":
+                raise SourceCaptureError("capture changed")
+            return SimpleNamespace(reader=captured_reader, started_parts=())
 
     def publish_prior_retirement(
         _runtime: CheckedInPropertyCatalogDevRuntime,
@@ -2382,6 +2432,9 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
     prior_active = object.__new__(PriorActiveEvidence)
 
     class Coordinator:
+        def invalidate_source_snapshot(self, lease):
+            events.append("invalidate")
+
         def allocate(self, **kwargs: Any) -> RevisionLease:
             events.append("allocate")
             plan = RevisionBuildPlan(
@@ -2433,6 +2486,10 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
     coordinator = Coordinator()
 
     class Lifecycle:
+        def load_fenced_scope_drift(self, scope: Any) -> None:
+            assert scope.project_ids == config.project_ids
+            return None
+
         def prepare(self, **kwargs: Any) -> PreparedLifecycleRevision:
             scope = kwargs["scope"]
             mode = kwargs["mode"]
@@ -2506,12 +2563,35 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
         new_build_token=lambda: "55555555-5555-4555-8555-555555555555",
         project_tenant_binding_probe=_project_bindings,
         _factory_authority=_RUNTIME_FACTORY_AUTHORITY,
+        _source_capture=Capture() if capture_enabled else None,
     )
+
+    if capture_mode in {"backpressure", "invalid"}:
+        expected = (
+            SourceCaptureBackpressure
+            if capture_mode == "backpressure"
+            else SourceCaptureError
+        )
+        with pytest.raises(expected):
+            runtime._prepare_revision(LifecycleRunMode.INITIAL_BACKFILL)
+        assert events == ["allocate", "capture"] + (
+            ["invalidate"] if capture_mode == "invalid" else []
+        )
+        return
 
     execution = runtime._prepare_revision(LifecycleRunMode.INITIAL_BACKFILL)
 
-    assert events[0] == "allocate"
-    assert events[1] == "publish_retirement"
+    expected_prefix = (
+        ["allocate", "capture", "publish_retirement"]
+        if capture_enabled
+        else ["allocate", "publish_retirement"]
+    )
+    assert events[: len(expected_prefix)] == expected_prefix
+    assert (
+        execution.capture_binding.reader is captured_reader
+        if capture_enabled
+        else execution.capture_binding is None
+    )
     assert len([event for event in events if event.startswith("open:")]) == 10
     assert events[-1] == "publish_building"
     assert len(execution.lease.build_plan.streams) == 10
@@ -2523,6 +2603,10 @@ def test_concrete_runtime_publishes_prior_retirement_then_opens_all_streams(
     restored: list[object] = []
 
     class FencedLifecycle:
+        def load_fenced_scope_drift(self, scope: Any) -> None:
+            assert scope.project_ids == config.project_ids
+            return None  # This test resumes the unchanged project inventory.
+
         def prepare(self, **kwargs: Any) -> PreparedLifecycleRevision:
             prepared = Lifecycle().prepare(**kwargs)
             return replace(
@@ -2767,6 +2851,7 @@ def test_full_repair_span_definition_ignores_the_prior_active_revision(
     )
     execution = SimpleNamespace(
         context=context,
+        capture_binding=None,
         lease=SimpleNamespace(build_token=build_token),
         prepared=SimpleNamespace(
             mode=LifecycleRunMode.FULL_REPAIR,

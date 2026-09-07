@@ -626,13 +626,13 @@ func (r *HotRuntime) AcceptCandidate(candidate WireCandidate) (bool, error) {
 	default:
 	}
 	snapshot := candidate.Snapshot()
-	if snapshot.CatalogEpoch != r.cfg.CatalogEpoch ||
-		snapshot.ProjectionVersion != r.cfg.ProjectionVersion {
-		return false, errors.New("propertycatalog: candidate epoch/projection does not match sequencer")
-	}
 	group, err := candidate.hotGroup()
 	if err != nil {
 		return false, err
+	}
+	if snapshot.Version == CandidateVersion && (snapshot.CatalogEpoch != r.cfg.CatalogEpoch ||
+		snapshot.ProjectionVersion != r.cfg.ProjectionVersion) {
+		return false, errors.New("propertycatalog: candidate epoch/projection does not match sequencer")
 	}
 	fence, err := r.revisions.CurrentRevision(
 		context.Background(), snapshot.OrganizationID, snapshot.WorkspaceID,
@@ -655,6 +655,15 @@ func (r *HotRuntime) AcceptCandidate(candidate WireCandidate) (bool, error) {
 	}
 	if err := validateHotFenceObservation(fence, group.key, group.firstSeen, group.lastSeen); err != nil {
 		return false, candidateNotAdmitted(snapshot, CandidateOutsideBuildSourceScope)
+	}
+	if snapshot.Version == CandidateManagedVersion {
+		// hotGroup owns fresh rows. Bind only that copy after fence admission;
+		// the immutable candidate bytes/ID remain the receipt and replay identity.
+		// Value rows carry epoch; the envelope takes the matching fence projection.
+		for key, row := range group.values {
+			row.CatalogEpoch = r.cfg.CatalogEpoch
+			group.values[key] = row
+		}
 	}
 	key := streamKey{
 		organizationID: snapshot.OrganizationID, workspaceID: snapshot.WorkspaceID,

@@ -290,6 +290,15 @@ class ClickHouseEnvelopePublisher:
             envelope_id=wire.envelope_id,
             payload_sha256=wire.payload_sha256,
         ):
+            confirm = getattr(self.client, "confirm_insert", None)
+            if confirm is not None:
+                confirm(
+                    _qualified(self.database, "property_catalog_deliveries"),
+                    (_delivery_row(envelope, wire),),
+                    columns=_DELIVERY_COLUMNS,
+                    timeout_ms=self._remaining(started),
+                    deduplication_token=f"property-catalog-v1:{wire.envelope_id}:delivery",
+                )
             return wire.payload_sha256
         self._assert_stream_writable(envelope=envelope, started=started)
         payload = wire.document["payload"]
@@ -322,39 +331,17 @@ class ClickHouseEnvelopePublisher:
                     f"property-catalog-v1:{wire.envelope_id}:chunk:{chunk['index']}"
                 ),
             )
-        now = datetime.now(UTC)
-        delivery = {
-            "organization_id": envelope.organization_id,
-            "workspace_id": envelope.workspace_id,
-            "catalog_epoch": envelope.catalog_epoch,
-            "catalog_revision": envelope.catalog_revision,
-            "build_token": envelope.build_token,
-            "projection_version": envelope.projection_version,
-            "source_adapter": str(envelope.source_adapter),
-            "producer_stream_id": envelope.producer_stream_id,
-            "sequence": envelope.sequence,
-            "envelope_format": wire.document["format"],
-            "envelope_version": wire.document["version"],
-            "envelope_id": wire.envelope_id,
-            "payload_sha256": wire.payload_sha256,
-            "previous_payload_sha256": envelope.previous_payload_sha256,
-            "source_batch_digest": envelope.source_batch_digest,
-            "outcome": str(envelope.outcome),
-            "terminal": int(envelope.terminal),
-            "gap_reasons": list(envelope.gap_reasons),
-            "source_rows": envelope.counts.source_count,
-            "definition_rows": envelope.counts.definition_count,
-            "value_rows": envelope.counts.value_count,
-            "tombstone_rows": envelope.counts.tombstone_count,
-            "transport": "reconcile",
-            "kafka_partition": -1,
-            "kafka_offset": -1,
-            "delivered_at": now,
-            "_version": envelope.sequence,
-        }
-        delivery = _native_insert_rows("property_catalog_deliveries", (delivery,))[0]
+        delivery = _delivery_row(envelope, wire)
         self._validate_target()
         self._assert_stream_writable(envelope=envelope, started=started)
+        restore = getattr(self.client, "restore_insert_metadata", None)
+        if restore is not None:
+            delivery = restore(
+                _qualified(self.database, "property_catalog_deliveries"),
+                (delivery,),
+                columns=_DELIVERY_COLUMNS,
+                deduplication_token=f"property-catalog-v1:{wire.envelope_id}:delivery",
+            )[0]
         self.client.insert(
             _qualified(self.database, "property_catalog_deliveries"),
             (delivery,),
@@ -400,6 +387,15 @@ class ClickHouseEnvelopePublisher:
         ):
             raise PropertyCatalogPublishError(
                 "delivery ledger append is not durably visible"
+            )
+        confirm = getattr(self.client, "confirm_insert", None)
+        if confirm is not None:
+            confirm(
+                _qualified(self.database, "property_catalog_deliveries"),
+                (delivery,),
+                columns=_DELIVERY_COLUMNS,
+                timeout_ms=self._remaining(started),
+                deduplication_token=f"property-catalog-v1:{wire.envelope_id}:delivery",
             )
         return wire.payload_sha256
 
@@ -609,6 +605,39 @@ def _qualified(database: str, table: str) -> str:
     if table not in PROPERTY_CATALOG_TABLES:
         raise PropertyCatalogPublishError("forbidden property catalog table")
     return f"`{database}`.`{table}`"
+
+
+def _delivery_row(envelope, wire):
+    delivery = {
+        "organization_id": envelope.organization_id,
+        "workspace_id": envelope.workspace_id,
+        "catalog_epoch": envelope.catalog_epoch,
+        "catalog_revision": envelope.catalog_revision,
+        "build_token": envelope.build_token,
+        "projection_version": envelope.projection_version,
+        "source_adapter": str(envelope.source_adapter),
+        "producer_stream_id": envelope.producer_stream_id,
+        "sequence": envelope.sequence,
+        "envelope_format": wire.document["format"],
+        "envelope_version": wire.document["version"],
+        "envelope_id": wire.envelope_id,
+        "payload_sha256": wire.payload_sha256,
+        "previous_payload_sha256": envelope.previous_payload_sha256,
+        "source_batch_digest": envelope.source_batch_digest,
+        "outcome": str(envelope.outcome),
+        "terminal": int(envelope.terminal),
+        "gap_reasons": list(envelope.gap_reasons),
+        "source_rows": envelope.counts.source_count,
+        "definition_rows": envelope.counts.definition_count,
+        "value_rows": envelope.counts.value_count,
+        "tombstone_rows": envelope.counts.tombstone_count,
+        "transport": "reconcile",
+        "kafka_partition": -1,
+        "kafka_offset": -1,
+        "delivered_at": datetime.now(UTC),
+        "_version": envelope.sequence,
+    }
+    return _native_insert_rows("property_catalog_deliveries", (delivery,))[0]
 
 
 def _native_insert_rows(

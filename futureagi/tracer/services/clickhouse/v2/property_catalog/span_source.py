@@ -71,6 +71,7 @@ from .source_adapters import (
     SourceKeysetCursor,
     SpanAttributeKeyGroup,
 )
+from .source_parts import checked_parts
 from .wire import ZERO_SHA256, encode_envelope
 
 _SOURCE_DATABASE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -90,6 +91,8 @@ DEV_INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS = (
     RUNTIME_LIMITS.initial_backfill_canonical_span_page_rows
 )
 CANONICAL_SPAN_QUERY_TIMEOUT_MS = RUNTIME_LIMITS.canonical_span_query_timeout_ms
+# A positive-only indexed hint, not another full payload scan or source fence.
+_HISTORICAL_CHANGE_PROBE_TIMEOUT_MS = 5_000
 DEV_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS = (
     RUNTIME_LIMITS.initial_backfill_canonical_span_query_timeout_ms
 )
@@ -113,6 +116,12 @@ AUTHORITATIVE_VALUE_BATCH_MAX_ROWS = RUNTIME_LIMITS.authoritative_value_batch_ma
 AUTHORITATIVE_VALUE_BATCH_MAX_BYTES = RUNTIME_LIMITS.authoritative_value_batch_max_bytes
 _EMPTY_SHA256 = canonical_json_sha256("")
 SPAN_AUDIT_CUTOFF_LABEL = "clickhouse_audit_generation"
+
+# An attempt identity, not a commit cursor. Empty authorized inventories must
+# not read the spans table merely to obtain the pinned source server's clock.
+_EMPTY_FENCE_SQL = (
+    "SELECT toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC'))) AS audit_generation"
+)
 
 _FENCE_SQL_TEMPLATE = """
 WITH toUInt64(toUnixTimestamp64Nano(now64(9, 'UTC'))) AS audit_generation
@@ -163,6 +172,10 @@ class PropertyCatalogSpanSourceError(RuntimeError):
     """Canonical spans cannot be proved complete inside the fixed bounds."""
 
 
+class PropertyCatalogSourceChanged(PropertyCatalogSpanSourceError):
+    """Independent audit disagrees with this build; its checkpoints cannot resume."""
+
+
 class AuthoritativeSpanRole(StrEnum):
     VALUES = "values"
     SOURCE_AUDIT = "source_audit"
@@ -170,6 +183,8 @@ class AuthoritativeSpanRole(StrEnum):
 
 class CanonicalSpanSourceClient(Protocol):
     source_database: str
+
+    def source_parts(self, *, timeout_ms: int) -> Sequence[Mapping[str, Any]]: ...
 
     def query(
         self,
@@ -217,6 +232,8 @@ class FrozenSpanSource:
     audit_generation: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.project_ids, tuple):
+            raise TypeError("project_ids must be an explicit tuple")
         projects = tuple(
             sorted(
                 {
@@ -225,29 +242,64 @@ class FrozenSpanSource:
                 }
             )
         )
-        if not projects or len(projects) > _MAX_PROJECTS:
-            raise ValueError(f"frozen span source requires 1..{_MAX_PROJECTS} projects")
+        if len(projects) > _MAX_PROJECTS or len(projects) != len(self.project_ids):
+            raise ValueError(
+                f"frozen span source requires 0..{_MAX_PROJECTS} unique projects"
+            )
         object.__setattr__(self, "project_ids", projects)
         _require_utc(self.since, "since")
         _require_utc(self.until, "until")
         if self.since >= self.until:
             raise ValueError("span source since must precede until")
-        window_count = math.ceil((self.until - self.since).total_seconds() / 3600)
-        if not 1 <= window_count <= _MAX_WINDOWS:
-            raise ValueError("span source window count is outside the fixed ceiling")
         _positive_uint64(self.audit_generation, "audit_generation")
 
     @property
-    def units(self) -> tuple[tuple[str, datetime, datetime], ...]:
-        units: list[tuple[str, datetime, datetime]] = []
-        for project_id in self.project_ids:
-            start = self.since
-            while start < self.until:
-                units.append(
-                    (project_id, start, min(start + timedelta(hours=1), self.until))
-                )
-                start += timedelta(hours=1)
-        return tuple(units)
+    def hours_per_project(self) -> int:
+        hours, remainder = divmod(self.until - self.since, timedelta(hours=1))
+        return hours + bool(remainder)
+
+    @property
+    def unit_count(self) -> int:
+        return len(self.project_ids) * self.hours_per_project
+
+    def unit_at(self, index: int) -> tuple[str, datetime, datetime]:
+        if type(index) is not int or not 0 <= index < self.unit_count:
+            raise IndexError("span source unit exceeds its frozen scope")
+        project, hour = divmod(index, self.hours_per_project)
+        start = self.since + timedelta(hours=hour)
+        return (
+            self.project_ids[project],
+            start,
+            min(start + timedelta(hours=1), self.until),
+        )
+
+    @property
+    def units(self) -> Sequence[tuple[str, datetime, datetime]]:
+        return _SpanUnits(self)
+
+
+class _SpanUnits(Sequence):
+    """Lazy original hourly coordinates, including lazy slices."""
+
+    def __init__(self, frozen, indices=None):
+        self._frozen = frozen
+        self._indices = range(frozen.unit_count) if indices is None else indices
+
+    def __len__(self):
+        return len(self._indices)
+
+    def __getitem__(self, index):
+        selected = self._indices[index]
+        if isinstance(selected, range):
+            return _SpanUnits(self._frozen, selected)
+        return self._frozen.unit_at(selected)
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, Sequence)
+            and len(self) == len(other)
+            and all(left == right for left, right in zip(self, other, strict=True))
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,9 +309,7 @@ class SpanScanCursor:
     window_hours: int = CANONICAL_SPAN_SCAN_WINDOW_HOURS
 
     def __post_init__(self) -> None:
-        if type(self.unit_index) is not int or not 0 <= self.unit_index < (
-            _MAX_PROJECTS * _MAX_WINDOWS
-        ):
+        if type(self.unit_index) is not int or not 0 <= self.unit_index < (1 << 64):
             raise ValueError("span scan unit index is outside its bound")
         if not isinstance(self.source_cursor, SourceCursor):
             raise TypeError("source_cursor must be a SourceCursor")
@@ -380,6 +430,45 @@ class SpanAggregateProof:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SpanAuditComponent:
+    """One original project/window query, never a finalized per-part state."""
+
+    project_id: str
+    since: datetime
+    until: datetime
+    proof: SpanAggregateProof
+    audit_generation: int = 1
+
+    def __post_init__(self) -> None:
+        FrozenSpanSource(
+            (self.project_id,), self.since, self.until, self.audit_generation
+        )
+        if not isinstance(self.proof, SpanAggregateProof):
+            raise TypeError("audit component requires a canonical aggregate proof")
+
+
+def combine_audit_components(components) -> SpanAggregateProof:
+    count = conflicts = 0
+    xor, total = [0] * 4, [0] * 4
+    previous = {}
+    for component in components:
+        if not isinstance(component, SpanAuditComponent):
+            raise TypeError("invalid canonical audit component")
+        if previous.get(component.project_id, component.since) > component.since:
+            raise ValueError("canonical audit components overlap or regress")
+        previous[component.project_id] = component.until
+        proof = component.proof
+        count += proof.count
+        conflicts += proof.state_conflict_count
+        _strict_uint(count, "combined audit source_count")
+        _strict_uint(conflicts, "combined state conflict count")
+        for index in range(4):
+            xor[index] ^= proof.xor[index]
+            total[index] = (total[index] + proof.total[index]) % (1 << 64)
+    return SpanAggregateProof(count, tuple(xor), tuple(total), conflicts)
+
+
 @dataclass(slots=True)
 class SpanAuditAccumulator:
     count: int = 0
@@ -491,6 +580,7 @@ class CanonicalSpanSourceReader:
         source_database: str,
         catalog_database: str,
         deadline: SharedCatalogDeadline,
+        source_table: str = SOURCE_TABLE,
         timeout_ms: int = CANONICAL_SPAN_QUERY_TIMEOUT_MS,
         explicit_initial_backfill: bool = False,
         page_rows: int = DEFAULT_CANONICAL_SPAN_PAGE_ROWS,
@@ -506,8 +596,15 @@ class CanonicalSpanSourceReader:
             raise ValueError(
                 "canonical source and isolated catalog databases must differ"
             )
+        if (
+            not isinstance(source_table, str)
+            or _SOURCE_DATABASE_RE.fullmatch(source_table) is None
+        ):
+            raise ValueError("source_table must be one safe ClickHouse identifier")
         if getattr(client, "source_database", None) != source_database:
             raise ValueError("canonical-span client database identity mismatch")
+        if getattr(client, "source_table", SOURCE_TABLE) != source_table:
+            raise ValueError("canonical-span client table identity mismatch")
         if (
             type(page_rows) is not int
             or not 1 <= page_rows <= MAX_CANONICAL_SPAN_PAGE_ROWS
@@ -530,6 +627,7 @@ class CanonicalSpanSourceReader:
             )
         self._client = client
         self._source_database = source_database
+        self._source_table_name = source_table
         self._catalog_database = catalog_database
         self._deadline = deadline
         self._timeout_ms = timeout_ms
@@ -543,6 +641,7 @@ class CanonicalSpanSourceReader:
         # share it without allowing an unbounded scheduled-run cache.
         self._occupied_frozen: FrozenSpanSource | None = None
         self._occupied_hours: frozenset[tuple[str, datetime]] = frozenset()
+        self._occupancy_scope: FrozenSpanSource | None = None
 
     def freeze(
         self,
@@ -551,8 +650,12 @@ class CanonicalSpanSourceReader:
         since: datetime,
         until: datetime,
     ) -> FrozenSpanSource:
-        candidate = FrozenSpanSource(tuple(project_ids), since, until, 1)
-        sql = _FENCE_SQL_TEMPLATE.format(source_table=self._source_table())
+        candidate = FrozenSpanSource(_explicit_projects(project_ids), since, until, 1)
+        sql = (
+            _FENCE_SQL_TEMPLATE.format(source_table=self._source_table())
+            if candidate.project_ids
+            else _EMPTY_FENCE_SQL
+        )
         rows = self._query(
             sql,
             {
@@ -572,18 +675,215 @@ class CanonicalSpanSourceReader:
             )
         return replace(candidate, audit_generation=generation)
 
+    def retained_since(
+        self, *, project_ids: Sequence[str], until: datetime, fallback: datetime
+    ) -> datetime:
+        """Widen a requested lower bound to the oldest retained physical hour.
+
+        Deleted rows and old versions deliberately participate. This bounded
+        discovery is not a snapshot or evidence that later arrivals were read.
+        """
+        if not isinstance(fallback, datetime) or not isinstance(until, datetime):
+            raise TypeError("retained bounds must be datetimes")
+        scope = FrozenSpanSource(_explicit_projects(project_ids), fallback, until, 1)
+        if not scope.project_ids:
+            return fallback
+        rows = self._query(
+            f"""SELECT minOrNull(start_time) AS retained_since
+                FROM {self._source_table()}
+                PREWHERE project_id IN %(catalog_project_ids)s
+                  AND start_time < toDateTime64(%(catalog_until)s, 6, 'UTC')
+                LIMIT 1""",
+            {
+                "catalog_project_ids": scope.project_ids,
+                # Native datetime parameter escaping drops fractional seconds.
+                "catalog_until": _clickhouse_time(scope.until),
+            },
+        )
+        if (
+            len(rows) != 1
+            or not isinstance(rows[0], Mapping)
+            or set(rows[0]) != {"retained_since"}
+        ):
+            raise PropertyCatalogSpanSourceError(
+                "retained minimum query must return one typed aggregate row"
+            )
+        minimum = rows[0]["retained_since"]
+        if minimum is None:
+            return fallback
+        if not isinstance(minimum, datetime):
+            raise PropertyCatalogSpanSourceError(
+                "retained minimum must be a ClickHouse datetime or NULL"
+            )
+        minimum = _clickhouse_utc_datetime(minimum, "retained minimum")
+        if minimum >= scope.until:
+            raise PropertyCatalogSpanSourceError("retained minimum must precede until")
+        return min(fallback, minimum.replace(minute=0, second=0, microsecond=0))
+
+    def newly_versioned_history(
+        self, *, project_ids: Sequence[str], since: datetime, until: datetime
+    ) -> datetime | None:
+        """Find a positive hint of an old event changed after an event cutoff.
+
+        Normal writers use wall-clock nanoseconds for `_version`. The existing
+        version min/max index can skip older blocks; only three narrow columns
+        are needed, including deleted rows. This is NOT a commit cursor: old-
+        version imports, unversioned mutations and replica gaps still require
+        the independent audit. A miss never certifies unchanged history.
+        """
+        history = FrozenSpanSource(_explicit_projects(project_ids), since, until, 1)
+        if not history.project_ids:
+            return None
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        since_us = (history.since - epoch) // timedelta(microseconds=1)
+        until_us = (history.until - epoch) // timedelta(microseconds=1)
+        floor = until_us * 1000
+        if not 0 <= floor < 2**64:
+            raise PropertyCatalogSpanSourceError(
+                "historical probe version floor is invalid"
+            )
+        rows = self._query(
+            f"""SELECT toString(project_id) AS project_id_text,
+                       toUnixTimestamp64Micro(start_time) AS seen_at_us,
+                       _version AS source_version
+                FROM {self._source_table()}
+                PREWHERE project_id IN %(catalog_project_ids)s
+                  AND _version >= %(catalog_history_version_floor)s
+                  AND start_time >= %(catalog_since)s
+                  AND start_time < %(catalog_until)s
+                LIMIT 1""",
+            {
+                "catalog_project_ids": history.project_ids,
+                "catalog_since": history.since,
+                "catalog_until": history.until,
+                "catalog_history_version_floor": floor,
+            },
+            timeout_cap_ms=_HISTORICAL_CHANGE_PROBE_TIMEOUT_MS,
+        )
+        if not rows:
+            return None
+        if len(rows) != 1 or not isinstance(rows[0], Mapping):
+            raise PropertyCatalogSpanSourceError(
+                "historical probe exceeded one typed row"
+            )
+        row = rows[0]
+        seen_us = _strict_uint(row.get("seen_at_us"), "historical event time")
+        version = _strict_uint(row.get("source_version"), "historical source version")
+        if (
+            row.get("project_id_text") not in history.project_ids
+            or not since_us <= seen_us < until_us
+            or version < floor
+        ):
+            raise PropertyCatalogSpanSourceError(
+                "historical probe returned cross-scope data"
+            )
+        return epoch + timedelta(microseconds=seen_us)
+
+    def parts_snapshot(self) -> tuple[tuple[str, str], ...]:
+        if getattr(self._client, "source_database", None) != self._source_database:
+            raise PropertyCatalogSpanSourceError("source part client changed database")
+        rows = self._client.source_parts(
+            timeout_ms=self._deadline.remaining_ms(cap_ms=min(self._timeout_ms, 5000))
+        )
+        return checked_parts([(row["name"], row["checksum"]) for row in rows])
+
+    def source_identity(self):
+        """Optional typed metadata capability; absence disables proof reuse.
+
+        The native adapter owns this metadata boundary. Never reach through its
+        private driver or broaden general source query() to system tables.
+        """
+        from .accepted_scope_proofs import SourceIdentity
+
+        if getattr(self._client, "source_database", None) != self._source_database:
+            raise PropertyCatalogSpanSourceError(
+                "source identity client changed database"
+            )
+        operation = getattr(self._client, "source_identity", None)
+        if not callable(operation):
+            raise PropertyCatalogSpanSourceError("source identity metadata unavailable")
+        return SourceIdentity.from_document(
+            operation(timeout_ms=self._deadline.remaining_ms(cap_ms=5000))
+        )
+
+    def audit_contract_sha256(self) -> str:
+        return canonical_json_sha256(
+            canonical_json(
+                {
+                    "format": "futureagi.property-catalog.accepted-scope-audit.v1",
+                    "sql": _aggregate_audit_sql(self._source_table()),
+                    "parameters": self._audit_parameters(),
+                    "window_hours": CANONICAL_SPAN_SCAN_WINDOW_HOURS,
+                }
+            )
+        )
+
+    def history_in_parts(
+        self,
+        *,
+        project_ids: Sequence[str],
+        since: datetime,
+        until: datetime,
+        part_names: tuple[str, ...],
+    ) -> datetime | None:
+        history = FrozenSpanSource(_explicit_projects(project_ids), since, until, 1)
+        checked_parts([(name, "0") for name in part_names])
+        if not history.project_ids:
+            return None
+        for offset in range(0, len(part_names), 256):
+            rows = self._query(
+                "SELECT toString(project_id) AS project_id_text, "
+                "toUnixTimestamp64Micro(start_time) AS seen_at_us "
+                f"FROM {self._source_table()} PREWHERE _part IN %(catalog_part_names)s "
+                "AND project_id IN %(catalog_project_ids)s AND start_time >= %(catalog_since)s "
+                "AND start_time < %(catalog_until)s LIMIT 1",
+                {
+                    "catalog_part_names": part_names[offset : offset + 256],
+                    "catalog_project_ids": history.project_ids,
+                    "catalog_since": since,
+                    "catalog_until": until,
+                },
+                timeout_cap_ms=5000,
+            )
+            if not rows:
+                continue
+            if (
+                len(rows) != 1
+                or rows[0].get("project_id_text") not in history.project_ids
+            ):
+                raise PropertyCatalogSpanSourceError(
+                    "part probe exceeded authorized scope"
+                )
+            seen = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(
+                microseconds=_strict_uint(
+                    rows[0].get("seen_at_us"), "part observation time"
+                )
+            )
+            if not since <= seen < until:
+                raise PropertyCatalogSpanSourceError(
+                    "part probe exceeded historical window"
+                )
+            return seen
+        return None
+
     def read_page(
         self, frozen: FrozenSpanSource, *, cursor: str | None = None
     ) -> SpanScanPage:
         decoded = SpanScanCursor.decode(cursor)
+        if not frozen.project_ids:
+            if cursor not in (None, ""):
+                raise PropertyCatalogSpanSourceError(
+                    "empty span source cannot resume a cursor"
+                )
+            return SpanScanPage(None, (), (), None, True)
         units = frozen.units
         if decoded.unit_index >= len(units):
             raise PropertyCatalogSpanSourceError("canonical-span cursor exceeds source")
-        occupied_hours = self._discover_occupied_hours(frozen)
         unit_index = decoded.unit_index
         source_cursor = decoded.source_cursor
         window_hours = decoded.window_hours
         while unit_index < len(units):
+            self._deadline.remaining_ms(cap_ms=self._timeout_ms)
             project_id, window_start, _hourly_window_end = units[unit_index]
             window_end = min(
                 window_start + timedelta(hours=window_hours),
@@ -593,8 +893,8 @@ class CanonicalSpanSourceReader:
                 1,
                 math.ceil((window_end - window_start).total_seconds() / 3600),
             )
-            if not _unit_may_be_occupied(
-                occupied_hours,
+            if not self._window_may_be_occupied(
+                frozen,
                 project_id=project_id,
                 window_start=window_start,
                 window_end=window_end,
@@ -639,6 +939,48 @@ class CanonicalSpanSourceReader:
                 terminal=terminal,
             )
         return SpanScanPage(None, (), (), None, True)
+
+    def _window_may_be_occupied(
+        self, frozen, *, project_id, window_start, window_end
+    ) -> bool:
+        if self._occupancy_scope != frozen:
+            self._occupied_frozen = None
+            self._occupied_hours = frozenset()
+            self._occupancy_scope = frozen
+        if frozen.hours_per_project <= _MAX_WINDOWS:
+            return _unit_may_be_occupied(
+                self._discover_occupied_hours(frozen),
+                project_id=project_id,
+                window_start=window_start,
+                window_end=window_end,
+            )
+        # Segment only the occupancy hints, never the identity/payload window.
+        # A v1/v2 resume key must still address exactly its original window,
+        # even if that window crosses an occupancy segment boundary.
+        start = window_start
+        while start < window_end:
+            segment = self._occupied_frozen
+            if segment is None or not (
+                segment.project_ids == (project_id,)
+                and segment.since <= start < segment.until
+            ):
+                segment = FrozenSpanSource(
+                    (project_id,),
+                    start,
+                    min(start + timedelta(hours=_MAX_WINDOWS), frozen.until),
+                    frozen.audit_generation,
+                )
+            occupied = self._discover_occupied_hours(segment)
+            end = min(segment.until, window_end)
+            if _unit_may_be_occupied(
+                occupied,
+                project_id=project_id,
+                window_start=start,
+                window_end=end,
+            ):
+                return True
+            start = end
+        return False
 
     def _discover_occupied_hours(
         self, frozen: FrozenSpanSource
@@ -775,6 +1117,46 @@ class CanonicalSpanSourceReader:
     def audit(self, frozen: FrozenSpanSource) -> SpanAggregateProof:
         """Independently audit bounded project/time shards and combine proof."""
 
+        return combine_audit_components(self._audit_components(frozen, fresh=False))
+
+    def audit_components(
+        self, frozen: FrozenSpanSource, *, expected_hostname: str | None = None
+    ) -> tuple[SpanAuditComponent, ...]:
+        """Fresh exact-scope evidence, including previously unoccupied windows."""
+        from .accepted_scope_proofs import MAX_COMPONENTS
+
+        size = len(frozen.project_ids) * math.ceil(
+            (frozen.until - frozen.since).total_seconds()
+            / (3600 * CANONICAL_SPAN_SCAN_WINDOW_HOURS)
+        )
+        if size > MAX_COMPONENTS:
+            raise PropertyCatalogSpanSourceError(
+                "accepted audit component bound exceeded"
+            )
+        return tuple(
+            self._audit_components(
+                frozen, fresh=True, expected_hostname=expected_hostname
+            )
+        )
+
+    def _audit_parameters(self) -> dict:
+        return {
+            "catalog_projected_typed_string_value_bytes": PROJECTED_TYPED_STRING_VALUE_BYTES,
+            "catalog_projected_array_string_value_bytes": PROJECTED_ARRAY_STRING_VALUE_BYTES,
+            "catalog_projected_value_budget_bytes": PROJECTED_VALUE_BUDGET_BYTES,
+            "catalog_projected_array_members": CATALOG_BUILD_LIMITS.max_array_members,
+            "catalog_max_source_attribute_entries": self._limits.max_source_attribute_entries,
+            "catalog_max_source_attribute_bytes": self._limits.max_source_attribute_bytes,
+        }
+
+    def _audit_components(
+        self,
+        frozen: FrozenSpanSource,
+        *,
+        fresh: bool,
+        expected_hostname: str | None = None,
+    ):
+
         # A workspace-wide aggregate makes ClickHouse account every project's
         # physical reads against one max_bytes_to_read budget.  Keep the same
         # independent aggregate proof, but execute it once per disjoint project
@@ -785,26 +1167,56 @@ class CanonicalSpanSourceReader:
         # hash, so XOR and wrapping UInt64 sums compose to exactly the same
         # workspace multiset proof.
         sql = _aggregate_audit_sql(self._source_table())
-        count = 0
-        xor = [0, 0, 0, 0]
-        total = [0, 0, 0, 0]
-        state_conflict_count = 0
+        if expected_hostname is not None:
+            # Bind EACH aggregate query to the observed node, not just the
+            # metadata reads on either side of a potentially reconnecting client.
+            sql = f"SELECT *, hostName() AS source_hostname FROM ({sql})"
         occupied_hours = (
-            self._occupied_hours if self._occupied_frozen == frozen else None
+            self._occupied_hours
+            if not fresh and self._occupied_frozen == frozen
+            else None
+        )
+        # A wide scan retains only its last bounded occupancy segment. Revisit
+        # earlier segments through the same helper instead of losing all empty-
+        # window hints when that segment differs from the full frozen scope.
+        # Fresh audits still read every window, without consulting these hints.
+        reuse_segments = (
+            not fresh
+            and self._occupancy_scope == frozen
+            and frozen.hours_per_project > _MAX_WINDOWS
         )
         for project_id in frozen.project_ids:
             window_start = frozen.since
             while window_start < frozen.until:
+                self._deadline.remaining_ms(cap_ms=self._timeout_ms)
                 window_end = min(
                     window_start + timedelta(hours=CANONICAL_SPAN_SCAN_WINDOW_HOURS),
                     frozen.until,
                 )
-                if occupied_hours is not None and not _unit_may_be_occupied(
-                    occupied_hours,
-                    project_id=project_id,
-                    window_start=window_start,
-                    window_end=window_end,
+                if (
+                    occupied_hours is not None
+                    and not _unit_may_be_occupied(
+                        occupied_hours,
+                        project_id=project_id,
+                        window_start=window_start,
+                        window_end=window_end,
+                    )
+                ) or (
+                    reuse_segments
+                    and not self._window_may_be_occupied(
+                        frozen,
+                        project_id=project_id,
+                        window_start=window_start,
+                        window_end=window_end,
+                    )
                 ):
+                    yield SpanAuditComponent(
+                        project_id,
+                        window_start,
+                        window_end,
+                        SpanAggregateProof(0, (0,) * 4, (0,) * 4, 0),
+                        frozen.audit_generation,
+                    )
                     window_start = window_end
                     continue
                 rows = self._query(
@@ -813,12 +1225,7 @@ class CanonicalSpanSourceReader:
                         "catalog_project_ids": (project_id,),
                         "catalog_since": window_start,
                         "catalog_until": window_end,
-                        "catalog_projected_typed_string_value_bytes": PROJECTED_TYPED_STRING_VALUE_BYTES,
-                        "catalog_projected_array_string_value_bytes": PROJECTED_ARRAY_STRING_VALUE_BYTES,
-                        "catalog_projected_value_budget_bytes": PROJECTED_VALUE_BUDGET_BYTES,
-                        "catalog_projected_array_members": CATALOG_BUILD_LIMITS.max_array_members,
-                        "catalog_max_source_attribute_entries": self._limits.max_source_attribute_entries,
-                        "catalog_max_source_attribute_bytes": self._limits.max_source_attribute_bytes,
+                        **self._audit_parameters(),
                     },
                 )
                 if len(rows) != 1:
@@ -826,51 +1233,60 @@ class CanonicalSpanSourceReader:
                         "canonical-span audit shard did not return one row"
                     )
                 row = rows[0]
-                count += _strict_uint(row.get("source_count"), "audit source_count")
-                state_conflict_count += _strict_uint(
-                    row.get("state_conflict_count"), "state conflict count"
-                )
-                _strict_uint(count, "combined audit source_count")
-                _strict_uint(
-                    state_conflict_count,
-                    "combined state conflict count",
-                )
-                for index in range(1, 5):
-                    xor[index - 1] ^= _strict_uint(
-                        row.get(f"audit_h{index}_xor"),
-                        f"audit h{index} xor",
+                if (
+                    expected_hostname is not None
+                    and row.get("source_hostname") != expected_hostname
+                ):
+                    raise PropertyCatalogSpanSourceError(
+                        "canonical audit changed source node"
                     )
-                    total[index - 1] = (
-                        total[index - 1]
-                        + _strict_uint(
-                            row.get(f"audit_h{index}_sum"),
-                            f"audit h{index} sum",
-                        )
-                    ) % (1 << 64)
+                yield SpanAuditComponent(
+                    project_id,
+                    window_start,
+                    window_end,
+                    SpanAggregateProof(
+                        _strict_uint(row.get("source_count"), "audit source_count"),
+                        tuple(
+                            _strict_uint(row.get(f"audit_h{i}_xor"), "audit xor")
+                            for i in range(1, 5)
+                        ),
+                        tuple(
+                            _strict_uint(row.get(f"audit_h{i}_sum"), "audit sum")
+                            for i in range(1, 5)
+                        ),
+                        _strict_uint(
+                            row.get("state_conflict_count"), "state conflict count"
+                        ),
+                    ),
+                    frozen.audit_generation,
+                )
                 window_start = window_end
-        return SpanAggregateProof(
-            count=count,
-            xor=tuple(xor),  # type: ignore[arg-type]
-            total=tuple(total),  # type: ignore[arg-type]
-            state_conflict_count=state_conflict_count,
-        )
 
     def _source_table(self) -> str:
-        return f"`{self._source_database}`.`{SOURCE_TABLE}`"
+        return f"`{self._source_database}`.`{self._source_table_name}`"
 
     def _query(
-        self, sql: str, params: Mapping[str, Any]
+        self, sql: str, params: Mapping[str, Any], *, timeout_cap_ms: int | None = None
     ) -> tuple[Mapping[str, Any], ...]:
         if getattr(self._client, "source_database", None) != self._source_database:
             raise PropertyCatalogSpanSourceError(
                 "canonical-span client identity changed during the scan"
+            )
+        if (
+            getattr(self._client, "source_table", SOURCE_TABLE)
+            != self._source_table_name
+        ):
+            raise PropertyCatalogSpanSourceError(
+                "canonical-span table identity changed during the scan"
             )
         _validate_source_select(
             sql,
             source_table=self._source_table(),
             catalog_database=self._catalog_database,
         )
-        remaining = self._deadline.remaining_ms(cap_ms=self._timeout_ms)
+        remaining = self._deadline.remaining_ms(
+            cap_ms=min(self._timeout_ms, timeout_cap_ms or self._timeout_ms)
+        )
         settings = dict(READ_SETTINGS)
         settings["readonly"] = 2
         settings["max_execution_time"] = max(1, math.ceil(remaining / 1000))
@@ -951,6 +1367,13 @@ class CanonicalSpanAttributeGroupPageLoader:
         encoded_bytes = 0
         while True:
             page = self._reader.read_page(self._frozen, cursor=cursor)
+            if (
+                page.project_id is not None
+                and page.project_id not in self._frozen.project_ids
+            ):
+                raise PropertySourceError(
+                    "span group page exceeds the frozen project scope"
+                )
             if page.project_id is not None:
                 for span in page.spans:
                     key_rows, _, reasons = _build_span_catalog_rows(
@@ -1124,6 +1547,8 @@ class RevisionPinnedSpanAttributeGroupPageLoader:
     def _load_groups(
         self,
     ) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...], datetime, datetime], ...]:
+        if not self._context.project_ids:
+            return ()
         if getattr(self._client, "catalog_database", None) != self._catalog_database:
             raise PropertySourceError(
                 "revision-pinned catalog client identity changed during the read"
@@ -1430,7 +1855,7 @@ class AuthoritativeSpanReconciler:
                 "canonical-span audit found conflicting states at the same max version"
             )
         if values.source_count != proof.count or values.source_digest != proof.digest:
-            raise PropertyCatalogSpanSourceError(
+            raise PropertyCatalogSourceChanged(
                 "authoritative values and independent source audit disagree"
             )
         audit = self._run_audit_stream(
@@ -1498,6 +1923,13 @@ class AuthoritativeSpanReconciler:
 
         while True:
             page = self._reader.read_page(frozen, cursor=source_cursor)
+            if (
+                page.project_id is not None
+                and page.project_id not in frozen.project_ids
+            ):
+                raise PropertyCatalogSpanSourceError(
+                    "span page exceeds the frozen project scope"
+                )
             page_source_digest = _EMPTY_SHA256
             for observation_sha256 in page.observation_sha256s:
                 page_source_digest = framed_sha256(
@@ -2240,6 +2672,8 @@ def _validate_source_select(
     sql: str, *, source_table: str, catalog_database: str
 ) -> None:
     stripped = sql.strip()
+    if stripped == _EMPTY_FENCE_SQL:
+        return
     if (
         not stripped
         or ";" in stripped
@@ -2293,6 +2727,12 @@ def _unit_may_be_occupied(
             return True
         hour += timedelta(hours=1)
     return False
+
+
+def _explicit_projects(project_ids: Sequence[str]) -> tuple[str, ...]:
+    if not isinstance(project_ids, (tuple, list)):
+        raise TypeError("project_ids must be an explicit list or tuple")
+    return tuple(project_ids)
 
 
 def _require_utc(value: datetime, field: str) -> None:

@@ -19,6 +19,7 @@ const (
 
 func validEnvironment() map[string]string {
 	return map[string]string{
+		envRevisionFence:      "/tmp/property-catalog-consumer-test/revision-fence.json",
 		envConsumerMode:       consumerModeKafka,
 		envEnvironment:        propertycatalog.DevelopmentEnvironment,
 		envDevAck:             propertycatalog.DevelopmentAcknowledgement,
@@ -435,6 +436,13 @@ func TestKafkaSettingsRejectURLsDuplicatesAndUnsafeTopicBeforeFactories(t *testi
 }
 
 type fakeSink struct{}
+
+func (*fakeSink) BeginPropertyCatalogDelivery(context.Context, propertycatalog.WireEnvelope) error {
+	return nil
+}
+func (*fakeSink) VerifyPropertyCatalogDelivery(context.Context, propertycatalog.WireEnvelope) error {
+	return nil
+}
 
 func (*fakeSink) InsertPropertyCatalog(context.Context, propertycatalog.Table, []map[string]any) error {
 	return nil

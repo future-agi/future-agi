@@ -33,11 +33,14 @@ x-backend-env: &backend-env
   # multiply ClickHouse pressure or starve unrelated XL work.
   EXACT_AGGREGATION_TASK_QUEUE: ${EXACT_AGGREGATION_TASK_QUEUE:-exact_aggregation}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
-  # The OSS stack builds the unified catalog by default through the isolated
-  # Kafka pipeline below. User-facing reads remain on the compatibility path
-  # until a workspace has an active catalog revision and an operator opts into
-  # the read gate; this prevents a fresh/empty workspace from returning 503s.
-  PROPERTY_CATALOG_READ_MODE: ${PROPERTY_CATALOG_READ_MODE:-off}
+  # Managed OSS reads follow qualified control-ledger activation automatically.
+  # Versions/activation/workspace eligibility are not operator environment IDs.
+  PROPERTY_CATALOG_READ_MODE: ${PROPERTY_CATALOG_READ_MODE:-managed}
+  PROPERTY_CATALOG_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
+  PROPERTY_CATALOG_CH_HOST: clickhouse
+  PROPERTY_CATALOG_CH_PORT: "9000"
+  PROPERTY_CATALOG_CH_USER: property_catalog_oss_api
+  PROPERTY_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:-oss-catalog-api-local-only}
   PROPERTY_CATALOG_DEV_RECONCILE_ENABLED: ${PROPERTY_CATALOG_DEV_RECONCILE_ENABLED:-false}
   # Empty -> settings.py auto-generates a throwaway dev key. Set in .env for
   # persistence across restarts (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
@@ -446,6 +449,8 @@ services:
     restart: unless-stopped
 
   clickhouse:
+    # Keep the observed node name stable with its persisted admission on recreate.
+    hostname: clickhouse
     # CH 25.3 is the floor for the v2 spans schema (typed-JSON columns
     # in 002_spans_v2.sql require it). The boot hook in
     # model_hub/apps.py auto-migrates a v1 `spans` table (from an older
@@ -663,8 +668,8 @@ services:
       FI_PROPERTY_CATALOG_MODE: ${FI_PROPERTY_CATALOG_MODE:-kafka}
       FI_PROPERTY_CATALOG_ENVIRONMENT: development
       FI_PROPERTY_CATALOG_DEV_ACK: PROPERTY_CATALOG_V1_DEV_ONLY
-      FI_PROPERTY_CATALOG_EPOCH: ${PROPERTY_CATALOG_EPOCH:-1}
-      FI_PROPERTY_CATALOG_PROJECTION_VERSION: ${PROPERTY_CATALOG_PROJECTION_VERSION:-1}
+      # Kafka candidates carry no lifecycle identity. The sequencer binds them
+      # to the controller-owned durable identity and active workspace fence.
       FI_PROPERTY_CATALOG_WORKSPACE_SCOPE_MODE: revision_fence
       FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
       FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
@@ -715,9 +720,8 @@ services:
       FI_PROPERTY_CATALOG_MODE: sequencer
       FI_PROPERTY_CATALOG_ENVIRONMENT: development
       FI_PROPERTY_CATALOG_DEV_ACK: PROPERTY_CATALOG_V1_DEV_ONLY
-      FI_PROPERTY_CATALOG_EPOCH: ${PROPERTY_CATALOG_EPOCH:-1}
-      FI_PROPERTY_CATALOG_PROJECTION_VERSION: ${PROPERTY_CATALOG_PROJECTION_VERSION:-1}
-      FI_PROPERTY_CATALOG_PRODUCER_STREAM_ID: ${PROPERTY_CATALOG_PRODUCER_STREAM_ID:-9e43cac3-65f0-50b1-991d-4e582aa2cc84}
+      # Runtime identity is loaded from the shared persistent control volume;
+      # startup waits for the supervisor to initialize or adopt it safely.
       FI_PROPERTY_CATALOG_WORKSPACE_SCOPE_MODE: revision_fence
       FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/property-catalog-control/property-catalog/revision-fence-v2.json
       FI_PROPERTY_CATALOG_SPOOL_DIR: /var/lib/property-catalog-sequencer
@@ -754,6 +758,7 @@ services:
       FI_PROPERTY_CATALOG_CONSUMER_MODE: kafka
       FI_PROPERTY_CATALOG_ENVIRONMENT: development
       FI_PROPERTY_CATALOG_DEV_ACK: PROPERTY_CATALOG_V1_DEV_ONLY
+      FI_PROPERTY_CATALOG_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
       FI_PROPERTY_CATALOG_CH_URL: http://clickhouse:8123
       FI_PROPERTY_CATALOG_CH_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
       FI_PROPERTY_CATALOG_CH_USERNAME: property_catalog_oss_consumer
@@ -767,7 +772,13 @@ services:
       FI_PROPERTY_CATALOG_KAFKA_BROKERS: property-catalog-kafka:9092
       FI_PROPERTY_CATALOG_KAFKA_TOPIC: ${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC:-${PROPERTY_CATALOG_KAFKA_TOPIC:-futureagi.oss.property-catalog.ordered.v1}}
       FI_PROPERTY_CATALOG_KAFKA_CONSUMER_GROUP: ${PROPERTY_CATALOG_KAFKA_CONSUMER_GROUP:-futureagi.oss.property-catalog.consumer.v1}
+    volumes:
+      # Admission is lifecycle-owned; exact consumer attempts share its private
+      # parent directory and must survive restart/rebalance with the same euid.
+      - fi-collector-data:/var/lib/fi-collector
     depends_on:
+      property-catalog-runtime-volume-init:
+        condition: service_completed_successfully
       property-catalog-clickhouse-bootstrap:
         condition: service_completed_successfully
       property-catalog-topic-init:
@@ -786,20 +797,10 @@ services:
     cpus: "${PROPERTY_CATALOG_SUPERVISOR_CPUS:-0.5}"
     mem_limit: "${PROPERTY_CATALOG_SUPERVISOR_MEMORY:-768M}"
     working_dir: /app/backend
-    # Run one bounded reconcile-only cycle at a time so a failed cycle exits
-    # non-zero and the container restart policy exposes the failure. This
-    # service never starts a historical backfill; operators initialize inactive
-    # catalogs explicitly with bin/property-catalog-backfill.
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - |
-        ready_file=/tmp/property-catalog-supervisor.ready
-        rm -f "$${ready_file}"
-        while true; do
-          python manage.py ch25_property_catalog_oss_supervisor --once
-          : > "$${ready_file}"
-          sleep "$${PROPERTY_CATALOG_OSS_SUPERVISOR_POLL_SECONDS}"
-        done
+    # Discover and initialize eligible workspaces automatically, then reconcile
+    # continuously. A workspace-local failure must not restart the whole fleet.
+    entrypoint: ["python", "manage.py", "ch25_property_catalog_oss_supervisor"]
+    command: ["--health-file", "/tmp/property-catalog-supervisor.health.json"]
     environment:
       <<: *backend-env
       ENV_TYPE: development
@@ -845,12 +846,14 @@ services:
       PROPERTY_CATALOG_DEV_WRITE_CH_USER: property_catalog_oss_control
       PROPERTY_CATALOG_DEV_WRITE_CH_PASSWORD: ${PROPERTY_CATALOG_CONTROL_PASSWORD:-oss-catalog-control-local-only}
       PROPERTY_CATALOG_DEV_WRITE_CH_DATABASE: ${PROPERTY_CATALOG_DATABASE:-property_catalog_dev_oss}
-      PROPERTY_CATALOG_DEV_CATALOG_EPOCH: ${PROPERTY_CATALOG_EPOCH:-1}
-      PROPERTY_CATALOG_DEV_PROJECTION_VERSION: ${PROPERTY_CATALOG_PROJECTION_VERSION:-1}
-      PROPERTY_CATALOG_DEV_HOT_PRODUCER_STREAM_ID: ${PROPERTY_CATALOG_PRODUCER_STREAM_ID:-9e43cac3-65f0-50b1-991d-4e582aa2cc84}
+      # Reuse the consumer's separate SELECT-only proof identity for startup.
+      FI_PROPERTY_CATALOG_LEDGER_CH_USERNAME: property_catalog_oss_ledger
+      FI_PROPERTY_CATALOG_LEDGER_CH_PASSWORD: ${PROPERTY_CATALOG_LEDGER_PASSWORD:-oss-catalog-ledger-local-only}
+      PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC: ${PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC:-futureagi.oss.property-catalog.candidates.v1}
+      PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC: ${PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC:-${PROPERTY_CATALOG_KAFKA_TOPIC:-futureagi.oss.property-catalog.ordered.v1}}
       PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE: /var/lib/fi-collector/property-catalog/revision-fence-v2.json
-      PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE: /var/lib/fi-collector/property-catalog/producer-drain-proof-v2.json
-      PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE: /var/lib/fi-collector/property-catalog/producer-state-retirements-v1.json
+      PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE: /var/lib/property-catalog-sequencer/producer-drain-proof-v2.json
+      PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE: /var/lib/property-catalog-sequencer/producer-state-retirements-v1.json
       PROPERTY_CATALOG_DEV_MUTATION_LOCK_DIRECTORY: /var/lib/fi-collector/property-catalog
       PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_WALL_MS: ${PROPERTY_CATALOG_DEV_SCHEDULED_RECONCILE_WALL_MS:-1200000}
     user: "65532:65532"
@@ -862,13 +865,27 @@ services:
       - /app/backend/logs:rw,noexec,nosuid,nodev,size=64m,mode=0770,uid=65532,gid=65532
       - /app/backend/tfc/logs:rw,noexec,nosuid,nodev,size=64m,mode=0770,uid=65532,gid=65532
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/property-catalog-supervisor.ready"]
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import json, time
+          from datetime import datetime
+          with open('/tmp/property-catalog-supervisor.health.json') as f:
+              h = json.load(f)
+          age = time.time() - datetime.fromisoformat(h['observed_at'].replace('Z', '+00:00')).timestamp()
+          assert h['format'] == 'futureagi.property-catalog-lifecycle-health' and h['version'] == 2
+          assert h['live'] is True and h['ready'] is True and 0 <= age <= 60
       interval: 5s
       timeout: 2s
       retries: 120
       start_period: 10s
     volumes:
       - fi-collector-data:/var/lib/fi-collector
+      # The sequencer owns drain proofs and receipts here; the supervisor writes
+      # retirement proofs and exact repair acknowledgements on the same volume.
+      - property-catalog-sequencer-data:/var/lib/property-catalog-sequencer
     depends_on:
       property-catalog-clickhouse-bootstrap:
         condition: service_completed_successfully

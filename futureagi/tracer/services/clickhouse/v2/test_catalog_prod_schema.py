@@ -148,7 +148,7 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
     manifest = _manifest()
 
     assert manifest.manifest_sha256 == (
-        "71667a959c24bd05a6375b21896d116d3c26d790c017e603d0fee83a64b5d7e3"
+        "4b230733a40e59de40351953f50b6bc04e70c9f9365b6554537394f3b92b04d1"
     )
     assert manifest.database_sql_sha256 == (
         "4f695a1763f59960cd08c89ff04a4e33d5f33ecfc152952215c73f8baca2df54"
@@ -160,7 +160,8 @@ def test_render_is_exactly_pinned_create_only_replicated_schema() -> None:
         "9fe77eed2ceb161c4df9a9d8198fbbda3c1156b5b159efa3fa368fccc59a47b9",
         "751e4bc5e497f52215d049f196e64f3a92d82de16d71bce19e78dce3c514aa15",
         "d7e4c89a57f41f191bd722e80dfc9ccddb78efc2466339c90f3301538893c6ec",
-        "749f3aa6de566e067b90ef0952544efefe8f7c799bd3b1811d7f55b1b35827f7",
+        # Existing enum codes remain stable; FOLLOW appends action code 4.
+        "1f8e29b0ad1eac7ac29c4d342d29b5ffd837965fe592a99d8ecb8ad2cc4293ff",
     )
     assert len(manifest.statements) == 8
 

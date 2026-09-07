@@ -17,6 +17,7 @@ from tracer.services.clickhouse.v2.property_catalog.activation_control import (
     ActivationControlSelector,
     ActivationControlTarget,
     ActivationControlUnavailable,
+    select_reader_activation,
 )
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     MAX_DEFINITION_JSON_BYTES,
@@ -102,6 +103,10 @@ class PropertyCatalogUnavailable(RuntimeError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__("The property catalog is temporarily unavailable.")
+
+
+class PropertyCatalogBootstrapPending(PropertyCatalogUnavailable):
+    """A first managed page is waiting for its authorized catalog coverage."""
 
 
 def is_property_catalog_not_ready_error(error: BaseException) -> bool:
@@ -1189,23 +1194,40 @@ def require_property_catalog_activation_coverage(
     scope: dict[str, Any],
     activation: PropertyCatalogActivation,
     unavailable_type: type[PropertyCatalogUnavailable] = PropertyCatalogUnavailable,
+    pending_type: type[PropertyCatalogUnavailable] | None = None,
     requested_span_since_us: int | None = None,
     requested_span_until_us: int | None = None,
 ) -> None:
-    """Require the immutable build to cover the authorized project/time scope."""
+    """Validate requested coverage without disabling a valid workspace snapshot."""
 
     source_scope = activation.source_scope
     if source_scope is None:
         raise unavailable_type("activation_scope_invalid")
     requested_projects = frozenset(scope["project_ids"])
     covered_projects = frozenset(source_scope.project_ids)
-    # The API materializes the complete *live* authorized project set. A full
-    # repair deliberately freezes soft-deleted projects too so it can publish
-    # their tombstones, therefore its immutable source scope may be a strict
-    # superset. The query predicate still contains only requested_projects, so
-    # accepting that proven superset never widens visibility. A newly-created
-    # live project remains fail-closed because it is absent from covered_projects.
-    if not requested_projects or not requested_projects.issubset(covered_projects):
+    # Workspace discovery is an eventually refreshed, qualified snapshot. A
+    # newly created project must not turn existing dataset/template properties
+    # into a 503. Query only the intersection of current PG authorization and
+    # this immutable build's coverage while its replacement is being prepared.
+    # Explicit project reads still require full coverage. Neither case widens
+    # visibility to deleted/foreign projects or skips activation verification.
+    authenticated_workspace = (
+        scope.get("workspace_scope") is True
+        and bool(scope.get("principal_id"))
+        and bool(scope.get("auth_type"))
+    )
+    if (
+        not requested_projects or not requested_projects.issubset(covered_projects)
+    ) and not authenticated_workspace:
+        if (
+            pending_type is not None
+            and requested_projects
+            and bool(scope.get("principal_id"))
+            and bool(scope.get("auth_type"))
+        ):
+            # First-page reads may wait for a newly authorized project. This
+            # does not authorize a source-table fallback or an empty result.
+            raise pending_type("activation_scope_pending")
         raise unavailable_type("activation_scope_incomplete")
 
     if (requested_span_since_us is None) != (requested_span_until_us is None):
@@ -1224,6 +1246,16 @@ def require_property_catalog_activation_coverage(
         or requested_span_until_us > source_scope.span_until_us
     ):
         raise unavailable_type("activation_scope_incomplete")
+
+
+def selected_property_catalog_project_ids(
+    scope: dict[str, Any], activation: PropertyCatalogActivation
+) -> tuple[str, ...]:
+    """Narrow already-authorized projects to the selected qualified snapshot."""
+    if activation.source_scope is None:
+        raise PropertyCatalogUnavailable("activation_scope_invalid")
+    covered = frozenset(activation.source_scope.project_ids)
+    return tuple(project for project in scope["project_ids"] if project in covered)
 
 
 def _control_target_matches_activation(
@@ -1257,7 +1289,7 @@ def _query_params(
     after: tuple[int, int, str, str, str, str] | None,
     page_size: int,
 ) -> dict[str, Any]:
-    projects = tuple(scope["project_ids"])
+    projects = selected_property_catalog_project_ids(scope, activation)
     workspace_scope = scope.get("workspace_scope") is True
     order = after or (0, 0, "", "", "", "")
     return {
@@ -1272,8 +1304,8 @@ def _query_params(
         # consumers still receive defaults when they intentionally omit a
         # project scope; universal system fields use ``always`` visibility.
         "catalog_include_workspace_default": int(workspace_scope),
-        # Workspace reads carry the complete authorized PG project set. Never
-        # widen the ClickHouse predicate to every catalog row in the tenant.
+        # Only authorized projects covered by this selected snapshot are read.
+        # Never widen the predicate to every catalog row in the tenant.
         "catalog_include_all_projects": 0,
         "catalog_project_ids": projects,
         "catalog_agent_definition_id": scope["agent_definition_id"],
@@ -1354,7 +1386,7 @@ class PropertyCatalogReader:
                 page_size=page_size,
             )
         budget = _ReadBudget.start()
-        activation = self._activation(
+        activation, follows_latest = self._activation(
             scope=checked_scope,
             cursor=cursor,
             budget=budget,
@@ -1364,6 +1396,7 @@ class PropertyCatalogReader:
         self._require_activation_coverage(
             scope=checked_scope,
             activation=activation,
+            allow_pending=follows_latest and cursor is None,
         )
 
         params = _query_params(
@@ -1579,15 +1612,33 @@ class PropertyCatalogReader:
         scope: dict[str, Any],
         cursor: PropertyCatalogCursor | None,
         budget: _ReadBudget,
-    ) -> PropertyCatalogActivation:
+    ) -> tuple[PropertyCatalogActivation, bool]:
         target: ActivationControlTarget | None = None
+        follows_latest = False
+        previous_cursor = False
         if self._activation_selector is not None:
             try:
-                target = self._activation_selector.select_target(
+                selection = select_reader_activation(
+                    self._activation_selector,
                     scope=scope,
                     timeout_ms=budget.remaining_ms(),
                 )
+                target = selection.target
+                follows_latest = selection.follows_latest
+                previous_cursor = (
+                    cursor is not None
+                    and selection.allows_previous_revision(
+                        epoch=cursor.catalog_epoch, revision=cursor.catalog_revision
+                    )
+                )
             except ActivationControlUnavailable as exc:
+                from .activation_control import ActivationControlBootstrapPending
+
+                if (
+                    isinstance(exc, ActivationControlBootstrapPending)
+                    and cursor is None
+                ):
+                    raise PropertyCatalogBootstrapPending(exc.reason) from exc
                 raise PropertyCatalogUnavailable(exc.reason) from exc
         rows = self._execute(
             self._activation_sql,
@@ -1598,14 +1649,18 @@ class PropertyCatalogReader:
                     target is not None or cursor is not None
                 ),
                 "catalog_epoch": (
-                    target.catalog_epoch
+                    cursor.catalog_epoch
+                    if previous_cursor
+                    else target.catalog_epoch
                     if target is not None
                     else cursor.catalog_epoch
                     if cursor
                     else 0
                 ),
                 "catalog_revision": (
-                    target.catalog_revision
+                    cursor.catalog_revision
+                    if previous_cursor
+                    else target.catalog_revision
                     if target is not None
                     else cursor.catalog_revision
                     if cursor
@@ -1620,22 +1675,33 @@ class PropertyCatalogReader:
             scope=scope,
             cursor_present=target is not None or cursor is not None,
         )
-        if target is not None and not _control_target_matches_activation(
-            target,
-            activation,
+        # FOLLOW may advance between pages. A signed cursor keeps its original
+        # qualified build, never the new target's payload or fingerprint.
+        if previous_cursor and (
+            activation.catalog_epoch != cursor.catalog_epoch
+            or activation.catalog_revision != cursor.catalog_revision
+            or activation.projection_version != target.projection_version
         ):
             raise PropertyCatalogUnavailable("control_target_mismatch")
-        return activation
+        if (
+            target is not None
+            and not previous_cursor
+            and not _control_target_matches_activation(target, activation)
+        ):
+            raise PropertyCatalogUnavailable("control_target_mismatch")
+        return activation, follows_latest
 
     @staticmethod
     def _require_activation_coverage(
         *,
         scope: dict[str, Any],
         activation: PropertyCatalogActivation,
+        allow_pending: bool = False,
     ) -> None:
         require_property_catalog_activation_coverage(
             scope=scope,
             activation=activation,
+            pending_type=PropertyCatalogBootstrapPending if allow_pending else None,
         )
 
     def _execute(
@@ -1674,6 +1740,8 @@ class PropertyCatalogReader:
 
     @staticmethod
     def _validate_scope(scope: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(scope.get("project_ids"), (list, tuple)):
+            raise ValueError("an explicit project inventory is required")
         normalized = normalize_property_catalog_scope(scope)
         normalized["organization_id"] = _uuid(
             normalized["organization_id"], "organization_id"
@@ -1840,6 +1908,7 @@ __all__ = [
     "PROPERTY_CATALOG_MAX_PAGE_SIZE",
     "PROPERTY_CATALOG_NOT_READY_REASONS",
     "PropertyCatalogActivation",
+    "PropertyCatalogBootstrapPending",
     "PropertyCatalogPage",
     "PropertyCatalogQueryExecutor",
     "PropertyCatalogReader",

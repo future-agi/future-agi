@@ -1,21 +1,19 @@
-"""Production-only supervisor for the unified property-catalog lifecycle.
+"""Production supervisor for the unified property-catalog lifecycle.
 
-The controller never creates a database or table.  It verifies the existing
-``property_catalog`` schema, proves read-only source identities and exact
-project tenancy, then either advances an active workspace incrementally or—
-only behind a separate bootstrap gate—runs the fixed initial lifecycle.
+The controller never creates a database or table. It verifies the isolated
+catalog schema, source identities and project tenancy. Managed installations
+initialize eligible workspaces automatically; existing explicit-identity
+deployments retain their legacy bootstrap admission until migrated.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import signal
-import tempfile
 import threading
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
@@ -32,6 +30,12 @@ from tracer.services.clickhouse.v2.property_catalog.codec import (
     canonical_json,
     canonical_uuid,
 )
+from tracer.services.clickhouse.v2.property_catalog.controller_health import (
+    HEALTH_FORMAT,
+    HEALTH_VERSION,
+    ControllerHealth,
+    write_health_record,
+)
 from tracer.services.clickhouse.v2.property_catalog.dev_rollout import (
     DEV_INITIAL_BACKFILL_MAX_WALL_MS,
     DEV_STANDARD_MAX_WALL_MS,
@@ -41,9 +45,17 @@ from tracer.services.clickhouse.v2.property_catalog.dev_rollout import (
 from tracer.services.clickhouse.v2.property_catalog.dev_runtime import (
     DEV_SIDECAR_ACK,
     PostgresDevIdentity,
-    PostgresProjectTenantBinding,
     PropertyCatalogProductionRuntimeFactory,
     require_checked_in_property_catalog_production_runtime,
+)
+from tracer.services.clickhouse.v2.property_catalog.installation_bootstrap import (
+    require_legacy_identity,
+    resolve_installation,
+)
+from tracer.services.clickhouse.v2.property_catalog.installation_identity import (
+    IDENTITY_FILENAME,
+    InstallationIdentityError,
+    load_identity,
 )
 from tracer.services.clickhouse.v2.property_catalog.production_rollout import (
     PRODUCTION_CLOUD_DEPLOYMENTS,
@@ -66,8 +78,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_PROJECTS_PER_WORKSPACE = 256
 _WORKSPACE_SCOPE_MODES = frozenset({"all", "allowlist"})
-_HEALTH_FORMAT = "futureagi.property-catalog-lifecycle-health"
-_HEALTH_VERSION = 1
+_HEALTH_FORMAT = HEALTH_FORMAT
+_HEALTH_VERSION = HEALTH_VERSION
 
 
 class ProductionLifecycleControllerError(RuntimeError):
@@ -110,6 +122,12 @@ class WorkspaceScope:
             "workspace_id",
             canonical_uuid(self.workspace_id, field="workspace_id"),
         )
+        if not isinstance(self.project_ids, tuple) or not isinstance(
+            self.legacy_project_ids, tuple
+        ):
+            raise ProductionLifecycleControllerError(
+                "workspace scope requires explicit project tuples"
+            )
         projects = tuple(
             sorted(
                 canonical_uuid(value, field="project_id") for value in self.project_ids
@@ -121,13 +139,11 @@ class WorkspaceScope:
                 for value in self.legacy_project_ids
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS_PER_WORKSPACE
-            or len(set(projects)) != len(projects)
+        if len(projects) > _MAX_PROJECTS_PER_WORKSPACE or len(set(projects)) != len(
+            projects
         ):
             raise ProductionLifecycleControllerError(
-                "workspace scope requires 1..256 unique projects"
+                "workspace scope requires 0..256 unique projects"
             )
         if len(set(legacy)) != len(legacy) or not set(legacy).issubset(projects):
             raise ProductionLifecycleControllerError(
@@ -221,6 +237,7 @@ class Command(BaseCommand):
         status_only = bool(options.get("status_only"))
         initial_backfill_wall_ms = options.get("initial_backfill_wall_ms")
         stop = threading.Event()
+        health_lifetime = ExitStack()
         previous_handlers = _install_signal_handlers(stop)
         try:
             config = controller_config(settings_object=settings)
@@ -230,8 +247,19 @@ class Command(BaseCommand):
                 bootstrap_enabled=config.bootstrap_enabled,
                 initial_backfill_wall_ms=initial_backfill_wall_ms,
             )
+            health = health_lifetime.enter_context(
+                ControllerHealth(
+                    lambda **snapshot: _write_health(config.health_file, **snapshot)
+                )
+            )
+            runtime_settings = resolve_controller_installation(
+                settings_object=settings,
+                config=config,
+                readonly=status_only,
+            )
             while not stop.is_set():
                 observed_at = datetime.now(UTC)
+                health.progress("discovering", timeout_seconds=120)
                 try:
                     scopes, skipped = discover_workspace_scopes(
                         config.workspace_ids
@@ -241,12 +269,28 @@ class Command(BaseCommand):
                     result = run_cycle(
                         scopes=scopes,
                         skipped=skipped,
-                        settings_object=settings,
+                        settings_object=runtime_settings,
                         config=config,
                         now=observed_at,
                         status_only=status_only,
                         initial_backfill_wall_ms=initial_backfill_wall_ms,
                         stop=stop,
+                        utc_now=lambda: datetime.now(UTC),
+                        on_progress=lambda scope: health.progress(
+                            "reconciling",
+                            timeout_seconds=(
+                                max(
+                                    config.scheduled_reconcile_wall_ms,
+                                    initial_backfill_wall_ms or 0,
+                                )
+                                / 1000
+                                + 120
+                            ),
+                            detail={
+                                **health.snapshot()["detail"],
+                                "workspace_id": scope.workspace_id,
+                            },
+                        ),
                         on_error=lambda workspace_id, exc: self.stderr.write(
                             self.style.ERROR(
                                 f"workspace {workspace_id} failed safely: {exc}"
@@ -254,12 +298,13 @@ class Command(BaseCommand):
                         ),
                     )
                 except Exception as exc:
-                    _write_health(
-                        config.health_file,
-                        healthy=False,
-                        observed_at=observed_at,
+                    health.progress(
+                        "retrying",
+                        timeout_seconds=config.failure_backoff_seconds + 120,
+                        ready=False,
                         detail={"cycle_error": str(exc)[:2048]},
                     )
+                    health.publish()
                     if once:
                         raise CommandError(str(exc)) from exc
                     logger.exception(
@@ -268,13 +313,14 @@ class Command(BaseCommand):
                     stop.wait(config.failure_backoff_seconds)
                     continue
 
-                healthy = not result.failures
-                _write_health(
-                    config.health_file,
-                    healthy=healthy,
-                    observed_at=observed_at,
+                health.progress(
+                    "idle",
+                    timeout_seconds=config.poll_seconds + 120,
+                    ready=not result.stopped
+                    and (not result.failures or bool(result.processed)),
                     detail=result.as_dict(summary=True),
                 )
+                health.publish()
                 if once:
                     if result.failures:
                         failed = ", ".join(sorted(result.failures))
@@ -288,7 +334,10 @@ class Command(BaseCommand):
         except (ProductionLifecycleControllerError, DevRolloutError, ValueError) as exc:
             raise CommandError(str(exc)) from exc
         finally:
-            _restore_signal_handlers(previous_handlers)
+            try:
+                health_lifetime.close()
+            finally:
+                _restore_signal_handlers(previous_handlers)
         return None
 
 
@@ -386,6 +435,14 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
         runtime_directory,
         "revision fence file",
     )
+    managed_identity = not any(
+        getattr(settings_object, name, None)
+        for name in (
+            "PROPERTY_CATALOG_LIFECYCLE_CATALOG_EPOCH",
+            "PROPERTY_CATALOG_LIFECYCLE_PROJECTION_VERSION",
+            "PROPERTY_CATALOG_LIFECYCLE_PRODUCER_STREAM_ID",
+        )
+    )
     return ControllerConfig(
         cloud_deployment=cloud,
         source_database=source,
@@ -414,7 +471,8 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
         health_file=health_file,
         revision_fence_file=revision_fence_file,
         bootstrap_enabled=(
-            getattr(
+            managed_identity
+            or getattr(
                 settings_object,
                 "PROPERTY_CATALOG_LIFECYCLE_BOOTSTRAP_ENABLED",
                 False,
@@ -422,13 +480,67 @@ def controller_config(*, settings_object: Any) -> ControllerConfig:
             is True
         ),
         repair_expired_incomplete=(
-            getattr(
+            managed_identity
+            or getattr(
                 settings_object,
                 "PROPERTY_CATALOG_LIFECYCLE_REPAIR_EXPIRED_INCOMPLETE",
                 False,
             )
             is True
         ),
+    )
+
+
+def resolve_controller_installation(
+    *,
+    settings_object: Any,
+    config: ControllerConfig,
+    readonly: bool = False,
+) -> Any:
+    prefix = "PROPERTY_CATALOG_LIFECYCLE_"
+    epoch = getattr(settings_object, prefix + "CATALOG_EPOCH", 0)
+    projection = getattr(settings_object, prefix + "PROJECTION_VERSION", 0)
+    producer = getattr(settings_object, prefix + "PRODUCER_STREAM_ID", "")
+    candidate_topic = getattr(
+        settings_object, "PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC", ""
+    )
+    ordered_topic = getattr(settings_object, "PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC", "")
+    path = Path(config.revision_fence_file).parent / IDENTITY_FILENAME
+    if epoch or projection or producer:
+        if not epoch or not projection or not producer:
+            raise InstallationIdentityError(
+                "legacy catalog identity must be completely configured or absent"
+            )
+        if path.exists() or path.is_symlink():
+            identity = load_identity(path)
+            identity.require_destination(
+                environment="production",
+                target_database=config.target_database,
+                candidate_topic=candidate_topic,
+                ordered_topic=ordered_topic,
+            )
+            require_legacy_identity(
+                identity, epoch=epoch, projection=projection, producer=producer
+            )
+        return settings_object
+    identity = resolve_installation(
+        settings_object=settings_object,
+        prefix=prefix,
+        environment="production",
+        target_database=config.target_database,
+        revision_fence_file=config.revision_fence_file,
+        candidate_topic=candidate_topic,
+        ordered_topic=ordered_topic,
+        readonly=readonly,
+    )
+    return SettingsOverlay(
+        base=settings_object,
+        overrides={
+            "_PROPERTY_CATALOG_MANAGED_INSTALLATION": True,
+            prefix + "CATALOG_EPOCH": identity.catalog_epoch,
+            prefix + "PROJECTION_VERSION": identity.projection_version,
+            prefix + "PRODUCER_STREAM_ID": identity.producer_stream_id,
+        },
     )
 
 
@@ -474,7 +586,7 @@ def discover_workspace_scopes(
             workspace_id__isnull=True,
         )
     project_rows = list(
-        Project.no_workspace_objects.filter(project_filter)
+        Project.no_workspace_objects.filter(project_filter, trace_type="observe")
         .order_by("organization_id", "workspace_id", "id")
         .values_list("id", "organization_id", "workspace_id")
     )
@@ -510,14 +622,10 @@ def discover_workspace_scopes(
                 f"workspace {bound_workspace_id} exceeds the 256-project bound"
             )
     scopes: list[WorkspaceScope] = []
-    skipped: list[str] = []
     for workspace_raw, organization_raw, is_default_raw in rows:
         workspace_id = canonical_uuid(workspace_raw, field="workspace_id")
         organization_id = canonical_uuid(organization_raw, field="organization_id")
         project_ids = tuple(projects_by_workspace[workspace_id])
-        if not project_ids:
-            skipped.append(workspace_id)
-            continue
         scopes.append(
             WorkspaceScope(
                 organization_id=organization_id,
@@ -527,7 +635,7 @@ def discover_workspace_scopes(
                 legacy_project_ids=tuple(legacy_by_workspace[workspace_id]),
             )
         )
-    return tuple(scopes), tuple(sorted(skipped))
+    return tuple(scopes), ()
 
 
 def run_cycle(
@@ -541,6 +649,8 @@ def run_cycle(
     stop: threading.Event,
     on_error: Callable[[str, Exception], None],
     initial_backfill_wall_ms: int | None = None,
+    on_progress: Callable[[WorkspaceScope], None] | None = None,
+    utc_now: Callable[[], datetime] | None = None,
 ) -> CycleResult:
     authorized_workspaces = tuple(
         sorted((*skipped, *(scope.workspace_id for scope in scopes)))
@@ -562,12 +672,14 @@ def run_cycle(
     for scope in scopes:
         if stop.is_set():
             break
+        if on_progress is not None:
+            on_progress(scope)
         try:
             run_workspace(
                 scope=scope,
                 settings_object=settings_object,
                 config=config,
-                now=now,
+                now=utc_now() if utc_now is not None else now,
                 status_only=status_only,
                 initial_backfill_wall_ms=initial_backfill_wall_ms,
                 stop=stop,
@@ -657,6 +769,11 @@ def run_workspace(
         proxy=proxy,
         config=config,
         initial_backfill_wall_ms=initial_backfill_wall_ms,
+        scheduled_reconcile_wall_ms=(
+            config.scheduled_reconcile_wall_ms
+            if initial_backfill_wall_ms is None
+            else None
+        ),
     )
     with managed_runtime(
         request=request,
@@ -692,36 +809,20 @@ def legacy_aware_project_probe(
     scope: WorkspaceScope,
 ) -> Callable[
     [tuple[str, ...], PostgresDevIdentity],
-    tuple[PostgresProjectTenantBinding, ...],
+    dev_runtime.PostgresWorkspaceProjectInventory,
 ]:
-    legacy = frozenset(scope.legacy_project_ids)
+    """Re-prove default workspace semantics and exact inventory in PostgreSQL."""
 
     def probe(
         project_ids: tuple[str, ...],
         expected_postgres_identity: PostgresDevIdentity,
-    ) -> tuple[PostgresProjectTenantBinding, ...]:
-        bindings = tuple(
-            dev_runtime._postgres_project_tenant_bindings(  # noqa: SLF001
-                project_ids,
-                expected_postgres_identity,
-            )
+    ) -> dev_runtime.PostgresWorkspaceProjectInventory:
+        return dev_runtime._postgres_workspace_project_inventory(  # noqa: SLF001
+            project_ids,
+            expected_postgres_identity,
+            organization_id=scope.organization_id,
+            workspace_id=scope.workspace_id,
         )
-        mapped: list[PostgresProjectTenantBinding] = []
-        for binding in bindings:
-            if (
-                binding.project_id in legacy
-                and binding.workspace_id is None
-                and binding.workspace_organization_id is None
-                and binding.organization_id == scope.organization_id
-                and scope.is_default
-            ):
-                binding = replace(
-                    binding,
-                    workspace_id=scope.workspace_id,
-                    workspace_organization_id=scope.organization_id,
-                )
-            mapped.append(binding)
-        return tuple(mapped)
 
     return probe
 
@@ -842,55 +943,21 @@ def _write_health(
     healthy: bool,
     observed_at: datetime,
     detail: Mapping[str, Any],
+    live: bool | None = None,
+    ready: bool | None = None,
+    phase: str = "idle",
+    progress_at: datetime | None = None,
 ) -> None:
-    raw = (
-        canonical_json(
-            {
-                "detail": dict(detail),
-                "format": _HEALTH_FORMAT,
-                "healthy": healthy,
-                "observed_at": iso_z(observed_at),
-                "version": _HEALTH_VERSION,
-            },
-            max_bytes=256 * 1024,
-        ).encode("utf-8")
-        + b"\n"
+    write_health_record(
+        path,
+        healthy=healthy,
+        observed_at=observed_at,
+        detail=detail,
+        live=live,
+        ready=ready,
+        phase=phase,
+        progress_at=progress_at,
     )
-    target = Path(path)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".property-catalog-lifecycle-health-",
-        dir=target.parent,
-    )
-    temporary = Path(temporary_name)
-    keep = True
-    try:
-        os.fchmod(descriptor, 0o600)
-        view = memoryview(raw)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise ProductionLifecycleControllerError(
-                    "production lifecycle health write was incomplete"
-                )
-            view = view[written:]
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
-        os.replace(temporary, target)
-        keep = False
-        directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        if keep:
-            try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _install_signal_handlers(

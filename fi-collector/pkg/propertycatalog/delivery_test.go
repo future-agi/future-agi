@@ -16,6 +16,9 @@ type recordingSink struct {
 	failLedger bool
 }
 
+func (*recordingSink) BeginPropertyCatalogDelivery(context.Context, WireEnvelope) error  { return nil }
+func (*recordingSink) VerifyPropertyCatalogDelivery(context.Context, WireEnvelope) error { return nil }
+
 type recordingLeaseGuard struct {
 	requests    []DeliveryLeaseRequest
 	failAt      int

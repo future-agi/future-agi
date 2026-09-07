@@ -9,13 +9,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	maxCatalogInsertBytes   = 16 << 20
-	prodCatalogDatabaseName = "property_catalog"
+	maxCatalogInsertBytes         = 16 << 20
+	maxCatalogInsertResponseBytes = 4 << 10
+	prodCatalogDatabaseName       = "property_catalog"
 )
 
 var reservedCatalogDatabases = map[string]struct{}{
@@ -58,6 +61,13 @@ type ClickHouseSinkConfig struct {
 	Password           string
 	RequestTimeout     time.Duration
 	RoundTripper       http.RoundTripper
+	// Admission/storage are injected by the consumer factory, never selected by
+	// an environment quorum/version override. Reader transports do not use them.
+	WritePolicy           *WritePolicy
+	WriteJournal          *WriteAttemptJournal
+	WriteProof            CatalogWriteProof
+	InstallationDirectory string
+	OrderedTopic          string
 }
 
 // ClickHouseSink is closed over the two new catalog data tables and their
@@ -69,9 +79,40 @@ type ClickHouseSink struct {
 	username string
 	password string
 	client   *http.Client
+	writer   *DurableWriteExecutor
 }
 
 func NewClickHouseSink(cfg ClickHouseSinkConfig) (*ClickHouseSink, error) {
+	sink, err := newClickHouseTransport(cfg)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := cfg.WritePolicy.DirectWriteEndpoint(cfg.Environment, cfg.Database)
+	if err != nil {
+		return nil, err
+	}
+	direct, err := bareClickHouseOrigin(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if direct.Scheme != sink.baseURL.Scheme {
+		return nil, errors.New("propertycatalog: admission cannot change the configured HTTP/TLS scheme")
+	}
+	sink.baseURL = direct
+	sink.writer, err = NewDurableWriteExecutor(cfg.WritePolicy, cfg.WriteJournal, cfg.WriteProof, sink.sendExact)
+	if err != nil {
+		return nil, err
+	}
+	return sink, nil
+}
+
+// ValidateClickHouseDestination is local-only. It grants no write capability.
+func ValidateClickHouseDestination(cfg ClickHouseSinkConfig) error {
+	_, err := newClickHouseTransport(cfg)
+	return err
+}
+
+func newClickHouseTransport(cfg ClickHouseSinkConfig) (*ClickHouseSink, error) {
 	parsed, err := url.Parse(cfg.URL)
 	if err != nil || parsed == nil || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
 		parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
@@ -126,7 +167,7 @@ func (s *ClickHouseSink) InsertPropertyCatalogDelivery(ctx context.Context, rows
 }
 
 func (s *ClickHouseSink) insert(ctx context.Context, table string, columns []string, rows []map[string]any) error {
-	if s == nil || s.baseURL == nil || s.client == nil || ctx == nil {
+	if s == nil || s.baseURL == nil || s.client == nil || ctx == nil || s.writer == nil {
 		return errors.New("propertycatalog: ClickHouse insert requires a sink context")
 	}
 	if len(rows) == 0 {
@@ -158,14 +199,54 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, columns []str
 			return errors.New("propertycatalog: ClickHouse insert exceeds byte limit")
 		}
 	}
-	endpoint := *s.baseURL
+	identity, ok := ctx.Value(catalogWriteIdentityKey{}).(catalogWriteIdentity)
+	if !ok || !isLowerSHA256(identity.envelopeID) || !validAttemptToken(identity.token) {
+		return errors.New("propertycatalog: INSERT requires exact envelope/chunk identity")
+	}
+	intent := ExactWriteAttempt{Body: body.Bytes(), Endpoint: s.baseURL.String(), EnvelopeID: identity.envelopeID,
+		Token: identity.token, Table: table, TopologySHA256: s.writer.policy.admission.TopologySHA256}
+	if table == "property_catalog_deliveries" {
+		lease, err := s.writer.journal.Lock(identity.token)
+		if err != nil {
+			return err
+		}
+		existing, loadErr := lease.Load()
+		lease.Close()
+		if loadErr == nil {
+			if !sameLogicalDelivery(existing.Body, intent.Body) {
+				return errors.New("propertycatalog: proposed ledger conflicts with durable envelope identity")
+			}
+			intent.Body = existing.Body // freeze original clock/version and Kafka provenance
+		} else if !errors.Is(loadErr, os.ErrNotExist) {
+			return loadErr
+		}
+	}
+	return s.writer.Execute(ctx, intent, identity.proofOnly)
+}
+
+func (s *ClickHouseSink) sendExact(ctx context.Context, attempt ExactWriteAttempt) error {
+	statement, err := exactInsertStatement(attempt.Table, attempt.Settings)
+	if err != nil {
+		return err
+	}
+	table := attempt.Table
+	endpoint, err := url.Parse(attempt.Endpoint)
+	if err != nil {
+		return err
+	}
 	query := endpoint.Query()
 	query.Set("database", s.database)
-	query.Set("query", fmt.Sprintf(
-		"INSERT INTO %s (%s) FORMAT JSONEachRow", table, strings.Join(columns, ","),
-	))
+	query.Set("query", statement)
+	// Envelopes are already batched. Never acknowledge server-side buffering,
+	// and ask CH to resolve the query before sending its HTTP response. Body
+	// validation remains mandatory: HTTP 200 alone is not a successful INSERT.
+	for name, value := range attempt.Settings {
+		query.Set(name, value)
+	}
+	query.Set("query_id", attempt.QueryID)
+	query.Set("insert_deduplication_token", attempt.Token)
 	endpoint.RawQuery = query.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body.Bytes()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(attempt.Body))
 	if err != nil {
 		return err
 	}
@@ -176,14 +257,52 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, columns []str
 		return fmt.Errorf("propertycatalog: ClickHouse %s insert: %w", table, err)
 	}
 	defer response.Body.Close()
-	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxCatalogInsertResponseBytes+1))
+	if err != nil {
+		// The write may already have committed. Propagate ambiguity without
+		// retrying or allowing the delivery handler to acknowledge Kafka.
+		return fmt.Errorf("propertycatalog: ClickHouse %s insert acknowledgement incomplete (write outcome unknown): %w", table, err)
+	}
+	if len(responseBody) > maxCatalogInsertResponseBytes {
+		return fmt.Errorf("propertycatalog: ClickHouse %s insert acknowledgement exceeds %d bytes (write outcome unknown)", table, maxCatalogInsertResponseBytes)
+	}
+	if response.ContentLength > 0 && int64(len(responseBody)) != response.ContentLength {
+		return fmt.Errorf("propertycatalog: ClickHouse %s insert acknowledgement truncated (write outcome unknown): %w", table, io.ErrUnexpectedEOF)
+	}
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf(
 			"propertycatalog: ClickHouse %s insert returned HTTP %d: %s",
 			table, response.StatusCode, strings.TrimSpace(string(responseBody)),
 		)
 	}
-	return nil
+	if code := response.Header.Get("X-ClickHouse-Exception-Code"); code != "" && code != "0" {
+		return fmt.Errorf("propertycatalog: ClickHouse %s insert returned an exception header with HTTP 200 (write outcome unknown)", table)
+	}
+	// INSERT without a returning clause has an empty success body. Reject any
+	// other bytes, including exceptions emitted after an HTTP 200 header.
+	if len(responseBody) != 0 {
+		return fmt.Errorf("propertycatalog: ClickHouse %s insert returned an unexpected HTTP 200 body (write outcome unknown): %q", table, responseBody)
+	}
+	return ctx.Err()
+}
+
+// CH25.3's QueryFinish.Settings omits values equal to built-in defaults even
+// when HTTP parameters explicitly supplied them (notably quorum_parallel=1).
+// Keep these execution settings in the actual SQL as well as HTTP parameters:
+// exact QueryFinish.query can positively witness them without inferring an
+// absent setting. This does not enable query logging or replay a Sent attempt.
+func exactInsertStatement(table string, settings map[string]string) (string, error) {
+	columns, err := insertColumns(table)
+	if err != nil {
+		return "", err
+	}
+	quorum, err := strconv.ParseUint(settings["insert_quorum"], 10, 32)
+	if err != nil || strconv.FormatUint(quorum, 10) != settings["insert_quorum"] || quorum == 1 ||
+		settings["async_insert"] != "0" || settings["insert_quorum_parallel"] != "1" {
+		return "", errors.New("propertycatalog: exact INSERT statement requires pinned sync/quorum settings")
+	}
+	return fmt.Sprintf("INSERT INTO %s (%s) SETTINGS async_insert=0, insert_quorum=%d, insert_quorum_parallel=1 FORMAT JSONEachRow",
+		table, strings.Join(columns, ","), quorum), nil
 }
 
 func safeClickHouseDatabase(environment, value, productionDatabase string) bool {

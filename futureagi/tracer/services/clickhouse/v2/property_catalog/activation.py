@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -89,11 +90,10 @@ class BuildPlanSourceScope:
     span_until_us: int
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.project_ids, tuple)
-            or not 1 <= len(self.project_ids) <= 256
-        ):
-            raise ValueError("build source scope requires 1..256 project_ids")
+        if not isinstance(self.project_ids, tuple) or len(self.project_ids) > 256:
+            raise ValueError(
+                "build source scope requires an explicit tuple of 0..256 project_ids"
+            )
         projects = tuple(
             sorted(
                 canonical_uuid(project_id, field="source_scope project_id")
@@ -853,6 +853,33 @@ class ActivationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ActivationHistory:
+    """One latest-state snapshot: ACTIVE lineage and all-status allocation marks."""
+
+    active_records: tuple[ActivationRecord, ...]
+    maximum_revision: int
+    maximum_sequence: int
+
+    def __post_init__(self) -> None:
+        if type(self.active_records) is not tuple or any(
+            type(record) is not ActivationRecord for record in self.active_records
+        ):
+            raise TypeError("active_records must be a tuple of ActivationRecord")
+        for field_name in ("maximum_revision", "maximum_sequence"):
+            value = getattr(self, field_name)
+            if type(value) is not int or not 0 <= value < (1 << 64):
+                raise ValueError(f"{field_name} must be a UInt64")
+        if self.maximum_sequence > 0 and self.maximum_revision == 0:
+            raise ValueError("a consumed activation sequence requires a revision")
+        if any(
+            record.catalog_revision > self.maximum_revision
+            or record.activation_sequence > self.maximum_sequence
+            for record in self.active_records
+        ):
+            raise ValueError("activation history maxima do not cover ACTIVE records")
+
+
+@dataclass(frozen=True, slots=True)
 class ActivationResult:
     record: ActivationRecord
     qualification: RevisionQualification
@@ -869,6 +896,10 @@ class RevisionCoordinator(Protocol):
     handshake; Python never guesses the Go hot-stream high-water. ``fence``
     revokes all producer writes before returning its immutable proof.
     """
+
+    def serialize_activation(
+        self, *, fence: RevisionFence, operation: Callable[[], ActivationResult]
+    ) -> ActivationResult: ...
 
     def allocate(
         self,
@@ -936,13 +967,13 @@ class ActivationStore(Protocol):
         requirement: RevisionRequirement,
     ) -> Sequence[CatalogCheckpoint]: ...
 
-    def list_activations(
+    def load_activation_history(
         self,
         *,
         organization_id: str,
         workspace_id: str,
         catalog_epoch: int,
-    ) -> Sequence[ActivationRecord]: ...
+    ) -> ActivationHistory: ...
 
     def append_active(
         self,
@@ -950,19 +981,72 @@ class ActivationStore(Protocol):
         *,
         fence_sha256: str,
         checkpoint_state_sha256s: tuple[str, ...],
+        write_scope: Any = None,
     ) -> ActivationRecord: ...
 
 
 class PropertyCatalogActivator:
-    def __init__(self, store: ActivationStore) -> None:
+    def __init__(
+        self,
+        store: ActivationStore,
+        *,
+        coordinator: RevisionCoordinator | None = None,
+        completion_probe: Callable[[ActivationRecord], bool] | None = None,
+        publication_barrier: Callable[..., Any] | None = None,
+    ) -> None:
         self._store = store
+        self._coordinator = coordinator
+        # The default retains the store's existing local read-after-write
+        # contract. A topology-owning integration can require stronger evidence;
+        # false/unknown/exception MUST leave an armed publication unresolved.
+        self._completion_probe = completion_probe
+        self._publication_barrier = publication_barrier
+
+    def _publication_scope(self, **kwargs):
+        if self._publication_barrier is None:
+            return nullcontext(None)
+        return self._publication_barrier(**kwargs)
+
+    def _confirm_scoped_completion(self, record, write_scope):
+        if write_scope is None:
+            self._confirm_completion(record)
+        else:
+            write_scope.confirm_complete(record)
+
+    def _confirm_completion(self, record: ActivationRecord) -> None:
+        if (
+            self._completion_probe is not None
+            and self._completion_probe(record) is not True
+        ):
+            raise ActivationRejected(("activation_completion_unconfirmed",))
 
     def activate(
         self,
         *,
         manifest: ActivationManifest,
         fence: RevisionFence,
-        inventory: ActivationInventory,
+        inventory: ActivationInventory | Callable[[], ActivationInventory],
+        now: datetime,
+    ) -> ActivationResult:
+        guard = getattr(self._coordinator, "serialize_activation", None)
+        if not callable(guard):
+            raise ActivationRejected(("workspace_activation_serialization_required",))
+        return guard(
+            fence=fence,
+            operation=lambda: self._activate_serialized(
+                manifest=manifest,
+                fence=fence,
+                inventory=inventory,
+                now=now,
+            ),
+        )
+
+    def _activate_serialized(
+        self,
+        *,
+        manifest: ActivationManifest,
+        fence: RevisionFence,
+        inventory: ActivationInventory | Callable[[], ActivationInventory],
         now: datetime,
     ) -> ActivationResult:
         _require_utc(now, "now")
@@ -989,13 +1073,60 @@ class PropertyCatalogActivator:
             checkpoint_states=checkpoint_states,
         )
 
-        activations = tuple(
-            self._store.list_activations(
+        publication_factory = getattr(self._coordinator, "publication_session", None)
+        if not callable(publication_factory):
+            raise ActivationRejected(("durable_activation_publication_required",))
+        publication = publication_factory(fence=fence)
+        publication.check_evidence(fence=fence, checkpoint_states=checkpoint_states)
+
+        # Keep the activator's conflict contract when ownership checks are
+        # performed by the concrete all-status store before ACTIVE selection.
+        from .state_store import PropertyCatalogStateConflict
+
+        try:
+            history = self._store.load_activation_history(
                 organization_id=manifest.organization_id,
                 workspace_id=manifest.workspace_id,
                 catalog_epoch=manifest.catalog_epoch,
             )
-        )
+        except PropertyCatalogStateConflict as exc:
+            raise ActivationRejected(("activation_history_conflicts",)) from exc
+        if type(history) is not ActivationHistory:
+            raise ActivationRejected(("activation_history_conflicts",))
+        activations = history.active_records
+        identities: dict[tuple[int, str], ActivationRecord] = {}
+        sequences: dict[int, tuple[int, str]] = {}
+        revisions: dict[int, str] = {}
+        for observed in activations:
+            if not isinstance(observed, ActivationRecord):
+                raise ActivationRejected(("activation_history_conflicts",))
+            key = (observed.catalog_revision, observed.build_token)
+            if (
+                any(
+                    getattr(observed, field) != getattr(manifest, field)
+                    for field in (
+                        "organization_id",
+                        "workspace_id",
+                        "catalog_epoch",
+                        "projection_version",
+                    )
+                )
+                or (key in identities and identities[key] != observed)
+                or (
+                    observed.catalog_revision in revisions
+                    and revisions[observed.catalog_revision] != observed.build_token
+                )
+                or (
+                    observed.activation_sequence in sequences
+                    and sequences[observed.activation_sequence] != key
+                )
+            ):
+                raise ActivationRejected(("activation_history_conflicts",))
+            identities[key] = observed
+            sequences[observed.activation_sequence] = key
+            revisions[observed.catalog_revision] = observed.build_token
+        activations = tuple(identities.values())
+        publication.check_visible_head(activations)
         for existing in activations:
             if existing.catalog_revision != manifest.catalog_revision:
                 continue
@@ -1005,13 +1136,34 @@ class PropertyCatalogActivator:
                 and existing.revision_fence_sha256 == fence.fence_sha256
                 and existing.activation_sha256 == qualification.activation_sha256
             ):
+                if publication.record is not None and publication.record != existing:
+                    raise ActivationRejected(
+                        ("publication_intent_conflicts_with_active",)
+                    )
+                with self._publication_scope(
+                    record=existing,
+                    publication=publication,
+                    fence=fence,
+                    checkpoint_states=checkpoint_states,
+                ) as write_scope:
+                    self._confirm_scoped_completion(existing, write_scope)
+                    if publication.record is not None:
+                        publication.resolve(existing)
+                    elif not publication.positive_only:
+                        raise ActivationRejected(("active_without_armed_publication",))
                 return ActivationResult(existing, qualification, True)
             raise ActivationRejected(("revision_already_activated_with_other_state",))
+
+        if publication.positive_only:
+            raise ActivationRejected(("legacy_activation_requires_positive_evidence",))
+        publication.require_predecessor(
+            activations, confirm_completion=self._confirm_completion
+        )
 
         latest = max(
             activations, key=lambda value: value.activation_sequence, default=None
         )
-        if latest is not None and latest.catalog_revision >= manifest.catalog_revision:
+        if history.maximum_revision >= manifest.catalog_revision:
             raise ActivationRejected(("activation_revision_not_monotonic",))
         if latest is None:
             if manifest.lifecycle_mode is not CatalogLifecycleMode.INITIAL_BACKFILL:
@@ -1025,8 +1177,20 @@ class PropertyCatalogActivator:
             and manifest.lineage_anchor_revision != latest.lineage_anchor_revision
         ):
             raise ActivationRejected(("incremental_lineage_anchor_changed",))
-        activation_sequence = 1 if latest is None else latest.activation_sequence + 1
-        record = ActivationRecord(
+        activation_sequence = history.maximum_sequence + 1
+        if activation_sequence >= (1 << 64):
+            raise ActivationRejected(("activation_sequence_exhausted",))
+        if publication.record is None:
+            # Historical FENCED recovery reads only already-frozen catalog data,
+            # and only for a provably new intent. Positive/uncertain publication
+            # must not depend on a fresh inventory or synthesize replacement rows.
+            inventory = inventory() if callable(inventory) else inventory
+            if not isinstance(inventory, ActivationInventory):
+                raise TypeError("inventory must produce ActivationInventory")
+        # An uncertain append must reuse every original byte, including the
+        # diagnostic counts/timestamps and sequence. If the all-status allocation
+        # head changed, reject below rather than renumbering a frozen intent.
+        record = publication.record or ActivationRecord(
             organization_id=manifest.organization_id,
             workspace_id=manifest.workspace_id,
             catalog_epoch=manifest.catalog_epoch,
@@ -1048,15 +1212,42 @@ class PropertyCatalogActivator:
             updated_at=now,
             version=activation_sequence,
         )
-        appended = self._store.append_active(
-            record,
-            fence_sha256=fence.fence_sha256,
-            checkpoint_state_sha256s=checkpoint_states,
-        )
-        if appended != record:
-            raise PropertyCatalogActivationError(
-                "activation store did not preserve the qualified append"
+        if (
+            record.source_manifest_sha256 != manifest.sha256
+            or record.activation_sha256 != qualification.activation_sha256
+            or record.activation_sequence != activation_sequence
+        ):
+            raise ActivationRejected(
+                ("publication_intent_changed_qualification_or_head",)
             )
+        if publication.record is None:
+            publication.prepare(
+                record,
+                fence=fence,
+                checkpoint_states=checkpoint_states,
+                previous=latest,
+            )
+        publication.arm(previous=latest)
+        with self._publication_scope(
+            record=record,
+            publication=publication,
+            fence=fence,
+            checkpoint_states=checkpoint_states,
+        ) as write_scope:
+            appended = self._store.append_active(
+                record,
+                fence_sha256=fence.fence_sha256,
+                checkpoint_state_sha256s=checkpoint_states,
+                **({"write_scope": write_scope} if write_scope is not None else {}),
+            )
+            if appended != record:
+                raise PropertyCatalogActivationError(
+                    "activation store did not preserve the qualified append"
+                )
+            self._confirm_scoped_completion(appended, write_scope)
+            # Keep the native scope guard through durable publication resolution.
+            # An error, including a lost INSERT response, leaves this ARMED.
+            publication.resolve(appended)
         # Existing active records are deliberately retained: readers with an
         # issued signed cursor continue to pin their exact epoch/revision.
         return ActivationResult(record, qualification, False)
@@ -1247,6 +1438,7 @@ def _validate_role_counts(
 
 
 __all__ = [
+    "ActivationHistory",
     "ActivationInventory",
     "ActivationManifest",
     "ActivationRecord",

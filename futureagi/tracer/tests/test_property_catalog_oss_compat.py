@@ -260,7 +260,7 @@ def test_root_oss_compose_defaults_to_the_unified_kafka_catalog() -> None:
     )
 
     backend_environment = compose["x-backend-env"]
-    assert backend_environment["PROPERTY_CATALOG_READ_MODE"].endswith(":-off}")
+    assert backend_environment["PROPERTY_CATALOG_READ_MODE"].endswith(":-managed}")
     assert backend_environment["PROPERTY_CATALOG_DEV_RECONCILE_ENABLED"].endswith(
         ":-false}"
     )
@@ -301,8 +301,16 @@ def test_oss_bootstrap_scripts_cannot_mutate_source_data() -> None:
     assert "default|futureagi|information_schema|property_catalog|system" in clickhouse
     assert r"GRANT SELECT ON \`$SOURCE_DATABASE\`.spans" in clickhouse
     assert r"GRANT SELECT, INSERT ON \`$TARGET_DATABASE\`.*" in clickhouse
-    assert "ALTER TABLE" not in clickhouse
-    assert "DROP " not in clickhouse
+    assert clickhouse.count("ALTER TABLE") == 1
+    assert "ALTER TABLE property_catalog_activation_control_events MODIFY COLUMN action Enum8('activate' = 1, 'disable' = 2, 'rollback' = 3, 'follow' = 4)" in clickhouse
+    # Capture cleanup needs DROP on its separate derived namespace. The
+    # bootstrap itself still cannot drop anything or grant source-table DDL.
+    capture_grant = (
+        r"GRANT SELECT, INSERT, CREATE TABLE, ALTER DELETE, ALTER TTL, DROP TABLE "
+        r"ON \`$CAPTURE_DATABASE\`.* TO $CONTROL_USER"
+    )
+    assert clickhouse.count(capture_grant) == 1
+    assert "DROP " not in clickhouse.replace(capture_grant, "")
     assert "TRUNCATE " not in clickhouse
     assert "DELETE FROM" not in clickhouse
     assert "INSERT INTO" not in clickhouse

@@ -133,6 +133,9 @@ func (c RuntimeConfig) normalizedWorkspaceScopeMode() WorkspaceScopeMode {
 }
 
 func (c RuntimeConfig) WithDefaults() RuntimeConfig {
+	// Preserve zero epoch/projection: together they select allocation-free v2
+	// candidates in RuntimeKafka. Ordered runtime identity must be resolved
+	// explicitly before validation; it cannot come from numeric defaults here.
 	if c.WorkspaceScopeMode == "" {
 		c.WorkspaceScopeMode = WorkspaceScopeStatic
 	}
@@ -221,7 +224,8 @@ func (c RuntimeConfig) Validate() error {
 	if err := c.validateKafka(); err != nil {
 		return err
 	}
-	if c.CatalogEpoch == 0 || c.ProjectionVersion == 0 {
+	managedCandidate := mode == RuntimeKafka && c.CatalogEpoch == 0 && c.ProjectionVersion == 0
+	if !managedCandidate && (c.CatalogEpoch == 0 || c.ProjectionVersion == 0) {
 		return errors.New("propertycatalog: enabled runtime requires positive epoch and projection version")
 	}
 	// Candidate mode also owns a bounded asynchronous queue and a bounded

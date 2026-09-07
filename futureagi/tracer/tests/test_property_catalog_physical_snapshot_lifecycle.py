@@ -162,6 +162,15 @@ class _PhysicalSnapshot:
             (params["source_adapter"], params["producer_stream_id"])
         )
 
+    def load_checkpoint_writes(self, **params):
+        assert params["catalog_revision"] == 3
+        assert params["build_token"] == TOKEN_A
+        return {
+            pair: self.checkpoints[pair]
+            for pair in params["stream_pairs"]
+            if pair in self.checkpoints
+        }
+
     def reader(self):
         return dl.ClickHouseLifecycleStateReader(
             self, database=self.catalog_database, checkpoint_store=self
@@ -273,12 +282,28 @@ def test_physical_snapshot_without_activation_is_not_resumable(status):
         )
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [("catalog_epoch", 2), ("catalog_revision", 4), ("projection_version", 1)],
-)
-def test_physical_snapshot_rejects_other_contracts(field, value):
-    plan = replace(_PhysicalSnapshot().plan, **{field: value})
+def test_physical_snapshot_contract_is_revision_scoped_not_deployment_scoped():
+    plan = _PhysicalSnapshot().plan
+    plan = replace(
+        plan,
+        catalog_epoch=2,
+        catalog_revision=4,
+        projection_version=7,
+        streams=tuple(
+            replace(stream, source_cutoff_label="physical_snapshot_r4")
+            for stream in plan.streams
+        ),
+    )
+
+    decoded = dl._decode_plan_scope(plan, allow_physical_snapshot=True)
+
+    assert decoded.mode is dl.LifecycleRunMode.INITIAL_BACKFILL
+    assert decoded.physical_snapshot
+    assert decoded.cutoffs.span_audit_generation == FENCE
+
+
+def test_physical_snapshot_rejects_revision_label_mismatch():
+    plan = replace(_PhysicalSnapshot().plan, catalog_revision=4)
     with pytest.raises(dl.DurableLifecycleError, match="contract changed"):
         dl._decode_plan_scope(plan, allow_physical_snapshot=True)
 

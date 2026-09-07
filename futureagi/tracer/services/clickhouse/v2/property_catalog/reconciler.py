@@ -712,7 +712,10 @@ def _project_records(
         record = records_by_entity.get(old.source_entity_id)
         if record is None or old.is_deleted or old.binding_id in by_binding:
             continue
-        if old.source_version >= request.source_version:
+        if (old.catalog_revision, old.source_version) >= (
+            request.context.catalog_revision,
+            request.source_version,
+        ):
             conflicts.add(old.binding_id)
             continue
         source_fingerprint = framed_sha256(
@@ -749,8 +752,13 @@ def _project_records(
         old = current_by_binding.get(binding_id)
         if old is None:
             continue
-        if old.source_version > request.source_version or (
-            old.source_version == request.source_version
+        old_version = (old.catalog_revision, old.source_version)
+        request_version = (
+            request.context.catalog_revision,
+            request.source_version,
+        )
+        if old_version > request_version or (
+            old_version == request_version
             and old.state_sha256 != row.state_sha256
         ):
             conflicts.add(binding_id)
@@ -779,7 +787,10 @@ def _repair_tombstones(
     for old in baseline:
         if old.is_deleted or old.binding_id in seen:
             continue
-        if old.source_version >= request.source_version:
+        if (old.catalog_revision, old.source_version) >= (
+            request.context.catalog_revision,
+            request.source_version,
+        ):
             conflicts += 1
             continue
         source_fingerprint = framed_sha256(

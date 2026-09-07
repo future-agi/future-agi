@@ -383,6 +383,14 @@ func (s *CandidateReceiptStore) completeLocked(
 		entry.SkipReason = known.SkipReason
 		newCandidate = false
 	}
+	if newCandidate && entry.Disposition == candidateCompletionNotAdmitted &&
+		entry.SkipReason != CandidateWorkspaceNotInRollout {
+		// Write before completion/removal. An uncertain request fsync leaves the
+		// original receipt recoverable and must never become a successful skip.
+		if err := s.persistRepairRequest(receipt); err != nil {
+			return fmt.Errorf("propertycatalog: persist canonical repair request: %w", err)
+		}
+	}
 	updated := make(map[candidateCoordinate]candidateCompletion, len(s.completions)+1)
 	for key, value := range s.completions {
 		updated[key] = value
@@ -722,7 +730,8 @@ func (s *CandidateReceiptStore) cleanupTemps() error {
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasPrefix(name, candidateReceiptTempPrefix) &&
-			!strings.HasPrefix(name, candidateCompletionTempPrefix) {
+			!strings.HasPrefix(name, candidateCompletionTempPrefix) &&
+			!strings.HasPrefix(name, ".candidate-repair-tmp-") {
 			continue
 		}
 		path := filepath.Join(s.cfg.Directory, name)

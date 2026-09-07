@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from .activation import (
     BuildPlanSourceScope,
@@ -26,6 +28,7 @@ from .activation import (
     StreamDrainProof,
 )
 from .codec import (
+    canonical_json,
     canonical_uuid,
     framed_sha256,
     require_sha256,
@@ -37,6 +40,7 @@ from .proof_limits import (
     MAX_DELIVERY_REPLAYS,
     MAX_LOGICAL_STATE_VARIANTS,
 )
+from .publication_journal import ActivationPublicationSession
 from .publisher import (
     PROPERTY_CATALOG_TABLES,
     CatalogWriteLease,
@@ -44,6 +48,15 @@ from .publisher import (
     require_catalog_database,
 )
 from .runtime_limits import RUNTIME_LIMITS
+from .state_store import ClickHouseCatalogStateStore, PropertyCatalogStateError
+
+if TYPE_CHECKING:
+    from .durable_lifecycle import PersistedReservation, PriorActiveEvidence
+
+_T = TypeVar("_T")
+_SUPERSESSION_VERSION = (1 << 64) - 1
+_SUPERSESSION_FORMAT = "futureagi.property-catalog.supersession.v1"
+_MAX_SUPERSESSION_JOURNAL_BYTES = 2_097_152
 
 _SOURCE_STREAM_TABLE = "property_catalog_source_streams"
 _DELIVERY_TABLE = "property_catalog_deliveries"
@@ -310,6 +323,169 @@ class AtomicSingleTenantFenceFile:
                     pass
 
 
+class FileSupersessionJournal:
+    """Fsynced control-write intent on the SAME persistent volume as the lock.
+
+    One slot per workspace is replaced only after the previous intent completed.
+    Completed supersessions also remain in the ClickHouse reservation log, but
+    permanent file receipts must be retained to veto stale replica reads. This
+    directory must be shared by every writer and survive process/pod loss.
+    """
+
+    def __init__(self, directory: str) -> None:
+        self._directory = Path(directory)
+        if not self._directory.is_absolute() or not self._directory.is_dir():
+            raise ValueError(
+                "recovery journal requires an existing absolute shared directory"
+            )
+
+    def _path(self, key: str) -> Path:
+        return self._directory / (
+            framed_sha256(_SUPERSESSION_FORMAT, key) + ".supersession.json"
+        )
+
+    def load(self, key: str) -> dict[str, Any] | None:
+        intent = self.load_record(key)
+        if intent is not None and (
+            intent.get("format") != _SUPERSESSION_FORMAT
+            or type(intent.get("complete")) is not bool
+            or set(intent)
+            != {
+                "format",
+                "complete",
+                "predecessor",
+                "revoked",
+                "replacement",
+                "active_head",
+            }
+        ):
+            raise PropertyCatalogCoordinatorError("supersession journal is corrupt")
+        return intent
+
+    def load_record(self, key: str) -> dict[str, Any] | None:
+        path = self._path(key)
+        try:
+            descriptor = os.open(
+                path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+            )
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise PropertyCatalogCoordinatorError(
+                        "supersession journal is not a regular file"
+                    )
+                if info.st_size > _MAX_SUPERSESSION_JOURNAL_BYTES:
+                    raise PropertyCatalogCoordinatorError(
+                        "supersession journal exceeds its bound"
+                    )
+                raw = stream.read(_MAX_SUPERSESSION_JOURNAL_BYTES + 1)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise PropertyCatalogCoordinatorError(
+                "cannot read supersession journal"
+            ) from exc
+        try:
+            document = json.loads(raw)
+            if (
+                len(raw) > _MAX_SUPERSESSION_JOURNAL_BYTES
+                or not isinstance(document, dict)
+                or set(document) != {"key", "intent", "sha256"}
+                or (_journal_json(document) + "\n").encode() != raw
+            ):
+                raise ValueError("invalid canonical journal")
+            intent = document["intent"]
+            if (
+                document["key"] != key
+                or not isinstance(intent, dict)
+                or document["sha256"]
+                != framed_sha256(_SUPERSESSION_FORMAT, key, _journal_json(intent))
+            ):
+                raise ValueError("invalid intent")
+            return intent
+        except (KeyError, TypeError, ValueError, RecursionError) as exc:
+            raise PropertyCatalogCoordinatorError(
+                "supersession journal is corrupt"
+            ) from exc
+
+    def save(self, key: str, intent: Mapping[str, Any]) -> None:
+        archive_key = f"{key}:revoked:{intent['revoked']['build_lease_sha256']}"
+        archived = self.load_record(archive_key)
+        record = {"revoked": intent["revoked"]}
+        if archived is not None and archived != record:
+            raise PropertyCatalogCoordinatorError(
+                "supersession revocation record changed"
+            )
+        self.save_record(key, intent)
+        # Retain revocation independently of the current pending-operation slot.
+        # This blocks old activation even if a replica serves a stale FENCED row
+        # after later supersessions have replaced that slot.
+        if archived is None:
+            self.save_record(archive_key, record)
+
+    def is_revoked(self, key: str, plan_sha256: str) -> bool:
+        return self.load_record(f"{key}:revoked:{plan_sha256}") is not None
+
+    def save_record(self, key: str, intent: Mapping[str, Any]) -> None:
+        document = {
+            "key": key,
+            "intent": intent,
+            "sha256": framed_sha256(_SUPERSESSION_FORMAT, key, _journal_json(intent)),
+        }
+        raw = (_journal_json(document) + "\n").encode()
+        if len(raw) > _MAX_SUPERSESSION_JOURNAL_BYTES:
+            raise PropertyCatalogCoordinatorError(
+                "supersession intent exceeds journal bound"
+            )
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".supersession-", dir=self._directory
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self._path(key))
+            directory_fd = os.open(self._directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def _journal_json(document: Mapping[str, Any]) -> str:
+    # The record contains several independently bounded build plans; the
+    # default property-definition JSON bound is too small for this container.
+    return canonical_json(document, max_bytes=_MAX_SUPERSESSION_JOURNAL_BYTES)
+
+
+def _journal_row_document(row: Mapping[str, Any]) -> dict[str, Any]:
+    # Normalize native CH UUID/DateTime values before persisting exact intent.
+    return json.loads(
+        json.dumps(
+            dict(row),
+            default=lambda value: (
+                value.astimezone(UTC).isoformat(timespec="microseconds")
+                if isinstance(value, datetime)
+                else str(value)
+            ),
+        )
+    )
+
+
+def _journal_source_row(document: Mapping[str, Any]) -> dict[str, Any]:
+    if set(document) != set(_SOURCE_STREAM_COLUMNS):
+        raise PropertyCatalogCoordinatorError("supersession row columns changed")
+    row = {column: document[column] for column in _SOURCE_STREAM_COLUMNS}
+    for column in ("started_at", "updated_at", "drain_deadline", "fenced_at"):
+        if row[column] is not None:
+            row[column] = _datetime(row[column], column)
+    return row
+
+
 class ClickHouseRevisionCoordinator:
     """Reserve revisions, open exact streams, drain, and persist final fences."""
 
@@ -325,6 +501,7 @@ class ClickHouseRevisionCoordinator:
         lease_seconds: int = REVISION_LEASE_SECONDS,
         timeout_ms: int = COORDINATOR_TIMEOUT_MS,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        recovery_journal_directory: str | None = None,
     ) -> None:
         require_catalog_database(database)
         if getattr(client, "catalog_database", None) != database:
@@ -351,6 +528,656 @@ class ClickHouseRevisionCoordinator:
         self._lease_seconds = lease_seconds
         self._timeout_ms = min(max(timeout_ms, 1), COORDINATOR_TIMEOUT_MS)
         self._now = now
+        self._recovery_journal = (
+            FileSupersessionJournal(recovery_journal_directory)
+            if recovery_journal_directory is not None
+            else None
+        )
+        self._publication_context: ContextVar[ActivationPublicationSession | None] = (
+            ContextVar("property_catalog_activation_publication", default=None)
+        )
+
+    def publication_session(
+        self, *, fence: RevisionFence
+    ) -> ActivationPublicationSession:
+        """Expose exact publication only while this coordinator owns the lock."""
+        session = self._publication_context.get()
+        if (
+            session is None
+            or session.lease.build_lease_sha256 != fence.build_lease_sha256
+        ):
+            raise PropertyCatalogCoordinatorError(
+                "ACTIVE publication requires its workspace activation lock"
+            )
+        return session
+
+    def recover_pending(
+        self, *, organization_id: str, workspace_id: str, catalog_epoch: int
+    ) -> None:
+        """Finish only the exact journaled control writes, before state selection."""
+        key = self._revision_key(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            catalog_epoch=catalog_epoch,
+        )
+        self._serializer.serialize(key, lambda: self._recover_pending_serialized(key))
+
+    def _recover_pending_serialized(self, key: str) -> RevisionLease | None:
+        if self._recovery_journal is None:
+            return None
+        intent = self._recovery_journal.load(key)
+        if intent is None or intent["complete"]:
+            return None
+        revoked = _journal_source_row(intent["revoked"])
+        replacement = _journal_source_row(intent["replacement"])
+        old_lease, new_lease = _row_lease(revoked), _row_lease(replacement)
+        if self._revision_key_for_lease(old_lease) != key or (
+            self._revision_key_for_lease(new_lease) != key
+            or new_lease.catalog_revision != old_lease.catalog_revision + 1
+            or new_lease.build_token == old_lease.build_token
+            or revoked["status"] != "failed"
+            or revoked["_version"] != _SUPERSESSION_VERSION
+            or replacement["status"] != "open"
+            or replacement["_version"] != 1
+        ):
+            raise PropertyCatalogCoordinatorError("invalid supersession intent scope")
+        self._assert_active_head(old_lease, intent["active_head"])
+        self._recovery_journal.save(key, intent)
+        # A failed, terminal-version reservation dominates any delayed old
+        # control row. Late DATA rows stay in the old revision/token namespace.
+        self._ensure_supersession_row(revoked, predecessor=intent["predecessor"])
+        self._ensure_supersession_row(replacement, predecessor=None)
+        self._assert_active_head(old_lease, intent["active_head"])
+        self._recovery_journal.save(key, {**intent, "complete": True})
+        return new_lease
+
+    def _ensure_supersession_row(
+        self, row: Mapping[str, Any], *, predecessor: Mapping[str, Any] | None
+    ) -> None:
+        lease = _row_lease(row)
+        token = (
+            f"property-catalog-supersession-v1:{lease.build_token}:{row['_version']}"
+        )
+        current = self._read_stream(
+            lease=lease,
+            source_adapter=SourceAdapter.SYSTEM_MANIFEST,
+            producer_stream_id=lease.build_token,
+        )
+        if (
+            current is not None
+            and _row_identity(current) == _row_identity(row)
+            and (_uint(current.get("_version"), "_version") == row["_version"])
+        ):
+            self._confirm_supersession_receipt(row, deduplication_token=token)
+            return
+        if predecessor is None:
+            if current is not None:
+                raise PropertyCatalogCoordinatorError("replacement reservation changed")
+        elif current is not None and _journal_row_document(current) != predecessor:
+            # The CAS already committed to the fsynced intent under the lock.
+            # A delayed, lower-version fence may arrive after that point. It
+            # cannot activate (the journal veto is permanent), so quarantine it
+            # too; never reinterpret contradictory bytes at the observed version.
+            current_version = _uint(current.get("_version"), "_version")
+            if (
+                current_version == predecessor["_version"]
+                or current_version >= _SUPERSESSION_VERSION
+                or _row_lease(current) != lease
+                or _text(current.get("status")) not in {"open", "draining", "fenced"}
+                or _uint(current.get("gap_count"), "gap_count")
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "supersession reservation CAS failed"
+                )
+        # Submit the frozen intent through the writer. A managed writer settles
+        # an already-sent attempt from its original receipt without resending it;
+        # this visibility read alone never proves an uncertain write completed.
+        self._insert(
+            _SOURCE_STREAM_TABLE,
+            row,
+            deduplication_token=token,
+        )
+        verified = self._read_stream(
+            lease=lease,
+            source_adapter=SourceAdapter.SYSTEM_MANIFEST,
+            producer_stream_id=lease.build_token,
+        )
+        if (
+            verified is None
+            or _row_identity(verified) != _row_identity(row)
+            or (_uint(verified.get("_version"), "_version") != row["_version"])
+        ):
+            raise PropertyCatalogCoordinatorError(
+                "supersession write remains uncertain"
+            )
+        self._confirm_supersession_receipt(row, deduplication_token=token)
+
+    def _confirm_supersession_receipt(
+        self, row: Mapping[str, Any], *, deduplication_token: str
+    ) -> None:
+        confirm = getattr(self._client, "confirm_reservation_receipt", None)
+        if callable(confirm):
+            self._validate_target()
+            confirm(
+                _qualified(self._database, _SOURCE_STREAM_TABLE),
+                (row,),
+                columns=tuple(row),
+                timeout_ms=self._deadline.remaining_ms(cap_ms=self._timeout_ms),
+                deduplication_token=deduplication_token,
+            )
+
+    def _assert_active_head(self, lease: RevisionLease, expected: Any) -> None:
+        if self._recovery_journal is not None:
+            started = self._recovery_journal.load_record(
+                self._revision_key_for_lease(lease) + ":activation"
+            )
+            if started is not None and (
+                expected is None
+                or started["catalog_revision"] > expected[0]
+                or (
+                    started["catalog_revision"] == expected[0]
+                    and started["build_token"] != expected[1]
+                )
+            ):
+                if self._confirm_terminal_marker(lease, started) is None:
+                    raise PropertyCatalogCoordinatorError(
+                        "activation outcome is unresolved or active lineage advanced"
+                    )
+        # Compare a trustworthy ACTIVE predecessor, not the highest consumed
+        # slot (which may now be disabled/building). This read holds no new
+        # lock: callers already own the workspace lock. The same bounded SQL
+        # and all-status conflict checks used for publication retain allocation
+        # maxima independently; nothing here retires a publication marker.
+        self._validate_target()
+        try:
+            history = ClickHouseCatalogStateStore(
+                self._client,
+                database=self._database,
+                serializer=self._serializer,
+                deadline=self._deadline,
+                timeout_ms=self._timeout_ms,
+            ).load_activation_history(
+                organization_id=lease.organization_id,
+                workspace_id=lease.workspace_id,
+                catalog_epoch=lease.catalog_epoch,
+            )
+        except (PropertyCatalogStateError, TypeError, ValueError) as exc:
+            raise PropertyCatalogCoordinatorError(
+                "supersession active head is ambiguous or invalid"
+            ) from exc
+        if history.maximum_revision > lease.catalog_revision:
+            # Supersession allocates old revision + 1. Filtering a newer
+            # invalidated build out of the predecessor must not permit reuse.
+            raise PropertyCatalogCoordinatorError(
+                "a newer revision exists before supersession"
+            )
+        latest = max(
+            history.active_records,
+            key=lambda record: record.activation_sequence,
+            default=None,
+        )
+        actual = (
+            None
+            if latest is None
+            else [
+                latest.catalog_revision,
+                latest.build_token,
+                latest.projection_version,
+                latest.activation_sequence,
+                latest.activation_sha256,
+                "active",
+            ]
+        )
+        if actual != expected:
+            raise PropertyCatalogCoordinatorError(
+                "active lineage changed before supersession"
+            )
+
+    def _confirm_terminal_marker(self, lease: RevisionLease, marker: Any):
+        """Exact native proof only, inside the caller's existing workspace lock."""
+        from .durable_native_writer import DurableNativeCatalogWriter
+        from .terminal_repair_execution import NativeTerminalRepairExecutor
+
+        writer = getattr(self._client, "_durable_writer", None)
+        if type(writer) is not DurableNativeCatalogWriter:
+            return None
+        return NativeTerminalRepairExecutor(writer, self).confirm_marker_serialized(
+            lease,
+            marker,
+            timeout_ms=self._deadline.remaining_ms(cap_ms=self._timeout_ms),
+        )
+
+    def source_snapshot_invalid(self, lease: RevisionLease) -> bool:
+        """A code-owned audit failure, not an operator-set expiry override."""
+        if self._recovery_journal is None:
+            return False
+        key = f"{self._revision_key_for_lease(lease)}:source-invalid:{lease.build_lease_sha256}"
+        expected = {
+            "format": "futureagi.property-catalog-source-invalid.v1",
+            "build_lease_sha256": lease.build_lease_sha256,
+            "reason": "independent_source_audit_changed",
+        }
+        record = self._recovery_journal.load_record(key)
+        if record is not None and record != expected:
+            raise PropertyCatalogCoordinatorError(
+                "source invalidation record is corrupt"
+            )
+        return record is not None
+
+    def invalidate_source_snapshot(self, lease: RevisionLease) -> None:
+        """Veto a never-fenced build after its authoritative audit changed.
+
+        Persist before returning failure. The next cycle can use the existing
+        journaled replacement/CAS protocol without waiting for lease expiry.
+        Payload/checkpoint rows remain isolated under the old build identity.
+        """
+        if self._recovery_journal is None:
+            raise PropertyCatalogCoordinatorError(
+                "source invalidation requires a durable journal"
+            )
+        key = self._revision_key_for_lease(lease)
+
+        def invalidate_serialized() -> None:
+            if self.source_snapshot_invalid(lease):
+                return
+            started = self._recovery_journal.load_record(key + ":activation")
+            if (
+                started is not None
+                and started["catalog_revision"] >= lease.catalog_revision
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "cannot invalidate a possibly activated snapshot"
+                )
+            # FENCED may already have an uncertain activation append. Never
+            # revoke it, nor bypass the reservation's exact scope/lease checks.
+            self._assert_reservation(lease, expected_status=("open", "draining"))
+            self._recovery_journal.save_record(
+                f"{key}:source-invalid:{lease.build_lease_sha256}",
+                {
+                    "format": "futureagi.property-catalog-source-invalid.v1",
+                    "build_lease_sha256": lease.build_lease_sha256,
+                    "reason": "independent_source_audit_changed",
+                },
+            )
+
+        self._serializer.serialize(key, invalidate_serialized)
+
+    def serialize_source_capture_retirement(
+        self,
+        *,
+        database: str,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+        build_token: str,
+        build_lease_sha256: str,
+        operation: Callable[[], None],
+    ) -> bool:
+        """Run derived-source cleanup under an exact permanent build veto.
+
+        Audit invalidation or an archived terminal reservation prevents the old
+        publisher from resuming. Neither proves native repair completion; this
+        permission is solely for deleting the build's derived source capture.
+        """
+        if database != self._database or self._recovery_journal is None:
+            raise PropertyCatalogCoordinatorError(
+                "source cleanup requires the bound durable coordinator"
+            )
+        for name, value in (
+            ("organization_id", organization_id),
+            ("workspace_id", workspace_id),
+            ("build_token", build_token),
+        ):
+            if canonical_uuid(value, field=name) != value:
+                raise ValueError(f"{name} must be canonical")
+        if type(catalog_epoch) is not int or not 1 <= catalog_epoch < (1 << 16):
+            raise ValueError("catalog_epoch must be a positive UInt16")
+        require_sha256(build_lease_sha256, field="build_lease_sha256")
+        if not callable(operation):
+            raise TypeError("source cleanup requires an operation")
+        key = self._revision_key(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            catalog_epoch=catalog_epoch,
+        )
+
+        def cleanup_serialized() -> bool:
+            record = self._recovery_journal.load_record(
+                f"{key}:source-invalid:{build_lease_sha256}"
+            )
+            if record is not None and record != {
+                "format": "futureagi.property-catalog-source-invalid.v1",
+                "build_lease_sha256": build_lease_sha256,
+                "reason": "independent_source_audit_changed",
+            }:
+                raise PropertyCatalogCoordinatorError(
+                    "source invalidation record is corrupt"
+                )
+            if record is None:
+                archived = self._recovery_journal.load_record(
+                    f"{key}:revoked:{build_lease_sha256}"
+                )
+                if archived is None:
+                    return False
+                try:
+                    if set(archived) != {"revoked"}:
+                        raise ValueError("revocation fields changed")
+                    row = _journal_source_row(archived["revoked"])
+                    lease = _row_lease(row)
+                    if (
+                        self._revision_key_for_lease(lease) != key
+                        or lease.build_token != build_token
+                        or lease.build_lease_sha256 != build_lease_sha256
+                        or row["build_token"] != build_token
+                        or row["producer_stream_id"] != build_token
+                        or row["source_adapter"] != str(SourceAdapter.SYSTEM_MANIFEST)
+                        or type(row["envelope_version"]) is not int
+                        or row["envelope_version"] != 0
+                        or row["status"] != "failed"
+                        or type(row["_version"]) is not int
+                        or row["_version"] != _SUPERSESSION_VERSION
+                    ):
+                        raise ValueError("revocation differs from captured build")
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise PropertyCatalogCoordinatorError(
+                        "source cleanup revocation record is invalid"
+                    ) from exc
+            operation()
+            return True
+
+        return self._serializer.serialize(key, cleanup_serialized)
+
+    def replace_expired(
+        self,
+        *,
+        expired_reservation: PersistedReservation,
+        prior_active: PriorActiveEvidence | None,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+        projection_version: int,
+        build_token: str,
+        source_scope: BuildPlanSourceScope,
+        planned_streams: tuple[BuildPlanStream, ...],
+        now: datetime,
+    ) -> RevisionLease:
+        """Replace expired or source-invalidated work under fencing/activation CAS.
+
+        This is an application CAS under the shared lock, not a CH transaction.
+        Both control records use the existing source-stream log. Payload rows
+        and checkpoints of the abandoned build are neither copied nor deleted.
+        """
+        if self._recovery_journal is None:
+            raise PropertyCatalogCoordinatorError(
+                "expired recovery requires a shared durable journal directory"
+            )
+        key = self._revision_key(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            catalog_epoch=catalog_epoch,
+        )
+        old = expired_reservation.lease
+        if (
+            key != self._revision_key_for_lease(old)
+            or projection_version != old.projection_version
+        ):
+            raise PropertyCatalogCoordinatorError(
+                "supersession changed workspace scope"
+            )
+        self._validate_planned_streams(planned_streams)
+        _require_utc(now, "now")
+        if any(
+            stream.key == (SourceAdapter.SYSTEM_MANIFEST, build_token)
+            for stream in planned_streams
+        ):
+            raise PropertyCatalogCoordinatorError(
+                "replacement stream collides with reservation"
+            )
+
+        def replace_serialized() -> RevisionLease:
+            recovered = self._recover_pending_serialized(key)
+            if recovered is not None:
+                return recovered
+            prior_intent = self._recovery_journal.load(key)
+            if prior_intent is not None and (
+                prior_intent["revoked"]["build_token"] == old.build_token
+            ):
+                return _row_lease(_journal_source_row(prior_intent["replacement"]))
+            current_time = self._now()
+            _require_utc(current_time, "coordinator now")
+            if (
+                old.expires_at > current_time or old.expires_at > now
+            ) and not self.source_snapshot_invalid(old):
+                raise PropertyCatalogCoordinatorError(
+                    "only expired reservations or source-invalidated builds can be superseded"
+                )
+            current = self._assert_reservation(
+                old, expected_status=("open", "draining"), allow_source_invalidated=True
+            )
+            if expired_reservation.state_version is None or (
+                _uint(current.get("_version"), "_version")
+                != expired_reservation.state_version
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "supersession reservation version CAS failed"
+                )
+            if (
+                _text(current.get("status")) != expired_reservation.status.value
+                or _row_lease(current) != old
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "supersession reservation CAS failed"
+                )
+            active_head = (
+                None
+                if prior_active is None
+                else [
+                    prior_active.catalog_revision,
+                    prior_active.build_token,
+                    prior_active.projection_version,
+                    prior_active.activation_sequence,
+                    prior_active.activation_sha256,
+                    "active",
+                ]
+            )
+            self._assert_active_head(old, active_head)
+            if (
+                prior_active is not None
+                and prior_active.catalog_revision >= old.catalog_revision
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "cannot supersede an active revision"
+                )
+            for table in (_SOURCE_STREAM_TABLE, _CHECKPOINT_TABLE):
+                maximum = self._query(
+                    "SELECT coalesce(max(catalog_revision), 0) AS max_revision "
+                    f"FROM {_qualified(self._database, table)} "
+                    "WHERE organization_id=%(organization_id)s AND workspace_id=%(workspace_id)s "
+                    "AND catalog_epoch=%(catalog_epoch)s",
+                    {
+                        "organization_id": organization_id,
+                        "workspace_id": workspace_id,
+                        "catalog_epoch": catalog_epoch,
+                    },
+                )
+                if (
+                    len(maximum) != 1
+                    or _uint(maximum[0].get("max_revision"), "max_revision")
+                    > old.catalog_revision
+                ):
+                    raise PropertyCatalogCoordinatorError(
+                        "a newer revision exists before supersession"
+                    )
+            if build_token == old.build_token or (
+                prior_active is not None and build_token == prior_active.build_token
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "supersession requires a fresh token"
+                )
+            plan = RevisionBuildPlan(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                catalog_epoch=catalog_epoch,
+                catalog_revision=old.catalog_revision + 1,
+                projection_version=projection_version,
+                build_token=build_token,
+                source_scope=source_scope,
+                streams=planned_streams,
+            )
+            lease = RevisionLease(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                catalog_epoch=catalog_epoch,
+                catalog_revision=plan.catalog_revision,
+                projection_version=projection_version,
+                build_token=build_token,
+                build_plan_json=plan.canonical_json,
+                build_lease_sha256=plan.sha256,
+                issued_at=current_time,
+                expires_at=current_time + timedelta(seconds=self._lease_seconds),
+            )
+            replacement = _stream_row(
+                lease=lease,
+                source_adapter=SourceAdapter.SYSTEM_MANIFEST,
+                producer_stream_id=build_token,
+                envelope_version=0,
+                status="open",
+                now=lease.issued_at,
+                drain_deadline=lease.expires_at,
+            )
+            revoked = dict(current)
+            revoked.update(
+                status="failed",
+                _version=_SUPERSESSION_VERSION,
+                updated_at=current_time,
+                gap_count=1,
+                gap_reasons=[
+                    _journal_json(
+                        {
+                            "format": _SUPERSESSION_FORMAT,
+                            "replacement": _journal_row_document(replacement),
+                            "active_head": active_head,
+                        }
+                    )
+                ],
+            )
+            intent = {
+                "format": _SUPERSESSION_FORMAT,
+                "complete": False,
+                "predecessor": _journal_row_document(current),
+                "revoked": _journal_row_document(revoked),
+                "replacement": _journal_row_document(replacement),
+                "active_head": active_head,
+            }
+            self._recovery_journal.save(key, intent)
+            result = self._recover_pending_serialized(key)
+            assert result is not None
+            return result
+
+        return self._serializer.serialize(key, replace_serialized)
+
+    def serialize_activation(
+        self, *, fence: RevisionFence, operation: Callable[[], _T]
+    ) -> _T:
+        """Hold the workspace lock through the activation store's append.
+
+        All activation callers must use this boundary. Supersession never
+        revokes FENCED reservations, including ambiguous activation appends.
+        """
+        plan = RevisionBuildPlan.from_json(fence.build_plan_json)
+        if self._recovery_journal is None:
+            raise PropertyCatalogCoordinatorError(
+                "activation requires a shared durable journal directory"
+            )
+        key = self._revision_key(
+            organization_id=plan.organization_id,
+            workspace_id=plan.workspace_id,
+            catalog_epoch=plan.catalog_epoch,
+        )
+
+        def activate_serialized() -> _T:
+            self._recover_pending_serialized(key)
+            if self._recovery_journal.is_revoked(key, plan.sha256):
+                raise PropertyCatalogCoordinatorError(
+                    "activation revision was durably superseded"
+                )
+            rows = self._query(
+                f"SELECT {', '.join(_SOURCE_STREAM_COLUMNS)} "
+                f"FROM {_qualified(self._database, _SOURCE_STREAM_TABLE)} "
+                "WHERE organization_id=%(organization_id)s AND workspace_id=%(workspace_id)s "
+                "AND catalog_epoch=%(catalog_epoch)s AND catalog_revision=%(catalog_revision)s "
+                "AND build_token=%(build_token)s AND source_adapter=%(source_adapter)s "
+                "AND producer_stream_id=%(producer_stream_id)s ORDER BY _version DESC LIMIT %(row_limit)s",
+                {
+                    "organization_id": plan.organization_id,
+                    "workspace_id": plan.workspace_id,
+                    "catalog_epoch": plan.catalog_epoch,
+                    "catalog_revision": plan.catalog_revision,
+                    "build_token": plan.build_token,
+                    "source_adapter": str(SourceAdapter.SYSTEM_MANIFEST),
+                    "producer_stream_id": plan.build_token,
+                    "row_limit": _MAX_STATE_VARIANTS + 1,
+                },
+            )
+            _require_below_row_cap(
+                rows, cap=_MAX_STATE_VARIANTS, label="activation reservation"
+            )
+            row = _latest(rows)
+            if (
+                row is None
+                or _text(row.get("status")) != "fenced"
+                or (
+                    _row_lease(row).build_plan != plan
+                    or row.get("fenced_at") is None
+                    or _uint(row.get("envelope_version"), "envelope_version") != 0
+                )
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "activation reservation is not fenced or was superseded"
+                )
+            if self.source_snapshot_invalid(_row_lease(row)):
+                raise PropertyCatalogCoordinatorError(
+                    "activation source snapshot was invalidated"
+                )
+            # Persist before invoking the activation store. An ambiguous append
+            # cannot then be mistaken for an inactive build by a stale replica.
+            activation_key = key + ":activation"
+            started = self._recovery_journal.load_record(activation_key)
+            marker = {
+                "catalog_revision": plan.catalog_revision,
+                "build_token": plan.build_token,
+                "build_lease_sha256": plan.sha256,
+            }
+            if (
+                started is not None
+                and started["catalog_revision"] == plan.catalog_revision
+                and started != marker
+            ):
+                raise PropertyCatalogCoordinatorError(
+                    "activation intent conflicts with this build"
+                )
+            # Persist a forward-protocol admission BEFORE the legacy high-water
+            # marker. A crash before exact-row preparation cannot masquerade as
+            # an old, possibly sent three-field intent on restart.
+            publication = ActivationPublicationSession(
+                self._recovery_journal,
+                workspace_key=key,
+                database=self._database,
+                lease=_row_lease(row),
+                marker=started,
+                confirm_terminal_repair=lambda marker: self._confirm_terminal_marker(
+                    _row_lease(row), marker
+                ),
+            )
+            if started is None or started["catalog_revision"] < plan.catalog_revision:
+                self._recovery_journal.save_record(activation_key, marker)
+            context_token = self._publication_context.set(publication)
+            try:
+                return operation()
+            finally:
+                self._publication_context.reset(context_token)
+
+        return self._serializer.serialize(key, activate_serialized)
 
     def allocate(
         self,
@@ -408,6 +1235,13 @@ class ClickHouseRevisionCoordinator:
         planned_streams: tuple[BuildPlanStream, ...],
         now: datetime,
     ) -> RevisionLease:
+        self._recover_pending_serialized(
+            self._revision_key(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                catalog_epoch=catalog_epoch,
+            )
+        )
         rows = self._query(
             f"SELECT {', '.join(_SOURCE_STREAM_COLUMNS)} FROM ("
             f"SELECT {', '.join(_SOURCE_STREAM_COLUMNS)}, "
@@ -1263,7 +2097,23 @@ class ClickHouseRevisionCoordinator:
         lease: RevisionLease,
         *,
         expected_status: str | tuple[str, ...],
+        allow_source_invalidated: bool = False,
     ) -> Mapping[str, Any]:
+        if self._recovery_journal is not None:
+            key = self._revision_key_for_lease(lease)
+            if self._recovery_journal.is_revoked(key, lease.build_lease_sha256):
+                raise PropertyCatalogCoordinatorError(
+                    "revision reservation is closed by supersession"
+                )
+            intent = self._recovery_journal.load(key)
+            if intent is not None and not intent["complete"]:
+                raise PropertyCatalogCoordinatorError(
+                    "reservation has a pending supersession"
+                )
+        if not allow_source_invalidated and self.source_snapshot_invalid(lease):
+            raise PropertyCatalogCoordinatorError(
+                "revision source snapshot was invalidated"
+            )
         row = self._read_stream(
             lease=lease,
             source_adapter=SourceAdapter.SYSTEM_MANIFEST,

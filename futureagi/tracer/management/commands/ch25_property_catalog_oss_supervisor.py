@@ -2,11 +2,11 @@
 
 The command discovers tenant scope through a read-only PostgreSQL identity,
 then delegates every catalog lifecycle transition to the checked-in DEV
-runtime.  Ordinary supervisor cycles reconcile only already-active catalogs;
-they never start a historical backfill.  The explicit ``--initial-backfill``
-mode is accepted only together with ``--once`` and is invoked by the operator
-backfill script.  It never prepares schema: an exact isolated catalog database
-must be created before either mode starts.
+runtime. Ordinary cycles initialize eligible inactive workspaces and then
+incrementally reconcile active catalogs. Bootstrap attempts use the runtime's
+bounded, resumable lifecycle. The explicit ``--once --initial-backfill`` mode
+is bootstrap-only and skips already-active catalogs. An exact isolated catalog
+schema must be prepared before either mode starts.
 """
 
 from __future__ import annotations
@@ -15,9 +15,10 @@ import logging
 import os
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -31,6 +32,10 @@ from tracer.services.clickhouse.v2.property_catalog import dev_runtime
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     canonical_json,
     canonical_uuid,
+)
+from tracer.services.clickhouse.v2.property_catalog.controller_health import (
+    ControllerHealth,
+    write_health_record,
 )
 from tracer.services.clickhouse.v2.property_catalog.dev_rollout import (
     DEV_ENVIRONMENT,
@@ -47,9 +52,19 @@ from tracer.services.clickhouse.v2.property_catalog.dev_runtime import (
     DevProvenanceObservation,
     DevRuntimeConfig,
     PostgresDevIdentity,
-    PostgresProjectTenantBinding,
     PropertyCatalogDevRuntimeFactory,
     require_checked_in_property_catalog_dev_runtime,
+)
+from tracer.services.clickhouse.v2.property_catalog.installation_bootstrap import (
+    require_legacy_identity,
+    resolve_installation,
+)
+from tracer.services.clickhouse.v2.property_catalog.installation_identity import (
+    IDENTITY_FILENAME,
+    load_identity,
+)
+from tracer.services.clickhouse.v2.property_catalog.oss_write_startup import (
+    prepare_oss_write_admission,
 )
 from tracer.services.clickhouse.v2.property_catalog.publisher import (
     PropertyCatalogPublishError,
@@ -104,6 +119,7 @@ class OssSupervisorConfig:
     workspace_batch_size: int
     project_batch_size: int
     scheduled_reconcile_wall_ms: int
+    managed_identity: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +141,12 @@ class WorkspaceScope:
             "workspace_id",
             canonical_uuid(self.workspace_id, field="workspace_id"),
         )
+        if not isinstance(self.project_ids, tuple) or not isinstance(
+            self.legacy_project_ids, tuple
+        ):
+            raise OssPropertyCatalogSupervisorError(
+                "workspace scope requires explicit project tuples"
+            )
         projects = tuple(
             sorted(
                 canonical_uuid(value, field="project_id") for value in self.project_ids
@@ -136,9 +158,9 @@ class WorkspaceScope:
                 for value in self.legacy_project_ids
             )
         )
-        if not projects or len(set(projects)) != len(projects):
+        if len(projects) > 256 or len(set(projects)) != len(projects):
             raise OssPropertyCatalogSupervisorError(
-                "workspace scope requires one or more unique projects"
+                "workspace scope requires 0..256 unique projects"
             )
         if len(set(legacy)) != len(legacy) or not set(legacy).issubset(projects):
             raise OssPropertyCatalogSupervisorError(
@@ -183,22 +205,26 @@ class _CycleResult:
 
 class Command(BaseCommand):
     help = (
-        "Continuously reconcile active isolated unified property catalogs, or "
-        "explicitly backfill bounded OSS-local workspace scopes once."
+        "Initialize and incrementally reconcile isolated OSS workspace catalogs, "
+        "or run one explicit bootstrap-only cycle."
     )
 
     def add_arguments(self, parser: Any) -> None:
         parser.add_argument(
+            "--health-file",
+            help="Publish live process and dependency health to an existing writable directory.",
+        )
+        parser.add_argument(
             "--once",
             action="store_true",
-            help="Run one complete bounded discovery/reconcile cycle and exit.",
+            help="Run one bounded discovery/bootstrap/reconcile cycle and exit.",
         )
         parser.add_argument(
             "--initial-backfill",
             action="store_true",
             help=(
-                "Explicitly initialize inactive workspace catalogs. This is a "
-                "historical write and is refused unless --once is also present."
+                "Only initialize inactive workspace catalogs; skip active builds. "
+                "This historical write requires --once."
             ),
         )
         parser.add_argument(
@@ -223,8 +249,52 @@ class Command(BaseCommand):
         except (OssPropertyCatalogSupervisorError, DevRolloutError, ValueError) as exc:
             raise CommandError(str(exc)) from exc
 
+        health_file = options.get("health_file")
+        if health_file:
+            path = Path(health_file)
+            if not path.is_absolute() or not path.parent.is_dir() or path.is_symlink():
+                raise CommandError(
+                    "health file requires an absolute writable directory"
+                )
+        health = ControllerHealth(
+            lambda **snapshot: (
+                write_health_record(health_file, **snapshot) if health_file else None
+            )
+        )
+        with ExitStack() as stack:
+            if health_file:
+                stack.enter_context(health)
+            config = _resolve_supervisor_installation(
+                settings_object=settings, config=config
+            )
+            if config.managed_identity:
+                health.progress("admitting_writes", timeout_seconds=60, ready=False)
+                try:
+                    prepare_oss_write_admission(settings, environ=os.environ)
+                except Exception as exc:
+                    raise CommandError(
+                        "OSS write admission failed before lifecycle work"
+                    ) from exc
+            return self._serve(
+                config=config,
+                health=health,
+                once=once,
+                initial_backfill=initial_backfill,
+                initial_backfill_wall_ms=initial_backfill_wall_ms,
+            )
+
+    def _serve(
+        self,
+        *,
+        config: OssSupervisorConfig,
+        health: ControllerHealth,
+        once: bool,
+        initial_backfill: bool,
+        initial_backfill_wall_ms: int | None,
+    ) -> str | None:
         while True:
             try:
+                health.progress("discovering", timeout_seconds=120, ready=False)
                 cycle_now = _utc_now()
                 observation = _probe_remote_identities(
                     settings_object=settings,
@@ -242,8 +312,20 @@ class Command(BaseCommand):
                     config=config,
                     observation=observation,
                     now=cycle_now,
-                    allow_initial_backfill=initial_backfill,
+                    bootstrap_only=initial_backfill,
                     initial_backfill_wall_ms=initial_backfill_wall_ms,
+                    clock=_utc_now,
+                    on_workspace=lambda workspace_id: health.progress(
+                        "reconciling",
+                        ready=True,
+                        timeout_seconds=max(
+                            config.scheduled_reconcile_wall_ms,
+                            initial_backfill_wall_ms or 0,
+                        )
+                        / 1000
+                        + 120,
+                        detail={"workspace_id": workspace_id},
+                    ),
                     on_error=lambda workspace_id, exc: self.stderr.write(
                         self.style.ERROR(
                             f"workspace {workspace_id} failed safely: {exc}"
@@ -259,7 +341,23 @@ class Command(BaseCommand):
                         "OSS property-catalog discovery cycle failed safely; retrying"
                     )
                 )
+                health.progress(
+                    "retrying",
+                    timeout_seconds=config.poll_seconds + 120,
+                    ready=False,
+                    detail={"cycle_error": type(exc).__name__},
+                )
             else:
+                health.progress(
+                    "idle",
+                    timeout_seconds=config.poll_seconds + 120,
+                    ready=True,
+                    detail={
+                        "failed_count": len(result.failures),
+                        "processed_count": len(result.processed),
+                        "skipped_count": len(result.skipped),
+                    },
+                )
                 if once:
                     if result.failures:
                         failed = ", ".join(sorted(result.failures))
@@ -267,6 +365,7 @@ class Command(BaseCommand):
                             f"OSS property-catalog cycle failed for workspaces: {failed}"
                         )
                     return canonical_json(result.as_dict(), max_bytes=256 * 1024)
+            health.publish()
             time.sleep(config.poll_seconds)
 
 
@@ -314,15 +413,24 @@ def _supervisor_config(
             "catalog writer database must equal the exact isolated target database"
         )
 
-    epoch = _explicit_positive_uint16(environ, OSS_CATALOG_EPOCH_ENV)
-    projection = _explicit_positive_uint16(environ, OSS_PROJECTION_VERSION_ENV)
-    try:
-        producer_stream_id = canonical_uuid(
-            _required_environment(environ, OSS_PRODUCER_STREAM_ID_ENV),
-            field="producer_stream_id",
-        )
-    except ValueError as exc:
-        raise OssPropertyCatalogSupervisorError(str(exc)) from exc
+    # No version variables is the normal managed installation. Partial legacy
+    # configuration is still an error, not a request to invent missing values.
+    legacy = (
+        OSS_CATALOG_EPOCH_ENV,
+        OSS_PROJECTION_VERSION_ENV,
+        OSS_PRODUCER_STREAM_ID_ENV,
+    )
+    epoch, projection, producer_stream_id = 0, 0, ""
+    if any(name in environ for name in legacy):
+        epoch = _explicit_positive_uint16(environ, OSS_CATALOG_EPOCH_ENV)
+        projection = _explicit_positive_uint16(environ, OSS_PROJECTION_VERSION_ENV)
+        try:
+            producer_stream_id = canonical_uuid(
+                _required_environment(environ, OSS_PRODUCER_STREAM_ID_ENV),
+                field="producer_stream_id",
+            )
+        except ValueError as exc:
+            raise OssPropertyCatalogSupervisorError(str(exc)) from exc
     revision_fence_file = str(
         getattr(settings_object, "PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE", "")
     ).strip()
@@ -371,6 +479,56 @@ def _supervisor_config(
         workspace_batch_size=workspace_batch_size,
         project_batch_size=project_batch_size,
         scheduled_reconcile_wall_ms=scheduled_wall_ms,
+        managed_identity=not any(name in environ for name in legacy),
+    )
+
+
+def _resolve_supervisor_installation(
+    *,
+    settings_object: Any,
+    config: OssSupervisorConfig,
+) -> OssSupervisorConfig:
+    candidate_topic = getattr(
+        settings_object,
+        "PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC",
+        "futureagi.oss.property-catalog.candidates.v1",
+    )
+    ordered_topic = getattr(
+        settings_object,
+        "PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC",
+        "futureagi.oss.property-catalog.ordered.v1",
+    )
+    path = Path(config.revision_fence_file).parent / IDENTITY_FILENAME
+    if config.producer_stream_id:
+        if path.exists() or path.is_symlink():
+            persisted = load_identity(path)
+            persisted.require_destination(
+                environment="development",
+                target_database=config.target_database,
+                candidate_topic=candidate_topic,
+                ordered_topic=ordered_topic,
+            )
+            require_legacy_identity(
+                persisted,
+                epoch=config.catalog_epoch,
+                projection=config.projection_version,
+                producer=config.producer_stream_id,
+            )
+        return config
+    identity = resolve_installation(
+        settings_object=settings_object,
+        prefix="PROPERTY_CATALOG_DEV_",
+        environment="development",
+        target_database=config.target_database,
+        revision_fence_file=config.revision_fence_file,
+        candidate_topic=candidate_topic,
+        ordered_topic=ordered_topic,
+    )
+    return replace(
+        config,
+        catalog_epoch=identity.catalog_epoch,
+        projection_version=identity.projection_version,
+        producer_stream_id=identity.producer_stream_id,
     )
 
 
@@ -405,14 +563,11 @@ def _discover_workspace_scopes(
                 workspace_id__isnull=True,
             )
         project_rows = list(
-            Project.no_workspace_objects.filter(project_filter)
+            Project.no_workspace_objects.filter(project_filter, trace_type="observe")
             .order_by("id")
             .values_list("id", "workspace_id")
             .iterator(chunk_size=project_batch_size)
         )
-        if not project_rows:
-            skipped.append(workspace_id)
-            continue
         projects = tuple(str(project_id) for project_id, _ in project_rows)
         legacy = tuple(
             str(project_id)
@@ -440,8 +595,10 @@ def _run_cycle(
     observation: DevProvenanceObservation,
     now: datetime,
     on_error: Callable[[str, Exception], None],
-    allow_initial_backfill: bool = False,
+    bootstrap_only: bool = False,
     initial_backfill_wall_ms: int | None = None,
+    clock: Callable[[], datetime] | None = None,
+    on_workspace: Callable[[str], None] = lambda _: None,
 ) -> _CycleResult:
     authorized_workspaces = tuple(
         sorted((*skipped, *(scope.workspace_id for scope in scopes)))
@@ -454,14 +611,15 @@ def _run_cycle(
     skipped_workspaces = list(skipped)
     failures: dict[str, str] = {}
     for scope in scopes:
+        on_workspace(scope.workspace_id)
         try:
             workspace_processed = _run_workspace(
                 scope=scope,
                 settings_object=settings_object,
                 config=config,
                 observation=observation,
-                now=now,
-                allow_initial_backfill=allow_initial_backfill,
+                now=clock() if clock is not None else now,
+                bootstrap_only=bootstrap_only,
                 initial_backfill_wall_ms=initial_backfill_wall_ms,
             )
         except Exception as exc:
@@ -486,7 +644,7 @@ def _run_workspace(
     config: OssSupervisorConfig,
     observation: DevProvenanceObservation,
     now: datetime,
-    allow_initial_backfill: bool = False,
+    bootstrap_only: bool = False,
     initial_backfill_wall_ms: int | None = None,
 ) -> bool:
     proxy = _workspace_settings_proxy(
@@ -512,8 +670,13 @@ def _run_workspace(
             "isolated catalog schema is not prepared; supervisor will not create it"
         )
 
-    if status_evidence.get("active") is True:
-        if allow_initial_backfill:
+    active = status_evidence.get("active")
+    if type(active) is not bool:
+        raise OssPropertyCatalogSupervisorError(
+            "catalog status must explicitly prove whether the workspace is active"
+        )
+    if active:
+        if bootstrap_only:
             return False
         request = _rollout_request(
             scope=scope,
@@ -528,9 +691,10 @@ def _run_workspace(
             )
         return True
 
-    if not allow_initial_backfill:
-        return False
-
+    # Each cycle re-enters the checked-in lifecycle: persisted reservations,
+    # cutoffs, and checkpoints govern retries. Keep its standard wall/query/lease
+    # bounds unless the operator supplies an explicit bootstrap-only allowance.
+    # Expired incomplete builds use the same journaled automatic recovery guard.
     request = _rollout_request(
         scope=scope,
         proxy=proxy,
@@ -575,44 +739,20 @@ def _legacy_aware_project_probe(
     scope: WorkspaceScope,
 ) -> Callable[
     [tuple[str, ...], PostgresDevIdentity],
-    tuple[PostgresProjectTenantBinding, ...],
+    dev_runtime.PostgresWorkspaceProjectInventory,
 ]:
-    """Map canonical null-workspace rows only into the proved default workspace.
-
-    The underlying private probe is the existing repeatable-read, read-only
-    ownership proof.  This narrow adapter preserves every observed owner field
-    and only supplies the product's legacy default-workspace interpretation for
-    project IDs discovered as null-workspace rows in this same bounded cycle.
-    """
-
-    legacy = frozenset(scope.legacy_project_ids)
+    """Re-prove default workspace semantics and exact inventory in PostgreSQL."""
 
     def probe(
         project_ids: tuple[str, ...],
         expected_postgres_identity: PostgresDevIdentity,
-    ) -> tuple[PostgresProjectTenantBinding, ...]:
-        bindings = tuple(
-            dev_runtime._postgres_project_tenant_bindings(  # noqa: SLF001
-                project_ids,
-                expected_postgres_identity,
-            )
+    ) -> dev_runtime.PostgresWorkspaceProjectInventory:
+        return dev_runtime._postgres_workspace_project_inventory(  # noqa: SLF001
+            project_ids,
+            expected_postgres_identity,
+            organization_id=scope.organization_id,
+            workspace_id=scope.workspace_id,
         )
-        mapped: list[PostgresProjectTenantBinding] = []
-        for binding in bindings:
-            if (
-                binding.project_id in legacy
-                and binding.workspace_id is None
-                and binding.workspace_organization_id is None
-                and binding.organization_id == scope.organization_id
-                and scope.is_default
-            ):
-                binding = replace(
-                    binding,
-                    workspace_id=scope.workspace_id,
-                    workspace_organization_id=scope.organization_id,
-                )
-            mapped.append(binding)
-        return tuple(mapped)
 
     return probe
 
@@ -698,6 +838,7 @@ def _workspace_settings_proxy(
     span_since = span_until - timedelta(days=_SPAN_WINDOW_DAYS)
     effective_expectation = expectation or _provenance_expectation(observation)
     overrides = {
+        "_PROPERTY_CATALOG_MANAGED_INSTALLATION": config.managed_identity,
         "ENV_TYPE": DEV_ENVIRONMENT,
         "CLOUD_DEPLOYMENT": "",
         "PROPERTY_CATALOG_DEV_ENVIRONMENT": DEV_ENVIRONMENT,

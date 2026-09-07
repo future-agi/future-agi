@@ -49,7 +49,7 @@ from .codec import (
 )
 from .models import SourceAdapter
 from .publisher import SharedCatalogDeadline, require_catalog_database
-from .qualification import CheckpointStatus
+from .qualification import CatalogCheckpoint, CheckpointStatus
 from .reconciler import CheckpointWrite, ReconcileMode
 from .runtime_limits import RUNTIME_LIMITS
 from .source_adapters import SourceKeysetCursor
@@ -193,8 +193,8 @@ class WorkspaceCatalogScope:
                 }
             )
         )
-        if not 1 <= len(projects) <= 256 or len(projects) != len(self.project_ids):
-            raise ValueError("project_ids must contain 1..256 unique canonical UUIDs")
+        if len(projects) > 256 or len(projects) != len(self.project_ids):
+            raise ValueError("project_ids must contain 0..256 unique canonical UUIDs")
         object.__setattr__(self, "project_ids", projects)
 
 
@@ -208,8 +208,8 @@ class SourceWindow:
         _require_utc(self.until, "until")
         if self.since >= self.until:
             raise ValueError("source window since must precede until")
-        if self.until - self.since > _MAX_SOURCE_WINDOW:
-            raise ValueError("source window cannot exceed 366 days")
+        # This is one complete immutable source interval, not a query budget.
+        # The source reader separately bounds every occupancy segment and page.
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,9 +217,9 @@ class ConfiguredSourceBounds:
     """Explicit origin and initial frozen upper bound.
 
     The management-command initial backfill uses both values.  Scheduled full
-    repairs use ``origin`` as their earliest retained bound and derive a fresh,
-    rolling upper bound. Incremental runs derive their lower bound from the
-    prior active build plan.
+    repairs use ``origin`` as their requested lower bound and derive a fresh,
+    rolling upper bound. A capture-aware freezer may widen initial/full history
+    earlier, never narrow it. Incrementals use the prior active build plan.
     """
 
     origin: datetime
@@ -258,12 +258,15 @@ class FrozenLifecycleCutoffs:
 class PersistedReservation:
     lease: RevisionLease
     status: ReservationStatus
+    state_version: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.lease, RevisionLease):
             raise TypeError("lease must be a RevisionLease")
         if not isinstance(self.status, ReservationStatus):
             raise TypeError("status must be a ReservationStatus")
+        if self.state_version is not None:
+            _positive_uint(self.state_version, 64, "reservation state_version")
 
 
 @dataclass(frozen=True, slots=True)
@@ -714,6 +717,17 @@ class LifecycleCompletionEvidence:
 
 
 class LifecycleCheckpointStore(Protocol):
+    def load_checkpoint_writes(
+        self,
+        *,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+        catalog_revision: int,
+        build_token: str,
+        stream_pairs: Sequence[tuple[SourceAdapter, str]],
+    ) -> Mapping[tuple[SourceAdapter, str], CheckpointWrite]: ...
+
     def load_checkpoint_write(
         self,
         *,
@@ -741,7 +755,48 @@ class LifecycleStateReader(Protocol):
     def load_resumes(self, lease: RevisionLease) -> Sequence[CheckpointWrite]: ...
 
 
+class ExpiredRevisionRecoveryCoordinator(Protocol):
+    """Required coordination boundary before abandoning an expired build.
+
+    Implementations compare the reservation and active lineage under the same
+    workspace lock used by activation, then permanently revoke activation of
+    the old revision. Late payload/checkpoint writes may remain quarantined in
+    that revision and token: do not copy them or replay uncertain payloads into
+    the replacement. Preserve the active catalog and old evidence; never mark
+    an incomplete build FENCED. A durable intent retains exact replacement
+    control bytes across crashes and ambiguous ClickHouse acknowledgements.
+
+    The comparison, revocation and replacement must share a recoverable operation
+    identity: an uncertain result must be reconciled, not blindly reallocated.
+    Subsequent allocate/recovery calls must also reject unresolved operations.
+    A SELECT followed by ordinary allocate(), an expiry grace period, or a
+    process-local lock does not implement this contract.
+    """
+
+    def replace_expired(
+        self,
+        *,
+        expired_reservation: PersistedReservation,
+        prior_active: PriorActiveEvidence | None,
+        organization_id: str,
+        workspace_id: str,
+        catalog_epoch: int,
+        projection_version: int,
+        build_token: str,
+        source_scope: BuildPlanSourceScope,
+        planned_streams: tuple[BuildPlanStream, ...],
+        now: datetime,
+    ) -> RevisionLease: ...
+
+
 class LifecycleCutoffFreezer(Protocol):
+    """Freeze source cutoffs before their durable build-plan reservation.
+
+    INITIAL/FULL may widen span_since to include retained history; INCREMENTAL
+    must retain its exact prior upper watermark. The injected freezer owns the
+    source authority. Widening never authorizes discovery on an unbound source.
+    """
+
     def __call__(
         self,
         *,
@@ -759,7 +814,10 @@ class FreshSpanLifecycleCutoffFreezer:
     Initial backfill honors its explicitly configured frozen upper bound.
     Every scheduled mode ignores static configuration and samples ``now`` once.
     The returned source object is checked byte-for-byte before its scope is
-    admitted to the durable build plan.
+    admitted to the durable build plan. The reader's optional retained_since
+    capability belongs to the managed source boundary; this helper neither
+    discovers live sources nor treats audit_generation as a commit fence.
+    The full lower bound is never an implicit query budget.
     """
 
     def __init__(
@@ -797,9 +855,23 @@ class FreshSpanLifecycleCutoffFreezer:
                     "scheduled revision cannot use a configured static upper cutoff"
                 )
             until = self._now()
-            if mode is LifecycleRunMode.FULL_REPAIR:
-                span_since = max(span_since, until - _MAX_SOURCE_WINDOW)
         window = SourceWindow(span_since, until)
+        if mode in {LifecycleRunMode.INITIAL_BACKFILL, LifecycleRunMode.FULL_REPAIR}:
+            retained_since = getattr(self._span_reader, "retained_since", None)
+            if retained_since is not None:
+                if not callable(retained_since):
+                    raise TypeError(
+                        "retained_since reader capability must be callable"
+                    )
+                discovered = retained_since(
+                    project_ids=scope.project_ids, until=until, fallback=span_since
+                )
+                _require_utc(discovered, "retained_since")
+                if discovered >= until:
+                    raise DurableLifecycleError(
+                        "retained lower bound must precede until"
+                    )
+                window = SourceWindow(min(span_since, discovered), until)
         frozen = self._span_reader.freeze(
             project_ids=scope.project_ids,
             since=window.since,
@@ -846,6 +918,18 @@ class LifecycleRunResult:
     completion: LifecycleCompletionEvidence
 
 
+@dataclass(frozen=True, slots=True)
+class FencedScopeDrift:
+    """Frozen control evidence, NOT authorization to reopen historical sources."""
+
+    lease: RevisionLease
+    mode: LifecycleRunMode
+    cutoffs: FrozenLifecycleCutoffs
+    lineage_anchor_revision: int
+    prior_active: PriorActiveEvidence | None
+    checkpoints: tuple[CatalogCheckpoint, ...]
+
+
 class DurableWorkspaceCatalogLifecycle:
     """Stateless prepare/run coordinator over durable revision evidence."""
 
@@ -879,13 +963,83 @@ class DurableWorkspaceCatalogLifecycle:
         self._now = now
         self._new_build_token = new_build_token
 
+    def load_fenced_scope_drift(
+        self, scope: WorkspaceCatalogScope
+    ) -> FencedScopeDrift | None:
+        """Read immutable publication evidence without reserving/freezing sources.
+
+        A visible ACTIVE is not a completion barrier. Return its FENCED plan too
+        so the caller resolves the exact journal/transport attempt before using
+        that head to allocate a replacement or publish producer retirement.
+        """
+        if not isinstance(scope, WorkspaceCatalogScope):
+            raise TypeError("scope must be a WorkspaceCatalogScope")
+        reservation = self._state_reader.load_nonterminal(scope)
+        if reservation is None or reservation.status is not ReservationStatus.FENCED:
+            return None
+        lease = reservation.lease
+        _require_lease_scope(lease, scope)
+        if lease.build_plan.source_scope.project_ids == scope.project_ids:
+            return None
+        active = self._state_reader.load_latest_active(scope)
+        if active is not None:
+            if any(
+                getattr(active.build_plan, field) != getattr(scope, field)
+                for field in (
+                    "organization_id",
+                    "workspace_id",
+                    "catalog_epoch",
+                    "projection_version",
+                )
+            ):
+                raise DurableLifecycleError(
+                    "active publication changed workspace scope"
+                )
+            if active.catalog_revision > lease.catalog_revision:
+                # The current head will still pass the normal coordinator's
+                # predecessor guard. Never replay an older superseded head.
+                return None
+            if active.catalog_revision == lease.catalog_revision and (
+                active.build_token != lease.build_token
+                or active.build_plan != lease.build_plan
+            ):
+                raise DurableLifecycleError("fenced publication conflicts with ACTIVE")
+        decoded = _decode_plan_scope(lease.build_plan)
+        is_published = (
+            active is not None and active.catalog_revision == lease.catalog_revision
+        )
+        if not is_published:
+            _validate_prior_marker(decoded.prior_active_revision, active)
+        resumes = tuple(self._state_reader.load_resumes(lease))
+        _require_fenced_resumes(lease, resumes)
+        for stream in lease.build_plan.streams:
+            resume = next(
+                value for value in resumes if value.checkpoint.key == stream.key
+            )
+            _validate_checkpoint_for_plan(resume, lease, stream)
+        anchor = lease.catalog_revision
+        if decoded.mode is LifecycleRunMode.INCREMENTAL:
+            if active is None:
+                raise DurableLifecycleError(
+                    "fenced incremental lacks qualified lineage"
+                )
+            anchor = active.lineage_anchor.catalog_revision
+        return FencedScopeDrift(
+            lease=lease,
+            mode=decoded.mode,
+            cutoffs=decoded.cutoffs,
+            lineage_anchor_revision=anchor,
+            prior_active=None if is_published else active,
+            checkpoints=tuple(value.checkpoint for value in resumes),
+        )
+
     def prepare(
         self,
         *,
         scope: WorkspaceCatalogScope,
         mode: LifecycleRunMode,
         configured_bounds: ConfiguredSourceBounds,
-        allow_expired_repair: bool = False,
+        allow_expired_repair: bool = True,
     ) -> PreparedLifecycleRevision:
         if not isinstance(scope, WorkspaceCatalogScope):
             raise TypeError("scope must be a WorkspaceCatalogScope")
@@ -895,6 +1049,13 @@ class DurableWorkspaceCatalogLifecycle:
             raise TypeError("configured_bounds must be ConfiguredSourceBounds")
         if type(allow_expired_repair) is not bool:
             raise TypeError("allow_expired_repair must be a bool")
+        recover_pending = getattr(self._coordinator, "recover_pending", None)
+        if callable(recover_pending):
+            recover_pending(
+                organization_id=scope.organization_id,
+                workspace_id=scope.workspace_id,
+                catalog_epoch=scope.catalog_epoch,
+            )
         observed_at = self._now()
         _require_utc(observed_at, "now")
         active = self._state_reader.load_latest_active(scope)
@@ -912,12 +1073,9 @@ class DurableWorkspaceCatalogLifecycle:
                     )
                 open_reservation = None
             elif open_lease.catalog_revision < active.catalog_revision:
-                if (
-                    open_reservation.status is not ReservationStatus.FENCED
-                    and open_lease.expires_at > observed_at
-                ):
+                if open_reservation.status is not ReservationStatus.FENCED:
                     raise DurableLifecycleError(
-                        "active lineage advanced past a live older reservation"
+                        "active lineage advanced past an unfenced older reservation"
                     )
                 open_reservation = None
         if open_reservation is not None:
@@ -985,8 +1143,25 @@ class DurableWorkspaceCatalogLifecycle:
                 "active lineage advanced into or beyond the incomplete revision"
             )
         if (
-            reservation.status is not ReservationStatus.FENCED
-            and lease.expires_at <= observed_at
+            lease.build_plan.source_scope.project_ids != scope.project_ids
+            and reservation.status is not ReservationStatus.FENCED
+            and allow_expired_repair
+            and lease.expires_at > observed_at
+        ):
+            # Never rewrite an admitted lease. A changed authorized inventory
+            # invalidates this never-fenced source snapshot; the existing
+            # journaled quarantine/replacement protocol retires its writers.
+            invalidate = getattr(self._coordinator, "invalidate_source_snapshot", None)
+            if not callable(invalidate):
+                raise DurableLifecycleError(
+                    "open revision project inventory differs from the workspace scope"
+                )
+            invalidate(lease)
+        invalidated = getattr(
+            self._coordinator, "source_snapshot_invalid", lambda _: False
+        )(lease)
+        if reservation.status is not ReservationStatus.FENCED and (
+            lease.expires_at <= observed_at or invalidated
         ):
             if not allow_expired_repair:
                 raise DurableLifecycleError(
@@ -1006,10 +1181,10 @@ class DurableWorkspaceCatalogLifecycle:
                     raise DurableLifecycleError(
                         "expired active repair cannot use initial-backfill mode"
                     )
-                # The explicit repair flag authorizes abandoning only the
-                # expired, never-activated build. Re-resolve AUTO against the
-                # last qualified active revision instead of inheriting the
-                # failed build's mode. This lets a bounded incremental run
+                # Repair policy selects only the expired, never-activated
+                # build; it is not proof of writer revocation. Re-resolve AUTO
+                # against the last qualified active revision instead of
+                # inheriting the failed build's mode. This lets an incremental run
                 # catch up from the active upper watermark after a large daily
                 # full repair exhausts its wall, while stale anchors still
                 # resolve back to FULL_REPAIR and remain fail-closed.
@@ -1024,9 +1199,10 @@ class DurableWorkspaceCatalogLifecycle:
                 configured_bounds=configured_bounds,
                 active=active,
                 observed_at=observed_at,
+                expired_reservation=reservation,
             )
-        # A live or fenced reservation remains immutable. An expired OPEN or
-        # DRAINING reservation may reach the explicit repair branch above and
+        # A live valid or fenced reservation remains immutable. An expired or
+        # source-invalidated OPEN/DRAINING build may reach the repair branch and
         # reserve a fresh revision against the current project inventory.
         if lease.build_plan.source_scope.project_ids != scope.project_ids:
             raise DurableLifecycleError(
@@ -1094,14 +1270,38 @@ class DurableWorkspaceCatalogLifecycle:
         configured_bounds: ConfiguredSourceBounds,
         active: PriorActiveEvidence | None,
         observed_at: datetime,
+        expired_reservation: PersistedReservation | None = None,
     ) -> PreparedLifecycleRevision:
+        replace_expired = None
+        if expired_reservation is not None:
+            # Validate persisted evidence without mistaking it for proof of no
+            # in-flight data. The coordinator quarantines the entire old build.
+            _require_expired_repair_checkpoints(
+                expired_reservation.lease,
+                tuple(self._state_reader.load_resumes(expired_reservation.lease)),
+            )
+            replace_expired = getattr(self._coordinator, "replace_expired", None)
+            if not callable(replace_expired):
+                raise DurableLifecycleError(
+                    "expired repair requires coordinated activation revocation and "
+                    "recoverable control writes; lease expiry and "
+                    "allow_expired_repair alone are insufficient"
+                )
         mode = _resolve_requested_mode(
             requested=mode,
             active=active,
             observed_at=observed_at,
         )
         if active is not None and mode is LifecycleRunMode.INCREMENTAL:
-            if active.build_plan.source_scope.project_ids != scope.project_ids:
+            if active.build_plan.source_scope.project_ids != scope.project_ids or (
+                expired_reservation is not None
+                and expired_reservation.lease.catalog_revision
+                + 1
+                - active.lineage_anchor.catalog_revision
+                > MAX_ACTIVE_REVISIONS_SINCE_ANCHOR
+            ):
+                # Abandoned revisions consume numeric IDs, though not active
+                # lineage depth. The bounded reader checks the numeric span too.
                 mode = LifecycleRunMode.FULL_REPAIR
         if mode is LifecycleRunMode.INITIAL_BACKFILL:
             if active is not None:
@@ -1135,12 +1335,13 @@ class DurableWorkspaceCatalogLifecycle:
         )
         frozen_at = self._now()
         _require_utc(frozen_at, "now")
-        expected_span_since = (
-            max(span_since, cutoffs.snapshot_upper - _MAX_SOURCE_WINDOW)
-            if mode is LifecycleRunMode.FULL_REPAIR
-            else span_since
-        )
-        if cutoffs.span_window.since != expected_span_since:
+        if (
+            cutoffs.span_window.since > span_since
+            or (
+                mode is LifecycleRunMode.INCREMENTAL
+                and cutoffs.span_window.since != span_since
+            )
+        ):
             raise DurableLifecycleError(
                 "cutoff freezer changed the required lower bound"
             )
@@ -1170,6 +1371,11 @@ class DurableWorkspaceCatalogLifecycle:
             self._new_build_token(),
             field="build_token",
         )
+        if expired_reservation is not None and (
+            build_token == expired_reservation.lease.build_token
+            or (active is not None and build_token == active.build_token)
+        ):
+            raise DurableLifecycleError("expired repair must use a fresh build token")
         planned_streams = _planned_streams(
             scope=scope,
             mode=mode,
@@ -1185,21 +1391,60 @@ class DurableWorkspaceCatalogLifecycle:
             span_since_us=_datetime_to_micros(cutoffs.span_window.since),
             span_until_us=_datetime_to_micros(cutoffs.span_window.until),
         )
-        lease = self._coordinator.allocate(
-            organization_id=scope.organization_id,
-            workspace_id=scope.workspace_id,
-            catalog_epoch=scope.catalog_epoch,
-            projection_version=scope.projection_version,
-            build_token=build_token,
-            source_scope=source_scope,
-            planned_streams=planned_streams,
-            now=observed_at,
-        )
+        allocation: dict[str, Any] = {
+            "organization_id": scope.organization_id,
+            "workspace_id": scope.workspace_id,
+            "catalog_epoch": scope.catalog_epoch,
+            "projection_version": scope.projection_version,
+            "build_token": build_token,
+            "source_scope": source_scope,
+            "planned_streams": planned_streams,
+            "now": observed_at,
+        }
+        if expired_reservation is None:
+            lease = self._coordinator.allocate(**allocation)
+        else:
+            assert callable(replace_expired)
+            # Never fall back to allocate, including after an uncertain result.
+            # The implementation must recheck these expectations atomically;
+            # the lifecycle's earlier reads cannot exclude a concurrent writer.
+            lease = replace_expired(
+                expired_reservation=expired_reservation,
+                prior_active=active,
+                **allocation,
+            )
+            old_lease = expired_reservation.lease
+            _require_lease_scope(lease, scope)
+            verified_at = self._now()
+            _require_utc(verified_at, "now")
+            minimum_issued_at = (
+                observed_at
+                if getattr(
+                    self._coordinator, "source_snapshot_invalid", lambda _: False
+                )(old_lease)
+                else old_lease.expires_at
+            )
+            if (
+                lease.build_token != build_token
+                or lease.catalog_revision <= old_lease.catalog_revision
+                or not minimum_issued_at <= lease.issued_at <= verified_at
+                or lease.expires_at <= verified_at
+                or lease.build_plan.source_scope != source_scope
+                or lease.build_plan.streams != planned_streams
+            ):
+                raise DurableLifecycleError(
+                    "expired recovery coordinator returned an invalid replacement lease"
+                )
         persisted = self._state_reader.load_nonterminal(scope)
         if persisted is None or persisted.lease != lease:
             raise DurableLifecycleError(
                 "new reservation was not durably readable with identical bytes"
             )
+        if (
+            expired_reservation is not None
+            and persisted.status is not ReservationStatus.OPEN
+        ):
+            raise DurableLifecycleError("replacement reservation is no longer open")
         decoded = _decode_plan_scope(persisted.lease.build_plan)
         if (
             decoded.mode is not mode
@@ -1211,6 +1456,10 @@ class DurableWorkspaceCatalogLifecycle:
         resumes = tuple(self._state_reader.load_resumes(lease))
         if resumes:
             raise DurableLifecycleError("new reservation already has checkpoint state")
+        if expired_reservation is not None and (
+            self._state_reader.load_latest_active(scope) != active
+        ):
+            raise DurableLifecycleError("active lineage changed during expired repair")
         return _prepared(
             scope=scope,
             mode=mode,
@@ -1374,17 +1623,19 @@ class ClickHouseLifecycleStateReader:
             raise DurableLifecycleError(
                 "active manifest does not match its persisted build plan"
             )
+        checkpoints = self._store.load_checkpoint_writes(
+            organization_id=scope.organization_id,
+            workspace_id=scope.workspace_id,
+            catalog_epoch=scope.catalog_epoch,
+            catalog_revision=active.catalog_revision,
+            build_token=active.build_token,
+            stream_pairs=tuple(
+                stream.key for stream in reservation.lease.build_plan.streams
+            ),
+        )
         streams: list[ActiveStreamEvidence] = []
         for plan_stream in reservation.lease.build_plan.streams:
-            checkpoint = self._store.load_checkpoint_write(
-                organization_id=scope.organization_id,
-                workspace_id=scope.workspace_id,
-                catalog_epoch=scope.catalog_epoch,
-                catalog_revision=active.catalog_revision,
-                build_token=active.build_token,
-                source_adapter=plan_stream.source_adapter,
-                producer_stream_id=plan_stream.producer_stream_id,
-            )
+            checkpoint = checkpoints.get(plan_stream.key)
             if checkpoint is None:
                 raise DurableLifecycleError(
                     "active build is missing a persisted stream checkpoint"
@@ -1571,17 +1822,17 @@ class ClickHouseLifecycleStateReader:
         )
 
     def load_resumes(self, lease: RevisionLease) -> Sequence[CheckpointWrite]:
+        checkpoints = self._store.load_checkpoint_writes(
+            organization_id=lease.organization_id,
+            workspace_id=lease.workspace_id,
+            catalog_epoch=lease.catalog_epoch,
+            catalog_revision=lease.catalog_revision,
+            build_token=lease.build_token,
+            stream_pairs=tuple(stream.key for stream in lease.build_plan.streams),
+        )
         resumes: list[CheckpointWrite] = []
         for plan_stream in lease.build_plan.streams:
-            checkpoint = self._store.load_checkpoint_write(
-                organization_id=lease.organization_id,
-                workspace_id=lease.workspace_id,
-                catalog_epoch=lease.catalog_epoch,
-                catalog_revision=lease.catalog_revision,
-                build_token=lease.build_token,
-                source_adapter=plan_stream.source_adapter,
-                producer_stream_id=plan_stream.producer_stream_id,
-            )
+            checkpoint = checkpoints.get(plan_stream.key)
             if checkpoint is None:
                 continue
             _validate_checkpoint_for_plan(checkpoint, lease, plan_stream)
@@ -1711,6 +1962,7 @@ class ClickHouseLifecycleStateReader:
         return PersistedReservation(
             lease=_lease_from_reservation(latest, scope),
             status=status,
+            state_version=_uint(latest.get("_version"), "_version"),
         )
 
     def _latest_fenced(
@@ -2042,9 +2294,10 @@ def _decode_plan_scope(
     if len(by_role) != len(plan.streams):
         raise DurableLifecycleError("build plan contains duplicate lifecycle roles")
     if any(
-        value.source_cutoff_label == "physical_snapshot_r3" for value in plan.streams
+        value.source_cutoff_label.startswith("physical_snapshot_")
+        for value in plan.streams
     ):
-        # Decode-only compatibility with the completed r3 physical backfill.
+        # Physical snapshots are revision-scoped immutable initial builds.
         # OPEN/DRAINING recovery deliberately does not opt in: these are not
         # executable lifecycle plans. Active reads still require the fenced
         # reservation, matching activation manifest and ten clean checkpoints.
@@ -2052,13 +2305,10 @@ def _decode_plan_scope(
             raise DurableLifecycleError(
                 "physical snapshot cannot resume as a lifecycle run"
             )
-        if (
-            (plan.catalog_epoch, plan.catalog_revision, plan.projection_version)
-            != (1, 3, 3)
-            or {value.source_cutoff_label for value in plan.streams}
-            != {"physical_snapshot_r3"}
-            or len({value.source_version_fence for value in plan.streams}) != 1
-        ):
+        expected_label = f"physical_snapshot_r{plan.catalog_revision}"
+        if {value.source_cutoff_label for value in plan.streams} != {
+            expected_label
+        } or len({value.source_version_fence for value in plan.streams}) != 1:
             raise DurableLifecycleError("physical snapshot build plan contract changed")
         # The generation fence is opaque (not UTC microseconds). The signed
         # source_scope is the authoritative half-open backfill time window.
@@ -2296,6 +2546,38 @@ def _validate_checkpoint_for_plan(
         or value.source_version_fence != stream.source_version_fence
     ):
         raise DurableLifecycleError("checkpoint scope differs from its build plan")
+
+
+def _require_expired_repair_checkpoints(
+    lease: RevisionLease,
+    resumes: Sequence[CheckpointWrite],
+) -> None:
+    planned = {stream.key: stream for stream in lease.build_plan.streams}
+    seen: set[tuple[SourceAdapter, str]] = set()
+    for value in resumes:
+        checkpoint = value.checkpoint
+        key = (checkpoint.source_adapter, checkpoint.producer_stream_id)
+        if key in seen or key not in planned:
+            raise DurableLifecycleError(
+                "expired revision checkpoint inventory is duplicate or unplanned"
+            )
+        seen.add(key)
+        _validate_checkpoint_for_plan(value, lease, planned[key])
+        if (
+            checkpoint.status
+            not in {
+                CheckpointStatus.RUNNING,
+                CheckpointStatus.FAILED,
+                CheckpointStatus.COMPLETE,
+            }
+            or checkpoint.terminal != (checkpoint.status is CheckpointStatus.COMPLETE)
+            or checkpoint.gap_count
+            or checkpoint.poison_count
+            or checkpoint.conflict_count
+        ):
+            raise DurableLifecycleError(
+                "expired revision has unsafe checkpoint evidence"
+            )
 
 
 def _require_fenced_resumes(
@@ -2653,6 +2935,7 @@ __all__ = [
     "ConfiguredSourceBounds",
     "DurableLifecycleError",
     "DurableWorkspaceCatalogLifecycle",
+    "ExpiredRevisionRecoveryCoordinator",
     "FreshSpanLifecycleCutoffFreezer",
     "FULL_REPAIR_INTERVAL_SECONDS",
     "FrozenLifecycleCutoffs",

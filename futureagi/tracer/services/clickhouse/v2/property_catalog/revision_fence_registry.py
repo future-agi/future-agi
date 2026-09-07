@@ -491,11 +491,11 @@ def _validated_fence_document(
     _positive_uint(document["projection_version"], 16, "projection_version")
     _lower_sha256(document["build_lease_sha256"], "build_lease_sha256")
     project_ids = document["project_ids"]
-    if type(project_ids) is not list or not 1 <= len(project_ids) <= (
+    if type(project_ids) is not list or len(project_ids) > (
         MAX_REVISION_FENCE_PROJECTS
     ):
         raise RevisionFenceRegistryError(
-            "revision fence project inventory must contain 1..256 entries"
+            "revision fence project inventory must contain an explicit list of 0..256 entries"
         )
     if any(type(project_id) is not str for project_id in project_ids):
         raise RevisionFenceRegistryError("revision fence project inventory is invalid")

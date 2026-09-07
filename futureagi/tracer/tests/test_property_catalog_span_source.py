@@ -448,7 +448,8 @@ def test_default_canonical_span_query_timeout_remains_8500_ms() -> None:
 
     assert _reader(client, deadline=deadline).read_page(frozen).terminal
 
-    assert deadline.caps == [CANONICAL_SPAN_QUERY_TIMEOUT_MS]
+    # One traversal check plus the unchanged physical query budget.
+    assert deadline.caps == [CANONICAL_SPAN_QUERY_TIMEOUT_MS] * 2
     assert len(client.query_limits) == 1
     timeout_ms, settings = client.query_limits[0]
     assert timeout_ms == CANONICAL_SPAN_QUERY_TIMEOUT_MS
@@ -472,7 +473,7 @@ def test_explicit_initial_backfill_can_use_30000_ms_per_source_query() -> None:
         .terminal
     )
 
-    assert deadline.caps == [DEV_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS]
+    assert deadline.caps == [DEV_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS] * 2
     timeout_ms, settings = client.query_limits[0]
     assert timeout_ms == DEV_INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS
     assert settings["max_execution_time"] == 30

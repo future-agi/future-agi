@@ -115,7 +115,8 @@ func TestSkippedCompletionSurvivesReceiptRemovalSyncFailureWithoutReclassificati
 	syncCalls := 0
 	store.syncDir = func(path string) error {
 		syncCalls++
-		if syncCalls == 2 {
+		// Request, completion, then removal each have a durability boundary.
+		if syncCalls == 3 {
 			return errors.New("crash after receipt removal")
 		}
 		return syncDirectory(path)

@@ -59,6 +59,8 @@ test-results/
 .coverage
 .coverage.*
 *.cover
+# Private replicated-smoke identities, journals, and retained run evidence.
+scripts/property_catalog_oss/tests/replicated_smoke/runs/
 
 # IDE
 .vscode/
