@@ -586,6 +586,26 @@ export const createListCursorPagination = ({
     };
   };
 
+  /**
+   * Whether page `pageNumber` (0-indexed, same convention as `requestParams`)
+   * can be requested right now without `requestParams` throwing "Continuation
+   * cursor is unavailable for this page". Mirrors that throw condition
+   * exactly rather than approximating it: cursor mode needs a remembered
+   * checkpoint for anything past page 0; numbered/unknown mode addresses
+   * pages directly by number and never needs one.
+   *
+   * Checkpoints are LRU-pruned (`maxCursorCheckpoints`) and reset()/
+   * fallbackToNumbered() clear them entirely, so a page proven reachable once
+   * can stop being reachable later. Callers must re-check on every render,
+   * never cache this across a generation change.
+   */
+  const canReachPage = (pageNumber) => {
+    if (!Number.isInteger(pageNumber) || pageNumber < 0) return false;
+    if (pageNumber === 0) return true;
+    if (mode === CURSOR_MODE) return Boolean(cursorForPage(pageNumber));
+    return true;
+  };
+
   const recordResponse = (pageNumber, metadata) => {
     const hasCursorContract =
       hasOwn(metadata, "has_more") && hasOwn(metadata, "next_cursor");
@@ -814,6 +834,7 @@ export const createListCursorPagination = ({
     disableCursor,
     fallbackToNumbered,
     requestParams,
+    canReachPage,
     recordResponse,
     recordEmptyContinuation,
     bufferedVisiblePage,
