@@ -103,9 +103,20 @@ export const pagerFlagsForPage = (page, frontier = EMPTY_PAGER_FRONTIER) => ({
  * / `loadExactListPage`). Those rows are proven to exist by construction —
  * a stronger proof than any reported count — so the next page must be
  * reachable even though nothing in the metadata says so.
+ *
+ * That proof itself rests on a precondition: `isLastPage` only degrades to
+ * this "no further window but not terminal" shape in cursor mode, where
+ * `isLastPage()` (listCursorPagination.js:805-810) reads `metadata.has_more`.
+ * In legacy/numbered mode — no `has_more` field at all — `isLastPage` instead
+ * collapses to `rowCount < pageSize`, and a full final page reads back false
+ * with nothing buffered behind it. Gate on the field's presence, not just its
+ * value, or a full last page in numbered mode manufactures a page that does
+ * not exist.
  */
-export const hasBufferedOverflowPage = (isLastPage, metadataHasMore) =>
-  isLastPage === false && metadataHasMore !== true;
+export const hasBufferedOverflowPage = (isLastPage, metadata) =>
+  isLastPage === false &&
+  Object.prototype.hasOwnProperty.call(metadata || {}, "has_more") &&
+  metadata.has_more !== true;
 
 /**
  * Cursor-backed lists can expose only pages whose opaque cursor chain has
@@ -307,10 +318,7 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       startRow: request.startRow,
       rowCount: rows.length,
     });
-    const bufferedOverflowPage = hasBufferedOverflowPage(
-      isLastPage,
-      pagerState.hasMore,
-    );
+    const bufferedOverflowPage = hasBufferedOverflowPage(isLastPage, metadata);
     setFrontier((previous) =>
       publishedPage < previous.page
         ? previous

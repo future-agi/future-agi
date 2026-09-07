@@ -214,6 +214,26 @@ describe("useCursorGridPagination", () => {
     expect(result.current.pageCount).toBeGreaterThanOrEqual(2);
   });
 
+  it("does not manufacture a phantom trailing page in legacy/numbered mode", () => {
+    // REGRESSION GUARD (N1): hasBufferedOverflowPage()'s proof only holds when
+    // the transport is in cursor mode and the response carries a `has_more`
+    // field (listCursorPagination.js isLastPage(), :805-810). A legacy/
+    // numbered-mode response has no such field, so isLastPage degrades to
+    // `rowCount < pageSize`. A true, exactly-full final page (page 2 of a
+    // 50-row legacy DRF list, 25 of 25 rows) must not be read as a buffered
+    // overflow just because isLastPage came back false.
+    const { result } = renderHook(() => useCursorGridPagination(null, null));
+    publish(result, {
+      startRow: 25,
+      endRow: 50,
+      rows: 25,
+      isLastPage: false,
+      metadata: { count: 50, total_pages: 2 },
+    });
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.provenNext).toBe(false);
+  });
+
   it("ignores a background block published for another page", () => {
     // beginPageLoad() already refuses to let a background block own the page
     // loader; the visible page and the pager flags need the same guard.

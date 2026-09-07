@@ -498,7 +498,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     // construction, so they must stay reachable.
     const bufferedOverflowPage = hasBufferedOverflowPage(
       exactPageIsLastPage,
-      hasMore,
+      pagerMetadata,
     );
     const nextHasMore = hasMore || bufferedOverflowPage;
     const nextProvenNext = provenNext || bufferedOverflowPage;

@@ -498,7 +498,7 @@ const UsersGrid = React.memo(
             });
             const bufferedOverflowPage = hasBufferedOverflowPage(
               isLastPage,
-              hasMore,
+              res,
             );
             const publishedPage = pageNumber + 1;
             setPagerFrontier((previous) =>
