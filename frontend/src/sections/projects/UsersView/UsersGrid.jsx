@@ -49,6 +49,8 @@ import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
+  OBSERVE_LIST_DEFAULT_PAGE_SIZE,
+  OBSERVE_LIST_PAGE_SIZE_OPTIONS,
 } from "src/config/runtime_limits";
 import {
   dispatchObservePageChanged,
@@ -106,7 +108,11 @@ const UsersGrid = React.memo(
     const [readError, setReadError] = useState(null);
     const [continuationNotice, setContinuationNotice] = useState(null);
     const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(25);
+    const [pageSize, setPageSize] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
+    // A ref mutation re-renders nothing, so the pager cannot read
+    // activeListReadsRef to decide whether it is busy — it would only ever see
+    // whatever the ref held at the last render.
+    const [isPageReadPending, setIsPageReadPending] = useState(false);
     // The deepest page this datasource has published, and the flags it reported
     // there. AG Grid serves an already-cached block without re-invoking the
     // datasource, so flags written by whichever read finished last would leave
@@ -287,6 +293,7 @@ const UsersGrid = React.memo(
           try {
             if (!isGridApiLive(params.api)) return;
             activeListReadsRef.current += 1;
+            setIsPageReadPending(true);
             setIsLoading(true);
             params.api.hideOverlay();
             const { request } = params;
@@ -602,7 +609,10 @@ const UsersGrid = React.memo(
               0,
               activeListReadsRef.current - 1,
             );
-            if (!continuationPending) setIsLoading(false);
+            if (!continuationPending) {
+              setIsPageReadPending(false);
+              setIsLoading(false);
+            }
           }
         },
       };
@@ -783,6 +793,27 @@ const UsersGrid = React.memo(
     // get to decide whether anything follows.
     const pagerFlags = pagerFlagsForPage(page, pagerFrontier);
 
+    // Mirrors changePageSize() in useCursorGridPagination: the new size has to
+    // reach the request — AG Grid derives it from cacheBlockSize — and the
+    // cursor chain, the visible page and the pager frontier all restart with
+    // it. cacheBlockSize is not reactive, hence the keyed grid remount.
+    const handlePageSizeChange = useCallback(
+      (nextPageSize) => {
+        if (
+          nextPageSize === pageSize ||
+          !OBSERVE_LIST_PAGE_SIZE_OPTIONS.includes(nextPageSize)
+        ) {
+          return;
+        }
+        cursorPagination.current.reset();
+        cursorQueryKeyRef.current = null;
+        setPagerFrontier(EMPTY_PAGER_FRONTIER);
+        setPage(1);
+        setPageSize(nextPageSize);
+      },
+      [pageSize],
+    );
+
     const onSortChanged = (params) => {
       if (!isGridApiLive(params.api)) return;
       const requestedSortModel = params.api
@@ -819,6 +850,9 @@ const UsersGrid = React.memo(
         >
           <Box className="ag-theme-quartz" sx={fullHeightStyle}>
             <AgGridReact
+              // AG Grid reads cacheBlockSize once, at construction. Remounting
+              // is how the other cursor grids adopt a new page size.
+              key={`users-grid-${pageSize}`}
               className={`clean-data-table${continuationNotice ? " ag-grid-cursor-paused" : ""}`}
               ref={(params) => {
                 gridApiRef.current = params;
@@ -834,9 +868,10 @@ const UsersGrid = React.memo(
               rowSelection={{ mode: "multiRow", enableClickSelection: false }}
               pagination={true}
               paginationPageSize={pageSize}
+              paginationPageSizeSelector={false}
               suppressPaginationPanel={true}
               rowModelType="serverSide"
-              cacheBlockSize={25}
+              cacheBlockSize={pageSize}
               maxBlocksInCache={OBSERVE_GRID_MAX_BLOCKS_IN_CACHE}
               maxConcurrentDatasourceRequests={
                 OBSERVE_GRID_MAX_CONCURRENT_REQUESTS
@@ -878,8 +913,8 @@ const UsersGrid = React.memo(
           </Box>
         </Box>
         <CursorGridPagination
-          disabled={activeListReadsRef.current > 0}
-          loading={false}
+          disabled={isPageReadPending}
+          loading={isPageReadPending}
           page={page}
           pageSize={pageSize}
           hasMore={pagerFlags.hasMore}
@@ -889,12 +924,7 @@ const UsersGrid = React.memo(
               api.paginationGoToPage?.(nextPage - 1),
             )
           }
-          onPageSizeChange={(size) => {
-            setPageSize(size);
-            withLiveGridApi(gridApiRef.current?.api, (api) =>
-              api.setGridOption?.("paginationPageSize", size),
-            );
-          }}
+          onPageSizeChange={handlePageSizeChange}
         />
       </Box>
     );

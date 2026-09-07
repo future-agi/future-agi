@@ -785,6 +785,66 @@ describe("UsersGrid deterministic pagination", () => {
     ).not.toBeDisabled();
   });
 
+  it("sends a changed page size to the API and restarts pagination", async () => {
+    // REGRESSION GUARD (I4): the selector set paginationPageSize only.
+    // cacheBlockSize stayed hardcoded at 25, so the server was always asked
+    // for 25 rows and the pager counted in a different unit than the grid.
+    getMock.mockResolvedValue(usersResponse({ rows: [row(0)] }));
+    renderGrid();
+
+    await readPage(makeGridParams());
+    expect(getMock.mock.calls[0][1].params.page_size).toBe(25);
+    expect(gridState.props.cacheBlockSize).toBe(25);
+
+    // MUI puts role="combobox" on the value element inside the labelled root;
+    // clicking the root itself does not open the menu under jsdom.
+    await userEvent.click(screen.getByRole("combobox"));
+    await userEvent.click(screen.getByRole("option", { name: "10" }));
+
+    expect(gridState.props.cacheBlockSize).toBe(10);
+    expect(gridState.props.paginationPageSize).toBe(10);
+    expect(gridState.props.paginationPageSizeSelector).toBe(false);
+
+    await readPage(makeGridParams({ startRow: 0, endRow: 10 }));
+    expect(getMock.mock.calls.at(-1)[1].params.page_size).toBe(10);
+    expect(
+      screen.getByRole("button", { name: "Go to page 1" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows a real loading state while a users page is in flight", async () => {
+    // REGRESSION GUARD (I5/I6): the pager hardcoded loading={false} and read a
+    // mutable ref during render for `disabled`, which no mutation re-renders.
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+    renderGrid();
+    const params = makeGridParams();
+    gridState.api = params.api;
+    let pendingRead;
+    act(() => {
+      pendingRead = gridState.props.serverSideDatasource.getRows(params);
+    });
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+
+    expect(screen.getByRole("status")).toHaveTextContent("Loading page…");
+    expect(screen.getByRole("button", { name: "Go to page 1" })).toBeDisabled();
+
+    await act(async () => {
+      resolveResponse(usersResponse({ rows: [row(0)] }));
+      await pendingRead;
+    });
+
+    expect(screen.queryByText("Loading page…")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Go to page 1" }),
+    ).not.toBeDisabled();
+  });
+
   it("does not number the next page when the users total only equals rows seen", () => {
     // Live capture: page 1 returned total_count 25 with has_more true.
     const state = getListPagerState({
