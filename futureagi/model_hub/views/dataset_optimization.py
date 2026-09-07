@@ -22,6 +22,7 @@ from model_hub.models.dataset_optimization_trial_item import (
 )
 from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.optimize_dataset import OptimizeDataset
+from model_hub.services.optimization_service import start_optimization_run
 from drf_yasg.utils import swagger_auto_schema
 
 from model_hub.serializers.dataset_optimization import (
@@ -37,7 +38,6 @@ from model_hub.utils.dataset_optimization import (
     OPTIMIZATION_RUN_TABLE_CONFIG,
     TRIAL_TABLE_BASE_COLUMNS,
     calculate_percentage_point_change,
-    create_dataset_optimization_steps,
     get_dataset_optimization_steps,
     get_optimization_graph_data,
 )
@@ -232,16 +232,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             self.perform_create(serializer)
             run_instance = serializer.instance
 
-            # Create optimization steps
-            create_dataset_optimization_steps(str(run_instance.id))
-
             # Start the Temporal workflow
             try:
-                from tfc.temporal.dataset_optimization.client import (
-                    start_dataset_optimization_workflow,
-                )
-
-                start_dataset_optimization_workflow(str(run_instance.id))
+                workflow_result = start_optimization_run(run_instance)
+                if hasattr(workflow_result, "code"):
+                    raise RuntimeError(workflow_result.message)
             except Exception as e:
                 logger.exception(
                     f"Failed to start Temporal workflow for DatasetOptimization {run_instance.id}: {e}"
