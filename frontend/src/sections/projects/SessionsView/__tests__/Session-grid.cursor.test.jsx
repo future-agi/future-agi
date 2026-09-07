@@ -374,6 +374,79 @@ describe("SessionGrid cursor continuation", () => {
     });
   });
 
+  // Regression: paginationRequestKey used to omit sort, so a sort click reset
+  // the datasource's cursor chain (getRows()'s own queryKey check) but left
+  // the pager's frontier (React state) pointing at a page the reset cursor
+  // chain can no longer serve.
+  it("resets the pager frontier when the sort changes, so a stale boundary page is not offered", async () => {
+    getMock
+      .mockResolvedValueOnce(
+        sessionResponse({
+          rows: Array.from({ length: 25 }, (_, index) => row(index)),
+          hasMore: true,
+          nextCursor: "after-25",
+          totalRows: 26,
+          lowerBound: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        sessionResponse({
+          rows: Array.from({ length: 25 }, (_, index) => row(index + 25)),
+          hasMore: true,
+          nextCursor: "after-50",
+          totalRows: 51,
+          lowerBound: true,
+        }),
+      )
+      .mockResolvedValueOnce(
+        sessionResponse({ rows: [row(50)], hasMore: false, nextCursor: null, totalRows: 51 }),
+      );
+    renderGrid();
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    // Walk forward the same way AG Grid's server-side row model requests
+    // blocks (startRow increasing) rather than through the pager's own
+    // click handler, so this test does not depend on the loading-state
+    // transition machinery covered elsewhere.
+    await getRows(makeParams());
+    await getRows(makeParams({ startRow: 25 }));
+    await getRows(makeParams({ startRow: 50 }));
+
+    // Return to page 1. Already cached, so this resolves without another
+    // network request, and publishPage() moves `page` back to 1 while the
+    // monotone frontier — proven by construction — stays at 3.
+    await getRows(makeParams());
+
+    // This assertion proves the scenario is actually set up correctly: the
+    // furthest-visited-page boundary is offered before any sort happens.
+    expect(
+      screen.getByRole("button", { name: "Go to page 1" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("button", { name: "Go to page 3" }),
+    ).toBeInTheDocument();
+
+    // A sort click must reset the frontier the same way a filter/date/page-size
+    // change already does.
+    await act(async () => {
+      gridState.props.onSortChanged({
+        api: {
+          getColumnState: () => [
+            { colId: "started_at", sort: "desc", sortIndex: 0 },
+          ],
+        },
+      });
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Go to page 3" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Go to page 1" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
   it("falls back to numbered pagination when an explicit cursor page is rejected by an older API", async () => {
     const legacyCursorError = {
       response: {

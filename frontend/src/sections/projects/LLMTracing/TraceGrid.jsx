@@ -160,6 +160,7 @@ const TraceGrid = React.forwardRef(
     const {
       beginPageLoad,
       endUnknown,
+      frontierPage,
       hasMore,
       page,
       pageSize,
@@ -185,6 +186,16 @@ const TraceGrid = React.forwardRef(
 
     const inFlightPageLoads = useRef(new Map());
     const cursorPagination = useRef(createListCursorPagination());
+    // Gate the boundary on whether its cursor is still remembered — reset(),
+    // an LRU eviction, or a filter/date/page-size change can all make a page
+    // that was genuinely visited unreachable again. `frontierPage` is
+    // 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
+    // convention as `requestParams`.
+    const furthestPage = cursorPagination.current.canReachPage(
+      frontierPage - 1,
+    )
+      ? frontierPage
+      : 0;
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
         showMetricsIds: state.showMetricsIds,
@@ -910,6 +921,7 @@ const TraceGrid = React.forwardRef(
           page={page}
           pageSize={pageSize}
           endUnknown={endUnknown}
+          furthestPage={furthestPage}
           hasMore={hasMore}
           provenNext={provenNext}
           onPageChange={goToPage}

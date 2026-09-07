@@ -388,6 +388,10 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
     return {
       beginPageLoad,
       endUnknown,
+      // The deepest page this generation has ever published — callers gate
+      // this on `listCursorPagination`'s `canReachPage` before drawing it as
+      // the pager's right-hand boundary; this hook only tracks it.
+      frontierPage: frontier.page,
       hasMore,
       page,
       pageCount,
