@@ -621,4 +621,52 @@ describe("CallLogsGrid bounded-read state", () => {
     expect(state.provenNext).toBe(false);
     expect(windowedPageNumbers({ page: 1, provenNext: state.provenNext })).toEqual([1]);
   });
+
+  it("disables the pager and falls back to page 1 during an unusable, non-loading read", async () => {
+    useCallLogsMock.mockImplementation(({ page }) => {
+      if (page === 2) {
+        // Simulates a user already on page 2 whose next read errors out
+        // without ever entering a loading state.
+        return {
+          data: undefined,
+          isLoading: false,
+          error: { message: "boom" },
+          queryKey: ["callLogs", "project", "project-1", 25, {}, 2],
+        };
+      }
+      return {
+        data: completeData,
+        isLoading: false,
+        error: null,
+        queryKey: ["callLogs", "project", "project-1", 25, {}, page],
+      };
+    });
+
+    render(<CallLogsGrid id="project-1" module="project" hideDrawer />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /go to page 2/i }),
+    );
+    await waitFor(() =>
+      expect(useCallLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 2 }),
+      ),
+    );
+
+    // `page` state is 2, but the read is unusable (errored, not loading):
+    // the pager must show page 1, not the stale page 2, and every control
+    // must be non-interactive — not just Next.
+    const currentPageButton = await screen.findByRole("button", {
+      name: "Go to page 1",
+    });
+    expect(currentPageButton).toHaveAttribute("aria-current", "page");
+    expect(currentPageButton).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Go to page 2" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Previous page" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+  });
 });

@@ -14,7 +14,6 @@ import {
   Box,
   Button,
   Skeleton,
-  Stack,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -463,6 +462,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     // stable `data` (e.g. this file's own test mocks) would otherwise refire
     // this effect on every render and loop forever, since each firing always
     // produces a brand-new pagerState object.
+    //
+    // This field list must match src/sections/projects/LLMTracing/
+    // listPagerState.js's reportedTotal()/isLowerBound() metadata reads
+    // (count/total_rows/total_count and their *_is_lower_bound siblings,
+    // plus has_more) — if that helper starts reading another field, add it
+    // here too, or this effect can miss a real update.
   }, [
     data?.count,
     data?.count_is_lower_bound,
@@ -886,9 +891,9 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         />
 
         <CursorGridPagination
-          disabled={isLoading}
+          disabled={isLoading || !isUsableListRead}
           loading={isLoading}
-          page={page}
+          page={isUsableListRead ? page : 1}
           pageSize={pageLimit}
           hasMore={pagerState.hasMore}
           provenNext={pagerState.provenNext}
