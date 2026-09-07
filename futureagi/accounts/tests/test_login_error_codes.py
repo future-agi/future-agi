@@ -21,7 +21,7 @@ import pytest
 from django.core.cache import cache
 from django.http import HttpResponse
 from django.test import RequestFactory
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.test import APIClient
 
 # ---------------------------------------------------------------------------
@@ -98,6 +98,48 @@ class TestInvalidCredentialsErrorCode:
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
         result = _result(resp)
         assert result["error_code"] == "LOGIN_INVALID_CREDENTIALS"
+
+    @pytest.mark.parametrize(
+        "payload_password",
+        [None, "", "   "],
+        ids=["omitted", "empty", "whitespace"],
+    )
+    def test_contract_rejects_missing_password(
+        self, api_client, user, payload_password
+    ):
+        """LoginRequestSerializer is the first gate: no token on a blank password."""
+        payload = {"email": user.email}
+        if payload_password is not None:
+            payload["password"] = payload_password
+
+        resp = api_client.post("/accounts/token/", payload, format="json")
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "access" not in resp.content.decode()
+
+    def test_password_check_fails_closed_without_the_contract(self, api_client, user):
+        """The view must reject a blank password on its own.
+
+        The serializer normally rejects it first, so this drives the view with a
+        contract that permits blank, the state the view would face if the
+        contract ever loosened. Red when the check is guarded by a truthiness
+        test on the password, green when it is unconditional.
+        """
+        from accounts.serializers.contracts import LoginRequestSerializer
+
+        permissive = serializers.CharField(required=False, allow_blank=True, default="")
+        with patch.dict(
+            LoginRequestSerializer._declared_fields,
+            {"password": permissive},
+        ):
+            resp = api_client.post(
+                "/accounts/token/", {"email": user.email}, format="json"
+            )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        result = _result(resp)
+        assert result["error_code"] == "LOGIN_INVALID_CREDENTIALS"
+        assert "access" not in resp.content.decode()
 
     def test_nonexistent_email_preserves_legacy_error_string(self, api_client, db):
         resp = _login(api_client, "nobody@futureagi.com", "anypass")
