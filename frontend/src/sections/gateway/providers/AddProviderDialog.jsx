@@ -195,7 +195,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setApiKey("");
       setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
       setModels(Array.isArray(c.models) ? c.models : []);
-      setTimeoutVal(c.default_timeout ?? c.defaultTimeout ?? "");
+      const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
+      setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
       setMaxConcurrent(
         c.max_concurrent != null
           ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
@@ -347,16 +348,21 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       newErrors.models = "Select at least one model";
     }
 
-    if (timeoutVal.trim() && parseTimeoutSeconds(timeoutVal) === null) {
-      newErrors.timeout = "Use seconds, e.g. 30 or 30s";
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSave = () => {
     if (!validate()) return;
+
+    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
+    if (timeoutVal.trim() && timeoutSeconds === null) {
+      setErrors((prev) => ({
+        ...prev,
+        timeout: "Use seconds, e.g. 30 or 30s",
+      }));
+      return;
+    }
 
     const config = { base_url: baseUrl, api_format: apiFormat };
     if (isAwsAuth) {
@@ -368,7 +374,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       config.api_key = apiKey;
     }
     if (models.length > 0) config.models = models;
-    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
     if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
