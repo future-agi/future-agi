@@ -71,4 +71,20 @@ describe("CursorGridPagination", () => {
     screen.getByRole("button", { name: "Go to page 9" }).click();
     expect(onPageChange).toHaveBeenCalledWith(9);
   });
+
+  it("moves forward one page when Next is clicked", () => {
+    // A middle page pins the arithmetic (page + 1) rather than a boundary
+    // where an off-by-one could accidentally read as correct.
+    const onPageChange = vi.fn();
+    setup({ page: 4, hasMore: true, provenNext: true, onPageChange });
+    screen.getByRole("button", { name: "Next page" }).click();
+    expect(onPageChange).toHaveBeenCalledWith(5);
+  });
+
+  it("moves back one page when Back is clicked", () => {
+    const onPageChange = vi.fn();
+    setup({ page: 4, hasMore: true, provenNext: true, onPageChange });
+    screen.getByRole("button", { name: "Previous page" }).click();
+    expect(onPageChange).toHaveBeenCalledWith(3);
+  });
 });
