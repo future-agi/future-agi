@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -695,27 +696,69 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 	if err != nil {
 		return nil, err
 	}
-	checkpoints := make([]StreamCheckpoint, 0, len(candidates))
-	for index, candidate := range candidates {
-		proof, found, err := l.loadCheckpointStreamProof(ctx, candidate)
-		if err != nil {
-			return nil, fmt.Errorf("propertycatalog: load checkpoint stream %d: %w", index, err)
-		}
-		if !found {
-			if err := validateEmptyCheckpointStream(candidate); err != nil {
-				return nil, err
+	// Bound proof reads without a goroutine or queued request per stream. Each
+	// worker owns one output index; compact only after all workers have joined.
+	const proofWorkers = 8
+	proofCtx, cancelProofs := context.WithCancelCause(ctx)
+	defer cancelProofs(nil)
+	checkpoints := make([]StreamCheckpoint, len(candidates))
+	found := make([]bool, len(candidates))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(proofWorkers, len(candidates)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if proofCtx.Err() != nil {
+					return
+				}
+				candidate := candidates[index]
+				proof, hasProof, err := l.loadCheckpointStreamProof(proofCtx, candidate)
+				if err != nil {
+					cancelProofs(fmt.Errorf("propertycatalog: load checkpoint stream %d: %w", index, err))
+					return
+				}
+				if !hasProof {
+					if err := validateEmptyCheckpointStream(candidate); err != nil {
+						cancelProofs(err)
+						return
+					}
+					continue
+				}
+				checkpoint, err := validateCheckpointStreamProof(candidate, proof)
+				if err != nil {
+					cancelProofs(fmt.Errorf(
+						"propertycatalog: invalid delivery stream %s: %w",
+						checkpointInventoryStreamKey(candidate), err,
+					))
+					return
+				}
+				checkpoints[index], found[index] = checkpoint, true
 			}
-			continue
-		}
-		checkpoint, err := validateCheckpointStreamProof(candidate, proof)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"propertycatalog: invalid delivery stream %s: %w",
-				checkpointInventoryStreamKey(candidate), err,
-			)
-		}
-		checkpoints = append(checkpoints, checkpoint)
+		}()
 	}
+dispatch:
+	for index := range candidates {
+		select {
+		case jobs <- index:
+		case <-proofCtx.Done():
+			break dispatch
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if err := context.Cause(proofCtx); err != nil {
+		return nil, err
+	}
+	loaded := 0
+	for index := range checkpoints {
+		if found[index] {
+			checkpoints[loaded] = checkpoints[index]
+			loaded++
+		}
+	}
+	checkpoints = checkpoints[:loaded]
 	// Only a wholly absent inventory needs the orphan-ledger probe. An exact
 	// newest reservation with ten proven-empty streams is a legitimate restart
 	// window before sequence one. Older immutable delivery history must not make
@@ -728,6 +771,9 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 		if nonempty {
 			return nil, errors.New("propertycatalog: delivery ledger is nonempty without a reconstructable newest reservation stream")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return checkpoints, nil
 }
@@ -750,6 +796,7 @@ func (l *ClickHouseCheckpointLoader) loadCheckpointStreamProof(
 	}
 	settings := map[string]string{
 		"max_execution_time":     "10",
+		"max_threads":            "1",
 		"max_rows_to_group_by":   fmt.Sprintf("%d", maxCheckpointSequencesPerStream+1),
 		"group_by_overflow_mode": "throw",
 	}
@@ -1331,6 +1378,7 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 	reservations := make(map[string]checkpointInventoryJSON)
 	plans := make(map[string]buildPlanDocumentJSON)
 	candidates := make(map[string]checkpointInventoryJSON)
+	candidateKeysByScope := make(map[string]map[string]struct{})
 	for index, row := range rows {
 		if err := validateCheckpointReservation(row); err != nil {
 			return nil, fmt.Errorf("propertycatalog: checkpoint inventory reservation row %d: %w", index, err)
@@ -1372,6 +1420,10 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 			return nil, fmt.Errorf("propertycatalog: checkpoint inventory duplicates stream %s", key)
 		}
 		candidates[key] = row
+		if candidateKeysByScope[scope] == nil {
+			candidateKeysByScope[scope] = make(map[string]struct{}, len(plans[scope].Streams))
+		}
+		candidateKeysByScope[scope][key] = struct{}{}
 	}
 	for scope, reservation := range reservations {
 		plan := plans[scope]
@@ -1379,12 +1431,7 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 		for _, stream := range plan.Streams {
 			expected[checkpointPlanStreamKey(reservation, stream.SourceAdapter, stream.ProducerStreamID)] = struct{}{}
 		}
-		actual := make(map[string]struct{}, len(expected))
-		for key, candidate := range candidates {
-			if checkpointInventoryScopeKey(candidate) == scope {
-				actual[key] = struct{}{}
-			}
-		}
+		actual := candidateKeysByScope[scope]
 		if len(actual) != len(expected) {
 			return nil, fmt.Errorf("propertycatalog: newest reservation scope %s lacks its exact build-plan stream inventory", scope)
 		}
