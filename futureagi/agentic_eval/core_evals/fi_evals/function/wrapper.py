@@ -824,11 +824,19 @@ class Accuracy(FunctionEvaluator):
 
 
 class PrecisionScore(FunctionEvaluator):
-    def __init__(self, positive_label: str | None = None, display_name: str | None = None):
-        """Initialize the PrecisionScore evaluator. Classification precision."""
+    def __init__(self, positive_label: str | None = None, display_name: str | None = None, *, average: str | None = None):
+        """Initialize the PrecisionScore evaluator. Classification precision.
+
+        Args:
+            positive_label: Label to treat as positive. When omitted, a known
+                binary convention is used if the labels match one, otherwise
+                precision is macro-averaged over every class.
+            average: Explicit averaging strategy — "binary", "macro", "micro"
+                or "weighted".
+        """
         super().__init__(
             function_name=FunctionEvalTypeId.PRECISION_SCORE.value,
-            function_arguments={"positive_label": positive_label},
+            function_arguments={"positive_label": positive_label, "average": average},
             display_name=display_name,
         )
 
@@ -940,8 +948,18 @@ class BalancedAccuracy(FunctionEvaluator):
 
 
 class FBetaScore(FunctionEvaluator):
-    def __init__(self, beta: float = 1.0, positive_label: str | None = None, display_name: str | None = None):
-        super().__init__(function_name=FunctionEvalTypeId.F_BETA_SCORE.value, function_arguments={"beta": beta, "positive_label": positive_label}, display_name=display_name)
+    def __init__(self, beta: float = 1.0, positive_label: str | None = None, display_name: str | None = None, *, average: str | None = None):
+        """Initialize the FBetaScore evaluator.
+
+        Args:
+            beta: Weight of recall relative to precision.
+            positive_label: Label to treat as positive. When omitted, a known
+                binary convention is used if the labels match one, otherwise
+                the score is macro-averaged over every class.
+            average: Explicit averaging strategy — "binary", "macro", "micro"
+                or "weighted".
+        """
+        super().__init__(function_name=FunctionEvalTypeId.F_BETA_SCORE.value, function_arguments={"beta": beta, "positive_label": positive_label, "average": average}, display_name=display_name)
 
 
 class LogLoss(FunctionEvaluator):
