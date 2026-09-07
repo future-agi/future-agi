@@ -28,6 +28,48 @@ const (
 	ActionLog
 )
 
+// TrajectoryContext is the request-scoped correlation snapshot available to
+// stateful guardrails. It intentionally contains identity/correlation data only;
+// policy, risk, and accumulated trajectory state belong in separate layers.
+type TrajectoryContext struct {
+	RequestID    string
+	TraceID      string
+	SessionID    string
+	UserID       string
+	A2ATaskID    string
+	A2AContextID string
+	AgentID      string
+}
+
+// TrajectoryContextFromContext returns the normalized correlation context for a
+// guardrail invocation. AgentID is correlation-only metadata and must never be
+// treated as an authorization identity.
+func TrajectoryContextFromContext(ctx context.Context) *TrajectoryContext {
+	rc := models.GetRequestContext(ctx)
+	if rc == nil {
+		return nil
+	}
+
+	return &TrajectoryContext{
+		RequestID:    rc.RequestID,
+		TraceID:      rc.TraceID,
+		SessionID:    rc.SessionID,
+		UserID:       rc.UserID,
+		A2ATaskID:    rc.Metadata["a2a_task_id"],
+		A2AContextID: rc.Metadata["a2a_context_id"],
+		AgentID:      firstNonEmpty(rc.Metadata["gen_ai.agent.id"], rc.Metadata["agent_id"]),
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // CheckInput is the input to a guardrail check.
 type CheckInput struct {
 	Request  *models.ChatCompletionRequest
