@@ -146,4 +146,67 @@ describe("windowedPageNumbers", () => {
   it("clamps a bad page to 1", () => {
     expect(windowedPageNumbers({ page: 0, provenNext: false })).toEqual([1]);
   });
+
+  describe("furthestPage boundary", () => {
+    // Hand-worked examples from the design brief: walking to page 11 and back.
+    it("draws the furthest page as a right-hand boundary after a walk-and-return", () => {
+      expect(
+        windowedPageNumbers({ page: 1, provenNext: true, furthestPage: 11 }),
+      ).toEqual([1, 2, 11]);
+    });
+
+    it("opens a second gap for the boundary while keeping the leading gap", () => {
+      expect(
+        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 11 }),
+      ).toEqual([1, 4, 5, 6, 11]);
+    });
+
+    it("draws no separate boundary once standing on the furthest page itself", () => {
+      expect(
+        windowedPageNumbers({ page: 11, provenNext: false, furthestPage: 11 }),
+      ).toEqual([1, 10, 11]);
+    });
+
+    it("never exceeds five numbers", () => {
+      expect(
+        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 11 })
+          .length,
+      ).toBeLessThanOrEqual(5);
+    });
+
+    it("is absent (no-op) when the furthest page is not ahead of the window", () => {
+      // The window already reaches page 9 (provenNext), so a furthest page of
+      // 9 or lower adds nothing new.
+      expect(
+        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 9 }),
+      ).toEqual([1, 7, 8, 9]);
+    });
+
+    it("never draws the boundary behind or equal to the current page", () => {
+      // A stale/lower furthestPage (e.g. from a route that no longer exists,
+      // or simply behind where the walk has since moved) must never appear.
+      expect(
+        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 3 }),
+      ).toEqual([1, 7, 8, 9]);
+      expect(
+        windowedPageNumbers({ page: 8, provenNext: true, furthestPage: 8 }),
+      ).toEqual([1, 7, 8, 9]);
+    });
+
+    it("does not flicker during the in-flight window right after Next is clicked", () => {
+      // useCursorGridPagination.js sets `page` optimistically on click, so
+      // `page === frontier.page + 1` for the whole in-flight request. A
+      // furthestPage equal to the *previous* page must not draw a boundary
+      // one click ahead of itself.
+      expect(
+        windowedPageNumbers({ page: 5, provenNext: true, furthestPage: 4 }),
+      ).toEqual([1, 4, 5, 6]);
+    });
+
+    it("defaults to no boundary when furthestPage is omitted", () => {
+      expect(windowedPageNumbers({ page: 8, provenNext: true })).toEqual([
+        1, 7, 8, 9,
+      ]);
+    });
+  });
 });

@@ -73,14 +73,33 @@ export const getListPagerState = ({
  * exactly the set the cursor protocol can serve. Cursors exist only for page 1
  * (needs none), pages already visited, and `pageNumber + 1`
  * (listCursorPagination.js:618); anything else throws.
+ *
+ * `furthestPage` adds a fifth, right-hand boundary number: the deepest page
+ * this pagination generation has ever reached (the monotone "frontier"),
+ * drawn even when the walk has since returned to an earlier page. It is only
+ * ever added when it sits strictly beyond the window computed above and
+ * strictly ahead of `page` — never behind or equal to the page on screen, and
+ * never redundant with a number the window already contains. That keeps the
+ * window at four numbers during a forward walk (the frontier is always
+ * inside the window there) and caps it at five only once the walk has gone
+ * back. Callers must gate `furthestPage` on reachability themselves
+ * (`listCursorPagination.js`'s `canReachPage`) — this function draws whatever
+ * number it is given.
  */
-export const windowedPageNumbers = ({ page, provenNext = false } = {}) => {
+export const windowedPageNumbers = ({
+  page,
+  provenNext = false,
+  furthestPage = 0,
+} = {}) => {
   const current = Number.isSafeInteger(page) && page >= 1 ? page : 1;
   const highest = current + (provenNext ? 1 : 0);
   const pages = new Set([1]);
   for (let candidate = current - 1; candidate <= highest; candidate += 1) {
     if (candidate >= 1) pages.add(candidate);
   }
+  const boundary = Number.isSafeInteger(furthestPage) ? furthestPage : 0;
+  const rightEdge = Math.max(highest, boundary);
+  if (rightEdge > current) pages.add(rightEdge);
   return Array.from(pages).sort((left, right) => left - right);
 };
 

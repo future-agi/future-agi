@@ -49,6 +49,11 @@ export default function CursorGridPagination({
   // answers "can you move forward from here". Consumers holding a pagination
   // frontier pass this; those that do not omit it and keep the old behaviour.
   endUnknown,
+  // The deepest page this pagination generation has ever reached (the
+  // monotone "frontier"), pre-gated by the caller on `canReachPage` so it is
+  // 0 (no boundary) whenever the route back to that page no longer exists.
+  // Drawn as a right-hand boundary mirroring page 1's left-hand one.
+  furthestPage = 0,
   hasMore = false,
   loading = false,
   onPageChange,
@@ -58,6 +63,16 @@ export default function CursorGridPagination({
   provenNext = false,
 }) {
   const showTrailingEllipsis = endUnknown === undefined ? hasMore : endUnknown;
+  const pageNumbers = windowedPageNumbers({ page, provenNext, furthestPage });
+  // Recomputed the same way `windowedPageNumbers` decides whether to draw the
+  // boundary at all, so a gap is only ever labelled "boundary" when the
+  // number right after it actually is that far-right page — never the
+  // ordinary leading gap between page 1 and the current-page neighbourhood.
+  const windowHighest = page + (provenNext ? 1 : 0);
+  const boundaryPageNumber =
+    Number.isSafeInteger(furthestPage) && furthestPage > windowHighest
+      ? furthestPage
+      : null;
   return (
     <Stack
       direction="row"
@@ -114,8 +129,9 @@ export default function CursorGridPagination({
       {/* Rendered from PaginationItem rather than plain buttons so the control
           keeps the metrics it had when it was a MUI <Pagination>: 32px items,
           3px gutters, 4px radius, and the Back/Next text labels. Only the item
-          *set* is ours — a window plus ellipses — because a cursor list has no
-          total to enumerate. */}
+          *set* is ours — a window plus ellipses, capped at five numbers once
+          the furthest-visited-page boundary is drawn — because a cursor list
+          has no total to enumerate. */}
       <Stack direction="row" alignItems="center" sx={{ userSelect: "none" }}>
         <PaginationItem
           type="previous"
@@ -129,44 +145,46 @@ export default function CursorGridPagination({
           slots={{ previous: BackLabel }}
         />
 
-        {windowedPageNumbers({ page, provenNext }).map(
-          (pageNumber, index, all) => (
-            <Box key={pageNumber} display="contents">
-              {index > 0 && pageNumber > all[index - 1] + 1 ? (
-                <Box
-                  component="span"
-                  data-testid="pager-leading-ellipsis"
-                  display="contents"
-                >
-                  <PaginationItem
-                    type="start-ellipsis"
-                    disabled
-                    variant="outlined"
-                    shape="rounded"
-                    sx={{
-                      borderRadius: "4px",
-                      bgcolor: "background.paper",
-                      userSelect: "none",
-                    }}
-                  />
-                </Box>
-              ) : null}
-              <PaginationItem
-                type="page"
-                page={pageNumber}
-                aria-label={`Go to page ${pageNumber}`}
-                aria-current={pageNumber === page ? "page" : undefined}
-                selected={pageNumber === page}
-                variant="outlined"
-                shape="rounded"
-                color="primary"
-                disabled={disabled || loading}
-                onClick={() => onPageChange(pageNumber)}
-                sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
-              />
-            </Box>
-          ),
-        )}
+        {pageNumbers.map((pageNumber, index, all) => (
+          <Box key={pageNumber} display="contents">
+            {index > 0 && pageNumber > all[index - 1] + 1 ? (
+              <Box
+                component="span"
+                data-testid={
+                  pageNumber === boundaryPageNumber
+                    ? "pager-boundary-ellipsis"
+                    : "pager-leading-ellipsis"
+                }
+                display="contents"
+              >
+                <PaginationItem
+                  type="start-ellipsis"
+                  disabled
+                  variant="outlined"
+                  shape="rounded"
+                  sx={{
+                    borderRadius: "4px",
+                    bgcolor: "background.paper",
+                    userSelect: "none",
+                  }}
+                />
+              </Box>
+            ) : null}
+            <PaginationItem
+              type="page"
+              page={pageNumber}
+              aria-label={`Go to page ${pageNumber}`}
+              aria-current={pageNumber === page ? "page" : undefined}
+              selected={pageNumber === page}
+              variant="outlined"
+              shape="rounded"
+              color="primary"
+              disabled={disabled || loading}
+              onClick={() => onPageChange(pageNumber)}
+              sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+            />
+          </Box>
+        ))}
 
         {showTrailingEllipsis ? (
           <Box
@@ -207,6 +225,7 @@ export default function CursorGridPagination({
 CursorGridPagination.propTypes = {
   disabled: PropTypes.bool,
   endUnknown: PropTypes.bool,
+  furthestPage: PropTypes.number,
   hasMore: PropTypes.bool,
   loading: PropTypes.bool,
   onPageChange: PropTypes.func.isRequired,

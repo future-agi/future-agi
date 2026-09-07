@@ -143,4 +143,87 @@ describe("CursorGridPagination", () => {
     setup({ page: 1, hasMore: true, provenNext: true });
     expect(screen.getByTestId("pager-trailing-ellipsis")).toBeTruthy();
   });
+
+  // Regression: after walking to page 11 and returning to page 1, the pager
+  // used to forget every page beyond its small forward-looking window. The
+  // furthest-visited page is now drawn as a right-hand boundary, mirroring
+  // page 1's left-hand one.
+  describe("furthestPage boundary", () => {
+    it("draws the furthest page as a right-hand boundary after a walk-and-return", () => {
+      setup({
+        page: 1,
+        provenNext: true,
+        hasMore: false,
+        endUnknown: false,
+        furthestPage: 11,
+      });
+      expect(pageButtonLabels()).toEqual(["1", "2", "11"]);
+    });
+
+    it("labels the boundary gap distinctly from an ordinary leading gap so both can be asserted independently", () => {
+      setup({
+        page: 5,
+        provenNext: true,
+        hasMore: false,
+        endUnknown: false,
+        furthestPage: 11,
+      });
+      expect(pageButtonLabels()).toEqual(["1", "4", "5", "6", "11"]);
+      expect(screen.getByTestId("pager-leading-ellipsis")).toBeTruthy();
+      expect(screen.getByTestId("pager-boundary-ellipsis")).toBeTruthy();
+    });
+
+    it("draws no boundary gap once standing on the furthest page itself", () => {
+      setup({
+        page: 11,
+        provenNext: false,
+        hasMore: false,
+        endUnknown: false,
+        furthestPage: 11,
+      });
+      expect(pageButtonLabels()).toEqual(["1", "10", "11"]);
+      expect(
+        screen.queryByTestId("pager-boundary-ellipsis"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("pager-leading-ellipsis")).toBeTruthy();
+    });
+
+    it("omits the boundary entirely when furthestPage is not reachable (caller passes 0)", () => {
+      setup({ page: 1, provenNext: true, hasMore: true, furthestPage: 0 });
+      expect(pageButtonLabels()).toEqual(["1", "2"]);
+      expect(
+        screen.queryByTestId("pager-boundary-ellipsis"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("never draws behind the current page even if the caller passes a stale furthestPage", () => {
+      setup({ page: 8, provenNext: true, hasMore: true, furthestPage: 3 });
+      expect(pageButtonLabels()).toEqual(["1", "7", "8", "9"]);
+    });
+
+    it("clicking the boundary page navigates to it", () => {
+      const onPageChange = vi.fn();
+      setup({
+        page: 1,
+        provenNext: true,
+        hasMore: false,
+        endUnknown: false,
+        furthestPage: 11,
+        onPageChange,
+      });
+      screen.getByRole("button", { name: "Go to page 11" }).click();
+      expect(onPageChange).toHaveBeenCalledWith(11);
+    });
+
+    it("does not flicker on right after Next is clicked (the in-flight window where page === frontier.page + 1)", () => {
+      // useCursorGridPagination.js sets `page` optimistically on click, so a
+      // furthestPage equal to the page just left behind must not draw a
+      // boundary one click ahead of itself.
+      setup({ page: 5, provenNext: true, hasMore: true, furthestPage: 4 });
+      expect(pageButtonLabels()).toEqual(["1", "4", "5", "6"]);
+      expect(
+        screen.queryByTestId("pager-boundary-ellipsis"),
+      ).not.toBeInTheDocument();
+    });
+  });
 });
