@@ -161,6 +161,12 @@ const UsersGrid = React.memo(
           return;
         }
         if (activeListReadsRef.current > 0) return;
+        // The other four cursor grids clear their pager frontier on refresh
+        // because refreshGrid() routes through resetPagination(). This grid
+        // calls refreshServerSide() directly, so getRows()'s monotone guard
+        // (never move the frontier backward) would otherwise keep a stale,
+        // deeper frontier alive after the list has shrunk.
+        setPagerFrontier(EMPTY_PAGER_FRONTIER);
         withLiveGridApi(gridApiRef.current?.api, (api) =>
           api.refreshServerSide?.({ purge: false }),
         );

@@ -767,6 +767,122 @@ describe("UsersGrid deterministic pagination", () => {
     ).not.toBeDisabled();
   });
 
+  it("collapses the pager after a refresh finds the list has shrunk", async () => {
+    // REGRESSION GUARD (N2): the other four cursor grids clear their pager
+    // frontier on refresh because refreshGrid() routes through
+    // resetPagination(). UsersGrid instead calls refreshServerSide() directly
+    // and never clears pagerFrontier, so the monotone "never move the
+    // frontier backward" guard in getRows() keeps a stale, deeper frontier
+    // alive across a refresh. If the list has since shrunk to one page, the
+    // pager still offers a page 2 that no longer exists.
+    //
+    // Walks to page 6 (not just page 2) so page 1's *exact* response cache
+    // (cursorPagination's completedVisiblePageByPage, bounded by
+    // OBSERVE_GRID_MAX_BLOCKS_IN_CACHE = 5) evicts page 1 along the way.
+    // Returning to page 1 and refreshing then genuinely re-reads it from the
+    // network, isolating the pagerFrontier bug from that unrelated cache.
+    const rowsFor = (page) =>
+      Array.from({ length: 25 }, (_, index) => row(page * 25 + index));
+    getMock
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: rowsFor(0),
+          totalCount: 200,
+          countIsLowerBound: true,
+          hasMore: true,
+          nextCursor: "cursor-2",
+        }),
+      )
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: rowsFor(1),
+          totalCount: 200,
+          countIsLowerBound: true,
+          hasMore: true,
+          nextCursor: "cursor-3",
+        }),
+      )
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: rowsFor(2),
+          totalCount: 200,
+          countIsLowerBound: true,
+          hasMore: true,
+          nextCursor: "cursor-4",
+        }),
+      )
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: rowsFor(3),
+          totalCount: 200,
+          countIsLowerBound: true,
+          hasMore: true,
+          nextCursor: "cursor-5",
+        }),
+      )
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: rowsFor(4),
+          totalCount: 200,
+          countIsLowerBound: true,
+          hasMore: true,
+          nextCursor: "cursor-6",
+        }),
+      )
+      .mockResolvedValueOnce(
+        usersResponse({ rows: [row(999)], totalCount: 126 }),
+      );
+    renderGrid();
+
+    // Walk pages 1 through 6. The 6th completion pushes the exact-page cache
+    // (capacity 5) past its bound and evicts page 1.
+    for (let index = 0; index < 6; index += 1) {
+      act(() =>
+        gridState.props.onPaginationChanged({
+          api: { paginationGetCurrentPage: () => index },
+        }),
+      );
+      await readPage(
+        makeGridParams({ startRow: index * 25, endRow: (index + 1) * 25 }),
+      );
+    }
+    expect(getMock).toHaveBeenCalledTimes(6);
+
+    // Back to page 1 — a cached AG Grid block, no read is issued for it.
+    act(() =>
+      gridState.props.onPaginationChanged({
+        api: { paginationGetCurrentPage: () => 0 },
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeInTheDocument();
+
+    // Press refresh while the list has shrunk to a single page.
+    const params = makeGridParams();
+    params.api.paginationGetCurrentPage = vi.fn(() => 0);
+    gridState.api = params.api;
+    act(() => window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT)));
+    expect(params.api.refreshServerSide).toHaveBeenCalledWith({
+      purge: false,
+    });
+
+    // What refreshServerSide({ purge: false }) would trigger next: AG Grid
+    // re-reads block 0. Page 1 is no longer in the exact-page cache, so this
+    // is a genuine network read that gets back a now-terminal, single-page
+    // result.
+    getMock.mockResolvedValueOnce(
+      usersResponse({ rows: [row(0)], totalCount: 1 }),
+    );
+    await readPage(params);
+    expect(getMock).toHaveBeenCalledTimes(7);
+
+    expect(
+      screen.queryByRole("button", { name: "Go to page 2" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+  });
+
   it("reaches an overflow page the terminal users response already buffered", async () => {
     // REGRESSION GUARD (C3): 35 rows arrive on a response that reports no
     // further search window. 25 become page one and 10 are buffered for page
