@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Chip,
-  Paper,
   Stack,
   Typography,
 } from "@mui/material";
@@ -13,7 +12,7 @@ import PropTypes from "prop-types";
 
 import Iconify from "src/components/iconify";
 
-import { readable } from "./harnessShared";
+import ScenarioCard from "./ScenarioCard";
 
 function RawDetails({ data }) {
   return (
@@ -71,8 +70,9 @@ export default function StageOutput({ output }) {
   return (
     <Accordion
       variant="outlined"
-      // Scenarios can be long; the others are short enough to read at a glance.
-      defaultExpanded={output.kind !== "scenarios"}
+      // Every stage output opens by default: the scenario list is a stack of individually
+      // collapsed cards now, so showing it no longer floods the pane the way a raw dump did.
+      defaultExpanded
       disableGutters
       // The theme leaves a collapsed accordion transparent and paints it only once
       // expanded, so the two states sit on different surfaces. Pin both to the darker
@@ -176,25 +176,30 @@ export default function StageOutput({ output }) {
           </Stack>
         )}
 
-        {output.kind === "scenarios" && (
-          <Stack spacing={1}>
-            {(Array.isArray(data) ? data : []).map((scenario) => (
-              <Paper
-                key={scenario.name}
-                variant="outlined"
-                sx={{ p: 1.25, bgcolor: "background.default" }}
-              >
-                <Typography variant="subtitle2">
-                  {readable(scenario.name)}
-                </Typography>
-                <Typography variant="body2">{scenario.instruction}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {scenario.use_case || "Generated test case"}
-                </Typography>
-              </Paper>
-            ))}
-          </Stack>
-        )}
+        {output.kind === "scenarios" &&
+          (() => {
+            const scenarios = Array.isArray(data) ? data : [];
+            // Open the scenario that most wants reading — the first one that failed — so a
+            // reviewer lands on the problem rather than the first passing case.
+            const firstFailed = scenarios.findIndex(
+              (scenario) => scenario.status === "failed",
+            );
+            return (
+              <Stack spacing={1.25}>
+                {scenarios.map((scenario, index) => (
+                  <ScenarioCard
+                    key={scenario.scenario_key || scenario.name || index}
+                    scenario={scenario}
+                    defaultExpanded={
+                      firstFailed >= 0
+                        ? index === firstFailed
+                        : index === 0 && scenarios.length === 1
+                    }
+                  />
+                ))}
+              </Stack>
+            );
+          })()}
 
         {!["contract", "environment", "scenarios", "simulation"].includes(
           output.kind,
