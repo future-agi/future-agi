@@ -2191,7 +2191,8 @@ def calculate_jaro_winkler_similarity(output, expected, case_insensitive=True, p
             transpositions += 1
         k += 1
 
-    jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3
+    transpositions //= 2
+    jaro = (matches / len1 + matches / len2 + (matches - transpositions) / matches) / 3
 
     # Winkler modification: boost for common prefix
     prefix = 0
