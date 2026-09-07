@@ -39,16 +39,6 @@ export default function StartEnvironment({ entry = false }) {
     }, 60);
   };
 
-  /* Back to the picker — clear the choice and scroll the picker into
-     view so the user immediately sees the options again instead of the
-     empty space where the panel used to be. */
-  const cancel = () => {
-    setChoice(null);
-    setTimeout(() => {
-      pickerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
-  };
-
   const bringYourAgent = OPTIONS.filter((o) => o.group === "bring");
 
   return (
@@ -132,7 +122,7 @@ export default function StartEnvironment({ entry = false }) {
 
       {choice && (
         <Box ref={panelRef} sx={{ mt: 2.5 }}>
-          <FlowPanel choice={choice} onCancel={cancel} />
+          <FlowPanel choice={choice} />
         </Box>
       )}
     </Box>
@@ -364,38 +354,16 @@ OptionCard.propTypes = {
 
 /* ── flow panel router ─────────────────────────────────────────────────── */
 
-function FlowPanel({ choice, onCancel }) {
+function FlowPanel({ choice }) {
   const opt = OPTIONS.find((o) => o.id === choice);
   const Body = PANELS[choice] || PanelNotImplemented;
-  /* Scratch is triggered from the "Start from scratch" header button,
-     not from an inline card, so the "Pick a different way" affordance
-     is meaningless there — nothing else to pick between. Other panels
-     (running agent, source repo, hosted, mcp, upload, local) keep it
-     because they *were* reached by clicking one card in the grid. */
-  const showCancel = choice !== "scratch";
   return (
-    <SectionCard
-      title={opt.title}
-      subtitle={opt.setupSubtitle || opt.blurb}
-      action={
-        showCancel ? (
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={onCancel}
-            startIcon={<Iconify icon="solar:alt-arrow-left-linear" width={12} />}
-            sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
-          >
-            Pick a different way
-          </Button>
-        ) : null
-      }
-    >
+    <SectionCard title={opt.title} subtitle={opt.setupSubtitle || opt.blurb}>
       <Body />
     </SectionCard>
   );
 }
-FlowPanel.propTypes = { choice: PropTypes.string, onCancel: PropTypes.func };
+FlowPanel.propTypes = { choice: PropTypes.string };
 
 /* ── build handler shared across panels ──────────────────────────────── */
 
