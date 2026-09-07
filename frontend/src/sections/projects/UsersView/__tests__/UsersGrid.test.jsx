@@ -667,15 +667,20 @@ describe("UsersGrid deterministic pagination", () => {
     renderGrid();
 
     const staleParams = makeGridParams();
-    const staleRead = gridState.props.serverSideDatasource.getRows(staleParams);
+    let staleRead;
+    act(() => {
+      staleRead = gridState.props.serverSideDatasource.getRows(staleParams);
+    });
     await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
 
     // A different page size changes the request identity even though every
     // client-side sort is intentionally cleared by the bounded contract.
     const currentParams = makeGridParams({ endRow: 50 });
     await readPage(currentParams);
-    resolveStale(usersResponse({ rows: [row(1)] }));
-    await act(async () => staleRead);
+    await act(async () => {
+      resolveStale(usersResponse({ rows: [row(1)] }));
+      await staleRead;
+    });
 
     expect(currentParams.success).toHaveBeenCalledTimes(1);
     expect(staleParams.fail).not.toHaveBeenCalled();
@@ -695,12 +700,17 @@ describe("UsersGrid deterministic pagination", () => {
     const params = makeGridParams();
     let destroyed = false;
     params.api.isDestroyed = () => destroyed;
-    const read = gridState.props.serverSideDatasource.getRows(params);
+    let read;
+    act(() => {
+      read = gridState.props.serverSideDatasource.getRows(params);
+    });
     await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
 
     destroyed = true;
-    resolveResponse(usersResponse({ rows: [row(1)] }));
-    await act(async () => read);
+    await act(async () => {
+      resolveResponse(usersResponse({ rows: [row(1)] }));
+      await read;
+    });
 
     expect(params.success).not.toHaveBeenCalled();
     expect(params.fail).not.toHaveBeenCalled();
