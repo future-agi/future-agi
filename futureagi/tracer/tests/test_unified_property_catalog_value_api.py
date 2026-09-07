@@ -18,6 +18,7 @@ from tracer.services.clickhouse.v2.property_catalog.value_cursor import (
 from tracer.services.clickhouse.v2.property_catalog.value_reader import (
     PropertyCatalogValue,
     PropertyCatalogValueNotReady,
+    PropertyCatalogValuePending,
     PropertyCatalogValueUnavailable,
 )
 from tracer.views.dashboard import (
@@ -148,6 +149,7 @@ def test_filter_values_uses_authorized_activated_native_catalog_page(settings):
         executor.return_value,
         database="property_catalog_dev_clean",
         deployment="dev",
+        managed=False,
     )
     assert reader_factory.call_args.kwargs["activation_selector"] is activation_selector
     legacy.assert_not_called()
@@ -381,6 +383,27 @@ def test_catalog_definition_native_adapter_mismatch_is_503_without_legacy(settin
 
     assert response.status_code == 503
     assert response.data["code"] == "service_unavailable"
+    legacy.assert_not_called()
+
+
+@pytest.mark.parametrize("reason", ["control_bootstrap_pending", "activation_scope_pending"])
+def test_managed_value_pending_never_falls_back_or_claims_complete(settings, reason):
+    _enable(settings)
+    reader = Mock()
+    reader.read_page.side_effect = PropertyCatalogValuePending(reason)
+    with (
+        patch("tracer.views.dashboard.resolve_property_catalog_project_scope", return_value=[PROJECT_ID]),
+        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
+        patch("tracer.views.dashboard.PropertyCatalogValueReader", return_value=reader),
+        patch("tracer.views.dashboard.AttributeReadSelector") as legacy,
+    ):
+        response = inspect.unwrap(DashboardViewSet.filter_values)(DashboardViewSet(), _request())
+    assert response.status_code == 200 and response["Retry-After"] == "5"
+    assert response.data["result"] == {
+        "values": [], "query_complete": False, "query_status": "pending",
+        "query_provenance": "property_catalog_bootstrap",
+        "has_more": False, "next_cursor": None,
+    }
     legacy.assert_not_called()
 
 

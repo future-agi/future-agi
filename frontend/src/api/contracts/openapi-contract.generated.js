@@ -79352,7 +79352,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         query_status: {
           title: "Query status",
           type: "string",
-          enum: ["complete", "sampled", "degraded"],
+          enum: ["complete", "sampled", "degraded", "pending"],
         },
         query_error_code: {
           title: "Query error code",
@@ -79430,7 +79430,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         query_provenance: {
           title: "Query provenance",
           type: "string",
-          enum: ["activated_property_catalog"],
+          enum: ["activated_property_catalog", "property_catalog_bootstrap"],
         },
       },
     },
@@ -79516,12 +79516,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         query_status: {
           title: "Query status",
           type: "string",
-          enum: ["complete"],
+          enum: ["complete", "pending"],
         },
         query_provenance: {
           title: "Query provenance",
           type: "string",
-          enum: ["activated_property_catalog"],
+          enum: ["activated_property_catalog", "property_catalog_bootstrap"],
         },
       },
     },

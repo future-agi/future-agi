@@ -17,6 +17,19 @@ type mirroringDeliverySink struct {
 	second DeliverySink
 }
 
+func (s *mirroringDeliverySink) BeginPropertyCatalogDelivery(ctx context.Context, e WireEnvelope) error {
+	if err := s.first.BeginPropertyCatalogDelivery(ctx, e); err != nil {
+		return err
+	}
+	return s.second.BeginPropertyCatalogDelivery(ctx, e)
+}
+func (s *mirroringDeliverySink) VerifyPropertyCatalogDelivery(ctx context.Context, e WireEnvelope) error {
+	if err := s.first.VerifyPropertyCatalogDelivery(ctx, e); err != nil {
+		return err
+	}
+	return s.second.VerifyPropertyCatalogDelivery(ctx, e)
+}
+
 func (s *mirroringDeliverySink) InsertPropertyCatalog(
 	ctx context.Context, table Table, rows []map[string]any,
 ) error {

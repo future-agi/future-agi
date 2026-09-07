@@ -105,6 +105,9 @@ class _Store:
     ) -> tuple[ActivationControlEvent, ...]:
         return tuple(self.events)
 
+    def confirm_control_event(self, event):
+        assert event in self.events
+
     def append_control_event(self, event, *, expected_head):
         actual_head = self.events[-1].head if self.events else None
         if actual_head != expected_head:
@@ -372,11 +375,22 @@ def test_production_selector_accepts_native_clickhouse_uuid_fields() -> None:
 
 class _CatalogClient:
     catalog_database = PROD_DATABASE
+    receipt_confirmation_available = True
 
     def __init__(self, qualified: tuple[QualifiedActivation, ...]) -> None:
         self.qualified = qualified
         self.events: list[dict[str, Any]] = []
         self.inserts: list[tuple[str, str]] = []
+        self.confirmations = []
+
+    def confirm_receipt(
+        self, table, rows, *, columns, timeout_ms, deduplication_token
+    ):
+        assert timeout_ms > 0 and len(rows) == 1
+        assert dict(rows[0]) in self.events
+        assert set(columns) == set(rows[0])
+        assert (table, deduplication_token) in self.inserts
+        self.confirmations.append((table, deduplication_token))
 
     def query(self, sql, _params, *, timeout_ms):
         assert timeout_ms > 0
@@ -498,7 +512,7 @@ def test_production_list_and_value_readers_pin_the_control_target(
             budget=value_reader_module._ReadBudget.start(reader._clock),
         )
 
-    assert result == activation
+    assert result == (activation, False)
     assert selector.calls == 1
     params = executor.calls[-1][1]
     assert params["catalog_exact_activation"] == 1

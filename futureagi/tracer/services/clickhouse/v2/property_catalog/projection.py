@@ -195,12 +195,24 @@ def resolve_binding_history(
     if len(binding_ids) != 1:
         raise ValueError("binding history contains multiple binding IDs")
 
-    max_version = max(event.source_version for event in eligible)
-    candidates = [event for event in eligible if event.source_version == max_version]
+    # Catalog revisions are qualified and activated as complete snapshots. A
+    # newer revision therefore supersedes an older revision before its
+    # source-local version is compared. This is also the ordering used by the
+    # production ClickHouse reader and permits a source-version domain change
+    # across revisions without allowing stale state within one revision.
+    max_version = max(
+        (event.catalog_revision, event.source_version) for event in eligible
+    )
+    candidates = [
+        event
+        for event in eligible
+        if (event.catalog_revision, event.source_version) == max_version
+    ]
     state_hashes = {event.state_sha256 for event in candidates}
     if len(state_hashes) != 1:
         raise DefinitionConflictError(
-            f"binding {eligible[0].binding_id} has conflicting source version {max_version}"
+            f"binding {eligible[0].binding_id} has conflicting source version "
+            f"{max_version[1]} at catalog revision {max_version[0]}"
         )
     current = max(candidates, key=_transport_order)
     return BindingHistoryResolution(
@@ -390,8 +402,8 @@ class PostgresSnapshotContext:
                 for project_id in self.project_ids
             )
         )
-        if not projects or len(projects) > 256 or len(set(projects)) != len(projects):
-            raise ValueError("project_ids must contain 1..256 unique canonical UUIDs")
+        if len(projects) > 256 or len(set(projects)) != len(projects):
+            raise ValueError("project_ids must contain 0..256 unique canonical UUIDs")
         object.__setattr__(self, "project_ids", projects)
         if type(self.catalog_epoch) is not int or not 1 <= self.catalog_epoch <= 65_535:
             raise ValueError("catalog_epoch must be a positive UInt16")

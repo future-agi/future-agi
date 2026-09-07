@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,32 @@ import (
 // physicalSnapshotEnvelopeFormat is a completed backfill ledger format, NOT
 // a Kafka wire format. Only checkpoint recovery may accept this receipt.
 const physicalSnapshotEnvelopeFormat = "futureagi.property-catalog.physical-snapshot.v1"
+
+// A valid open reservation is persisted before its planned streams are opened.
+// Consumers may observe that short startup/rebalance boundary. They must wait
+// for the exact inventory, never seed an empty/older checkpoint set instead.
+var ErrCheckpointInventoryPending = errors.New("propertycatalog: open reservation stream inventory is pending")
+
+func AwaitCheckpointInventory(ctx context.Context, loader CheckpointLoader) ([]StreamCheckpoint, error) {
+	if ctx == nil || loader == nil {
+		return nil, errors.New("propertycatalog: checkpoint wait requires context and loader")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		checkpoints, err := loader.LoadCheckpoints(ctx)
+		if !errors.Is(err, ErrCheckpointInventoryPending) {
+			return checkpoints, err
+		}
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("%w: %w", ErrCheckpointInventoryPending, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
 
 // checkpointInventoryQuery deliberately anchors every scope on the newest
 // serialized build reservation.  An open or draining newer revision must
@@ -476,6 +503,18 @@ type ClickHouseCheckpointLoader struct {
 	now               func() time.Time
 	maxStreams        int
 	inventoryMaxBytes int64
+	writeProof        *HTTPWriteProof
+	completionSink    *ClickHouseSink
+}
+
+// BindCompletionProof is mandatory in the consumer factory. The raw loader is
+// also used for read-only diagnostics; it cannot create a Kafka consumer alone.
+func (l *ClickHouseCheckpointLoader) BindCompletionProof(proof *HTTPWriteProof, sink *ClickHouseSink) error {
+	if proof == nil || sink == nil || sink.writer == nil || proof.policy.admission.Database != l.sink.database {
+		return errors.New("propertycatalog: invalid checkpoint completion binding")
+	}
+	l.writeProof, l.completionSink = proof, sink
+	return nil
 }
 
 func NewClickHouseCheckpointLoader(
@@ -512,7 +551,7 @@ func NewClickHouseCheckpointLoader(
 			MaximumCheckpointInventoryTimeout,
 		)
 	}
-	sink, err := NewClickHouseSink(cfg)
+	sink, err := newClickHouseTransport(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -631,6 +670,8 @@ type checkpointInventoryJSON struct {
 	ActivationStatus                string        `json:"activation_status"`
 	ActivationVersion               uint64        `json:"activation_version"`
 	ActivationStateVariants         uint64        `json:"activation_state_variants"`
+	// Derived only from the exact validated lease/stream, never decoded from SQL.
+	validatedStreamRole string
 }
 
 type checkpointStreamProofJSON struct {
@@ -715,6 +756,16 @@ func (l *ClickHouseCheckpointLoader) LoadCheckpoints(ctx context.Context) ([]Str
 			)
 		}
 		checkpoints = append(checkpoints, checkpoint)
+		// Regular envelope encoding is shared by native backend reconciliation
+		// and Kafka. Only the exact hot_values stream owns Go-local receipts;
+		// cold streams still crossed the all-member inventory/chain checks above.
+		// Validated completed physical snapshots retain their existing adoption
+		// contract, including a hot_values stream; they are not Kafka receipts.
+		if l.writeProof != nil && candidate.validatedStreamRole == "hot_values" && proof.TailEnvelopeFormat == EnvelopeFormat {
+			if err := l.completionSink.ProveCheckpoint(ctx, checkpoint, l.writeProof); err != nil {
+				return nil, err
+			}
+		}
 	}
 	// Only a wholly absent inventory needs the orphan-ledger probe. An exact
 	// newest reservation with ten proven-empty streams is a legitimate restart
@@ -826,6 +877,30 @@ func (l *ClickHouseCheckpointLoader) queryJSONEachRow(
 ) error {
 	if ctx == nil || client == nil || statement == "" || maxRows < 1 || maxBytes < 1 || label == "" || visit == nil {
 		return errors.New("propertycatalog: invalid bounded checkpoint query")
+	}
+	if l.writeProof != nil {
+		bounded := make(map[string]string, len(settings)+1)
+		for name, value := range settings {
+			bounded[name] = value
+		}
+		bounded["max_result_rows"] = strconv.Itoa(maxRows + 1)
+		rows, err := l.writeProof.readAgreedBounded(ctx, statement, params, bounded, maxBytes)
+		if err != nil {
+			return err
+		}
+		if len(rows) > maxRows {
+			return errors.New("propertycatalog: agreed checkpoint read exceeds row limit")
+		}
+		for i, row := range rows {
+			raw, err := json.Marshal(row)
+			if err != nil {
+				return err
+			}
+			if err := visit(i, raw); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
 	}
 	endpoint := *l.sink.baseURL
 	query := endpoint.Query()
@@ -980,6 +1055,29 @@ func (l *ClickHouseCheckpointLoader) AuthorizeDelivery(
 	}
 	if err := ctx.Err(); err != nil {
 		return DeliveryLeaseEvidence{}, err
+	}
+	if l.writeProof != nil {
+		params := map[string]string{
+			"param_organization_id": request.OrganizationID, "param_workspace_id": request.WorkspaceID,
+			"param_catalog_epoch":    strconv.FormatUint(uint64(request.CatalogEpoch), 10),
+			"param_catalog_revision": strconv.FormatUint(request.CatalogRevision, 10),
+			"param_build_token":      request.BuildToken, "param_source_adapter": string(request.SourceAdapter),
+			"param_producer_stream_id": request.ProducerStreamID,
+		}
+		rows := make([]deliveryLeaseJSON, 0, 4)
+		err := l.queryJSONEachRow(ctx, l.sink.client, deliveryLeaseQuery, params, map[string]string{"max_execution_time": "2"},
+			maxDeliveryLeaseRows, maxDeliveryLeaseBytes, "source-stream lease", func(_ int, raw []byte) error {
+				var row deliveryLeaseJSON
+				if err := decodeCheckpointJSON(raw, &row); err != nil {
+					return err
+				}
+				rows = append(rows, row)
+				return nil
+			})
+		if err != nil {
+			return DeliveryLeaseEvidence{}, err
+		}
+		return validateDeliveryLeaseRows(request, rows, l.now().UTC())
 	}
 	endpoint := *l.sink.baseURL
 	query := endpoint.Query()
@@ -1240,6 +1338,12 @@ func validateBuildPlan(
 	if err := requireJSONEOF(decoder); err != nil {
 		return DeliveryLeaseEvidence{}, err
 	}
+	// DisallowUnknownFields still accepts case-insensitive field aliases. Require
+	// the exact typed field inventory as well, including explicit project_ids.
+	typedCanonical, err := json.Marshal(plan)
+	if err != nil || !bytes.Equal(typedCanonical, []byte(value)) {
+		return DeliveryLeaseEvidence{}, errors.New("propertycatalog: build plan fields are not canonical JSON")
+	}
 	if plan.Format != "futureagi.property-catalog-build-plan" || plan.Version != 2 ||
 		plan.OrganizationID != request.OrganizationID || plan.WorkspaceID != request.WorkspaceID ||
 		plan.CatalogEpoch != request.CatalogEpoch || plan.CatalogRevision != request.CatalogRevision ||
@@ -1306,7 +1410,7 @@ func validateBuildPlan(
 	}
 	return DeliveryLeaseEvidence{
 		StreamRole:  declaredRole,
-		ProjectIDs:  append([]string(nil), plan.SourceScope.ProjectIDs...),
+		ProjectIDs:  slices.Clone(plan.SourceScope.ProjectIDs),
 		SpanSinceUS: plan.SourceScope.SpanSinceUS,
 		SpanUntilUS: plan.SourceScope.SpanUntilUS,
 	}, nil
@@ -1361,7 +1465,7 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 			}
 			continue
 		}
-		if err := validateCheckpointCandidate(row); err != nil {
+		if err := validateCheckpointCandidate(&row); err != nil {
 			return nil, fmt.Errorf("propertycatalog: checkpoint inventory stream row %d: %w", index, err)
 		}
 		if err := validateCheckpointEvidence(row); err != nil {
@@ -1373,6 +1477,7 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 		}
 		candidates[key] = row
 	}
+	var pending error
 	for scope, reservation := range reservations {
 		plan := plans[scope]
 		expected := make(map[string]struct{}, len(plan.Streams))
@@ -1382,10 +1487,17 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 		actual := make(map[string]struct{}, len(expected))
 		for key, candidate := range candidates {
 			if checkpointInventoryScopeKey(candidate) == scope {
+				if _, exists := expected[key]; !exists {
+					return nil, fmt.Errorf("propertycatalog: newest reservation scope %s has unplanned stream %s", scope, key)
+				}
 				actual[key] = struct{}{}
 			}
 		}
 		if len(actual) != len(expected) {
+			if reservation.ReservationStatus == "open" && reservation.ActivationEvidenceRows == 0 {
+				pending = fmt.Errorf("%w: scope %s lacks its exact build-plan stream inventory", ErrCheckpointInventoryPending, scope)
+				continue
+			}
 			return nil, fmt.Errorf("propertycatalog: newest reservation scope %s lacks its exact build-plan stream inventory", scope)
 		}
 		for key := range expected {
@@ -1393,6 +1505,9 @@ func validateCheckpointInventory(rows []checkpointInventoryJSON) ([]checkpointIn
 				return nil, fmt.Errorf("propertycatalog: newest reservation scope %s omits planned stream %s", scope, key)
 			}
 		}
+	}
+	if pending != nil {
+		return nil, pending
 	}
 	result := make([]checkpointInventoryJSON, 0, len(candidates))
 	for _, row := range candidates {
@@ -1471,7 +1586,7 @@ func checkpointInventoryBuildPlan(row checkpointInventoryJSON) (buildPlanDocumen
 	return plan, nil
 }
 
-func validateCheckpointCandidate(row checkpointInventoryJSON) error {
+func validateCheckpointCandidate(row *checkpointInventoryJSON) error {
 	if row.StreamStateVariants != 1 || row.StreamVersion == 0 || row.StreamProjectionVersion == 0 ||
 		row.StreamProjectionVersion != row.ReservationProjectionVersion ||
 		row.StreamEnvelopeVersion != EnvelopeVersion || !validSourceAdapter(row.StreamSourceAdapter) ||
@@ -1483,7 +1598,7 @@ func validateCheckpointCandidate(row checkpointInventoryJSON) error {
 	if err := validateCanonicalUUID("checkpoint inventory producer stream", row.StreamProducerStreamID); err != nil {
 		return err
 	}
-	if _, err := validateBuildPlan(
+	lease, err := validateBuildPlan(
 		row.StreamBuildPlanJSON,
 		row.StreamBuildLeaseSHA256,
 		DeliveryLeaseRequest{
@@ -1493,7 +1608,8 @@ func validateCheckpointCandidate(row checkpointInventoryJSON) error {
 			SourceAdapter: row.StreamSourceAdapter, ProducerStreamID: row.StreamProducerStreamID,
 			EnvelopeVersion: row.StreamEnvelopeVersion, Sequence: 1,
 		},
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 	if (row.StreamFirstSequence == 0) != (row.StreamLastSequence == 0) ||
@@ -1522,6 +1638,7 @@ func validateCheckpointCandidate(row checkpointInventoryJSON) error {
 	default:
 		return errors.New("source stream has an unsupported lifecycle status")
 	}
+	row.validatedStreamRole = lease.StreamRole
 	return nil
 }
 

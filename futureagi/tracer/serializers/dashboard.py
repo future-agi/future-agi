@@ -753,9 +753,9 @@ class DashboardMetricsCatalogResultSerializer(serializers.Serializer):
     activation_fingerprint = serializers.RegexField(r"^[0-9a-f]{64}$", required=False)
     query_complete = serializers.BooleanField(required=False)
     query_exact = serializers.BooleanField(required=False)
-    query_status = serializers.ChoiceField(choices=["complete"], required=False)
+    query_status = serializers.ChoiceField(choices=["complete", "pending"], required=False)
     query_provenance = serializers.ChoiceField(
-        choices=["activated_property_catalog"], required=False
+        choices=["activated_property_catalog", "property_catalog_bootstrap"], required=False
     )
 
 
@@ -1097,7 +1097,7 @@ class DashboardFilterValuesResultSerializer(serializers.Serializer):
     values = DashboardFilterValueOptionSerializer(many=True)
     query_complete = serializers.BooleanField(required=False)
     query_status = serializers.ChoiceField(
-        choices=["complete", "sampled", "degraded"],
+        choices=["complete", "sampled", "degraded", "pending"],
         required=False,
     )
     query_error_code = serializers.ChoiceField(
@@ -1139,7 +1139,8 @@ class DashboardFilterValuesResultSerializer(serializers.Serializer):
     catalog_revision = serializers.IntegerField(min_value=1, required=False)
     activation_fingerprint = serializers.RegexField(r"^[0-9a-f]{64}$", required=False)
     query_provenance = serializers.ChoiceField(
-        choices=["activated_property_catalog"], required=False
+        choices=["activated_property_catalog", "property_catalog_bootstrap"],
+        required=False,
     )
 
 

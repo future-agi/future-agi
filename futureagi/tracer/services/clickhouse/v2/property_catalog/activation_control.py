@@ -1,4 +1,4 @@
-"""Production-only activation control over immutable qualified catalog builds.
+"""Deployment-bound activation control over immutable qualified catalog builds.
 
 ``property_catalog_activations`` remains the immutable lifecycle/qualification
 ledger.  This module never writes it and never reuses its activation sequence.
@@ -15,12 +15,13 @@ older qualified build.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Protocol
-from uuid import UUID
+from time import monotonic
+from typing import Any, Protocol, TypeVar
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from tfc.settings.settings import validate_property_catalog_database
 
@@ -49,6 +50,7 @@ ACTIVATION_CONTROL_COLUMNS = (
 )
 
 _CONTROL_READ_SETTINGS = RUNTIME_LIMITS.clickhouse_read_settings
+_T = TypeVar("_T")
 
 
 class ActivationControlError(RuntimeError):
@@ -71,10 +73,19 @@ class ActivationControlUnavailable(ActivationControlError):
         super().__init__("The property catalog activation control is unavailable.")
 
 
+class ActivationControlBootstrapPending(ActivationControlUnavailable):
+    """Automatic onboarding has no completed reader selection yet.
+
+    A first, prepared INITIAL FOLLOW may precede lifecycle publication. This
+    first-page-only signal grants no data access and never ignores a DISABLE.
+    """
+
+
 class ActivationControlAction(StrEnum):
     ACTIVATE = "activate"
     DISABLE = "disable"
     ROLLBACK = "rollback"
+    FOLLOW = "follow"
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,11 +358,16 @@ class ActivationControlStore(Protocol):
         expected_head: ActivationControlHead | None,
     ) -> ActivationControlEvent: ...
 
+    def confirm_control_event(self, event: ActivationControlEvent) -> None: ...
+
 
 class ActivationControlCatalogClient(Protocol):
     """Minimal dedicated production write client used by the concrete store."""
 
     catalog_database: str
+
+    @property
+    def receipt_confirmation_available(self) -> bool: ...
 
     def query(
         self,
@@ -370,6 +386,36 @@ class ActivationControlCatalogClient(Protocol):
         timeout_ms: int,
         deduplication_token: str,
     ) -> None: ...
+
+    def confirm_receipt(
+        self,
+        table: str,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        columns: Sequence[str],
+        timeout_ms: int,
+        deduplication_token: str,
+    ) -> None: ...
+
+
+class ActivationControlAppendCoordinator(Protocol):
+    """Shared writer lock and crash-persistent exact append intent."""
+
+    def serialize(
+        self, scope: ActivationControlScope, operation: Callable[[], _T]
+    ) -> _T: ...
+
+    def pending(
+        self, scope: ActivationControlScope
+    ) -> ActivationControlEvent | None: ...
+
+    def verify_history(
+        self, scope: ActivationControlScope, events: Sequence[ActivationControlEvent]
+    ) -> None: ...
+
+    def prepare(self, event: ActivationControlEvent) -> None: ...
+
+    def complete(self, event: ActivationControlEvent) -> None: ...
 
 
 class ActivationControlQueryExecutor(Protocol):
@@ -390,6 +436,77 @@ class ActivationControlSelector(Protocol):
         scope: Mapping[str, Any],
         timeout_ms: int,
     ) -> ActivationControlTarget: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ReaderActivationSelection:
+    """Target and advancement intent from the same validated control read.
+
+    A pinned ACTIVATE or ROLLBACK must not promise automatic scope catch-up.
+    This is backend-only selection metadata, not part of a public cursor.
+    """
+
+    target: ActivationControlTarget
+    follows_latest: bool = False
+    follow_anchor: ActivationControlTarget | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target, ActivationControlTarget):
+            raise TypeError("reader selection requires an activation target")
+        if type(self.follows_latest) is not bool:
+            raise TypeError("reader selection advancement must be boolean")
+        if self.follow_anchor is not None:
+            anchor = self.follow_anchor
+            if not isinstance(anchor, ActivationControlTarget):
+                raise TypeError("reader selection anchor requires an activation target")
+            if (
+                not self.follows_latest
+                or anchor.scope != self.target.scope
+                or anchor.catalog_epoch != self.target.catalog_epoch
+                or anchor.projection_version != self.target.projection_version
+                or anchor.catalog_revision > self.target.catalog_revision
+                or (
+                    anchor.catalog_revision == self.target.catalog_revision
+                    and anchor != self.target
+                )
+            ):
+                raise ValueError("reader selection anchor must bound the same FOLLOW")
+
+    def allows_previous_revision(self, *, epoch: int, revision: int) -> bool:
+        """Bound a verified cursor to the currently authorized FOLLOW history.
+
+        This only admits an exact historical lookup. The reader must still
+        validate that build's qualification, lineage, scope and signed cursor
+        fingerprint. A legacy target-only selector cannot authorize history.
+        """
+        return (
+            self.follow_anchor is not None
+            and type(epoch) is int
+            and type(revision) is int
+            and epoch == self.target.catalog_epoch
+            and self.follow_anchor.catalog_revision
+            <= revision
+            < self.target.catalog_revision
+        )
+
+
+def select_reader_activation(
+    selector: ActivationControlSelector,
+    *,
+    scope: Mapping[str, Any],
+    timeout_ms: int,
+) -> ReaderActivationSelection:
+    select_for_read = getattr(selector, "select_for_read", None)
+    if callable(select_for_read):
+        selection = select_for_read(scope=scope, timeout_ms=timeout_ms)
+        if not isinstance(selection, ReaderActivationSelection):
+            raise ActivationControlUnavailable("control_selection_invalid")
+        return selection
+    # Older/custom selectors supply only a pinned target. Never infer FOLLOW
+    # from the mere presence of a selector or an environment setting.
+    return ReaderActivationSelection(
+        selector.select_target(scope=scope, timeout_ms=timeout_ms)
+    )
 
 
 class PropertyCatalogActivationControlPlane:
@@ -448,17 +565,63 @@ class PropertyCatalogActivationControlPlane:
         now: datetime,
     ) -> ActivationControlResult:
         _require_utc(now, field="now")
+        coordinator = (
+            self._store._append_coordinator
+            if isinstance(self._store, ClickHouseActivationControlStore)
+            else None
+        )
+        if coordinator is not None:
+            return coordinator.serialize(
+                request.target.scope,
+                lambda: self._apply_serialized(
+                    action=action, request=request, now=now, coordinator=coordinator
+                ),
+            )
+        return self._apply_serialized(action=action, request=request, now=now)
+
+    def _apply_serialized(
+        self,
+        *,
+        action: ActivationControlAction,
+        request: ActivationControlRequest,
+        now: datetime,
+        coordinator: ActivationControlAppendCoordinator | None = None,
+    ) -> ActivationControlResult:
         scope = request.target.scope
         events = canonical_control_events(
             self._store.list_control_events(scope),
             scope=scope,
         )
+        if coordinator is not None:
+            # An old idempotent request must not report a stale selection just
+            # because its own receipt is settled. Keep the durable head check,
+            # exact-event proofs, and result under the same reader-control lock.
+            coordinator.verify_history(scope, events)
         replay = _find_exact_replay(
             events,
             action=action,
             request=request,
         )
         if replay is not None:
+            pending = coordinator.pending(scope) if coordinator is not None else None
+            confirmations = [replay]
+            if pending is not None:
+                observed = next(
+                    (item for item in events if item.request_id == pending.request_id),
+                    None,
+                )
+                if observed is None:
+                    raise ActivationControlRejected("control_append_uncertain")
+                if observed != pending:
+                    raise ActivationControlRejected("control_request_id_conflict")
+                if pending not in confirmations:
+                    confirmations.append(pending)
+            if events[-1] not in confirmations:
+                confirmations.append(events[-1])
+            for event in confirmations:
+                self._store.confirm_control_event(event)
+            if pending is not None:
+                coordinator.complete(pending)
             return ActivationControlResult(
                 event=replay,
                 selected_target=selected_control_target(events),
@@ -468,6 +631,17 @@ class PropertyCatalogActivationControlPlane:
         actual_head = events[-1].head if events else None
         if actual_head != request.expected_head:
             raise ActivationControlRejected("control_stale")
+
+        if (
+            action is ActivationControlAction.DISABLE
+            and isinstance(self._store, ClickHouseActivationControlStore)
+            and is_initial_follow(events, database=self._store.database)
+            and selected_control_target(events) == request.target
+            and not self._store.has_lifecycle_history(scope)
+        ):
+            # A prepared INITIAL can be stopped before ACTIVE exists. This
+            # exception can only revoke selection, never activate or roll back.
+            return self._append(action=action, request=request, now=now, events=events)
 
         qualified = canonical_qualified_activations(
             self._store.list_qualified_activations(scope),
@@ -479,10 +653,29 @@ class PropertyCatalogActivationControlPlane:
             raise ActivationControlRejected("target_not_qualified")
 
         current_target = selected_control_target(events)
-        baseline = _head_qualified_activation(
-            actual_head,
-            by_target=by_target,
+        disabled_initial = (
+            action is ActivationControlAction.ACTIVATE
+            and actual_head is not None
+            and actual_head.action is ActivationControlAction.DISABLE
+            and isinstance(self._store, ClickHouseActivationControlStore)
+            and is_initial_follow(events[:-1], database=self._store.database)
+            and actual_head.target == events[-2].target
         )
+        # Explicit re-enable may select a qualified replacement of an INITIAL
+        # disabled before it ever became ACTIVE. The failed target is not proof.
+        baseline = (
+            None
+            if disabled_initial
+            else _head_qualified_activation(actual_head, by_target=by_target)
+        )
+        if (
+            actual_head is not None
+            and actual_head.action is ActivationControlAction.FOLLOW
+        ):
+            current_target = follow_qualified_target(
+                qualified, anchor=actual_head.target
+            )
+            baseline = by_target[current_target]
         if action is ActivationControlAction.ACTIVATE:
             if request.target != qualified[-1].target:
                 raise ActivationControlRejected("activate_target_not_latest")
@@ -504,6 +697,17 @@ class PropertyCatalogActivationControlPlane:
             if requested.lifecycle_position >= baseline.lifecycle_position:
                 raise ActivationControlRejected("rollback_target_not_prior")
 
+        return self._append(action=action, request=request, now=now, events=events)
+
+    def _append(
+        self,
+        *,
+        action: ActivationControlAction,
+        request: ActivationControlRequest,
+        now: datetime,
+        events: tuple[ActivationControlEvent, ...],
+    ) -> ActivationControlResult:
+        actual_head = events[-1].head if events else None
         previous_sha256 = (
             ZERO_SHA256 if actual_head is None else actual_head.control_sha256
         )
@@ -523,7 +727,9 @@ class PropertyCatalogActivationControlPlane:
         )
         if appended != event:
             raise ActivationControlRejected("control_append_not_exact")
-        post_events = canonical_control_events((*events, appended), scope=scope)
+        post_events = canonical_control_events(
+            (*events, appended), scope=request.target.scope
+        )
         return ActivationControlResult(
             event=appended,
             selected_target=selected_control_target(post_events),
@@ -536,9 +742,10 @@ class ClickHouseActivationControlStore:
 
     ClickHouse does not provide a row-level compare-and-swap primitive.  The
     exact predecessor check is therefore repeated before and after the insert.
-    If two writers race, both rows remain immutable and the duplicate sequence
-    creates a permanent, fail-closed fork; neither writer nor any production
-    reader can select a build from that ledger.
+    Managed writers supply the same append coordinator to serialize that check
+    and persist exact uncertain-write retries. Uncoordinated legacy writers
+    remain detectable as fail-closed forks; they must not run alongside managed
+    writers without adopting the shared coordinator.
     """
 
     def __init__(
@@ -547,11 +754,14 @@ class ClickHouseActivationControlStore:
         *,
         database: str,
         timeout_ms: int | None = None,
+        append_coordinator: ActivationControlAppendCoordinator | None = None,
+        deployment: str = "prod",
     ) -> None:
         self._database = validate_property_catalog_database(
             database,
-            deployment="prod",
+            deployment=deployment,
         )
+        self._deployment = deployment
         if getattr(client, "catalog_database", None) != self._database:
             raise ValueError("activation-control client/database binding mismatch")
         if timeout_ms is None:
@@ -562,13 +772,46 @@ class ClickHouseActivationControlStore:
             raise ValueError("activation-control timeout is outside its safe bound")
         self._client = client
         self._timeout_ms = timeout_ms
+        self._append_coordinator = append_coordinator
+
+    @property
+    def database(self) -> str:
+        return self._database
+
+    def qualified_for_follow(
+        self,
+        scope: ActivationControlScope,
+        *,
+        catalog_epoch: int,
+        anchor_revision: int = 0,
+    ) -> tuple[QualifiedActivation, ...]:
+        """Read the exact anchor and two newest builds, not lifetime history."""
+        rows = self._client.query(
+            qualified_activation_sql(
+                self._database,
+                deployment=self._deployment,
+                follow=True,
+            ),
+            {
+                **_scope_params(scope),
+                "catalog_follow_epoch": catalog_epoch,
+                "catalog_follow_anchor": anchor_revision,
+            },
+            timeout_ms=self._timeout_ms,
+        )
+        if len(rows) > 3:
+            raise ActivationControlRejected("qualified_follow_result_limit")
+        return canonical_qualified_activations(
+            tuple(_qualified_from_row(row) for row in rows),
+            scope=scope,
+        )
 
     def list_qualified_activations(
         self,
         scope: ActivationControlScope,
     ) -> tuple[QualifiedActivation, ...]:
         rows = self._client.query(
-            qualified_activation_sql(self._database),
+            qualified_activation_sql(self._database, deployment=self._deployment),
             _scope_params(scope),
             timeout_ms=self._timeout_ms,
         )
@@ -584,7 +827,7 @@ class ClickHouseActivationControlStore:
         scope: ActivationControlScope,
     ) -> tuple[ActivationControlEvent, ...]:
         rows = self._client.query(
-            activation_control_event_sql(self._database),
+            activation_control_event_sql(self._database, deployment=self._deployment),
             {
                 **_scope_params(scope),
                 "catalog_control_result_limit": ACTIVATION_CONTROL_MAX_EVENTS + 1,
@@ -598,34 +841,122 @@ class ClickHouseActivationControlStore:
             scope=scope,
         )
 
+    def has_lifecycle_history(self, scope: ActivationControlScope) -> bool:
+        return _lifecycle_history_exists(
+            self._client.query(
+                activation_history_sql(self._database, deployment=self._deployment),
+                _scope_params(scope),
+                timeout_ms=self._timeout_ms,
+            )
+        )
+
     def append_control_event(
         self,
         event: ActivationControlEvent,
         *,
         expected_head: ActivationControlHead | None,
     ) -> ActivationControlEvent:
+        if self._append_coordinator is not None:
+            return self._append_coordinator.serialize(
+                event.target.scope,
+                lambda: self._append_control_event(event, expected_head=expected_head),
+            )
+        return self._append_control_event(event, expected_head=expected_head)
+
+    def _require_receipt_confirmation(self) -> None:
+        if getattr(
+            self._client, "receipt_confirmation_available", False
+        ) is not True or not callable(getattr(self._client, "confirm_receipt", None)):
+            raise ActivationControlRejected("control_native_receipt_required")
+
+    def confirm_control_event(self, event: ActivationControlEvent) -> None:
+        """Prove this exact event, never publish or recover a different build.
+
+        Reader-control coordination precedes the native event-scope lock. In
+        particular, INITIAL FOLLOW confirmation must not drain a Prepared ACTIVE
+        from that build: the lifecycle publisher still owns that authorization.
+        """
+        if not isinstance(event, ActivationControlEvent):
+            raise TypeError("control confirmation requires an exact event")
+
+        def confirm() -> None:
+            self._require_receipt_confirmation()
+            self._client.confirm_receipt(
+                f"`{self._database}`.`{ACTIVATION_CONTROL_TABLE}`",
+                (event.as_row(),),
+                columns=ACTIVATION_CONTROL_COLUMNS,
+                timeout_ms=self._timeout_ms,
+                deduplication_token=_control_event_token(event),
+            )
+
+        if self._append_coordinator is not None:
+            self._append_coordinator.serialize(event.target.scope, confirm)
+        else:
+            confirm()
+
+    def _append_control_event(
+        self,
+        event: ActivationControlEvent,
+        *,
+        expected_head: ActivationControlHead | None,
+    ) -> ActivationControlEvent:
+        # Reject a missing proof transport before persisting an intent or
+        # dispatching an INSERT. Read-only status/selection needs no journal.
+        self._require_receipt_confirmation()
         before = self.list_control_events(event.target.scope)
+        coordinator = self._append_coordinator
+        if coordinator is not None:
+            coordinator.verify_history(event.target.scope, before)
+        pending = coordinator.pending(event.target.scope) if coordinator else None
+        confirmed: list[ActivationControlEvent] = []
+        if pending is not None:
+            observed = next(
+                (item for item in before if item.request_id == pending.request_id), None
+            )
+            if observed is not None:
+                if observed != pending:
+                    raise ActivationControlRejected("control_request_id_conflict")
+                self.confirm_control_event(pending)
+                confirmed.append(pending)
+                if before[-1] != pending:
+                    self.confirm_control_event(before[-1])
+                    confirmed.append(before[-1])
+                coordinator.complete(pending)
+            elif pending != event:
+                raise ActivationControlRejected("control_append_uncertain")
         exact_replay = tuple(
             item for item in before if item.request_id == event.request_id
         )
         if exact_replay:
             if len(exact_replay) == 1 and exact_replay[0] == event:
+                if event not in confirmed:
+                    self.confirm_control_event(event)
                 return event
             raise ActivationControlRejected("control_request_id_conflict")
         actual_head = before[-1].head if before else None
         if actual_head != expected_head:
             raise ActivationControlRejected("control_concurrent")
+        if event.control_sequence != (
+            1 if actual_head is None else actual_head.control_sequence + 1
+        ) or event.previous_control_sha256 != (
+            ZERO_SHA256 if actual_head is None else actual_head.control_sha256
+        ):
+            raise ActivationControlRejected("control_stale")
+        if len(before) >= ACTIVATION_CONTROL_MAX_EVENTS:
+            raise ActivationControlRejected("control_history_limit")
+
+        if before and before[-1] not in confirmed:
+            self.confirm_control_event(before[-1])
 
         row = event.as_row()
+        if coordinator is not None:
+            coordinator.prepare(event)
         self._client.insert(
             f"`{self._database}`.`{ACTIVATION_CONTROL_TABLE}`",
             (row,),
             columns=ACTIVATION_CONTROL_COLUMNS,
             timeout_ms=self._timeout_ms,
-            deduplication_token=(
-                "property-catalog-activation-control-v1:"
-                f"{event.request_id}:{event.control_sha256}"
-            ),
+            deduplication_token=_control_event_token(event),
         )
         after = self.list_control_events(event.target.scope)
         persisted = tuple(item for item in after if item.request_id == event.request_id)
@@ -633,7 +964,17 @@ class ClickHouseActivationControlStore:
             raise ActivationControlRejected("control_append_not_exact")
         if after[-1] != event:
             raise ActivationControlRejected("control_concurrent")
+        self.confirm_control_event(event)
+        if coordinator is not None:
+            coordinator.complete(event)
         return event
+
+
+def _control_event_token(event: ActivationControlEvent) -> str:
+    return (
+        "property-catalog-activation-control-v1:"
+        f"{event.request_id}:{event.control_sha256}"
+    )
 
 
 class ClickHouseActivationControlSelector:
@@ -644,13 +985,24 @@ class ClickHouseActivationControlSelector:
         executor: ActivationControlQueryExecutor,
         *,
         database: str,
+        deployment: str = "prod",
+        managed: bool = False,
     ) -> None:
         self._executor = executor
         self._database = validate_property_catalog_database(
             database,
-            deployment="prod",
+            deployment=deployment,
         )
-        self._sql = activation_control_event_sql(self._database)
+        self._deployment = deployment
+        self._sql = activation_control_event_sql(self._database, deployment=deployment)
+        self._follow_sql = qualified_activation_sql(
+            self._database,
+            deployment=deployment,
+            follow=True,
+        )
+        if managed and deployment != "dev":
+            raise ValueError("managed bootstrap selection is OSS-only")
+        self._managed = managed
 
     def select_target(
         self,
@@ -658,44 +1010,240 @@ class ClickHouseActivationControlSelector:
         scope: Mapping[str, Any],
         timeout_ms: int,
     ) -> ActivationControlTarget:
+        return self.select_for_read(scope=scope, timeout_ms=timeout_ms).target
+
+    def select_for_read(
+        self,
+        *,
+        scope: Mapping[str, Any],
+        timeout_ms: int,
+    ) -> ReaderActivationSelection:
+        deadline = monotonic() + timeout_ms / 1_000
         try:
             checked_scope = ActivationControlScope(
                 organization_id=str(scope["organization_id"]),
                 workspace_id=str(scope["workspace_id"]),
             )
-            result = self._executor.execute(
-                self._sql,
-                {
-                    **_scope_params(checked_scope),
-                    "catalog_control_result_limit": (ACTIVATION_CONTROL_MAX_EVENTS + 1),
-                },
-                timeout_ms=timeout_ms,
-                settings={
-                    **_CONTROL_READ_SETTINGS,
-                    "max_result_rows": ACTIVATION_CONTROL_MAX_EVENTS + 1,
-                    "max_execution_time": timeout_ms / 1_000,
-                },
-            )
-            rows = getattr(result, "data", None)
-            if not isinstance(rows, list) or not all(
-                isinstance(row, dict) for row in rows
-            ):
-                raise ActivationControlRejected("control_result_invalid")
-            if len(rows) > ACTIVATION_CONTROL_MAX_EVENTS:
-                raise ActivationControlRejected("control_history_limit")
-            events = canonical_control_events(
-                tuple(_event_from_row(row) for row in rows),
-                scope=checked_scope,
-            )
-            target = selected_control_target(events)
-            if target is None:
-                reason = "control_missing" if not events else "control_disabled"
-                raise ActivationControlUnavailable(reason)
-            return target
+            events = self._read_events(checked_scope, deadline=deadline)
+            if not events and self._managed:
+                empty = not self._has_history(checked_scope, deadline=deadline)
+                # FOLLOW may have been published after the first control read.
+                # Always validate the new head, including DISABLE and corruption.
+                events = self._read_events(checked_scope, deadline=deadline)
+                if not events and empty:
+                    raise ActivationControlBootstrapPending("control_bootstrap_pending")
+            return self._select_events(events, checked_scope, deadline=deadline)
         except ActivationControlUnavailable:
             raise
         except Exception as exc:
             raise ActivationControlUnavailable("control_invalid") from exc
+
+    def _read_events(
+        self, scope: ActivationControlScope, *, deadline: float
+    ) -> tuple[ActivationControlEvent, ...]:
+        timeout_ms = _control_remaining_ms(deadline)
+        result = self._executor.execute(
+            self._sql,
+            {
+                **_scope_params(scope),
+                "catalog_control_result_limit": ACTIVATION_CONTROL_MAX_EVENTS + 1,
+            },
+            timeout_ms=timeout_ms,
+            settings={
+                **_CONTROL_READ_SETTINGS,
+                "max_result_rows": ACTIVATION_CONTROL_MAX_EVENTS + 1,
+                "max_execution_time": timeout_ms / 1_000,
+            },
+        )
+        rows = getattr(result, "data", None)
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise ActivationControlRejected("control_result_invalid")
+        if len(rows) > ACTIVATION_CONTROL_MAX_EVENTS:
+            raise ActivationControlRejected("control_history_limit")
+        return canonical_control_events(
+            tuple(_event_from_row(row) for row in rows), scope=scope
+        )
+
+    def _select_events(
+        self,
+        events: tuple[ActivationControlEvent, ...],
+        scope: ActivationControlScope,
+        *,
+        deadline: float,
+        allow_pending: bool = True,
+    ) -> ReaderActivationSelection:
+        target = selected_control_target(events)
+        if target is None:
+            raise ActivationControlUnavailable(
+                "control_missing" if not events else "control_disabled"
+            )
+        if events[-1].action is not ActivationControlAction.FOLLOW:
+            return ReaderActivationSelection(target)
+        rows = self._follow_rows(target, deadline=deadline)
+        if (
+            not rows
+            and allow_pending
+            and is_initial_follow(events, database=self._database)
+        ):
+            # No qualified rows alone is NOT proof of onboarding: disabled,
+            # malformed, other-epoch and unqualified lifecycle rows all veto it.
+            empty = not self._has_history(scope, deadline=deadline)
+            latest = self._read_events(scope, deadline=deadline)
+            if latest != events:
+                if empty and is_initial_follow(latest, database=self._database):
+                    raise ActivationControlBootstrapPending("control_bootstrap_pending")
+                return self._select_events(
+                    latest, scope, deadline=deadline, allow_pending=False
+                )
+            if empty:
+                raise ActivationControlBootstrapPending("control_bootstrap_pending")
+            # ACTIVE may have appeared between the qualified read and history
+            # probe. Retry once; existing history can never take the pending exit.
+            rows = self._follow_rows(target, deadline=deadline)
+        qualified = canonical_qualified_activations(
+            tuple(_qualified_from_row(row) for row in rows), scope=scope
+        )
+        return ReaderActivationSelection(
+            follow_qualified_target(qualified, anchor=target),
+            follows_latest=True,
+            follow_anchor=target,
+        )
+
+    def _follow_rows(
+        self, target: ActivationControlTarget, *, deadline: float
+    ) -> list[dict[str, Any]]:
+        timeout_ms = _control_remaining_ms(deadline)
+        result = self._executor.execute(
+            self._follow_sql,
+            {
+                **_scope_params(target.scope),
+                "catalog_follow_epoch": target.catalog_epoch,
+                "catalog_follow_anchor": target.catalog_revision,
+            },
+            timeout_ms=timeout_ms,
+            settings={
+                **_CONTROL_READ_SETTINGS,
+                "max_result_rows": 4,
+                "max_execution_time": timeout_ms / 1_000,
+            },
+        )
+        rows = getattr(result, "data", None)
+        if (
+            not isinstance(rows, list)
+            or len(rows) > 3
+            or not all(isinstance(row, dict) for row in rows)
+        ):
+            raise ActivationControlRejected("qualified_follow_result_invalid")
+        return rows
+
+    def _has_history(self, scope: ActivationControlScope, *, deadline: float) -> bool:
+        timeout_ms = _control_remaining_ms(deadline)
+        result = self._executor.execute(
+            activation_history_sql(self._database, deployment=self._deployment),
+            _scope_params(scope),
+            timeout_ms=timeout_ms,
+            settings={
+                **_CONTROL_READ_SETTINGS,
+                "max_result_rows": 1,
+                "max_execution_time": timeout_ms / 1_000,
+            },
+        )
+        return _lifecycle_history_exists(getattr(result, "data", None))
+
+
+def _control_remaining_ms(deadline: float) -> int:
+    remaining = int((deadline - monotonic()) * 1_000)
+    if remaining < 1:
+        raise ActivationControlUnavailable("control_deadline")
+    return remaining
+
+
+def activation_history_sql(database: str, *, deployment: str = "prod") -> str:
+    checked = validate_property_catalog_database(database, deployment=deployment)
+    return (
+        f"SELECT 1 AS catalog_history_exists FROM `{checked}`.`property_catalog_activations` "
+        "PREWHERE organization_id = %(catalog_organization_id)s "
+        "AND workspace_id = %(catalog_workspace_id)s LIMIT 1"
+    )
+
+
+def _lifecycle_history_exists(rows: Any) -> bool:
+    if isinstance(rows, (list, tuple)) and not rows:
+        return False
+    if (
+        not isinstance(rows, (list, tuple))
+        or len(rows) != 1
+        or not isinstance(rows[0], dict)
+        or set(rows[0]) != {"catalog_history_exists"}
+        or type(rows[0]["catalog_history_exists"]) is not int
+        or rows[0]["catalog_history_exists"] != 1
+    ):
+        raise ActivationControlRejected("control_bootstrap_proof_invalid")
+    return True
+
+
+def initial_follow_request_id(
+    database: str,
+    target: ActivationControlTarget,
+    *,
+    control_sequence: int = 1,
+    previous_control_sha256: str = ZERO_SHA256,
+) -> str:
+    """Identify the first prepublication FOLLOW without another table or action.
+
+    This domain distinguishes a writer-authorized INITIAL from ordinary FOLLOW.
+    It is not qualification evidence: the reader still requires the exact ACTIVE
+    target before any data access. Only the dedicated, attested writer appends it.
+    """
+    return str(
+        uuid5(
+            NAMESPACE_URL,
+            framed_sha256(
+                "futureagi.property-catalog.initial-reader-follow.v1",
+                database,
+                target.organization_id,
+                target.workspace_id,
+                control_sequence,
+                previous_control_sha256,
+                target.catalog_epoch,
+                target.projection_version,
+                target.catalog_revision,
+                target.build_token,
+                target.activation_sha256,
+            ),
+        )
+    )
+
+
+def is_initial_follow(
+    events: Sequence[ActivationControlEvent], *, database: str
+) -> bool:
+    """An initial preparation chain, possibly replacing never-active attempts."""
+    return (
+        bool(events)
+        and events[0].control_sequence == 1
+        and events[0].previous_control_sha256 == ZERO_SHA256
+        and all(is_initial_follow_event(event, database=database) for event in events)
+        and all(
+            earlier.target.catalog_epoch == later.target.catalog_epoch
+            and earlier.target.projection_version == later.target.projection_version
+            and earlier.target.catalog_revision < later.target.catalog_revision
+            for earlier, later in zip(events, events[1:], strict=False)
+        )
+    )
+
+
+def is_initial_follow_event(event: ActivationControlEvent, *, database: str) -> bool:
+    return (
+        event.action is ActivationControlAction.FOLLOW
+        and event.request_id
+        == initial_follow_request_id(
+            database,
+            event.target,
+            control_sequence=event.control_sequence,
+            previous_control_sha256=event.previous_control_sha256,
+        )
+    )
 
 
 def activation_control_selector_for_deployment(
@@ -703,18 +1251,24 @@ def activation_control_selector_for_deployment(
     *,
     database: str,
     deployment: str | None,
+    managed: bool = False,
 ) -> ActivationControlSelector | None:
     """Wire control selection only for explicitly admitted production reads."""
 
-    if deployment in {None, "dev"}:
+    if deployment is None or (deployment == "dev" and not managed):
         return None
-    if deployment != "prod":
+    if deployment not in {"dev", "prod"}:
         raise ValueError("unsupported property catalog read deployment")
-    return ClickHouseActivationControlSelector(executor, database=database)
+    return ClickHouseActivationControlSelector(
+        executor,
+        database=database,
+        deployment=deployment,
+        managed=managed and deployment == "dev",
+    )
 
 
-def activation_control_event_sql(database: str) -> str:
-    checked = validate_property_catalog_database(database, deployment="prod")
+def activation_control_event_sql(database: str, *, deployment: str = "prod") -> str:
+    checked = validate_property_catalog_database(database, deployment=deployment)
     columns = ", ".join(ACTIVATION_CONTROL_COLUMNS)
     return f"""\
 SELECT {columns}
@@ -726,8 +1280,29 @@ LIMIT %(catalog_control_result_limit)s
 """
 
 
-def qualified_activation_sql(database: str) -> str:
-    checked = validate_property_catalog_database(database, deployment="prod")
+def qualified_activation_sql(
+    database: str,
+    *,
+    deployment: str = "prod",
+    follow: bool = False,
+) -> str:
+    checked = validate_property_catalog_database(database, deployment=deployment)
+    # A FOLLOW control event pins the installation and a qualified lower bound,
+    # not every incremental revision. Keep that anchor and the newest two builds
+    # (including ordering conflicts), independent of lifetime revision count.
+    epoch_predicate = "AND catalog_epoch = %(catalog_follow_epoch)s" if follow else ""
+    selection = (
+        """
+  AND (catalog_revision = %(catalog_follow_anchor)s OR catalog_revision IN
+       (SELECT catalog_revision FROM latest
+        WHERE status = 'active' AND qualified_at IS NOT NULL
+        ORDER BY activation_sequence DESC, catalog_revision DESC, build_token DESC
+        LIMIT 2))
+"""
+        if follow
+        else ""
+    )
+    result_limit = 4 if follow else ACTIVATION_CONTROL_MAX_QUALIFIED_BUILDS + 1
     return f"""\
 WITH versioned AS
 (
@@ -740,6 +1315,7 @@ WITH versioned AS
     FROM `{checked}`.`property_catalog_activations`
     PREWHERE organization_id = %(catalog_organization_id)s
       AND workspace_id = %(catalog_workspace_id)s
+      {epoch_predicate}
 ), latest AS
 (
     SELECT
@@ -755,12 +1331,15 @@ WITH versioned AS
         argMax(versioned_rows.activation_sha256, versioned_rows._version)
             AS activation_sha256,
         argMax(versioned_rows.status, versioned_rows._version) AS status,
+        argMax(tuple(versioned_rows.qualified_at), versioned_rows._version).1
+            AS qualified_at,
         uniqExactIf(
             tuple(
                 versioned_rows.projection_version,
                 versioned_rows.activation_sequence,
                 versioned_rows.activation_sha256,
-                versioned_rows.status
+                versioned_rows.status,
+                versioned_rows.qualified_at
             ),
             versioned_rows._version = versioned_rows.latest_version
         ) AS latest_variants
@@ -783,9 +1362,10 @@ SELECT
     activation_sha256,
     latest_variants
 FROM latest
-WHERE status = 'active'
+WHERE status = 'active' AND qualified_at IS NOT NULL
+{selection}
 ORDER BY activation_sequence ASC, catalog_revision ASC, build_token ASC
-LIMIT {ACTIVATION_CONTROL_MAX_QUALIFIED_BUILDS + 1}
+LIMIT {result_limit}
 """
 
 
@@ -898,6 +1478,27 @@ def selected_control_target(
     if not ordered or ordered[-1].action is ActivationControlAction.DISABLE:
         return None
     return ordered[-1].target
+
+
+def follow_qualified_target(
+    qualified: Sequence[QualifiedActivation],
+    *,
+    anchor: ActivationControlTarget,
+) -> ActivationControlTarget:
+    """Follow compatible qualified progress; never cross an installation."""
+    ordered = canonical_qualified_activations(qualified, scope=anchor.scope)
+    by_target = {item.target: item for item in ordered}
+    if anchor not in by_target:
+        raise ActivationControlRejected("control_head_target_not_qualified")
+    latest = ordered[-1]
+    if (latest.target.catalog_epoch, latest.target.projection_version) != (
+        anchor.catalog_epoch,
+        anchor.projection_version,
+    ):
+        raise ActivationControlRejected("control_installation_identity_conflict")
+    if latest.lifecycle_position < by_target[anchor].lifecycle_position:
+        raise ActivationControlRejected("activate_target_not_newer")
+    return latest.target
 
 
 def _find_exact_replay(

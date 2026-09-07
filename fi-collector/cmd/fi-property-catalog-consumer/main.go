@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -47,9 +48,13 @@ const (
 	envCheckpointMaxStreams = "FI_PROPERTY_CATALOG_CHECKPOINT_MAX_STREAMS"
 	envCheckpointMaxBytes   = "FI_PROPERTY_CATALOG_CHECKPOINT_MAX_INVENTORY_BYTES"
 	envCheckpointTimeout    = "FI_PROPERTY_CATALOG_CHECKPOINT_INVENTORY_TIMEOUT"
+	// Existing sequencer/lifecycle storage hook, not a new write-policy knob.
+	envRevisionFence = "FI_PROPERTY_CATALOG_REVISION_FENCE_FILE"
 
 	consumerModeKafka      = "kafka"
 	defaultDeliveryTimeout = propertycatalog.DefaultDeliveryTransportTimeout
+	admissionRetryInitial  = 250 * time.Millisecond
+	admissionRetryMaximum  = 5 * time.Second
 )
 
 type lookupEnvFunc func(string) (string, bool)
@@ -97,6 +102,7 @@ type dependencies struct {
 	newSink     sinkFactory
 	newLoader   loaderFactory
 	newConsumer consumerFactory
+	close       func()
 }
 
 func main() {
@@ -110,22 +116,56 @@ func main() {
 }
 
 func defaultDependencies() dependencies {
+	var sink *propertycatalog.ClickHouseSink
+	var proof *propertycatalog.HTTPWriteProof
+	var journal *propertycatalog.WriteAttemptJournal
+	var writeConfig propertycatalog.ClickHouseSinkConfig
 	return dependencies{
+		close: func() {
+			if journal != nil {
+				journal.Close()
+			}
+		},
 		newSink: func(cfg propertycatalog.ClickHouseSinkConfig) (propertycatalog.DeliverySink, error) {
-			return propertycatalog.NewClickHouseSink(cfg)
+			writeConfig = cfg
+			// The loader's separate proof credentials arrive next. Keep the
+			// pointer stable while completing construction before any Kafka I/O.
+			sink = &propertycatalog.ClickHouseSink{}
+			return sink, nil
 		},
 		newLoader: func(
 			cfg propertycatalog.ClickHouseSinkConfig,
 			limits propertycatalog.CheckpointLoaderLimits,
 		) (checkpointLeaseReader, error) {
-			return propertycatalog.NewClickHouseCheckpointLoader(cfg, limits)
+			configured, configuredProof, ownedJournal, err := propertycatalog.ConfigureDurableClickHouse(writeConfig, cfg)
+			if err != nil {
+				return nil, err
+			}
+			*sink, proof, journal = *configured, configuredProof, ownedJournal
+			loader, err := propertycatalog.NewClickHouseCheckpointLoader(cfg, limits)
+			if err != nil {
+				journal.Close()
+				return nil, err
+			}
+			if err := loader.BindCompletionProof(proof, sink); err != nil {
+				journal.Close()
+				return nil, err
+			}
+			return loader, nil
 		},
 		newConsumer: func(
 			cfg propertycatalog.FranzConsumerConfig,
 			handler propertycatalog.Handler,
 			validator *propertycatalog.SequenceValidator,
 		) (runningConsumer, error) {
-			return propertycatalog.NewFranzConsumer(cfg, handler, validator)
+			consumer, err := propertycatalog.NewFranzConsumer(cfg, handler, validator)
+			if err != nil {
+				if journal != nil {
+					journal.Close()
+				}
+				return nil, err
+			}
+			return consumer, nil
 		},
 	}
 }
@@ -141,6 +181,11 @@ func run(ctx context.Context, args []string, lookup lookupEnvFunc, deps dependen
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// The installation journal is opened before inventory validation. Release
+	// it on every startup failure as well as after the Kafka client is closed.
+	if deps.close != nil {
+		defer deps.close()
+	}
 
 	// Constructing either HTTP adapter is local-only. In ledger mode, validate
 	// both identities and the Kafka settings before the first checkpoint read.
@@ -148,11 +193,11 @@ func run(ctx context.Context, args []string, lookup lookupEnvFunc, deps dependen
 	if err != nil {
 		return fmt.Errorf("configure property catalog ClickHouse sink: %w", err)
 	}
-	loader, err := deps.newLoader(cfg.ledger, cfg.checkpointLimits)
+	loader, err := loadWithAdmissionWait(ctx, cfg.ledger, cfg.checkpointLimits, deps.newLoader)
 	if err != nil {
 		return fmt.Errorf("configure property catalog delivery ledger reader: %w", err)
 	}
-	seeds, err := loader.LoadCheckpoints(ctx)
+	seeds, err := propertycatalog.AwaitCheckpointInventory(ctx, loader)
 	if err != nil {
 		return fmt.Errorf("load property catalog sequence checkpoints: %w", err)
 	}
@@ -177,6 +222,44 @@ func run(ctx context.Context, args []string, lookup lookupEnvFunc, deps dependen
 	}
 	defer consumer.Close()
 	return consumer.Run(ctx)
+}
+
+// The lifecycle supervisor starts concurrently. Missing descriptors are normal
+// startup state, not a reason to crash or poll in a tight loop. Every retry is
+// local and precedes journal/HTTP/Kafka construction; ConfigureDurableClickHouse
+// only marks ENOENT of those two fixed files as pending. Never retry a genuine
+// configuration, corruption, journal, database or uncertain INSERT failure.
+func loadWithAdmissionWait(ctx context.Context, cfg propertycatalog.ClickHouseSinkConfig,
+	limits propertycatalog.CheckpointLoaderLimits, factory loaderFactory) (checkpointLeaseReader, error) {
+	if ctx == nil || factory == nil {
+		return nil, errors.New("property catalog admission wait requires context and factory")
+	}
+	delay := admissionRetryInitial
+	var pending error
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.Join(err, pending)
+		}
+		loader, err := factory(cfg, limits)
+		if err == nil {
+			return loader, ctx.Err()
+		}
+		if !errors.Is(err, propertycatalog.ErrWriteAdmissionPending) {
+			return nil, err
+		}
+		if pending == nil {
+			log.Printf("fi-property-catalog-consumer: waiting for lifecycle installation/admission publication; no Kafka or ClickHouse I/O")
+		}
+		pending = err
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, errors.Join(ctx.Err(), pending)
+		case <-timer.C:
+		}
+		delay = min(delay*2, admissionRetryMaximum)
+	}
 }
 
 func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
@@ -309,6 +392,12 @@ func loadConfig(args []string, lookup lookupEnvFunc) (commandConfig, error) {
 		seed: seedSequenceOne, delivery: deliveryTimeout,
 		checkpointLimits: checkpointLimits,
 	}
+	fence, err := requireEnv(lookup, envRevisionFence, false)
+	if err != nil || !filepath.IsAbs(fence) {
+		return commandConfig{}, errors.New("property catalog consumer requires existing absolute revision-fence storage path")
+	}
+	result.write.InstallationDirectory = filepath.Dir(fence)
+	result.write.OrderedTopic = topic
 	if *ledger {
 		result.seed = seedDeliveryLedger
 	}
@@ -343,7 +432,7 @@ func clickHouseConfig(
 	}
 	// Constructor validation is local-only and binds the isolated database
 	// prefix to the exact environment before a ledger read or Kafka client.
-	if _, err := propertycatalog.NewClickHouseSink(cfg); err != nil {
+	if err := propertycatalog.ValidateClickHouseDestination(cfg); err != nil {
 		return propertycatalog.ClickHouseSinkConfig{}, fmt.Errorf("%s: %w", databaseName, err)
 	}
 	return cfg, nil

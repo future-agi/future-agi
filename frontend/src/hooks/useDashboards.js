@@ -77,6 +77,30 @@ const DASHBOARD_KEYS = {
 };
 
 const PROPERTY_CATALOG_CURSOR_STOPPED_KEY = "__propertyCatalogCursorStopped";
+const PROPERTY_CATALOG_BOOTSTRAP_POLL_MS = 5000;
+
+// A new managed workspace has no selected catalog yet. This is not an exact
+// empty catalog or a cursor page: keep it visibly pending and retry first page.
+export const isPropertyCatalogBootstrapPending = (page) =>
+  page?.query_status === "pending" &&
+  page.query_provenance === "property_catalog_bootstrap" &&
+  page.query_complete === false &&
+  page.query_exact === false &&
+  Array.isArray(page.metrics) &&
+  page.metrics.length === 0 &&
+  page.total === null &&
+  page.total_is_exact === false &&
+  page.category_counts_exact === false &&
+  Number.isSafeInteger(page.page_size) &&
+  page.page_size > 0 &&
+  page.has_more === false &&
+  page.next_cursor === null &&
+  ![
+    "catalog_epoch",
+    "catalog_revision",
+    "activation_fingerprint",
+    "category_counts",
+  ].some((key) => Object.prototype.hasOwnProperty.call(page, key));
 const PROPERTY_CATALOG_COUNT_KEYS = [
   "all",
   "system_metric",
@@ -230,6 +254,37 @@ const stopFilterValueCursor = (page, reason) => ({
 const isFilterValueCursorStopped = (page) =>
   typeof page?.[FILTER_VALUE_CURSOR_STOPPED_KEY] === "string";
 
+const FILTER_VALUE_BOOTSTRAP_FIELDS = new Set([
+  "values",
+  "query_complete",
+  "query_status",
+  "query_provenance",
+  "has_more",
+  "next_cursor",
+]);
+
+export const isFilterValueBootstrapPending = (page) =>
+  page?.query_status === "pending" &&
+  page.query_provenance === "property_catalog_bootstrap" &&
+  page.query_complete === false &&
+  Array.isArray(page.values) &&
+  page.values.length === 0 &&
+  page.has_more === false &&
+  page.next_cursor === null &&
+  Object.keys(page).every(
+    (key) =>
+      FILTER_VALUE_BOOTSTRAP_FIELDS.has(key) ||
+      (key === FILTER_VALUE_FOLLOWED_CURSORS_KEY &&
+        Array.isArray(page[key]) &&
+        page[key].length === 0),
+  );
+
+const isFilterValueBootstrapData = (data) =>
+  data?.pages?.length === 1 &&
+  data?.pageParams?.length === 1 &&
+  data.pageParams[0] === null &&
+  isFilterValueBootstrapPending(data.pages[0]);
+
 const validateFilterValueCursor = (page, consumedCursors = new Set()) => {
   const normalized = normalizeFilterValuePage(page);
   const hasMoreField = hasOwn(normalized, "has_more");
@@ -317,6 +372,9 @@ const isFilterValueCursorChainStopped = (data) => {
 };
 
 const compactFilterValueRetryPage = (previousData, freshPage) => {
+  // A first-page pending response has no activated vocabulary. Do not merge
+  // previously cached values into its explicitly empty, still-loading shape.
+  if (isFilterValueBootstrapPending(freshPage)) return freshPage;
   const seen = new Set();
   const values = [
     ...(previousData?.pages || []).flatMap((page) => page?.values || []),
@@ -568,6 +626,12 @@ export function usePropertyCatalog({
     staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
     gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
+    refetchInterval: (current) =>
+      current.state.status !== "error" &&
+      current.state.data?.pages?.length === 1 &&
+      isPropertyCatalogBootstrapPending(current.state.data.pages[0])
+        ? PROPERTY_CATALOG_BOOTSTRAP_POLL_MS
+        : false,
     meta: { errorHandled: true },
   });
 
@@ -590,8 +654,13 @@ export function usePropertyCatalog({
   ]);
 
   const rawPages = query.data?.pages || [];
+  const bootstrapPending =
+    !query.isError &&
+    rawPages.length === 1 &&
+    isPropertyCatalogBootstrapPending(rawPages[0]);
   let chainFailureReason = null;
   const checkedPages = rawPages.map((page, index) => {
+    if (bootstrapPending) return page;
     const consumed = new Set(
       rawPages
         .slice(0, index)
@@ -666,6 +735,9 @@ export function usePropertyCatalog({
 
   return {
     ...query,
+    isLoading: query.isLoading || (enabled && bootstrapPending),
+    isPending: query.isPending || (enabled && bootstrapPending),
+    isCatalogBootstrapPending: bootstrapPending,
     continuationKey:
       !cursorChainStopped && query.hasNextPage
         ? checkedPages.at(-1)?.next_cursor || null
@@ -686,7 +758,11 @@ export function usePropertyCatalog({
     isRemoteCatalogSearchPending,
     isRemoteCatalogNextPagePending,
     queryReadState:
-      query.isError || cursorChainStopped ? "degraded" : "complete",
+      query.isError || cursorChainStopped
+        ? "degraded"
+        : bootstrapPending
+          ? "pending"
+          : "complete",
   };
 }
 
@@ -929,8 +1005,23 @@ export function useDashboardFilterValues({
       .then((res) => res.data?.result || {});
   const readFilterValuePage = async ({ signal, pageParam, publishedData }) => {
     const actionStartedAt = Date.now();
-    const requestPage = (cursor, requestSignal = signal) =>
-      requestFilterValuePage(cursor, requestSignal);
+    const requestPage = async (cursor, requestSignal = signal) => {
+      const page = await requestFilterValuePage(cursor, requestSignal);
+      if (
+        page?.query_status === "pending" ||
+        page?.query_provenance === "property_catalog_bootstrap"
+      ) {
+        // Check the raw payload before exhaustion normalization or sparse-page
+        // following can disguise pending as a valid terminal continuation.
+        if (cursor != null || !isFilterValueBootstrapPending(page)) {
+          return stopFilterValueCursor(
+            { ...page, values: [] },
+            "malformed_bootstrap_page",
+          );
+        }
+      }
+      return page;
+    };
     const cachedPages = publishedData?.pages || [];
     const isFreshChainRead = pageParam == null;
     const knownValueIdentities = isFreshChainRead
@@ -1035,6 +1126,11 @@ export function useDashboardFilterValues({
     staleTime: FILTER_VALUE_STALE_TIME_MS,
     gcTime: FILTER_VALUE_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
+    refetchInterval: (current) =>
+      current.state.status !== "error" &&
+      isFilterValueBootstrapData(current.state.data)
+        ? PROPERTY_CATALOG_BOOTSTRAP_POLL_MS
+        : false,
     refetchOnMount: false,
     refetchOnReconnect: false,
     // This surface renders a deliberately generic retry state. Prevent the
@@ -1138,6 +1234,8 @@ export function useDashboardFilterValues({
 
   const pages = query.data?.pages || [];
   const cursorChainStopped = isFilterValueCursorChainStopped(query.data);
+  const bootstrapPending =
+    !query.isError && isFilterValueBootstrapData(query.data);
   const seenValues = new Set();
   const values = pages.flatMap((page) =>
     (page?.values || []).filter((option) => {
@@ -1150,16 +1248,25 @@ export function useDashboardFilterValues({
   const pageReadStates = pages.map((page) => getFilterValueReadState(page));
   const queryReadState = query.isError
     ? "error"
-    : cursorChainStopped || pageReadStates.includes("degraded")
+    : cursorChainStopped
       ? "degraded"
-      : pageReadStates.includes("sampled")
-        ? "sampled"
-        : "complete";
+      : bootstrapPending
+        ? "pending"
+        : pageReadStates.includes("degraded")
+          ? "degraded"
+          : pageReadStates.includes("sampled")
+            ? "sampled"
+            : "complete";
   const lastPage = pages.at(-1);
   const browseStatus = lastPage?.browse_status;
 
   return {
     ...query,
+    isLoading:
+      query.isLoading || (enabled && Boolean(metricName) && bootstrapPending),
+    isPending:
+      query.isPending || (enabled && Boolean(metricName) && bootstrapPending),
+    isCatalogBootstrapPending: bootstrapPending,
     data: values,
     continuationKey:
       !cursorChainStopped && query.hasNextPage

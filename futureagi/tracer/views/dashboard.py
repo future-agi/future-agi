@@ -24,8 +24,9 @@ from rest_framework.viewsets import ModelViewSet
 
 from tfc.routers import uses_db
 from tfc.settings.settings import (
+    property_catalog_managed_oss_reads,
     property_catalog_read_workspace_allowlist,
-    property_catalog_reads_all_production_workspaces,
+    property_catalog_reads_all_workspaces,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
@@ -145,6 +146,7 @@ from tracer.services.clickhouse.v2.property_catalog.cursor import (
     PropertyCatalogCursorError,
 )
 from tracer.services.clickhouse.v2.property_catalog.reader import (
+    PropertyCatalogBootstrapPending,
     PropertyCatalogReader,
     PropertyCatalogUnavailable,
     is_property_catalog_not_ready_error,
@@ -158,6 +160,7 @@ from tracer.services.clickhouse.v2.property_catalog.value_cursor import (
 from tracer.services.clickhouse.v2.property_catalog.value_reader import (
     PROPERTY_CATALOG_VALUE_ADAPTER,
     PropertyCatalogValueNotReady,
+    PropertyCatalogValuePending,
     PropertyCatalogValueReader,
     PropertyCatalogValueUnavailable,
 )
@@ -192,10 +195,10 @@ logger = structlog.get_logger(__name__)
 
 
 def _property_catalog_read_enabled_for_workspace(workspace) -> bool:
-    if getattr(settings, "PROPERTY_CATALOG_READ_MODE", "off") != "read":
+    if getattr(settings, "PROPERTY_CATALOG_READ_MODE", "off") not in {"read", "managed"}:
         return False
     workspace_id = getattr(workspace, "id", None)
-    if workspace_id is not None and property_catalog_reads_all_production_workspaces(
+    if workspace_id is not None and property_catalog_reads_all_workspaces(
         settings
     ):
         return True
@@ -292,6 +295,7 @@ def _read_property_catalog_value_page(request, query_params, *, deadline):
             catalog_executor,
             database=settings.PROPERTY_CATALOG_DATABASE,
             deployment=getattr(settings, "PROPERTY_CATALOG_READ_DEPLOYMENT", None),
+            managed=property_catalog_managed_oss_reads(settings),
         ),
     )
     read_args = {
@@ -2726,6 +2730,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             "PROPERTY_CATALOG_READ_DEPLOYMENT",
                             None,
                         ),
+                        managed=property_catalog_managed_oss_reads(settings),
                     ),
                 ).read_page(
                     scope=cursor_scope,
@@ -2740,6 +2745,23 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     str(exc),
                     code=exc.code,
                 )
+            except PropertyCatalogBootstrapPending:
+                # This first page awaits managed coverage for its authorized
+                # scope. Never fabricate an empty activation or a cursor while
+                # initial setup or a new project's catalog catches up.
+                response = self._gm.success_response(
+                    {
+                        "metrics": [], "total": None, "total_is_exact": False,
+                        "category_counts_exact": False,
+                        "page_size": query_params["page_size"],
+                        "has_more": False, "next_cursor": None,
+                        "query_complete": False, "query_exact": False,
+                        "query_status": "pending",
+                        "query_provenance": "property_catalog_bootstrap",
+                    }
+                )
+                response["Retry-After"] = "5"
+                return response
             except (PropertyCatalogUnavailable, ReadDeadlineExceeded) as exc:
                 logger.warning(
                     "property_catalog_read_unavailable",
@@ -3225,6 +3247,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     query_params,
                     deadline=filter_value_deadline,
                 )
+            except PropertyCatalogValuePending:
+                response = self._gm.success_response(
+                    {
+                        "values": [],
+                        "query_complete": False,
+                        "query_status": "pending",
+                        "query_provenance": "property_catalog_bootstrap",
+                        "has_more": False,
+                        "next_cursor": None,
+                    }
+                )
+                response["Retry-After"] = "5"
+                return response
             except PropertyCatalogValueNotReady:
                 # The active definition explicitly names another native value
                 # adapter (or this legacy request has no stable property/page
@@ -6126,6 +6161,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         deadline,
     ):
         """Return an exact finite value page for a dataset system property."""
+        from tracer.services.clickhouse.dataset_filter_values import (
+            dataset_cell_visibility_sql,
+        )
+
         try:
             if not is_clickhouse_enabled():
                 return self._gm.custom_error_response(
@@ -6167,13 +6206,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     sql = (
                         f"SELECT DISTINCT {col_expr} AS val "
                         f"FROM model_hub_cell AS c FINAL "
-                        f"WHERE c._peerdb_is_deleted = 0 "
-                        f"AND c.dataset_id IN ("
-                        f"SELECT id FROM model_hub_dataset FINAL "
-                        f"WHERE _peerdb_is_deleted = 0 "
-                        f"AND deleted = 0 "
-                        f"AND workspace_id = toUUID(%(workspace_id)s)"
-                        f") "
+                        f"WHERE {dataset_cell_visibility_sql()} "
                         f"AND {col_expr} != '' "
                         f"AND (%(search)s = '' OR "
                         f"positionCaseInsensitiveUTF8(toString({col_expr}), "
@@ -6261,6 +6294,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         import uuid as _uuid
 
         from model_hub.models.develop_dataset import Column
+        from tracer.services.clickhouse.dataset_filter_values import (
+            dataset_cell_visibility_sql,
+            live_dataset_column_queryset,
+        )
 
         # --- Input validation --------------------------------------------
         if not dataset_id or not column_id:
@@ -6277,12 +6314,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             column = _run_filter_value_pg_read(
                 deadline,
-                lambda: Column.objects.select_related("dataset").get(
-                    id=column_id,
+                lambda: live_dataset_column_queryset(
+                    workspace=request.workspace,
                     dataset_id=dataset_id,
-                    dataset__workspace=request.workspace,
-                    deleted=False,
-                ),
+                    column_id=column_id,
+                ).get(),
             )
         except Column.DoesNotExist:
             return self._gm.success_response({"values": []})
@@ -6310,14 +6346,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         result_limit = max_values + 1
         try:
             sql = (
-                "SELECT DISTINCT value AS val "
-                "FROM model_hub_cell FINAL "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND dataset_id = toUUID(%(dataset_id)s) "
-                "AND column_id = toUUID(%(column_id)s) "
-                "AND value != '' "
+                "SELECT DISTINCT c.value AS val "
+                "FROM model_hub_cell AS c FINAL "
+                f"WHERE {dataset_cell_visibility_sql(dataset_scoped=True)} "
+                "AND c.dataset_id = toUUID(%(dataset_id)s) "
+                "AND c.column_id = toUUID(%(column_id)s) "
+                "AND c.value != '' "
                 "AND (%(search)s = '' OR "
-                "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
+                "positionCaseInsensitiveUTF8(c.value, %(search)s) > 0) "
                 "ORDER BY val "
                 "LIMIT %(result_limit)s"
             )
@@ -6326,6 +6362,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 {
                     "dataset_id": str(dataset_id),
                     "column_id": str(column_id),
+                    "workspace_id": str(request.workspace.id),
                     "search": search,
                     "result_limit": result_limit,
                 },

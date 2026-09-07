@@ -87,6 +87,8 @@ fi-collector/
 **/.coverage
 **/.coverage.*
 **/*.cover
+# Private replicated-smoke identities, journals, and retained run evidence.
+futureagi/scripts/property_catalog_oss/tests/replicated_smoke/runs/
 
 # ---------------------------------------------------------------------------
 # Editors and OS

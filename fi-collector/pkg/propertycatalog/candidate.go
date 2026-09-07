@@ -18,8 +18,13 @@ import (
 )
 
 const (
-	CandidateFormat  = "futureagi.property-catalog-candidate"
+	CandidateFormat = "futureagi.property-catalog-candidate"
+	// CandidateVersion retains the epoch/projection-bound v1 wire contract.
 	CandidateVersion = uint16(1)
+	// CandidateManagedVersion fixes the current canonical value projection
+	// format without allocating catalog identity. Both coordinates remain zero
+	// until the singleton binds a defensive value copy to its validated fence.
+	CandidateManagedVersion = uint16(2)
 )
 
 // CandidateValue is the bounded collector projection needed to build one hot
@@ -69,6 +74,7 @@ type candidateJSON struct {
 
 // CandidateSnapshot is a defensive copy of immutable candidate metadata.
 type CandidateSnapshot struct {
+	Version           uint16
 	CandidateID       string
 	OrganizationID    string
 	WorkspaceID       string
@@ -176,6 +182,9 @@ func newWireCandidate(group hotGroup, cfg RuntimeConfig) (WireCandidate, error) 
 		LastSeen:          group.lastSeen.UTC().Format(dateTime64Layout),
 		GapReasons:        sortedGapReasons(group.gaps), Values: values,
 	}
+	if cfg.normalizedMode() == RuntimeKafka && cfg.CatalogEpoch == 0 && cfg.ProjectionVersion == 0 {
+		document.Version = CandidateManagedVersion
+	}
 	unsigned, err := json.Marshal(candidateUnsigned(document))
 	if err != nil {
 		return WireCandidate{}, fmt.Errorf("propertycatalog: encode candidate identity: %w", err)
@@ -223,7 +232,8 @@ func ParseWireCandidate(raw []byte) (WireCandidate, error) {
 }
 
 func validateCandidate(document candidateJSON) error {
-	if document.Format != CandidateFormat || document.Version != CandidateVersion {
+	if document.Format != CandidateFormat ||
+		(document.Version != CandidateVersion && document.Version != CandidateManagedVersion) {
 		return errors.New("propertycatalog: candidate format/version is unsupported")
 	}
 	if !isLowerSHA256(document.CandidateID) {
@@ -238,8 +248,14 @@ func validateCandidate(document candidateJSON) error {
 			return err
 		}
 	}
-	if document.CatalogEpoch == 0 || document.ProjectionVersion == 0 || document.SourceRows == 0 {
-		return errors.New("propertycatalog: candidate epoch, projection, and source rows must be positive")
+	if document.Version == CandidateVersion && (document.CatalogEpoch == 0 || document.ProjectionVersion == 0) {
+		return errors.New("propertycatalog: v1 candidate epoch and projection must be positive")
+	}
+	if document.Version == CandidateManagedVersion && (document.CatalogEpoch != 0 || document.ProjectionVersion != 0) {
+		return errors.New("propertycatalog: v2 candidate epoch and projection must both be zero")
+	}
+	if document.SourceRows == 0 {
+		return errors.New("propertycatalog: candidate source rows must be positive")
 	}
 	first, err := parseCandidateTime("candidate first_seen", document.FirstSeen)
 	if err != nil {
@@ -346,8 +362,9 @@ func (c WireCandidate) MarshalBinary() ([]byte, error) {
 
 func (c WireCandidate) Snapshot() CandidateSnapshot {
 	return CandidateSnapshot{
-		CandidateID: c.document.CandidateID, OrganizationID: c.document.OrganizationID,
-		WorkspaceID: c.document.WorkspaceID, ProjectID: c.document.ProjectID,
+		Version: c.document.Version, CandidateID: c.document.CandidateID,
+		OrganizationID: c.document.OrganizationID,
+		WorkspaceID:    c.document.WorkspaceID, ProjectID: c.document.ProjectID,
 		CatalogEpoch: c.document.CatalogEpoch, ProjectionVersion: c.document.ProjectionVersion,
 		SourceRows: c.document.SourceRows, FirstSeen: c.document.FirstSeen,
 		LastSeen:   c.document.LastSeen,

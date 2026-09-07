@@ -8,36 +8,45 @@ disable, rollback, and head advancement remain separate reviewed operations.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Mapping, Sequence
+import os
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
-from tracer.management.commands.ch25_property_catalog_lifecycle_controller import (
-    discover_workspace_scopes,
-)
 from tracer.services.clickhouse.client import ClickHouseClient
 from tracer.services.clickhouse.v2.property_catalog.activation_control import (
-    ACTIVATION_CONTROL_COLUMNS,
-    ACTIVATION_CONTROL_MAX_EVENTS,
-    ACTIVATION_CONTROL_TABLE,
     ActivationControlError,
     ActivationControlRequest,
     ActivationControlScope,
     ActivationControlTarget,
     ClickHouseActivationControlStore,
     PropertyCatalogActivationControlPlane,
-    activation_control_event_sql,
-    qualified_activation_sql,
     selected_control_target,
 )
 from tracer.services.clickhouse.v2.property_catalog.codec import (
     canonical_json,
     canonical_uuid,
+)
+from tracer.services.clickhouse.v2.property_catalog.durable_native_writer import (
+    DurableNativeCatalogWriter,
+    NativeWriteUnresolved,
+)
+from tracer.services.clickhouse.v2.property_catalog.installation_identity import (
+    IDENTITY_FILENAME,
+    InstallationIdentity,
+    load_identity,
+)
+from tracer.services.clickhouse.v2.property_catalog.native_write_journal import (
+    NativeWriteJournal,
+)
+from tracer.services.clickhouse.v2.property_catalog.native_write_proof import (
+    NativeWriteProof,
+    NativeWriteProofError,
 )
 from tracer.services.clickhouse.v2.property_catalog.production_rollout import (
     PRODUCTION_CLOUD_DEPLOYMENTS,
@@ -47,32 +56,28 @@ from tracer.services.clickhouse.v2.property_catalog.publisher import (
     PropertyCatalogPublishError,
     require_prod_catalog_database,
 )
+from tracer.services.clickhouse.v2.property_catalog.reader_activation_client import (
+    _CLICKHOUSE_GRANTS_SQL as _CLICKHOUSE_GRANTS_SQL,
+)
+from tracer.services.clickhouse.v2.property_catalog.reader_activation_client import (
+    _CLICKHOUSE_PROVENANCE_SQL as _CLICKHOUSE_PROVENANCE_SQL,
+)
+from tracer.services.clickhouse.v2.property_catalog.reader_activation_client import (
+    ProductionActivationCommandError,
+)
+from tracer.services.clickhouse.v2.property_catalog.reader_activation_client import (
+    _ActivationControlClient as _ActivationControlClient,
+)
+from tracer.services.clickhouse.v2.property_catalog.reader_activation_client import (
+    _validate_control_writer_grants as _validate_control_writer_grants,
+)
+from tracer.services.clickhouse.v2.property_catalog.replicated_write_startup import (
+    replicated_write_admission_context,
+)
 from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
 
 ACTIVATION_CONTROL_ACK = "PROPERTY_CATALOG_ACTIVATION_CONTROL_V1"
-_ACTIVATION_TABLE = "property_catalog_activations"
-_CLICKHOUSE_PROVENANCE_SQL = """
-SELECT
-    hostName(),
-    currentDatabase(),
-    currentUser(),
-    toUInt64(value),
-    toUInt8(readonly)
-FROM system.settings
-WHERE name = 'readonly'
-"""
-_CLICKHOUSE_GRANTS_SQL = "SHOW GRANTS FOR CURRENT_USER"
-_DIRECT_TABLE_GRANT_RE = re.compile(
-    r"^GRANT (?P<access>SELECT|INSERT)(?:, (?P<second>SELECT|INSERT))? "
-    r"ON `?(?P<database>[A-Za-z_][A-Za-z0-9_]*)`?\."
-    r"`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`? "
-    r"TO `?(?P<user>[A-Za-z_][A-Za-z0-9_]*)`?$"
-)
 _MAX_EXPECTED_CLICKHOUSE_HOSTNAMES = 16
-
-
-class ProductionActivationCommandError(RuntimeError):
-    """The one-shot production activation was not admitted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,131 +92,7 @@ class ActivationCommandConfig:
     projection_version: int
     workspace_scope_mode: str
     workspace_ids: tuple[str, ...]
-
-
-class _ActivationControlClient:
-    """Two-table native client closed over the immutable activation bridge."""
-
-    def __init__(
-        self,
-        driver: ClickHouseClient,
-        *,
-        database: str,
-        user: str,
-        expected_hostnames: Sequence[str],
-    ) -> None:
-        self.catalog_database = require_prod_catalog_database(database)
-        self._driver = driver
-        self._user = user
-        self._expected_hostnames = tuple(expected_hostnames)
-        self._validate_identity()
-        self._attest_server_identity_and_grants()
-        self._allowed_reads = frozenset(
-            {
-                activation_control_event_sql(self.catalog_database),
-                qualified_activation_sql(self.catalog_database),
-            }
-        )
-
-    def query(
-        self,
-        sql: str,
-        params: Mapping[str, Any],
-        *,
-        timeout_ms: int,
-    ) -> Sequence[Mapping[str, Any]]:
-        self._validate_identity()
-        if sql not in self._allowed_reads:
-            raise ProductionActivationCommandError(
-                "activation-control client rejected a non-reviewed read"
-            )
-        rows, columns, _ = self._driver.execute_read(
-            sql,
-            dict(params),
-            timeout_ms=timeout_ms,
-            settings={
-                "max_result_rows": ACTIVATION_CONTROL_MAX_EVENTS + 1,
-                "result_overflow_mode": "throw",
-                "readonly": 2,
-            },
-        )
-        names = tuple(
-            str(column[0]) if isinstance(column, tuple) else str(column)
-            for column in columns
-        )
-        if len(names) != len(set(names)):
-            raise ProductionActivationCommandError(
-                "ClickHouse returned duplicate activation-control columns"
-            )
-        return tuple(dict(zip(names, row, strict=True)) for row in rows)
-
-    def insert(
-        self,
-        table: str,
-        rows: Sequence[Mapping[str, Any]],
-        *,
-        columns: Sequence[str],
-        timeout_ms: int,
-        deduplication_token: str,
-    ) -> None:
-        self._validate_identity()
-        self._attest_server_identity_and_grants()
-        expected_table = f"`{self.catalog_database}`.`{ACTIVATION_CONTROL_TABLE}`"
-        ordered_columns = tuple(columns)
-        if table != expected_table or ordered_columns != ACTIVATION_CONTROL_COLUMNS:
-            raise ProductionActivationCommandError(
-                "activation-control client rejected a non-ledger insert"
-            )
-        if len(rows) != 1 or set(rows[0]) != set(ACTIVATION_CONTROL_COLUMNS):
-            raise ProductionActivationCommandError(
-                "activation-control append must contain exactly one complete row"
-            )
-        values = [tuple(rows[0][column] for column in ordered_columns)]
-        column_sql = ", ".join(ordered_columns)
-        self._driver.execute(
-            f"INSERT INTO {expected_table} ({column_sql}) VALUES",
-            values,  # type: ignore[arg-type]
-            settings={
-                "insert_deduplication_token": deduplication_token,
-                "max_execution_time": timeout_ms / 1_000,
-            },
-        )
-
-    def close(self) -> None:
-        self._driver.close()
-
-    def _validate_identity(self) -> None:
-        if (
-            self._driver.database != self.catalog_database
-            or self._driver.user != self._user
-            or self._driver.server_enforced_readonly is not False
-        ):
-            raise ProductionActivationCommandError(
-                "activation-control client identity changed"
-            )
-
-    def _attest_server_identity_and_grants(self) -> None:
-        rows = self._driver.execute(_CLICKHOUSE_PROVENANCE_SQL)
-        if len(rows) != 1 or len(rows[0]) != 5:
-            raise ProductionActivationCommandError(
-                "activation-control provenance did not return one complete row"
-            )
-        hostname, database, user, readonly_value, readonly_locked = rows[0]
-        if (
-            hostname not in self._expected_hostnames
-            or database != self.catalog_database
-            or user != self._user
-            or readonly_value != 0
-            or readonly_locked != 0
-        ):
-            raise ProductionActivationCommandError(
-                "activation-control server identity or write profile mismatched"
-            )
-        _validate_control_writer_grants(
-            self._driver.execute(_CLICKHOUSE_GRANTS_SQL),
-            database=self.catalog_database,
-            user=self._user,
-        )
+    installation: InstallationIdentity | None = None
 
 
 class Command(BaseCommand):
@@ -232,9 +113,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> str:
-        client: _ActivationControlClient | None = None
+        from tracer.management.commands.ch25_property_catalog_lifecycle_controller import (
+            discover_workspace_scopes,
+        )
+
+        resources = ExitStack()
         try:
-            config = activation_command_config(settings_object=settings)
+            execute = bool(options.get("execute"))
+            config = activation_command_config(
+                settings_object=settings, require_managed=execute
+            )
             workspace_id = canonical_uuid(
                 options.get("workspace_id"),
                 field="workspace_id",
@@ -249,9 +137,8 @@ class Command(BaseCommand):
             scopes, skipped = discover_workspace_scopes((workspace_id,))
             if skipped or len(scopes) != 1:
                 raise ProductionActivationCommandError(
-                    "workspace has no active project scope"
+                    "workspace has no active authorized lifecycle scope"
                 )
-            execute = bool(options.get("execute"))
             request_id = options.get("request_id")
             if execute and not request_id:
                 raise ProductionActivationCommandError(
@@ -261,29 +148,59 @@ class Command(BaseCommand):
                 raise ProductionActivationCommandError(
                     "--request-id is accepted only with --execute"
                 )
-            driver = ClickHouseClient(
-                host=config.host,
-                port=config.port,
-                user=config.user,
-                password=config.password,
-                database=config.database,
-                server_enforced_readonly=False,
-                connect_timeout=5,
-                send_timeout=30,
-                receive_timeout=30,
-                pool_size=1,
-                read_timeout_ceiling_ms=RUNTIME_LIMITS.state_store_timeout_ms,
+            if execute:
+                request_id = canonical_uuid(request_id, field="request_id")
+                coordinator_directory = _activation_state_directory(settings)
+                writer = _managed_control_writer(
+                    config, settings_object=settings, resources=resources
+                )
+                driver = writer.driver
+                expected_hostnames = (writer.member.hostname,)
+            else:
+                # Status never constructs a native journal, admission producer,
+                # or file coordinator. The adapter permits only reviewed reads.
+                writer = None
+                driver = _control_driver(config, resources=resources)
+                expected_hostnames = config.expected_hostnames
+            from tracer.services.clickhouse.v2.property_catalog.reader_activation import (
+                FileActivationControlCoordinator,
+                ReaderActivationClient,
             )
-            client = _ActivationControlClient(
+
+            client = ReaderActivationClient(
                 driver,
                 database=config.database,
                 user=config.user,
-                expected_hostnames=config.expected_hostnames,
+                expected_hostnames=expected_hostnames,
+                durable_writer=writer,
             )
             store = ClickHouseActivationControlStore(
                 client,
                 database=config.database,
+                append_coordinator=(
+                    FileActivationControlCoordinator(
+                        coordinator_directory,
+                        database=config.database,
+                    )
+                    if execute
+                    else None
+                ),
             )
+            # Reauthorize the workspace immediately before the selection plane;
+            # startup/discovery may have taken long enough for ownership to change.
+            if execute:
+                current, skipped = discover_workspace_scopes((workspace_id,))
+                if (
+                    skipped
+                    or len(current) != 1
+                    or (
+                        current[0].organization_id != scopes[0].organization_id
+                        or str(current[0].workspace_id) != workspace_id
+                    )
+                ):
+                    raise ProductionActivationCommandError(
+                        "workspace authorization changed during activation startup"
+                    )
             payload = run_initial_activation(
                 store=store,
                 scope=ActivationControlScope(
@@ -301,16 +218,22 @@ class Command(BaseCommand):
             ActivationControlError,
             ProductionActivationCommandError,
             PropertyCatalogPublishError,
+            NativeWriteProofError,
+            NativeWriteUnresolved,
+            OSError,
             TypeError,
             ValueError,
         ) as exc:
             raise CommandError(str(exc)) from exc
         finally:
-            if client is not None:
-                client.close()
+            # Register drivers before adapter construction, including failures
+            # in schema/grant attestation. Proof drivers stay alive through replay.
+            resources.close()
 
 
-def activation_command_config(*, settings_object: Any) -> ActivationCommandConfig:
+def activation_command_config(
+    *, settings_object: Any, require_managed: bool = False
+) -> ActivationCommandConfig:
     environment = str(getattr(settings_object, "ENV_TYPE", "")).strip().lower()
     cloud = str(getattr(settings_object, "CLOUD_DEPLOYMENT", "")).strip()
     if environment not in {"prod", "production"}:
@@ -384,13 +307,8 @@ def activation_command_config(*, settings_object: Any) -> ActivationCommandConfi
         settings_object,
         "PROPERTY_CATALOG_LIFECYCLE_EXPECTED_WRITE_CH_HOSTNAMES",
     )
-    catalog_epoch = _positive_uint16_setting(
-        settings_object,
-        "PROPERTY_CATALOG_LIFECYCLE_CATALOG_EPOCH",
-    )
-    projection_version = _positive_uint16_setting(
-        settings_object,
-        "PROPERTY_CATALOG_LIFECYCLE_PROJECTION_VERSION",
+    installation, catalog_epoch, projection_version = _command_identity(
+        settings_object, database=database, required=require_managed
     )
     workspace_scope_mode = (
         str(
@@ -439,6 +357,165 @@ def activation_command_config(*, settings_object: Any) -> ActivationCommandConfi
         projection_version=projection_version,
         workspace_scope_mode=workspace_scope_mode,
         workspace_ids=workspace_ids,
+        installation=installation,
+    )
+
+
+def _activation_state_directory(settings_object: Any) -> Path:
+    """Use the SAME coordinator directory as workspace_settings_overlay."""
+    value = getattr(settings_object, "PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY", "")
+    if (
+        not isinstance(value, str)
+        or not value
+        or not Path(value).is_absolute()
+        or Path(value).is_symlink()
+        or not Path(value).is_dir()
+        or Path(value) == Path(Path(value).anchor)
+    ):
+        raise ProductionActivationCommandError(
+            "activation control requires the existing shared lifecycle runtime directory"
+        )
+    return Path(value)
+
+
+def _installation_directory(settings_object: Any) -> Path:
+    """Native receipts live beside the installed identity and revision fence."""
+    value = getattr(
+        settings_object, "PROPERTY_CATALOG_LIFECYCLE_REVISION_FENCE_FILE", ""
+    )
+    if not isinstance(value, str) or not value or not Path(value).is_absolute():
+        raise ProductionActivationCommandError(
+            "activation control requires the shared absolute lifecycle fence path"
+        )
+    return Path(value).parent
+
+
+def _command_identity(
+    settings_object: Any, *, database: str, required: bool
+) -> tuple[InstallationIdentity | None, int, int]:
+    prefix = "PROPERTY_CATALOG_LIFECYCLE_"
+    epoch = getattr(settings_object, prefix + "CATALOG_EPOCH", 0)
+    projection = getattr(settings_object, prefix + "PROJECTION_VERSION", 0)
+    if any(
+        type(v) is not int or not 0 <= v < (1 << 16) for v in (epoch, projection)
+    ) or bool(epoch) != bool(projection):
+        raise ProductionActivationCommandError(
+            "catalog epoch/projection must both be managed zero or positive UInt16"
+        )
+    identity = None
+    if (
+        required
+        or not epoch
+        or getattr(settings_object, prefix + "REVISION_FENCE_FILE", "")
+    ):
+        path = _installation_directory(settings_object) / IDENTITY_FILENAME
+        if required or not epoch or path.exists() or path.is_symlink():
+            # Deliberately load only: a one-shot selector must not initialize or
+            # migrate installation identity, even when its target is qualified.
+            identity = load_identity(path)
+            identity.require_destination(
+                environment="production",
+                target_database=database,
+                candidate_topic=getattr(
+                    settings_object, "PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC", ""
+                ),
+                ordered_topic=getattr(
+                    settings_object, "PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC", ""
+                ),
+            )
+            if epoch and (epoch, projection) != (
+                identity.catalog_epoch,
+                identity.projection_version,
+            ):
+                raise ProductionActivationCommandError(
+                    "configured epoch/projection conflicts with persisted identity"
+                )
+            producer = getattr(settings_object, prefix + "PRODUCER_STREAM_ID", "")
+            if producer and producer != identity.producer_stream_id:
+                raise ProductionActivationCommandError(
+                    "configured producer conflicts with persisted identity"
+                )
+            epoch, projection = identity.catalog_epoch, identity.projection_version
+    return identity, epoch, projection
+
+
+def _control_driver(
+    config: ActivationCommandConfig,
+    *,
+    resources: ExitStack,
+    host: str | None = None,
+    port: int | None = None,
+) -> ClickHouseClient:
+    driver = ClickHouseClient(
+        host=config.host if host is None else host,
+        port=config.port if port is None else port,
+        user=config.user,
+        password=config.password,
+        database=config.database,
+        server_enforced_readonly=False,
+        connect_timeout=5,
+        send_timeout=30,
+        receive_timeout=30,
+        pool_size=1,
+        read_timeout_ceiling_ms=RUNTIME_LIMITS.state_store_timeout_ms,
+    )
+    resources.callback(driver.close)
+    return driver
+
+
+def _managed_control_writer(
+    config: ActivationCommandConfig, *, settings_object: Any, resources: ExitStack
+) -> DurableNativeCatalogWriter:
+    """Reattest existing production admission and retain direct proof resources."""
+    if config.installation is None:
+        raise ProductionActivationCommandError(
+            "execute requires persisted installation identity"
+        )
+    if os.environ.get("FI_PROPERTY_CATALOG_LEDGER_CH_USERNAME") == config.user:
+        raise ProductionActivationCommandError(
+            "control and ledger proof principals must differ"
+        )
+    directory = _installation_directory(settings_object)
+    # This requires BOTH existing immutable files before the discovery producer
+    # can run; execute cannot create a missing admission as a side effect.
+    journal = resources.enter_context(NativeWriteJournal(directory))
+    if journal.identity != config.installation:
+        raise ProductionActivationCommandError(
+            "installed identity changed during startup"
+        )
+    identity, admission, connections = resources.enter_context(
+        replicated_write_admission_context(
+            settings_object, prefix="PROPERTY_CATALOG_LIFECYCLE_"
+        )
+    )
+    if identity != journal.identity or admission != journal.admission:
+        raise ProductionActivationCommandError(
+            "installed admission changed during startup"
+        )
+    matching = [
+        c
+        for c in connections
+        if (c.driver.host, c.driver.port) == (config.host, config.port)
+    ]
+    if len(matching) > 1 or not connections:
+        raise ProductionActivationCommandError(
+            "control writer has no unique admitted route"
+        )
+    selected = matching[0] if matching else min(connections, key=lambda c: c.name)
+    driver = _control_driver(
+        config,
+        resources=resources,
+        host=selected.driver.host,
+        port=selected.driver.port,
+    )
+    proof = NativeWriteProof(
+        directory=directory,
+        identity=identity,
+        admission=admission,
+        connections=connections,
+    )
+    return DurableNativeCatalogWriter(
+        driver, directory=directory, proof=proof, member_name=selected.name
     )
 
 
@@ -517,13 +594,6 @@ def _required_text(source: Any, name: str) -> str:
     return value.strip()
 
 
-def _positive_uint16_setting(source: Any, name: str) -> int:
-    value = getattr(source, name, None)
-    if type(value) is not int or not 1 <= value < (1 << 16):
-        raise ProductionActivationCommandError(f"{name} must be a positive UInt16")
-    return value
-
-
 def _required_hostnames(source: Any, name: str) -> tuple[str, ...]:
     values = getattr(source, name, ())
     if not isinstance(values, (tuple, list)):
@@ -545,55 +615,6 @@ def _required_hostnames(source: Any, name: str) -> tuple[str, ...]:
             f"{name} must contain unique bounded exact hostnames"
         )
     return tuple(sorted(hostnames))
-
-
-def _validate_control_writer_grants(
-    rows: Any,
-    *,
-    database: str,
-    user: str,
-) -> None:
-    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
-        raise ProductionActivationCommandError(
-            "activation-control grant query returned an invalid result"
-        )
-    observed: dict[str, frozenset[str]] = {}
-    for row in rows:
-        if (
-            not isinstance(row, Sequence)
-            or isinstance(row, (str, bytes))
-            or len(row) != 1
-            or not isinstance(row[0], str)
-        ):
-            raise ProductionActivationCommandError(
-                "activation-control grant query returned an invalid row"
-            )
-        match = _DIRECT_TABLE_GRANT_RE.fullmatch(row[0])
-        if (
-            match is None
-            or match.group("database") != database
-            or match.group("user") != user
-        ):
-            raise ProductionActivationCommandError(
-                "activation-control writer has an unexpected or delegated grant"
-            )
-        access = {match.group("access")}
-        if match.group("second") is not None:
-            access.add(match.group("second"))
-        table = match.group("table")
-        if table in observed:
-            raise ProductionActivationCommandError(
-                "activation-control writer has duplicate table grants"
-            )
-        observed[table] = frozenset(access)
-    expected = {
-        _ACTIVATION_TABLE: frozenset({"SELECT"}),
-        ACTIVATION_CONTROL_TABLE: frozenset({"SELECT", "INSERT"}),
-    }
-    if observed != expected:
-        raise ProductionActivationCommandError(
-            "activation-control writer grants must match the two-table contract exactly"
-        )
 
 
 __all__ = [

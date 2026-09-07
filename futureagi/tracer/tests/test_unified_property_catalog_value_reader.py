@@ -339,6 +339,8 @@ def _definition_row(**overrides):
         }
     )
     row = {
+        "selected_activation_rows": 1,
+        "anchor_activation_rows": 1,
         "activation_state_conflicts": 0,
         "activation_lineage_conflicts": 0,
         "activation_projection_conflicts": 0,
@@ -1021,21 +1023,21 @@ def test_value_reader_rejects_project_missing_from_immutable_build_scope(setting
     assert len(executor.calls) == 1
 
 
-def test_value_reader_rejects_partial_workspace_activation_coverage(settings):
+def test_value_reader_keeps_qualified_workspace_data_while_new_project_builds(settings):
     settings.SECRET_KEY = "property-value-reader-secret"
-    executor = FakeExecutor([[_activation_row()]])
+    executor = FakeExecutor(
+        [[_activation_row()], [_definition_row()], [{"value_conflicts": 0}], []]
+    )
 
-    with pytest.raises(PropertyCatalogValueUnavailable) as exc_info:
-        _read(
-            _reader(executor),
-            scope=_scope(
-                project_ids=(PROJECT_ID, OTHER_PROJECT_ID),
-                workspace_scope=True,
-            ),
-        )
-
-    assert exc_info.value.reason == "activation_scope_incomplete"
-    assert len(executor.calls) == 1
+    _read(
+        _reader(executor),
+        scope=_scope(
+            project_ids=(PROJECT_ID, OTHER_PROJECT_ID), workspace_scope=True
+        ),
+    )
+    params = executor.calls[1]["params"]
+    assert params["catalog_project_ids"] == (PROJECT_ID,)
+    assert params["catalog_include_all_projects"] == 0
 
 
 def test_value_reader_accepts_workspace_scope_with_deleted_project_tombstones(

@@ -64,6 +64,7 @@ const (
 	defaultStartupTimeout = 10 * time.Second
 	maxStartupTimeout     = 2 * time.Minute
 	maxTransactionTimeout = 2 * time.Minute
+	identityRetryInterval = 100 * time.Millisecond
 )
 
 type lookupEnvFunc func(string) (string, bool)
@@ -89,8 +90,11 @@ func run(ctx context.Context, lookup lookupEnvFunc) error {
 	if ctx == nil || lookup == nil {
 		return errors.New("property catalog sequencer requires context and environment")
 	}
-	cfg, err := loadConfig(lookup)
+	cfg, err := loadConfigWithRetry(ctx, lookup)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -184,6 +188,44 @@ func run(ctx context.Context, lookup lookupEnvFunc) error {
 	return sequencer.Run(ctx)
 }
 
+// The lifecycle initializer publishes the identity after database evidence is
+// available. Wait only for that missing descriptor, before opening any spool,
+// lock, or Kafka client. Corruption and conflicting configuration are fatal.
+func loadConfigWithRetry(ctx context.Context, lookup lookupEnvFunc) (commandConfig, error) {
+	if ctx == nil || lookup == nil {
+		return commandConfig{}, errors.New("property catalog sequencer requires context and environment")
+	}
+	timeout := defaultStartupTimeout
+	if err := optionalDuration(lookup, envStartupTimeout, &timeout, maxStartupTimeout); err != nil {
+		return commandConfig{}, err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var lastErr error
+	for {
+		if err := waitCtx.Err(); err != nil {
+			return commandConfig{}, fmt.Errorf("wait for persisted catalog installation identity: %w", errors.Join(err, lastErr))
+		}
+		cfg, err := loadConfig(lookup)
+		if err == nil && waitCtx.Err() != nil {
+			return commandConfig{}, fmt.Errorf("load persisted catalog installation identity: %w", waitCtx.Err())
+		}
+		if !errors.Is(err, propertycatalog.ErrInstallationIdentityMissing) {
+			return cfg, err
+		}
+		if lastErr == nil {
+			log.Printf("fi-property-catalog-sequencer: waiting up to %s for lifecycle installation identity", timeout)
+		}
+		lastErr = err
+		timer := time.NewTimer(identityRetryInterval)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
 func loadConfig(lookup lookupEnvFunc) (commandConfig, error) {
 	if lookup == nil {
 		return commandConfig{}, errors.New("environment lookup is required")
@@ -195,17 +237,27 @@ func loadConfig(lookup lookupEnvFunc) (commandConfig, error) {
 	if err != nil {
 		return commandConfig{}, err
 	}
-	epoch, err := requiredUint16(lookup, envEpoch)
-	if err != nil {
-		return commandConfig{}, err
-	}
-	projection, err := requiredUint16(lookup, envProjection)
-	if err != nil {
-		return commandConfig{}, err
-	}
-	streamID, err := required(lookup, envStreamID)
-	if err != nil {
-		return commandConfig{}, err
+	_, epochPresent := lookup(envEpoch)
+	_, projectionPresent := lookup(envProjection)
+	_, streamPresent := lookup(envStreamID)
+	legacyIdentity := epochPresent || projectionPresent || streamPresent
+	var epoch, projection uint16
+	var streamID string
+	if legacyIdentity {
+		// Presence, including an explicitly empty variable, selects the legacy
+		// contract. Partial triples must never silently use persisted values.
+		epoch, err = requiredUint16(lookup, envEpoch)
+		if err != nil {
+			return commandConfig{}, err
+		}
+		projection, err = requiredUint16(lookup, envProjection)
+		if err != nil {
+			return commandConfig{}, err
+		}
+		streamID, err = required(lookup, envStreamID)
+		if err != nil {
+			return commandConfig{}, err
+		}
 	}
 	fenceFile, err := required(lookup, envFenceFile)
 	if err != nil {
@@ -293,9 +345,6 @@ func loadConfig(lookup lookupEnvFunc) (commandConfig, error) {
 		return commandConfig{}, err
 	}
 	runtime = runtime.WithDefaults()
-	if err := runtime.Validate(); err != nil {
-		return commandConfig{}, err
-	}
 
 	transactionTimeout := time.Duration(0)
 	if err := optionalDuration(lookup, envTransactionTimeout, &transactionTimeout, maxTransactionTimeout); err != nil {
@@ -346,7 +395,48 @@ func loadConfig(lookup lookupEnvFunc) (commandConfig, error) {
 	if err := propertycatalog.ValidateFranzCandidateSourceConfig(result.candidate); err != nil {
 		return commandConfig{}, err
 	}
+	if err := resolveInstallationIdentity(&result.runtime, candidateTopic, legacyIdentity); err != nil {
+		return commandConfig{}, err
+	}
+	if err := result.runtime.Validate(); err != nil {
+		return commandConfig{}, err
+	}
 	return result, nil
+}
+
+func resolveInstallationIdentity(runtime *propertycatalog.RuntimeConfig, candidateTopic string, legacy bool) error {
+	path, err := propertycatalog.InstallationIdentityPath(runtime.RevisionFenceFile)
+	if err != nil {
+		// Legacy installations may not have created the shared directory yet.
+		// An existing unreadable/invalid directory still fails closed.
+		if legacy && errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	identity, err := propertycatalog.LoadInstallationIdentity(path)
+	if err != nil {
+		if legacy && errors.Is(err, propertycatalog.ErrInstallationIdentityMissing) {
+			return nil
+		}
+		return err
+	}
+	// The sequencer has no separate database setting: the descriptor owns the
+	// database binding, while every configured destination must match exactly.
+	if err := identity.RequireDestination(runtime.Environment, identity.TargetDatabase, candidateTopic, runtime.Kafka.Topic); err != nil {
+		return err
+	}
+	if legacy {
+		if runtime.CatalogEpoch != identity.CatalogEpoch || runtime.ProjectionVersion != identity.ProjectionVersion ||
+			runtime.ProducerStreamID != identity.ProducerStreamID {
+			return errors.New("propertycatalog: legacy epoch/projection/producer stream conflicts with persisted installation identity")
+		}
+		return nil
+	}
+	runtime.CatalogEpoch = identity.CatalogEpoch
+	runtime.ProjectionVersion = identity.ProjectionVersion
+	runtime.ProducerStreamID = identity.ProducerStreamID
+	return nil
 }
 
 func required(lookup lookupEnvFunc, name string) (string, error) {

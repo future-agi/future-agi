@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -9,8 +12,13 @@ import pytest
 from django.core.management.base import CommandError
 
 from tracer.management.commands import ch25_property_catalog_oss_supervisor as subject
+from tracer.services.clickhouse.v2.property_catalog import dev_rollout
 from tracer.services.clickhouse.v2.property_catalog.dev_runtime import (
+    ClickHouseDevIdentity,
+    DevProvenanceObservation,
+    PostgresDevIdentity,
     PostgresProjectTenantBinding,
+    PostgresWorkspaceProjectInventory,
 )
 
 ORG_A = "11111111-1111-4111-8111-111111111111"
@@ -86,6 +94,119 @@ def _scope(
         project_ids=project_ids,
         legacy_project_ids=legacy_project_ids,
     )
+
+
+def _observation() -> DevProvenanceObservation:
+    return DevProvenanceObservation(
+        writer_clickhouse=ClickHouseDevIdentity(
+            hostname="writer-host",
+            database="default",
+            user="catalog_writer",
+            readonly_value=0,
+            readonly_locked=False,
+        ),
+        source_clickhouse=ClickHouseDevIdentity(
+            hostname="source-host",
+            database="default",
+            user="source_reader",
+            readonly_value=1,
+            readonly_locked=True,
+        ),
+        postgres=PostgresDevIdentity(
+            database="futureagi",
+            user="catalog_reader",
+            session_user="catalog_reader",
+            server_address="10.0.0.8",
+            server_port=5432,
+            can_login=True,
+            is_superuser=False,
+            can_create_role=False,
+            can_create_database=False,
+            can_replicate=False,
+            can_bypass_rls=False,
+            default_transaction_read_only=True,
+            transaction_read_only=True,
+            writable_relation_count=0,
+        ),
+    )
+
+
+def _stub_lifecycle_runtime(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Exercise the real rollout ordering with in-memory runtime IO doubles."""
+    state = SimpleNamespace(active=set(), events=[], requests=[], failures={})
+
+    class Runtime:
+        def __init__(self, *, request: Any, proxy: Any, scope: Any) -> None:
+            self.workspace_id = scope.workspace_id
+            self.request = request
+            state.requests.append((request, proxy))
+
+        def step(self, name: str) -> dict[str, Any]:
+            state.events.append((self.workspace_id, name))
+            failure = state.failures.pop((self.workspace_id, name), None)
+            if failure is not None:
+                raise failure
+            return {}
+
+        def close(self) -> None:
+            self.step("close-status" if self.request.status else "close-execute")
+
+        def status(self, request: Any) -> dict[str, Any]:
+            assert request.status and not request.execute
+            self.step("status")
+            return {
+                "schema_ready": True,
+                "active": self.workspace_id in state.active,
+            }
+
+        def apply_schema(self, request: Any) -> dict[str, Any]:
+            assert request.execute and not request.status
+            return self.step("schema")
+
+        def backfill(self, request: Any) -> dict[str, Any]:
+            assert not request.repair_expired_incomplete
+            return self.step("backfill")
+
+        def postgres_reconciler(self, request: Any) -> None:
+            self.step("postgres")
+
+        def postgres_request_factory(self, request: Any) -> None:
+            return None
+
+        def postgres_adapters(self, request: Any) -> None:
+            return None
+
+        def postgres_snapshot_guard(self, request: Any) -> None:
+            return None
+
+        def reconcile_non_postgres(self, request: Any, postgres: Any) -> dict[str, Any]:
+            return self.step("reconcile")
+
+        def qualify(self, request: Any) -> dict[str, Any]:
+            return self.step("qualify")
+
+        def activate(self, request: Any) -> dict[str, Any]:
+            result = self.step("activate")
+            state.active.add(self.workspace_id)
+            return result
+
+        def verify_schema(self, request: Any) -> dict[str, Any]:
+            return self.step("verify-schema")
+
+        def reconcile_workspace(self, request: Any, *, mode: Any) -> dict[str, Any]:
+            assert mode is subject.ReconcileMode.INCREMENTAL
+            assert self.workspace_id in state.active
+            return self.step("incremental")
+
+    monkeypatch.setattr(subject, "_runtime", Runtime)
+    monkeypatch.setattr(
+        dev_rollout,
+        "reconcile_postgres_revision",
+        lambda **_kwargs: SimpleNamespace(
+            adapter_results=(), postgres_snapshot_opened=True
+        ),
+    )
+    return state
 
 
 @pytest.mark.parametrize(
@@ -207,7 +328,7 @@ class _RowsManager:
         return _RowsQuery(self.batches.pop(0), self.calls)
 
 
-def test_discovery_is_deterministic_maps_legacy_only_to_default_and_skips_empty(
+def test_discovery_is_deterministic_maps_legacy_only_to_default_and_includes_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace_manager = _RowsManager(
@@ -247,12 +368,19 @@ def test_discovery_is_deterministic_maps_legacy_only_to_default_and_skips_empty(
 
     assert [scope.workspace_id for scope in scopes] == [
         WORKSPACE_DEFAULT,
+        WORKSPACE_EMPTY,
         WORKSPACE_OTHER,
     ]
     assert scopes[0].project_ids == (PROJECT_LEGACY, PROJECT_DEFAULT)
     assert scopes[0].legacy_project_ids == (PROJECT_LEGACY,)
-    assert scopes[1].project_ids == (PROJECT_OTHER,)
-    assert skipped == (WORKSPACE_EMPTY,)
+    assert scopes[1].project_ids == ()
+    assert scopes[2].project_ids == (PROJECT_OTHER,)
+    assert skipped == ()
+    assert all(
+        call[2] == {"trace_type": "observe"}
+        for call in project_manager.calls
+        if call[0] == "filter"
+    )
     assert workspace_manager.calls[0] == ("filter", (), {"is_active": True})
     assert ("order_by", "organization_id", "id") in workspace_manager.calls
     assert all(
@@ -390,7 +518,7 @@ def test_explicit_backfill_skips_already_active_workspace(
         config=_config(),
         observation=SimpleNamespace(),  # type: ignore[arg-type]
         now=datetime(2026, 8, 26, 12, tzinfo=UTC),
-        allow_initial_backfill=True,
+        bootstrap_only=True,
         initial_backfill_wall_ms=1_740_000,
     )
 
@@ -398,10 +526,10 @@ def test_explicit_backfill_skips_already_active_workspace(
     assert calls == ["close"]
 
 
-@pytest.mark.parametrize("allow_initial_backfill", (False, True))
-def test_inactive_workspace_backfills_only_with_explicit_permission(
+@pytest.mark.parametrize("bootstrap_only", (False, True))
+def test_inactive_workspace_bootstraps_in_ordinary_and_operator_modes(
     monkeypatch: pytest.MonkeyPatch,
-    allow_initial_backfill: bool,
+    bootstrap_only: bool,
 ) -> None:
     calls: list[tuple[str, Any]] = []
     status_result = SimpleNamespace(
@@ -441,17 +569,14 @@ def test_inactive_workspace_backfills_only_with_explicit_permission(
         config=_config(),
         observation=SimpleNamespace(),  # type: ignore[arg-type]
         now=datetime(2026, 8, 26, 12, 34, tzinfo=UTC),
-        allow_initial_backfill=allow_initial_backfill,
+        bootstrap_only=bootstrap_only,
     )
 
     assert calls[0] == ("request", "status-request")
     assert ("close", "status-request") in calls
-    assert processed is allow_initial_backfill
-    if allow_initial_backfill:
-        assert ("request", "initial-request") in calls
-        assert ("close", "initial-request") in calls
-    else:
-        assert ("request", "initial-request") not in calls
+    assert processed is True
+    assert ("request", "initial-request") in calls
+    assert ("close", "initial-request") in calls
 
 
 def test_workspace_refuses_initial_rollout_when_schema_is_not_prepared(
@@ -640,8 +765,21 @@ def test_default_workspace_probe_maps_only_discovered_legacy_projects(
     )
     monkeypatch.setattr(
         subject.dev_runtime,
-        "_postgres_project_tenant_bindings",
-        lambda *_args: bindings,
+        "_postgres_workspace_project_inventory",
+        lambda *_args, **scope: subject.dev_runtime._parse_postgres_workspace_inventory(
+            [
+                (
+                    WORKSPACE_DEFAULT,
+                    ORG_A,
+                    True,
+                    binding.project_id,
+                    binding.organization_id,
+                    binding.workspace_id,
+                )
+                for binding in bindings
+            ],
+            **scope,
+        ),
     )
 
     mapped = subject._legacy_aware_project_probe(scope)(
@@ -649,9 +787,10 @@ def test_default_workspace_probe_maps_only_discovered_legacy_projects(
         SimpleNamespace(),  # type: ignore[arg-type]
     )
 
-    assert mapped[0].workspace_id == WORKSPACE_DEFAULT
-    assert mapped[0].workspace_organization_id == ORG_A
-    assert mapped[1] == bindings[1]
+    assert mapped.bindings[0].workspace_id == WORKSPACE_DEFAULT
+    assert mapped.bindings[0].workspace_organization_id == ORG_A
+    assert mapped.bindings[1] == bindings[1]
+    assert mapped.is_default is True
 
 
 def test_once_exits_nonzero_after_any_workspace_failure(
@@ -720,7 +859,7 @@ def test_once_forwards_explicit_initial_backfill_mode_and_wall(
         initial_backfill_wall_ms=1_740_000,
     )
 
-    assert captured["allow_initial_backfill"] is True
+    assert captured["bootstrap_only"] is True
     assert captured["initial_backfill_wall_ms"] == 1_740_000
 
 
@@ -736,3 +875,414 @@ def test_initial_backfill_wall_requires_explicit_backfill() -> None:
             initial_backfill_wall_ms=1_740_000,
             once=True,
         )
+
+
+def test_continuous_empty_install_discovers_new_workspace_then_reconciles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _stub_lifecycle_runtime(monkeypatch)
+    workspace = (WORKSPACE_DEFAULT, ORG_A, True)
+    project = (PROJECT_DEFAULT, WORKSPACE_DEFAULT)
+    workspaces = _RowsManager([[], [workspace], [workspace], [workspace]])
+    projects = _RowsManager([[], [project], [project]])
+    monkeypatch.setattr(
+        subject, "Workspace", SimpleNamespace(no_workspace_objects=workspaces)
+    )
+    monkeypatch.setattr(
+        subject, "Project", SimpleNamespace(no_workspace_objects=projects)
+    )
+    config = replace(_config(), revision_fence_file=str(tmp_path / "fence.json"))
+    monkeypatch.setattr(subject, "settings", _settings())
+    monkeypatch.setattr(subject, "_supervisor_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        subject, "_probe_remote_identities", lambda **_kwargs: _observation()
+    )
+    now = datetime(2026, 8, 26, 12, tzinfo=UTC)
+    monkeypatch.setattr(subject, "_utc_now", lambda: now)
+    cycles: list[list[tuple[str, str]]] = []
+
+    class StopSupervisor(Exception):
+        pass
+
+    def sleep(seconds: int) -> None:
+        assert seconds == config.poll_seconds
+        cycles.append(list(state.events))
+        if len(cycles) == 4:
+            raise StopSupervisor
+
+    monkeypatch.setattr(subject.time, "sleep", sleep)
+    with pytest.raises(StopSupervisor):
+        subject.Command().handle(once=False)
+
+    assert cycles[0] == []  # No workspace yet.
+    bootstrap = [
+        "status",
+        "close-status",
+        "schema",
+        "backfill",
+        "postgres",
+        "reconcile",
+        "qualify",
+        "activate",
+        "close-execute",
+    ]
+    # A real workspace bootstraps before its first Observe project exists.
+    assert cycles[1] == [(WORKSPACE_DEFAULT, step) for step in bootstrap]
+    scheduled = [
+        (WORKSPACE_DEFAULT, step)
+        for step in (
+            "status",
+            "close-status",
+            "verify-schema",
+            "incremental",
+            "close-execute",
+        )
+    ]
+    assert cycles[2][len(bootstrap) :] == scheduled
+    assert cycles[3][len(bootstrap) :] == scheduled * 2
+    assert state.active == {WORKSPACE_DEFAULT}
+    assert workspaces.batches == projects.batches == []
+    assert all(
+        request.initial_backfill_wall_ms is None
+        and request.repair_expired_incomplete is False
+        for request, _proxy in state.requests
+    )
+
+
+@pytest.mark.parametrize(
+    "failed_stage", ("backfill", "reconcile", "qualify", "activate")
+)
+@pytest.mark.parametrize("checkpoint_reload", (False, True))
+def test_bootstrap_failure_retries_on_next_cycle_and_then_becomes_incremental(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failed_stage: str,
+    checkpoint_reload: bool,
+) -> None:
+    from tracer.services.clickhouse.v2.property_catalog.durable_native_writer import (
+        NativeCheckpointReloadRequired,
+    )
+
+    state = _stub_lifecycle_runtime(monkeypatch)
+    failure_type = NativeCheckpointReloadRequired if checkpoint_reload else RuntimeError
+    failure = failure_type(f"{failed_stage} incomplete")
+    state.failures[(WORKSPACE_DEFAULT, failed_stage)] = failure
+    errors: list[Exception] = []
+    config = replace(_config(), revision_fence_file=str(tmp_path / "fence.json"))
+
+    def cycle(now: datetime) -> subject._CycleResult:
+        return subject._run_cycle(
+            scopes=(_scope(),),
+            skipped=(),
+            settings_object=_settings(),
+            config=config,
+            observation=_observation(),
+            now=now,
+            on_error=lambda _workspace_id, exc: errors.append(exc),
+        )
+
+    now = datetime(2026, 8, 26, 12, tzinfo=UTC)
+    failed = cycle(now)
+    assert failed.processed == ()
+    assert failed.failures == {WORKSPACE_DEFAULT: str(failure)}
+    assert state.active == set()
+    assert errors == [failure]
+    assert state.events[-1] == (WORKSPACE_DEFAULT, "close-execute")
+
+    retried = cycle(now + timedelta(seconds=config.poll_seconds))
+    assert retried.processed == (WORKSPACE_DEFAULT,)
+    assert retried.failures == {}
+    assert state.active == {WORKSPACE_DEFAULT}
+    assert state.events.count((WORKSPACE_DEFAULT, "backfill")) == 2
+
+    assert cycle(now + timedelta(seconds=2 * config.poll_seconds)).failures == {}
+    assert state.events.count((WORKSPACE_DEFAULT, "backfill")) == 2
+    assert state.events.count((WORKSPACE_DEFAULT, "incremental")) == 1
+    assert all(
+        request.repair_expired_incomplete is False for request, _proxy in state.requests
+    )
+
+
+def test_failed_bootstrap_does_not_block_another_new_or_active_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _stub_lifecycle_runtime(monkeypatch)
+    state.active.add(WORKSPACE_EMPTY)
+    state.failures[(WORKSPACE_DEFAULT, "backfill")] = RuntimeError("lease refused")
+    result = subject._run_cycle(
+        scopes=(
+            _scope(),
+            _scope(
+                WORKSPACE_OTHER, organization_id=ORG_B, project_ids=(PROJECT_OTHER,)
+            ),
+            _scope(WORKSPACE_EMPTY, project_ids=(PROJECT_LEGACY,)),
+        ),
+        skipped=(),
+        settings_object=_settings(),
+        config=replace(_config(), revision_fence_file=str(tmp_path / "fence.json")),
+        observation=_observation(),
+        now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+        on_error=lambda *_args: None,
+    )
+
+    assert result.failures == {WORKSPACE_DEFAULT: "lease refused"}
+    assert result.processed == (WORKSPACE_OTHER, WORKSPACE_EMPTY)
+    assert state.active == {WORKSPACE_OTHER, WORKSPACE_EMPTY}
+    assert (WORKSPACE_OTHER, "activate") in state.events
+    assert (WORKSPACE_EMPTY, "incremental") in state.events
+    assert (WORKSPACE_DEFAULT, "activate") not in state.events
+
+
+def test_each_workspace_uses_fresh_clock_and_reports_progress(monkeypatch, tmp_path):
+    times = [datetime(2026, 9, 6, tzinfo=UTC), datetime(2026, 9, 6, 1, tzinfo=UTC)]
+    clock = iter(times)
+    observed = []
+    progress = []
+
+    def run(**kwargs):
+        observed.append(kwargs["now"])
+        return True
+
+    monkeypatch.setattr(subject, "_run_workspace", run)
+    subject._run_cycle(
+        scopes=(
+            _scope(),
+            _scope(
+                WORKSPACE_OTHER, organization_id=ORG_B, project_ids=(PROJECT_OTHER,)
+            ),
+        ),
+        skipped=(),
+        settings_object=_settings(),
+        config=replace(_config(), revision_fence_file=str(tmp_path / "fence.json")),
+        observation=_observation(),
+        now=times[0],
+        clock=lambda: next(clock),
+        on_workspace=progress.append,
+        on_error=lambda *_: None,
+    )
+    assert observed == times
+    assert progress == [WORKSPACE_DEFAULT, WORKSPACE_OTHER]
+
+
+@pytest.mark.parametrize("dependency_failure", [False, True])
+def test_continuous_health_distinguishes_workspace_and_dependency_failures(
+    monkeypatch,
+    tmp_path,
+    dependency_failure,
+):
+    config = replace(_config(), revision_fence_file=str(tmp_path / "fence.json"))
+    path = tmp_path / "health.json"
+    monkeypatch.setattr(subject, "settings", _settings())
+    monkeypatch.setattr(subject, "_supervisor_config", lambda **_: config)
+
+    def probe(**_):
+        if dependency_failure:
+            raise RuntimeError("dependency unavailable")
+        return _observation()
+
+    monkeypatch.setattr(subject, "_probe_remote_identities", probe)
+    monkeypatch.setattr(subject, "_discover_workspace_scopes", lambda **_: ((), ()))
+    monkeypatch.setattr(
+        subject,
+        "_run_cycle",
+        lambda **_: subject._CycleResult(
+            processed=(WORKSPACE_OTHER,),
+            skipped=(),
+            failures={WORKSPACE_DEFAULT: "local failure"},
+        ),
+    )
+
+    class StopSupervisor(Exception):
+        pass
+
+    def sleep(_):
+        record = json.loads(path.read_text())
+        assert record["live"] is True
+        assert record["ready"] is (not dependency_failure)
+        assert record["healthy"] is False
+        raise StopSupervisor
+
+    monkeypatch.setattr(subject.time, "sleep", sleep)
+    with pytest.raises(StopSupervisor):
+        subject.Command().handle(once=False, health_file=str(path))
+    assert json.loads(path.read_text())["live"] is False
+
+
+def test_once_initial_backfill_is_idempotent_after_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _stub_lifecycle_runtime(monkeypatch)
+    state.active.add(WORKSPACE_OTHER)
+    config = replace(_config(), revision_fence_file=str(tmp_path / "fence.json"))
+    monkeypatch.setattr(subject, "settings", _settings())
+    monkeypatch.setattr(subject, "_supervisor_config", lambda **_kwargs: config)
+    monkeypatch.setattr(
+        subject, "_probe_remote_identities", lambda **_kwargs: _observation()
+    )
+    monkeypatch.setattr(
+        subject,
+        "_discover_workspace_scopes",
+        lambda **_kwargs: (
+            (
+                _scope(),
+                _scope(
+                    WORKSPACE_OTHER, organization_id=ORG_B, project_ids=(PROJECT_OTHER,)
+                ),
+            ),
+            (),
+        ),
+    )
+
+    first = subject.Command().handle(
+        once=True, initial_backfill=True, initial_backfill_wall_ms=1_740_000
+    )
+    assert first == subject.canonical_json(
+        {"failed": {}, "processed": [WORKSPACE_DEFAULT], "skipped": [WORKSPACE_OTHER]}
+    )
+    offset = len(state.events)
+    second = subject.Command().handle(once=True, initial_backfill=True)
+    assert second == subject.canonical_json(
+        {"failed": {}, "processed": [], "skipped": [WORKSPACE_DEFAULT, WORKSPACE_OTHER]}
+    )
+    assert state.events[offset:] == [
+        (workspace, step)
+        for workspace in (WORKSPACE_DEFAULT, WORKSPACE_OTHER)
+        for step in ("status", "close-status")
+    ]
+    writes = [request for request, _proxy in state.requests if request.execute]
+    assert len(writes) == 1
+    assert writes[0].initial_backfill_wall_ms == 1_740_000
+
+
+@pytest.mark.parametrize("active", (None, 0, 1, "false", "true"))
+def test_ambiguous_status_cannot_trigger_automatic_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+    active: Any,
+) -> None:
+    state = _stub_lifecycle_runtime(monkeypatch)
+    monkeypatch.setattr(
+        subject,
+        "run_configured_dev_rollout",
+        lambda **_kwargs: SimpleNamespace(
+            evidence=(
+                SimpleNamespace(evidence={"schema_ready": True, "active": active}),
+            )
+        ),
+    )
+
+    with pytest.raises(
+        subject.OssPropertyCatalogSupervisorError, match="explicitly prove"
+    ):
+        subject._run_workspace(
+            scope=_scope(),
+            settings_object=_settings(),
+            config=_config(),
+            observation=_observation(),
+            now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+        )
+    assert len(state.requests) == 1
+    assert state.requests[0][0].status is True
+    assert state.events == [(WORKSPACE_DEFAULT, "close-status")]
+
+
+def test_automatic_bootstrap_retains_bounded_runtime_scans_deadline_and_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state = _stub_lifecycle_runtime(monkeypatch)
+    now = datetime(2026, 8, 26, 12, tzinfo=UTC)
+    settings_object = _settings(
+        CLICKHOUSE={},
+        CLICKHOUSE_V2={
+            "CH25_HOST": "source.invalid",
+            "CH25_TCP_PORT": 9000,
+            "CH25_USER": "source_reader",
+            "CH25_PASSWORD": "test-source",
+            "CH25_DATABASE": "default",
+            "CH25_SERVER_ENFORCED_READONLY": True,
+        },
+        PROPERTY_CATALOG_DEV_WRITE_CH_HOST="writer.invalid",
+        PROPERTY_CATALOG_DEV_WRITE_CH_PORT=9000,
+        PROPERTY_CATALOG_DEV_WRITE_CH_USER="catalog_writer",
+        PROPERTY_CATALOG_DEV_WRITE_CH_PASSWORD="test-writer",
+        PROPERTY_CATALOG_DEV_MUTATION_LOCK_DIRECTORY=str(tmp_path),
+        PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE=str(
+            tmp_path / "producer-drain-proof-v2.json"
+        ),
+        PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE=str(
+            tmp_path / "producer-state-retirements-v1.json"
+        ),
+    )
+    subject._run_workspace(
+        scope=_scope(),
+        settings_object=settings_object,
+        config=replace(_config(), revision_fence_file=str(tmp_path / "fence.json")),
+        observation=_observation(),
+        now=now,
+    )
+    request, proxy = state.requests[1]
+    assert request.execute and not request.status
+    assert request.initial_backfill_wall_ms is None
+    assert request.scheduled_reconcile_wall_ms is None
+    assert request.repair_expired_incomplete is False
+
+    class Driver:
+        def __init__(self, config: Any) -> None:
+            self.database = config.database
+            self.server_enforced_readonly = config.server_enforced_readonly
+
+    runtime = subject.PropertyCatalogDevRuntimeFactory(
+        settings_object=proxy,
+        native_client_factory=Driver,
+        provenance_probe=lambda *_args: _observation(),
+        project_tenant_binding_probe=lambda *_args: PostgresWorkspaceProjectInventory(
+            ORG_A,
+            WORKSPACE_DEFAULT,
+            False,
+            (
+                PostgresProjectTenantBinding(
+                    project_id=PROJECT_DEFAULT,
+                    organization_id=ORG_A,
+                    workspace_id=WORKSPACE_DEFAULT,
+                    workspace_organization_id=ORG_A,
+                ),
+            ),
+        ),
+        now=lambda: now,
+    )(request)
+    try:
+        assert runtime.config.span_until - runtime.config.span_since == timedelta(
+            days=366
+        )
+        assert runtime.config.project_ids == (PROJECT_DEFAULT,)
+        assert runtime.config.extended_rollout_wall is False
+        assert 0 < runtime.deadline.wall_ms <= dev_rollout.DEV_STANDARD_MAX_WALL_MS
+        assert (
+            runtime.coordinator._lease_seconds
+            == subject.dev_runtime.REVISION_LEASE_SECONDS
+        )
+        assert (
+            runtime.coordinator._lease_seconds
+            <= subject.dev_runtime.MAX_REVISION_LEASE_SECONDS
+        )
+        assert runtime.deadline.wall_ms < runtime.coordinator._lease_seconds * 1000
+        assert runtime.coordinator._deadline is runtime.deadline
+        assert runtime.state_store._deadline is runtime.deadline
+        assert runtime.span_reader._deadline is runtime.deadline
+        assert runtime.lifecycle_state._deadline is runtime.deadline
+        assert (
+            runtime.span_reader._timeout_ms
+            == subject.dev_runtime.CANONICAL_SPAN_QUERY_TIMEOUT_MS
+        )
+        assert (
+            0
+            < runtime.span_reader._page_rows
+            <= subject.dev_runtime.MAX_CANONICAL_SPAN_PAGE_ROWS
+        )
+        assert runtime.source_client._explicit_initial_backfill is False
+        assert runtime.config.source.server_enforced_readonly is True
+    finally:
+        runtime.close()

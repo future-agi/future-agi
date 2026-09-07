@@ -1327,10 +1327,26 @@ def validate_property_catalog_read_admission(
 ) -> str | None:
     """Fail closed unless one bounded DEV or production read is admitted."""
 
-    if read_mode not in {"off", "shadow", "read"}:
-        raise ValueError("PROPERTY_CATALOG_READ_MODE must be off, shadow, or read")
+    if read_mode not in {"off", "shadow", "read", "managed"}:
+        raise ValueError("PROPERTY_CATALOG_READ_MODE must be off, shadow, read, or managed")
     if read_mode == "off":
         return None
+
+    if read_mode == "managed":
+        # Code-owned OSS admission: infrastructure supplies the isolated
+        # database and read-only identity; the control ledger supplies versions
+        # and per-workspace activation. Cloud admission remains explicit.
+        if not _property_catalog_managed_oss_environment(environment_type, cloud_deployment):
+            raise ValueError("managed property catalog reads require an OSS local/dev environment")
+        if dev_acknowledgement not in {None, ""} or prod_acknowledgement not in {None, ""}:
+            raise ValueError("managed property catalog reads cannot mix explicit read acknowledgements")
+        if dev_workspace_allowlist or prod_workspace_allowlist or prod_workspace_scope_mode != "allowlist":
+            raise ValueError("managed property catalog reads use authenticated scope, not an operator allowlist")
+        validate_property_catalog_read_connection(
+            host=host, port=port, database=database, api_read_user=api_read_user,
+            password=password, source_users=source_users, deployment="dev",
+        )
+        return "dev"
 
     deployment = property_catalog_read_deployment(
         environment_type,
@@ -1412,6 +1428,30 @@ def validate_property_catalog_read_admission(
     return deployment
 
 
+def _property_catalog_managed_oss_environment(environment_type: object, cloud_deployment: object) -> bool:
+    return (
+        isinstance(environment_type, str)
+        and environment_type.strip().lower() in {"local", "dev", "development"}
+        and cloud_deployment in {None, ""}
+    )
+
+
+def property_catalog_managed_oss_reads(source: object) -> bool:
+    """Managed OSS still requires deployment/connection admission at query time."""
+    return (
+        getattr(source, "PROPERTY_CATALOG_READ_MODE", "off") == "managed"
+        and getattr(source, "PROPERTY_CATALOG_READ_DEPLOYMENT", None) == "dev"
+        and _property_catalog_managed_oss_environment(
+            getattr(source, "ENV_TYPE", None), getattr(source, "CLOUD_DEPLOYMENT", None),
+        )
+    )
+
+
+def property_catalog_reads_all_workspaces(source: object) -> bool:
+    """Only the request's authenticated workspace may enter a global read gate."""
+    return property_catalog_managed_oss_reads(source) or property_catalog_reads_all_production_workspaces(source)
+
+
 def property_catalog_read_workspace_allowlist(source: object) -> tuple[object, ...]:
     """Return only the allowlist bound to the admitted read deployment."""
 
@@ -1450,6 +1490,12 @@ PROPERTY_CATALOG_PRODUCTION_DATABASE = os.getenv(
     PROPERTY_CATALOG_DEFAULT_PRODUCTION_DATABASE,
 ).strip()
 PROPERTY_CATALOG_DATABASE = os.getenv("PROPERTY_CATALOG_DATABASE", "").strip()
+PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC = os.getenv(
+    "PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC", "futureagi.oss.property-catalog.candidates.v1"
+).strip()
+PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC = os.getenv(
+    "PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC", "futureagi.oss.property-catalog.ordered.v1"
+).strip()
 PROPERTY_CATALOG_DEV_READ_ACK = os.getenv("PROPERTY_CATALOG_DEV_READ_ACK", "").strip()
 PROPERTY_CATALOG_PROD_READ_ACK = os.getenv("PROPERTY_CATALOG_PROD_READ_ACK", "").strip()
 PROPERTY_CATALOG_CH_HOST = os.getenv("PROPERTY_CATALOG_CH_HOST", "").strip()

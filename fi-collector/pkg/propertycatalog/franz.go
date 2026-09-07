@@ -264,7 +264,7 @@ func NewFranzConsumer(
 	}
 	if cfg.CheckpointLoader != nil {
 		options = append(options, kgo.OnPartitionsAssigned(func(ctx context.Context, _ *kgo.Client, _ map[string][]int32) {
-			checkpoints, err := cfg.CheckpointLoader.LoadCheckpoints(ctx)
+			checkpoints, err := AwaitCheckpointInventory(ctx, cfg.CheckpointLoader)
 			if err == nil {
 				err = validator.MergeCheckpoints(checkpoints)
 			}

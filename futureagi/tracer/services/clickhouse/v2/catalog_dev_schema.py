@@ -944,9 +944,31 @@ def verify_catalog_schema(
         except catalog_prod_schema.CatalogProdSchemaError as exc:
             raise CatalogDevSchemaError(str(exc)) from exc
     else:
-        _validate_exact_catalog_tables(target)
-        pinned_schema_sha256 = _validate_pinned_create_queries(target, statements)
-        _validate_unified_property_schema(target)
+        # Managed OSS adds one append-only reader control ledger. Validate its
+        # pinned standalone contract separately; the six lifecycle tables and
+        # their immutable pinned schema digest remain unchanged. Other extras
+        # are still rejected by the exact six-table check below.
+        from tracer.services.clickhouse.v2 import catalog_prod_schema
+
+        control = tuple(
+            table for table in target
+            if table.name == "property_catalog_activation_control_events"
+        )
+        for table in control:
+            expected = catalog_prod_schema._activation_control_statement()
+            options = {"target_database": target_database, "expected_table": table.name, "cluster": "managed_oss"}
+            try:
+                if table.engine != expected.engine or (
+                    catalog_prod_schema._canonical_create_tokens(table.create_table_query, **options)
+                    != catalog_prod_schema._canonical_create_tokens(expected.sql, **options)
+                ):
+                    raise CatalogDevSchemaError("managed reader control table differs from pinned schema")
+            except catalog_prod_schema.CatalogProdSchemaError as exc:
+                raise CatalogDevSchemaError(str(exc)) from exc
+        lifecycle_tables = tuple(table for table in target if table not in control)
+        _validate_exact_catalog_tables(lifecycle_tables)
+        pinned_schema_sha256 = _validate_pinned_create_queries(lifecycle_tables, statements)
+        _validate_unified_property_schema(lifecycle_tables)
     evidence = {
         "clickhouse_version": version,
         "deployment": deployment,
@@ -965,7 +987,7 @@ def verify_catalog_schema(
         "pinned_create_schema_sha256": pinned_schema_sha256,
         "target_tables": [table.as_dict() for table in target],
         "target_tables_sha256": _snapshot_digest(target),
-        "validated_target_table_count": 6,
+        "validated_target_table_count": len(target),
         "write_count": 0,
     }
     return json.dumps(evidence, indent=2, sort_keys=True) + "\n"

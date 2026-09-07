@@ -1,9 +1,10 @@
 """Checked-in infrastructure for the isolated property-catalog DEV runtime.
 
 The module deliberately separates the write-capable catalog identity from the
-SELECT-only canonical-span identity.  Python fence files and Go drain proofs
-must live in the same non-symlink runtime directory mounted into a Python/Go
-sidecar pod; a standalone one-off command pod cannot activate a revision.
+SELECT-only canonical-span identity. Python/Go share persistent control and
+spool directories (one sidecar volume or two OSS Compose volumes). Fences stay
+with mutation locks; drain/retirement proofs stay with the sequencer spool.
+A standalone one-off command without those shared files cannot activate.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import stat
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +34,7 @@ from .activation import (
     ActivationResult,
     BuildPlanSourceScope,
     BuildPlanStream,
+    CatalogLifecycleMode,
     ManifestStream,
     ManifestStreamRole,
     PropertyCatalogActivator,
@@ -40,6 +43,7 @@ from .activation import (
     StreamDrainProof,
     make_revision_fence,
 )
+from .candidate_repair import CandidateRepair, pending_candidate_repair
 from .codec import canonical_json, canonical_json_sha256, canonical_uuid
 from .coordinator import (
     MAX_REVISION_LEASE_SECONDS,
@@ -60,9 +64,11 @@ from .dev_rollout import (
     is_dev_control_plane_cloud_allowed,
 )
 from .durable_lifecycle import (
+    _MAX_SOURCE_WINDOW,
     ClickHouseLifecycleStateReader,
     ConfiguredSourceBounds,
     DurableWorkspaceCatalogLifecycle,
+    FencedScopeDrift,
     FreshSpanLifecycleCutoffFreezer,
     LifecycleRunMode,
     PreparedLifecycleRevision,
@@ -127,7 +133,10 @@ from .source_adapters import (
     SpanAttributeDefinitionSourceAdapter,
     SystemManifestAdapter,
 )
+from .source_parts import MAX_SOURCE_PARTS, notice_part_changes
+from .source_repair import SourceRepair, pending_source_repair, record_source_repair
 from .span_source import (
+    _EMPTY_FENCE_SQL,
     CANONICAL_SPAN_QUERY_TIMEOUT_MS,
     DEV_CANONICAL_SPAN_PAGE_ROWS,
     DEV_INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS,
@@ -140,6 +149,7 @@ from .span_source import (
     AuthoritativeSpanRole,
     CanonicalSpanSourceReader,
     FrozenSpanSource,
+    PropertyCatalogSourceChanged,
     RevisionPinnedSpanAttributeGroupPageLoader,
     stream_requirement,
 )
@@ -191,11 +201,36 @@ FROM system.settings
 WHERE name = 'readonly'
 """
 _CLICKHOUSE_WRITER_GRANTS_SQL = "SHOW GRANTS FOR CURRENT_USER"
+_REPLICA_HEALTH_COLUMNS = frozenset(
+    {
+        "database",
+        "table",
+        "is_readonly",
+        "is_session_expired",
+        "queue_size",
+        "active_replicas",
+        "total_replicas",
+    }
+)
+_REPLICA_HEALTH_GRANT_RE = re.compile(
+    r"^GRANT SELECT\((?P<columns>[a-z_`, ]+)\) ON system\.replicas "
+    r"TO (?P<quote>`?)(?P<user>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)$"
+)
 _DIRECT_TABLE_GRANT_RE = re.compile(
     r"^GRANT (?P<access>SELECT|INSERT)(?:, (?P<second>SELECT|INSERT))? "
     r"ON `?(?P<database>[A-Za-z_][A-Za-z0-9_]*)`?\."
     r"`?(?P<table>[A-Za-z_][A-Za-z0-9_]*)`? "
     r"TO `?(?P<user>[A-Za-z_][A-Za-z0-9_]*)`?$"
+)
+_SOURCE_CAPTURE_GRANT_RE = re.compile(
+    r"^GRANT (?P<access>[A-Z ]+(?:, [A-Z ]+)*) "
+    r"ON (?P<database_quote>`?)(?P<database>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=database_quote)\.(?P<table>\*|`spans`|spans) "
+    r"TO (?P<user_quote>`?)(?P<user>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P=user_quote)$"
+)
+_SOURCE_CAPTURE_ACCESS = frozenset(
+    {"SELECT", "INSERT", "CREATE TABLE", "ALTER DELETE", "ALTER TTL", "DROP TABLE"}
 )
 _POSTGRES_PROVENANCE_SQL = """
 SELECT
@@ -253,6 +288,27 @@ WHERE project.id = ANY(%s::uuid[])
 ORDER BY project.id
 """
 _PROJECT_TENANT_AUTHORITY = object()
+
+# The left join retains a positive workspace/organization witness even when
+# its complete eligible inventory is empty. Organization has no active/deleted
+# flags; workspace has both. Legacy null-project workspace ownership follows
+# the product's default-workspace rule, proved here rather than at discovery.
+_POSTGRES_WORKSPACE_INVENTORY_SQL = """
+SELECT workspace.id::text, workspace.organization_id::text, workspace.is_default,
+       project.id::text, project.organization_id::text, project.workspace_id::text
+FROM public.accounts_workspace AS workspace
+INNER JOIN public.accounts_organization AS organization
+    ON organization.id = workspace.organization_id
+LEFT JOIN public.tracer_project AS project
+    ON project.organization_id = workspace.organization_id
+   AND (project.workspace_id = workspace.id
+        OR (workspace.is_default AND project.workspace_id IS NULL))
+   AND project.deleted = FALSE AND project.trace_type = 'observe'
+WHERE workspace.id = %s::uuid AND workspace.organization_id = %s::uuid
+  AND workspace.is_active = TRUE AND workspace.deleted = FALSE
+ORDER BY project.id
+LIMIT 257
+"""
 _RUNTIME_FACTORY_AUTHORITY = object()
 _LOCKED_RUNTIME_SCOPE_FIELDS = frozenset(
     {
@@ -265,6 +321,8 @@ _LOCKED_RUNTIME_SCOPE_FIELDS = frozenset(
         "_revision_project_tenant_authorization",
         "_authorized_build_binding_sha256",
         "_authorized_revision_proof",
+        "_reader_activation_callback",
+        "_source_capture",
     }
 )
 
@@ -412,6 +470,12 @@ class SharedVolumeHotDrainProofSource:
                 or before.st_size != after.st_size
                 or before.st_mtime_ns != after.st_mtime_ns
                 or len(raw) != before.st_size
+                # A shared mount can expose a short observation even with
+                # matching cached metadata. The Go writer always terminates
+                # its atomically published document with a newline. Do not
+                # parse or accept an incomplete observation; retry under the
+                # same shrinking deadline. Complete invalid proofs still fail.
+                or not raw.endswith(b"\n")
             ):
                 return None
             return raw
@@ -802,12 +866,23 @@ class PostgresProjectTenantBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class PostgresWorkspaceProjectInventory:
+    """Positive active-workspace witness and its complete Observe inventory."""
+
+    organization_id: str
+    workspace_id: str
+    is_default: bool
+    bindings: tuple[PostgresProjectTenantBinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectTenantAuthorization:
     """Exact allowlist-to-rollout-tenant proof frozen before any target access."""
 
     organization_id: str = field(repr=False)
     workspace_id: str = field(repr=False)
     project_ids: tuple[str, ...] = field(repr=False)
+    workspace_is_default: bool
     authorization_contract_sha256: str
     authorized_at: datetime
     _authority: object = field(repr=False, compare=False)
@@ -831,16 +906,16 @@ class ProjectTenantAuthorization:
                 for project_id in self.project_ids
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS
-            or len(set(projects)) != len(projects)
-        ):
+        if len(projects) > _MAX_PROJECTS or len(set(projects)) != len(projects):
             raise PropertyCatalogDevRuntimeError(
-                "project tenant authorization requires 1.."
+                "project tenant authorization requires 0.."
                 f"{_MAX_PROJECTS} unique project IDs"
             )
         object.__setattr__(self, "project_ids", projects)
+        if type(self.workspace_is_default) is not bool:
+            raise PropertyCatalogDevRuntimeError(
+                "workspace default proof must be a bool"
+            )
         if (
             not isinstance(self.authorization_contract_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", self.authorization_contract_sha256) is None
@@ -953,6 +1028,8 @@ class DevRuntimeConfig:
                 raise PropertyCatalogDevRuntimeError(
                     f"{field_name} must be a positive UInt{bits}"
                 )
+        if not isinstance(self.project_ids, tuple):
+            raise TypeError("project_ids must be an explicit tuple")
         projects = tuple(
             sorted(
                 {
@@ -961,13 +1038,9 @@ class DevRuntimeConfig:
                 }
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS
-            or len(projects) != len(self.project_ids)
-        ):
+        if len(projects) > _MAX_PROJECTS or len(projects) != len(self.project_ids):
             raise PropertyCatalogDevRuntimeError(
-                "project allowlist must contain 1.."
+                "project allowlist must contain 0.."
                 f"{_MAX_PROJECTS} unique canonical UUIDs"
             )
         object.__setattr__(self, "project_ids", projects)
@@ -996,16 +1069,28 @@ class DevRuntimeConfig:
                 "revision fence, drain proof, and retirement files must be distinct"
             )
         shared_directory = Path(self.mutation_lock_directory).resolve(strict=True)
-        for value, name in (
-            (self.revision_fence_file, "revision fence file"),
-            (self.drain_proof_file, "drain proof file"),
-            (self.producer_retirement_file, "producer retirement file"),
+        if (
+            Path(self.revision_fence_file).parent.resolve(strict=True)
+            != shared_directory
         ):
-            if Path(value).parent.resolve(strict=True) != shared_directory:
-                raise PropertyCatalogDevRuntimeError(
-                    f"{name} must be inside the exact shared Python/Go sidecar "
-                    "runtime directory"
-                )
+            raise PropertyCatalogDevRuntimeError(
+                "revision fence file must be inside the exact shared Python/Go "
+                "sidecar runtime directory"
+            )
+        # OSS Compose preserves separate control and sequencer volumes. The
+        # fence and mutation locks must share the control directory; drain and
+        # retirement handshakes must share the sequencer's persistent spool.
+        # Requiring every file to share one directory broke that supported
+        # topology and must not be worked around by moving/discarding old state.
+        spool_directory = Path(self.drain_proof_file).parent.resolve(strict=True)
+        if (
+            Path(self.producer_retirement_file).parent.resolve(strict=True)
+            != spool_directory
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "drain proof and producer retirement must share the exact "
+                "persistent sequencer directory"
+            )
         if Path(self.drain_proof_file).name != _DRAIN_PROOF_FILENAME:
             raise PropertyCatalogDevRuntimeError(
                 "drain proof file must use the Go runtime's fixed v2 filename"
@@ -1023,9 +1108,9 @@ class DevRuntimeConfig:
         if self.span_since >= self.span_until:
             raise PropertyCatalogDevRuntimeError("span_since must precede span_until")
         hours = int((self.span_until - self.span_since).total_seconds() // 3600)
-        if not 1 <= hours <= 366 * 24:
+        if hours < 1:
             raise PropertyCatalogDevRuntimeError(
-                "canonical span window must contain 1 hour to 366 days"
+                "canonical span window must contain at least one hour"
             )
         if (
             type(self.span_page_rows) is not int
@@ -1623,15 +1708,174 @@ def _parse_postgres_project_tenant_rows(
     return tuple(bindings)
 
 
+def _postgres_workspace_project_inventory(
+    project_ids: tuple[str, ...],
+    expected_postgres_identity: PostgresDevIdentity,
+    *,
+    organization_id: str,
+    workspace_id: str,
+    current_snapshot: bool = False,
+) -> PostgresWorkspaceProjectInventory:
+    """Prove workspace presence and exact live inventory on the pinned PG DB."""
+    if not isinstance(project_ids, tuple) or len(project_ids) > _MAX_PROJECTS:
+        raise PropertyCatalogDevRuntimeError(
+            "project inventory must be an explicit bounded tuple"
+        )
+    if not isinstance(expected_postgres_identity, PostgresDevIdentity):
+        raise TypeError("expected_postgres_identity must be PostgresDevIdentity")
+    organization_id = canonical_uuid(organization_id, field="organization_id")
+    workspace_id = canonical_uuid(workspace_id, field="workspace_id")
+    from django.db import connections, transaction
+
+    connection = connections[PROPERTY_SOURCE_DB_ALIAS]
+    if (
+        connection.vendor != "postgresql"
+        or bool(connection.in_atomic_block) != current_snapshot
+    ):
+        raise PropertyCatalogDevRuntimeError(
+            "workspace inventory requires its read-only PostgreSQL snapshot"
+        )
+    try:
+        with (
+            nullcontext()
+            if current_snapshot
+            else transaction.atomic(using=PROPERTY_SOURCE_DB_ALIAS)
+        ):
+            with connection.cursor() as cursor:
+                if not current_snapshot:
+                    cursor.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                    cursor.execute("SET LOCAL statement_timeout = '8000ms'")
+                cursor.execute(_POSTGRES_PROVENANCE_SQL)
+                row, extra = cursor.fetchone(), cursor.fetchone()
+                if (
+                    row is None
+                    or extra is not None
+                    or _postgres_dev_identity_from_row(row)
+                    != expected_postgres_identity
+                ):
+                    raise PropertyCatalogDevRuntimeError(
+                        "workspace inventory changed PostgreSQL identity"
+                    )
+                cursor.execute(
+                    _POSTGRES_WORKSPACE_INVENTORY_SQL, (workspace_id, organization_id)
+                )
+                rows = cursor.fetchall()
+        return _parse_postgres_workspace_inventory(
+            rows, organization_id=organization_id, workspace_id=workspace_id
+        )
+    except PropertyCatalogDevRuntimeError:
+        raise
+    except Exception as exc:
+        raise PropertyCatalogDevRuntimeError(
+            "canonical PostgreSQL workspace inventory proof failed"
+        ) from exc
+
+
+def _parse_postgres_workspace_inventory(
+    rows: Sequence[Sequence[Any]],
+    *,
+    organization_id: str,
+    workspace_id: str,
+) -> PostgresWorkspaceProjectInventory:
+    if not rows or len(rows) > _MAX_PROJECTS:
+        raise PropertyCatalogDevRuntimeError(
+            "active workspace inventory is missing or exceeds its bound"
+        )
+    bindings = []
+    is_default = None
+    for row in rows:
+        if (
+            not isinstance(row, (tuple, list))
+            or len(row) != 6
+            or row[0] != workspace_id
+            or row[1] != organization_id
+            or type(row[2]) is not bool
+            or (is_default is not None and row[2] != is_default)
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "workspace inventory returned inconsistent ownership"
+            )
+        is_default = row[2]
+        if row[3] is None:
+            if len(rows) != 1 or row[4] is not None or row[5] is not None:
+                raise PropertyCatalogDevRuntimeError(
+                    "workspace inventory returned an invalid empty witness"
+                )
+            continue
+        if row[4] != organization_id or (
+            row[5] != workspace_id and not (is_default and row[5] is None)
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "project inventory returned foreign ownership"
+            )
+        bindings.append(
+            PostgresProjectTenantBinding(
+                project_id=row[3],
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                workspace_organization_id=organization_id,
+            )
+        )
+    return PostgresWorkspaceProjectInventory(
+        organization_id, workspace_id, is_default, tuple(bindings)
+    )
+
+
+def _validate_workspace_project_inventory(
+    inventory: PostgresWorkspaceProjectInventory,
+    *,
+    organization_id: str,
+    workspace_id: str,
+) -> None:
+    """Validate positive workspace eligibility, without granting source access."""
+    if not isinstance(inventory, PostgresWorkspaceProjectInventory):
+        raise PropertyCatalogDevRuntimeError(
+            "project allowlist is missing exact canonical PostgreSQL ownership: active workspace inventory required"
+        )
+    if (
+        inventory.organization_id != organization_id
+        or inventory.workspace_id != workspace_id
+        or type(inventory.is_default) is not bool
+    ):
+        raise PropertyCatalogDevRuntimeError(
+            "project allowlist is not owned by the exact rollout organization/workspace"
+        )
+    if not isinstance(inventory.bindings, tuple):
+        raise PropertyCatalogDevRuntimeError(
+            "project inventory must be an explicit tuple"
+        )
+    if any(
+        not isinstance(binding, PostgresProjectTenantBinding)
+        for binding in inventory.bindings
+    ):
+        raise TypeError("project binding probe returned an invalid binding")
+    ids = tuple(binding.project_id for binding in inventory.bindings)
+    if len(ids) > _MAX_PROJECTS or len(set(ids)) != len(ids):
+        raise PropertyCatalogDevRuntimeError(
+            "project allowlist is missing exact canonical PostgreSQL ownership: inventory oversized or duplicated"
+        )
+    if any(
+        binding.organization_id != organization_id
+        or binding.workspace_id != workspace_id
+        or binding.workspace_organization_id != organization_id
+        for binding in inventory.bindings
+    ):
+        raise PropertyCatalogDevRuntimeError(
+            "project allowlist is not owned by the exact rollout organization/workspace"
+        )
+
+
 def _authorize_project_tenant_bindings(
     *,
     request: DevRolloutRequest,
     config: Any,
     observation: DevProvenanceObservation,
-    bindings: Sequence[PostgresProjectTenantBinding],
+    bindings: PostgresWorkspaceProjectInventory,
     authorized_at: datetime,
 ) -> ProjectTenantAuthorization:
-    """Require a complete one-to-one owner match for the rollout allowlist."""
+    """Require positive workspace ownership and an exact eligible inventory."""
 
     if not isinstance(request, DevRolloutRequest):
         raise TypeError("request must be a DevRolloutRequest")
@@ -1639,25 +1883,26 @@ def _authorize_project_tenant_bindings(
         raise TypeError("observation must be a DevProvenanceObservation")
     organization_id = request.organization_id
     workspace_id = request.workspace_id
+    inventory = bindings
+    _validate_workspace_project_inventory(
+        inventory, organization_id=organization_id, workspace_id=workspace_id
+    )
+    bindings = inventory.bindings
+    if not isinstance(config.project_ids, tuple) or not isinstance(bindings, tuple):
+        raise PropertyCatalogDevRuntimeError(
+            "project inventory must be an explicit tuple"
+        )
     expected = tuple(
         sorted(
             canonical_uuid(project_id, field="project_id")
             for project_id in config.project_ids
         )
     )
-    if (
-        not expected
-        or len(expected) > _MAX_PROJECTS
-        or len(set(expected)) != len(expected)
-    ):
+    if len(expected) > _MAX_PROJECTS or len(set(expected)) != len(expected):
         raise PropertyCatalogDevRuntimeError(
-            "project tenant authorization requires 1.."
+            "project tenant authorization requires 0.."
             f"{_MAX_PROJECTS} unique project IDs"
         )
-    if any(
-        not isinstance(binding, PostgresProjectTenantBinding) for binding in bindings
-    ):
-        raise TypeError("project binding probe returned an invalid binding")
     observed_ids = tuple(binding.project_id for binding in bindings)
     if (
         len(observed_ids) != len(set(observed_ids))
@@ -1666,23 +1911,16 @@ def _authorize_project_tenant_bindings(
         raise PropertyCatalogDevRuntimeError(
             "project allowlist is missing exact canonical PostgreSQL ownership"
         )
-    if any(
-        binding.organization_id != organization_id
-        or binding.workspace_id != workspace_id
-        or binding.workspace_organization_id != organization_id
-        for binding in bindings
-    ):
-        raise PropertyCatalogDevRuntimeError(
-            "project allowlist is not owned by the exact rollout organization/workspace"
-        )
     return ProjectTenantAuthorization(
         organization_id=organization_id,
         workspace_id=workspace_id,
         project_ids=expected,
+        workspace_is_default=inventory.is_default,
         authorization_contract_sha256=_project_tenant_authorization_contract_sha256(
             request=request,
             config=config,
             observation=observation,
+            workspace_is_default=inventory.is_default,
         ),
         authorized_at=authorized_at,
         _authority=_PROJECT_TENANT_AUTHORITY,
@@ -1694,6 +1932,7 @@ def _project_tenant_authorization_contract_sha256(
     request: DevRolloutRequest,
     config: Any,
     observation: DevProvenanceObservation,
+    workspace_is_default: bool = False,
 ) -> str:
     """Bind authorization to every immutable request/config/identity input."""
 
@@ -1708,6 +1947,11 @@ def _project_tenant_authorization_contract_sha256(
         }
 
     payload = {
+        "workspace_inventory": {
+            "active": True,
+            "is_default": workspace_is_default,
+            "trace_type": "observe",
+        },
         "config": {
             "catalog": connection_payload(config.catalog),
             "catalog_control_database": config.catalog_control_database,
@@ -1858,6 +2102,7 @@ def _validate_dev_provenance(
             observation.writer_clickhouse_grants,
             database=config.catalog.database,
             user=config.catalog.user,
+            source_database=config.source.database,
         )
     return DevProvenanceEvidence(observation=observation, attested_at=attested_at)
 
@@ -1867,16 +2112,99 @@ def _validate_production_writer_grants(
     *,
     database: str,
     user: str,
+    source_database: str | None = None,
 ) -> None:
-    """Require direct table-exact DML grants for the isolated catalog only."""
+    """Exact catalog grants, optionally plus the complete local capture bundle.
+
+    This checks grants, not topology or permission to dispatch a capture. The
+    factory must separately prove the writer and canonical source are the same
+    native member before using this capability; never reroute credentials.
+    """
 
     require_prod_catalog_database(database)
     if _IDENTIFIER_RE.fullmatch(user) is None:
         raise PropertyCatalogDevRuntimeError(
             "production ClickHouse writer user must be one safe identifier"
         )
-    observed: set[tuple[str, str]] = set()
+    capture_database = f"{database}_source_capture"
+    if source_database is not None and (
+        not isinstance(source_database, str)
+        or _IDENTIFIER_RE.fullmatch(source_database) is None
+        or source_database in {database, capture_database}
+    ):
+        raise PropertyCatalogDevRuntimeError(
+            "production ClickHouse capture source namespace is invalid"
+        )
+    capture_seen: set[tuple[str, str, str]] = set()
+    catalog_grants: list[str] = []
+    replica_health_seen = False
     for grant in grants:
+        health = (
+            _REPLICA_HEALTH_GRANT_RE.fullmatch(grant)
+            if isinstance(grant, str)
+            else None
+        )
+        if health is not None:
+            raw_columns = health.group("columns").split(", ")
+            columns = [column.strip("`") for column in raw_columns]
+            if (
+                replica_health_seen
+                or health.group("user") != user
+                or set(columns) != _REPLICA_HEALTH_COLUMNS
+                or len(columns) != len(_REPLICA_HEALTH_COLUMNS)
+                or any(
+                    raw not in {column, f"`{column}`"}
+                    for raw, column in zip(raw_columns, columns, strict=True)
+                )
+            ):
+                raise PropertyCatalogDevRuntimeError(
+                    "invalid replica health read grant"
+                )
+            # Initialization must check replica health, never grant broad
+            # metadata access or relax the catalog/source write restrictions.
+            replica_health_seen = True
+            continue
+        match = (
+            _SOURCE_CAPTURE_GRANT_RE.fullmatch(grant)
+            if source_database is not None and isinstance(grant, str)
+            else None
+        )
+        scope = (
+            (match.group("database"), match.group("table").strip("`"))
+            if match is not None
+            else None
+        )
+        if scope not in {(source_database, "spans"), (capture_database, "*")}:
+            catalog_grants.append(grant)
+            continue
+        assert match is not None
+        access = match.group("access").split(", ")
+        allowed = (
+            {"SELECT"}
+            if scope == (source_database, "spans")
+            else _SOURCE_CAPTURE_ACCESS
+        )
+        entries = {(*scope, privilege) for privilege in access}
+        if (
+            match.group("user") != user
+            or not set(access) <= allowed
+            or len(entries) != len(access)
+            or capture_seen & entries
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "production ClickHouse writer has invalid source capture grants"
+            )
+        capture_seen.update(entries)
+    expected_capture = {
+        (source_database, "spans", "SELECT"),
+        *((capture_database, "*", privilege) for privilege in _SOURCE_CAPTURE_ACCESS),
+    }
+    if capture_seen and capture_seen != expected_capture:
+        raise PropertyCatalogDevRuntimeError(
+            "production ClickHouse writer source capture grants are incomplete"
+        )
+    observed: set[tuple[str, str]] = set()
+    for grant in catalog_grants:
         match = _DIRECT_TABLE_GRANT_RE.fullmatch(grant)
         if match is None:
             raise PropertyCatalogDevRuntimeError(
@@ -1900,7 +2228,7 @@ def _validate_production_writer_grants(
             )
         observed.add((database, table))
     expected = {(database, table) for table in PROPERTY_CATALOG_TABLES}
-    if observed != expected or len(grants) != len(expected):
+    if observed != expected or len(catalog_grants) != len(expected):
         raise PropertyCatalogDevRuntimeError(
             "production ClickHouse writer grants must cover every catalog table exactly"
         )
@@ -1909,10 +2237,39 @@ def _validate_production_writer_grants(
 class NativeCatalogClient:
     """Qualified six-table writer/reader over one dedicated native client."""
 
-    def __init__(self, driver: NativeClickHouseDriver, *, database: str) -> None:
+    def __init__(
+        self,
+        driver: NativeClickHouseDriver,
+        *,
+        database: str,
+        durable_writer: Any = None,
+    ) -> None:
         self.catalog_database = require_catalog_database(database)
         self._driver = driver
+        self._durable_writer = durable_writer
+        if durable_writer is not None:
+            from .durable_native_writer import DurableNativeCatalogWriter
+
+            if (
+                type(durable_writer) is not DurableNativeCatalogWriter
+                or durable_writer.driver is not driver
+                or durable_writer.database != self.catalog_database
+            ):
+                raise PropertyCatalogDevRuntimeError(
+                    "native durable writer identity differs"
+                )
         self._validate_identity()
+        from .native_write_proof import NativeReadAgreement
+        from .state_store import activation_latest_rows_sql
+
+        # Only these complete activation inventories may ignore exact duplicate
+        # counts/order after every member passes the unchanged physical bounds.
+        self._read_agreements = {
+            activation_latest_rows_sql(
+                self.catalog_database, through_revision=through_revision
+            ): NativeReadAgreement.complete_result()
+            for through_revision in (False, True)
+        }
 
     def query(
         self,
@@ -1932,6 +2289,15 @@ class NativeCatalogClient:
             raise PropertyCatalogDevRuntimeError(
                 "catalog reads may reference only the exact six qualified DEV tables"
             )
+        if self._durable_writer is not None:
+            if sql in self._read_agreements:
+                return self._durable_writer.query(
+                    sql,
+                    params,
+                    timeout_ms=timeout_ms,
+                    agreement=self._read_agreements[sql],
+                )
+            return self._durable_writer.query(sql, params, timeout_ms=timeout_ms)
         rows, columns, _ = self._driver.execute_read(
             sql,
             params,
@@ -1956,6 +2322,7 @@ class NativeCatalogClient:
         columns: Sequence[str],
         timeout_ms: int,
         deduplication_token: str,
+        write_scope=None,
     ) -> None:
         self._validate_identity()
         _bounded_catalog_timeout(timeout_ms)
@@ -1990,15 +2357,74 @@ class NativeCatalogClient:
             encoded_rows.append(tuple(row[column] for column in ordered_columns))
         if not encoded_rows:
             return
+        if self._durable_writer is not None:
+            return self._durable_writer.insert(
+                table,
+                rows,
+                columns=ordered_columns,
+                timeout_ms=timeout_ms,
+                deduplication_token=deduplication_token,
+                **({"write_scope": write_scope} if write_scope is not None else {}),
+            )
+        if write_scope is not None:
+            raise PropertyCatalogDevRuntimeError(
+                "native publication scope requires the managed durable writer"
+            )
         column_sql = ", ".join(ordered_columns)
         self._driver.execute(
             f"INSERT INTO {table} ({column_sql}) VALUES",
             encoded_rows,
             settings={
+                # Catalog checkpoints and activation cannot acknowledge an
+                # inherited fire-and-forget buffer instead of a finished insert.
+                "async_insert": 0,
                 "insert_deduplication_token": deduplication_token,
                 "max_execution_time": timeout_ms / 1000,
             },
         )
+
+    def restore_insert_metadata(self, table, rows, *, columns, deduplication_token):
+        self._validate_identity()
+        if self._durable_writer is None:
+            return rows
+        return self._durable_writer.restore_insert_metadata(
+            table, rows, columns=columns, deduplication_token=deduplication_token
+        )
+
+    def recover_checkpoint_dependencies(self, row, *, timeout_ms):
+        self._validate_identity()
+        _bounded_catalog_timeout(timeout_ms)
+        if self._durable_writer is not None:
+            return self._durable_writer.recover_checkpoint_dependencies(
+                row, timeout_ms=timeout_ms
+            )
+        return None
+
+    def confirm_insert(self, table, rows, *, columns, timeout_ms, deduplication_token):
+        self._validate_identity()
+        _bounded_catalog_timeout(timeout_ms)
+        if self._durable_writer is not None:
+            self._durable_writer.confirm_insert(
+                table,
+                rows,
+                columns=columns,
+                timeout_ms=timeout_ms,
+                deduplication_token=deduplication_token,
+            )
+
+    def confirm_reservation_receipt(
+        self, table, rows, *, columns, timeout_ms, deduplication_token
+    ) -> None:
+        self._validate_identity()
+        _bounded_catalog_timeout(timeout_ms)
+        if self._durable_writer is not None:
+            self._durable_writer.confirm_reservation_receipt(
+                table,
+                rows,
+                columns=columns,
+                timeout_ms=timeout_ms,
+                deduplication_token=deduplication_token,
+            )
 
     def _validate_identity(self) -> None:
         require_catalog_database(self.catalog_database)
@@ -2013,7 +2439,12 @@ class NativeCatalogClient:
 
 
 class NativeSourceClient:
-    """SELECT-only native adapter closed over one canonical ``spans`` table."""
+    """SELECT-only adapter closed over one factory-selected source table.
+
+    Normal reads bind ``spans``. A capture reader binds an already qualified
+    derived table; the factory must acquire and retain its capture first. This
+    is not an environment setting or a table name accepted from an API request.
+    """
 
     def __init__(
         self,
@@ -2022,10 +2453,18 @@ class NativeSourceClient:
         source_database: str,
         catalog_database: str,
         explicit_initial_backfill: bool = False,
+        source_table: str = "spans",
     ) -> None:
         if _IDENTIFIER_RE.fullmatch(source_database) is None:
             raise PropertyCatalogDevRuntimeError("source database is invalid")
+        if (
+            not isinstance(source_table, str)
+            or _IDENTIFIER_RE.fullmatch(source_table) is None
+        ):
+            raise PropertyCatalogDevRuntimeError("source table is invalid")
         self.source_database = source_database
+        self.source_table = source_table
+        self._bound_table = source_table
         self._catalog_database = require_catalog_database(catalog_database)
         if source_database == catalog_database:
             raise PropertyCatalogDevRuntimeError(
@@ -2054,9 +2493,12 @@ class NativeSourceClient:
         )
         ensure_read_statement(sql)
         qualified = set(_QUALIFIED_SOURCE_RE.findall(sql))
-        if qualified != {(self.source_database, "spans")}:
+        if (
+            qualified != {(self.source_database, self.source_table)}
+            and sql.strip() != _EMPTY_FENCE_SQL
+        ):
             raise PropertyCatalogDevRuntimeError(
-                "canonical source reads may reference only the exact CH25 spans table"
+                "canonical source reads may reference only the exact bound source table"
             )
         if f"`{self._catalog_database}`" in sql:
             raise PropertyCatalogDevRuntimeError(
@@ -2081,6 +2523,8 @@ class NativeSourceClient:
         return tuple(dict(zip(names, row, strict=True)) for row in rows)
 
     def _validate_identity(self) -> None:
+        if self.source_table != self._bound_table:
+            raise PropertyCatalogDevRuntimeError("native source client changed tables")
         if getattr(self._driver, "database", None) != self.source_database:
             raise PropertyCatalogDevRuntimeError(
                 "native source client identity changed databases"
@@ -2089,6 +2533,34 @@ class NativeSourceClient:
             raise PropertyCatalogDevRuntimeError(
                 "native source client is not server-enforced read-only"
             )
+
+    def source_parts(self, *, timeout_ms: int) -> Sequence[Mapping[str, Any]]:
+        """Typed metadata operation; normal query() remains spans-only."""
+        self._validate_identity()
+        _bounded_canonical_span_timeout(timeout_ms, explicit_initial_backfill=False)
+        rows, columns, _ = self._driver.execute_read(
+            "SELECT name, toString(hash_of_all_files) AS checksum "
+            "FROM system.parts WHERE database=%(source_database)s AND table=%(source_table)s "
+            "AND active ORDER BY name LIMIT %(part_limit)s",
+            {
+                "source_database": self.source_database,
+                "source_table": self.source_table,
+                "part_limit": MAX_SOURCE_PARTS + 1,
+            },
+            timeout_ms=timeout_ms,
+            settings={
+                "readonly": 2,
+                "max_execution_time": max(1, (timeout_ms + 999) // 1000),
+                "max_result_rows": MAX_SOURCE_PARTS + 1,
+                "max_result_bytes": 2_097_152,
+                "result_overflow_mode": "throw",
+                "timeout_overflow_mode": "throw",
+            },
+        )
+        names = tuple(str(c[0]) if isinstance(c, tuple) else str(c) for c in columns)
+        if names != ("name", "checksum"):
+            raise PropertyCatalogDevRuntimeError("source part metadata columns changed")
+        return tuple(dict(zip(names, row, strict=True)) for row in rows)
 
 
 class NativeSchemaClient:
@@ -2269,6 +2741,7 @@ class _RevisionExecution:
     ]
     reconciler: PropertyCatalogReconciler
     emitted_at: datetime
+    capture_binding: Any = None
     source_budget: SourceReadBudget | None = None
     authoritative: AuthoritativeSpanResult | None = None
     postgres: PostgresRevisionReconcileResult | None = None
@@ -2424,7 +2897,21 @@ class CheckedInPropertyCatalogDevRuntime:
         default=(),
         repr=False,
     )
+    _write_resources: Any = field(default=None, repr=False)
+    _reader_activation_callback: Callable[[Any], Any] | None = field(
+        default=None,
+        repr=False,
+    )
+    _source_capture: Any = field(default=None, repr=False)
     _scope_locked: bool = field(default=False, init=False, repr=False)
+    _candidate_repair: CandidateRepair | None = field(
+        default=None, init=False, repr=False
+    )
+    _source_repair: SourceRepair | None = field(default=None, init=False, repr=False)
+    _native_repairs: tuple[Any, ...] = field(default=(), init=False, repr=False)
+    _source_parts_at_start: tuple[tuple[str, str], ...] | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if self._factory_authority is not _RUNTIME_FACTORY_AUTHORITY:
@@ -2458,7 +2945,13 @@ class CheckedInPropertyCatalogDevRuntime:
 
         drivers = self._native_drivers
         object.__setattr__(self, "_native_drivers", ())
-        _close_native_drivers(drivers, raise_on_error=True)
+        resources = self._write_resources
+        object.__setattr__(self, "_write_resources", None)
+        try:
+            _close_native_drivers(drivers, raise_on_error=True)
+        finally:
+            if resources is not None:
+                resources.close()
 
     def status(self, request: DevRolloutRequest) -> Mapping[str, Any]:
         self._validate_request(request)
@@ -2715,9 +3208,12 @@ class CheckedInPropertyCatalogDevRuntime:
                 request=self.bound_request,
                 config=self.config,
                 observation=self.provenance.observation,
-                bindings=_postgres_project_tenant_bindings_in_current_snapshot(
+                bindings=_postgres_workspace_project_inventory(
                     self.config.project_ids,
                     self.provenance.observation.postgres,
+                    organization_id=self.bound_request.organization_id,
+                    workspace_id=self.bound_request.workspace_id,
+                    current_snapshot=True,
                 ),
                 authorized_at=self.now(),
             )
@@ -2786,19 +3282,42 @@ class CheckedInPropertyCatalogDevRuntime:
                 )
             ),
         )
-        final_audit = self.span_reader.audit(execution.frozen)
+        from .accepted_scope_proofs import capture_final_audit, stage_final_audit
+
+        if execution.capture_binding is not None:
+            # The optional live-source cache cannot treat snapshot equality as
+            # evidence about arrivals committed after capture. Mandatory source
+            # validation still reads the exact captured table independently.
+            self._source_capture.verify(execution.prepared)
+            final_audit = execution.capture_binding.reader.audit(execution.frozen)
+            self._source_capture.verify(execution.prepared)
+            accepted_scope_capture = None
+        else:
+            final_audit, accepted_scope_capture = capture_final_audit(
+                self.span_reader, execution.frozen
+            )
         authoritative = self._require_authoritative(execution)
+        if final_audit.state_conflict_count:
+            raise PropertyCatalogDevRuntimeError(
+                "canonical span source has conflicting states"
+            )
         if (
-            final_audit.state_conflict_count
-            or final_audit.count != authoritative.values.source_count
+            final_audit.count != authoritative.values.source_count
             or final_audit.digest != authoritative.values.source_digest
             or final_audit.count != authoritative.source_audit.source_count
             or final_audit.digest != authoritative.source_audit.source_digest
         ):
+            self.coordinator.invalidate_source_snapshot(execution.lease)
             raise PropertyCatalogDevRuntimeError(
                 "canonical span source changed between authoritative values, "
                 "definition projection, and the final independent audit"
             )
+        stage_final_audit(
+            runtime=self,
+            execution=execution,
+            capture=accepted_scope_capture,
+            proof=final_audit,
+        )
         return {
             "definition_streams": 7,
             "final_span_audit_count": final_audit.count,
@@ -2842,7 +3361,31 @@ class CheckedInPropertyCatalogDevRuntime:
                     "activation requires a qualified and physically fenced revision"
                 )
             inventory = self._activation_inventory(execution)
-            execution.activation = PropertyCatalogActivator(self.state_store).activate(
+            # Check after the frozen snapshot/audits, before advancing its
+            # selected event cutoff. Persist positive observations before the
+            # activation so a crash cannot advance past an unrecorded signal.
+            self._notice_historical_source_change(execution)
+            self._notice_source_part_changes(execution)
+
+            # Keep preparation inside the existing lifecycle activation guard:
+            # a revoked/invalidated fence must fail before any FOLLOW is written.
+            # The activator invokes this guard once, so no file lock is reentered.
+            runtime = self
+
+            class PublicationGuard:
+                def publication_session(self, *, fence):
+                    return runtime.coordinator.publication_session(fence=fence)
+
+                def serialize_activation(self, *, fence, operation):
+                    def publish():
+                        runtime.reconcile_reader_selection(prepare_initial=True)
+                        return operation()
+
+                    return runtime.coordinator.serialize_activation(
+                        fence=fence, operation=publish
+                    )
+
+            execution.activation = self._activator(PublicationGuard()).activate(
                 manifest=execution.manifest,
                 fence=execution.fence,
                 inventory=inventory,
@@ -2863,7 +3406,65 @@ class CheckedInPropertyCatalogDevRuntime:
             raise PropertyCatalogDevRuntimeError(
                 "durably reread active evidence differs from activation result"
             )
-        self._publish_producer_retirement(active, execution.prepared.scope)
+        writer = getattr(getattr(self, "catalog_client", None), "_durable_writer", None)
+
+        def completion():
+            if writer is None:
+                return nullcontext()
+            from .native_publication import NativePublicationBarrier
+
+            return NativePublicationBarrier(writer).completion(result.record)
+
+        # A cached ActivationResult is not sufficient after a later uncertain
+        # control write. Hold native completion through each local publication.
+        with completion():
+            self._publish_producer_retirement(active, execution.prepared.scope)
+        from .accepted_scope_proofs import register_active_proof
+
+        # This may write native reader control; do not nest it under the native
+        # build lock. Re-prove the resulting generation before clearing repairs.
+        self.reconcile_reader_selection()
+        with completion() as completion_proof:
+            register_active_proof(runtime=self, execution=execution, active=active)
+            if (
+                self._candidate_repair is not None
+                and execution.prepared.scope.project_ids
+                and not (
+                    self._source_capture is not None and execution.prepared.resumed
+                )
+            ):
+                self._candidate_repair.acknowledge_covered(
+                    since=execution.prepared.cutoffs.span_window.since,
+                    until=execution.prepared.cutoffs.span_window.until,
+                )
+            if (
+                self._source_repair is not None
+                and execution.prepared.scope.project_ids
+                and execution.prepared.mode is LifecycleRunMode.FULL_REPAIR
+                and not (
+                    self._source_capture is not None and execution.prepared.resumed
+                )
+            ):
+                self._source_repair.acknowledge_replacement(
+                    since=execution.prepared.cutoffs.span_window.since,
+                    until=execution.prepared.cutoffs.span_window.until,
+                )
+            if getattr(self, "_native_repairs", ()):
+                from .native_recovery import acknowledge_replacement
+
+                acknowledge_replacement(
+                    writer=writer,
+                    repairs=self._native_repairs,
+                    record=result.record,
+                    since=execution.prepared.cutoffs.span_window.since,
+                    until=execution.prepared.cutoffs.span_window.until,
+                )
+            if self._source_capture is not None:
+                # Completion proof is held here. close() never retires captures;
+                # a failed/restarted process must retain its source for resume.
+                self._source_capture.retire(
+                    execution.prepared, completion_proof=completion_proof
+                )
         return {
             "activated": True,
             "activation_sequence": result.record.activation_sequence,
@@ -2880,11 +3481,255 @@ class CheckedInPropertyCatalogDevRuntime:
             "value_rows": result.record.value_rows,
         }
 
+    def _activator(self, coordinator: Any) -> PropertyCatalogActivator:
+        writer = getattr(getattr(self, "catalog_client", None), "_durable_writer", None)
+        if writer is None:
+            return PropertyCatalogActivator(self.state_store, coordinator=coordinator)
+        from .native_publication import NativePublicationBarrier
+
+        barrier = NativePublicationBarrier(writer)
+        return PropertyCatalogActivator(
+            self.state_store,
+            coordinator=coordinator,
+            completion_probe=barrier.confirm,
+            publication_barrier=barrier.publication,
+        )
+
+    def reconcile_reader_selection(self, *, prepare_initial: bool = False) -> Any:
+        """Select only qualified state; status and legacy runtimes never write it."""
+        if self._reader_activation_callback is None:
+            return None
+        if not self.bound_request.execute or self.bound_request.status:
+            raise PropertyCatalogDevRuntimeError(
+                "automatic reader activation requires execute mode"
+            )
+        if prepare_initial:
+            # Both managed deployments publish only an exact qualified INITIAL.
+            # The writer-authorized control means pending, not readable data,
+            # until ACTIVE is independently qualified by the reader.
+            execution = self._require_execution()
+            if execution.prepared.mode is not LifecycleRunMode.INITIAL_BACKFILL:
+                return None
+            manifest, fence, qualification = (
+                execution.manifest,
+                execution.fence,
+                execution.qualification,
+            )
+            if (
+                manifest is None
+                or fence is None
+                or qualification is None
+                or not qualification.qualified
+                or qualification.activation_sha256 is None
+                or execution.prepared.prior_active is not None
+                or manifest.lifecycle_mode is not CatalogLifecycleMode.INITIAL_BACKFILL
+                or manifest.sha256 != fence.manifest_sha256
+                or manifest.build_token != fence.build_token
+                or manifest.catalog_revision != fence.catalog_revision
+            ):
+                raise PropertyCatalogDevRuntimeError(
+                    "initial reader preparation requires exact qualified fenced INITIAL"
+                )
+            if any(
+                intent.publication_document is not None
+                for intent, _ in getattr(self, "_native_repairs", ())
+            ):
+                # A replacement INITIAL is not an empty installation. Preserve
+                # the existing control history; re-anchor FOLLOW only after the
+                # replacement ACTIVE has its real native completion receipt.
+                return None
+            return self._prepare_initial_reader_selection(manifest, qualification)
+        return self._reader_activation_callback(self)
+
+    def _prepare_initial_reader_selection(
+        self, manifest: ActivationManifest, qualification: RevisionQualification
+    ) -> Any:
+        if (
+            self._reader_activation_callback is None
+            or manifest.lifecycle_mode is not CatalogLifecycleMode.INITIAL_BACKFILL
+        ):
+            return None
+        if not qualification.qualified or qualification.activation_sha256 is None:
+            raise PropertyCatalogDevRuntimeError(
+                "initial reader target is not qualified"
+            )
+        from .activation_control import ActivationControlTarget
+
+        return self._reader_activation_callback(
+            self,
+            initial_target=ActivationControlTarget(
+                organization_id=manifest.organization_id,
+                workspace_id=manifest.workspace_id,
+                catalog_epoch=manifest.catalog_epoch,
+                projection_version=manifest.projection_version,
+                catalog_revision=manifest.catalog_revision,
+                build_token=manifest.build_token,
+                activation_sha256=qualification.activation_sha256,
+            ),
+        )
+
+    def _source_repair_scope(self) -> dict[str, str]:
+        return {
+            "state_directory": self.config.mutation_lock_directory,
+            "organization_id": self.bound_request.organization_id,
+            "workspace_id": self.bound_request.workspace_id,
+            "source_database": self.config.source.database,
+        }
+
+    def _notice_historical_source_change(self, execution: _RevisionExecution) -> None:
+        if not execution.prepared.scope.project_ids:
+            return
+        if execution.prepared.mode is not LifecycleRunMode.INCREMENTAL:
+            return
+        window = execution.prepared.cutoffs.span_window
+        history_since = (
+            datetime(1970, 1, 1, 0, 0, 0, 1, tzinfo=UTC)
+            if self._source_capture is not None
+            else max(self.config.span_since, window.until - _MAX_SOURCE_WINDOW)
+        )
+        if history_since >= window.since:
+            return
+        seen_at = self.span_reader.newly_versioned_history(
+            project_ids=execution.prepared.scope.project_ids,
+            since=history_since,
+            until=window.since,
+        )
+        if seen_at is not None:
+            record_source_repair(
+                **self._source_repair_scope(), seen_at=seen_at, observed_at=self.now()
+            )
+
+    def _notice_source_part_changes(self, execution: _RevisionExecution) -> None:
+        from .accepted_scope_proofs import proof_checker
+
+        # The PG-authorized empty inventory has no span source to watch. Do not
+        # clear any durable repair notice left by the prior nonempty scope.
+        if not execution.prepared.scope.project_ids:
+            return
+        window = execution.prepared.cutoffs.span_window
+        full = execution.prepared.mode is not LifecycleRunMode.INCREMENTAL
+        history_since = (
+            datetime(1970, 1, 1, 0, 0, 0, 1, tzinfo=UTC)
+            if self._source_capture is not None
+            else max(self.config.span_since, window.until - _MAX_SOURCE_WINDOW)
+        )
+        notice_part_changes(
+            reader=self.span_reader,
+            **self._source_repair_scope(),
+            project_ids=execution.prepared.scope.project_ids,
+            since=history_since,
+            until=window.until,
+            scan_since=None if full else max(history_since, window.since),
+            observed_at=self.now(),
+            full_replacement=full,
+            started_parts=self._source_parts_at_start
+            if execution.prepared.reservation_status is not ReservationStatus.FENCED
+            else None,
+            scope_audit_check=None
+            if self._source_capture is not None
+            else proof_checker(
+                scope=self._source_repair_scope(),
+                execution=execution,
+                reader=self.span_reader,
+            ),
+        )
+
+    def _notice_preplanning_source_part_changes(
+        self, scope: WorkspaceCatalogScope
+    ) -> bool:
+        """Notice pre-existing history before a fresh managed AUTO allocation."""
+        key = self.coordinator._revision_key(
+            organization_id=scope.organization_id,
+            workspace_id=scope.workspace_id,
+            catalog_epoch=scope.catalog_epoch,
+        )
+
+        def observe_serialized():
+            self._refresh_project_tenant_authorization()
+            reservation = self.lifecycle_state.load_nonterminal(scope)
+            # Even expired OPEN/DRAINING work belongs to the existing recovery
+            # path. Do not inspect live source or reinterpret a retained plan.
+            if reservation is not None and (
+                reservation.status is not ReservationStatus.FENCED
+            ):
+                return False
+            active = self.lifecycle_state.load_latest_active(scope)
+            if active is None:
+                return False
+            for plan in (
+                active.build_plan,
+                *((reservation.lease.build_plan,) if reservation is not None else ()),
+            ):
+                if any(
+                    getattr(plan, field) != getattr(scope, field)
+                    for field in (
+                        "organization_id",
+                        "workspace_id",
+                        "catalog_epoch",
+                        "projection_version",
+                    )
+                ):
+                    raise PropertyCatalogDevRuntimeError(
+                        "preplanning source observation changed catalog scope"
+                    )
+            if reservation is not None:
+                lease = reservation.lease
+                if lease.catalog_revision > active.catalog_revision:
+                    return False  # Unpublished FENCED build must resume unchanged.
+                if lease.catalog_revision == active.catalog_revision and (
+                    lease.build_token != active.build_token
+                    or lease.build_lease_sha256 != active.build_plan.sha256
+                ):
+                    raise PropertyCatalogDevRuntimeError(
+                        "preplanning ACTIVE differs from its FENCED reservation"
+                    )
+            return notice_part_changes(
+                reader=self.span_reader,
+                **self._source_repair_scope(),
+                project_ids=scope.project_ids,
+                since=datetime(1970, 1, 1, 0, 0, 0, 1, tzinfo=UTC),
+                until=datetime.fromtimestamp(
+                    active.build_plan.source_scope.span_until_us / 1_000_000,
+                    tz=UTC,
+                ),
+                observed_at=self.now(),
+                full_replacement=False,
+                started_parts=None,
+                positive_only=True,
+            )
+
+        # Release the workspace serializer before lifecycle.prepare, which owns
+        # its existing allocation/recovery locks and rechecks persisted state.
+        return self.coordinator._serializer.serialize(key, observe_serialized)
+
     def _prepare_revision(self, mode: LifecycleRunMode) -> _RevisionExecution:
         if not self.bound_request.execute or self.bound_request.status:
             raise PropertyCatalogDevRuntimeError(
                 "revision preparation requires an execute-mode request"
             )
+        scope = WorkspaceCatalogScope(
+            organization_id=self.bound_request.organization_id,
+            workspace_id=self.bound_request.workspace_id,
+            catalog_epoch=self.config.catalog_epoch,
+            projection_version=self.config.projection_version,
+            project_ids=self.config.project_ids,
+        )
+        if self._execution is None:
+            # Authorization precedes recovery, and recovery precedes any attempt
+            # to resume a fenced publisher or select a reader. The same runtime
+            # is used for standalone OSS and replicated installations.
+            self._native_repairs = self._recover_native_writes(scope)
+            if self._native_repairs:
+                active = self.lifecycle_state.load_latest_active(scope)
+                mode = (
+                    LifecycleRunMode.INITIAL_BACKFILL
+                    if active is None
+                    else LifecycleRunMode.FULL_REPAIR
+                )
+        if self._execution is None and self._recover_fenced_scope_drift(scope):
+            # Discovery may have selected INITIAL before the uncertain ACTIVE
+            # became visible. Its completion now requires a new-scope snapshot.
+            mode = LifecycleRunMode.FULL_REPAIR
         authorization = self._refresh_project_tenant_authorization()
         object.__setattr__(
             self,
@@ -2904,23 +3749,94 @@ class CheckedInPropertyCatalogDevRuntime:
                 authorization,
             )
             return self._execution
-        scope = WorkspaceCatalogScope(
-            organization_id=self.bound_request.organization_id,
-            workspace_id=self.bound_request.workspace_id,
-            catalog_epoch=self.config.catalog_epoch,
-            projection_version=self.config.projection_version,
-            project_ids=self.config.project_ids,
+        # Heal a crash after lifecycle activation but before reader selection
+        # before starting more work. The selection service preserves explicit
+        # disable/rollback decisions and does nothing for an unqualified catalog.
+        self.reconcile_reader_selection()
+        if self._source_capture is not None:
+            self._recover_completed_capture_retirement(scope)
+        self._candidate_repair = pending_candidate_repair(
+            drain_proof_file=self.config.drain_proof_file,
+            organization_id=scope.organization_id,
+            workspace_id=scope.workspace_id,
+            now=self.now(),
         )
+        self._source_repair = pending_source_repair(**self._source_repair_scope())
+        if (
+            self._source_capture is not None
+            and scope.project_ids
+            and mode is LifecycleRunMode.AUTO
+            and self._source_repair is None
+            and self._notice_preplanning_source_part_changes(scope)
+        ):
+            self._source_repair = pending_source_repair(**self._source_repair_scope())
+        if (
+            self._source_repair is not None
+            and scope.project_ids
+            and mode is LifecycleRunMode.AUTO
+        ):
+            mode = LifecycleRunMode.FULL_REPAIR
+        if (
+            self._candidate_repair is not None
+            and scope.project_ids
+            and mode is LifecycleRunMode.AUTO
+        ):
+            active = self._load_latest_active_retirement(scope)
+            prior_until = datetime.fromtimestamp(
+                active.build_plan.source_scope.span_until_us / 1_000_000, tz=UTC
+            )
+            if self._candidate_repair.needs_history(
+                prior_until=prior_until, now=self.now()
+            ):
+                # Event-time increments cannot cover a late source commit.
+                # Use the existing audited replacement path, never relabel hot
+                # rows or claim a skipped candidate was actually ingested.
+                mode = LifecycleRunMode.FULL_REPAIR
         prepared = self.lifecycle.prepare(
             scope=scope,
             mode=mode,
             configured_bounds=ConfiguredSourceBounds(
                 origin=self.config.span_since,
-                initial_until=self.config.span_until,
+                # Managed discovery enters through backfill(INITIAL), not AUTO.
+                # Its hour-aligned settings are defaults, not a requested source
+                # snapshot. Freeze current time once for a new initial lease;
+                # lifecycle recovery keeps the original persisted cutoffs.
+                initial_until=(
+                    self.now()
+                    if self._source_capture is not None
+                    else self.config.span_until
+                ),
             ),
-            allow_expired_repair=self.bound_request.repair_expired_incomplete,
+            # Recovery is an automatic journaled lifecycle operation, not an
+            # operator toggle. The coordinator proves revocation/replacement;
+            # an expired lease alone never authorizes a fresh writer.
+            allow_expired_repair=True,
         )
         self._validate_prepared_authorization(prepared, authorization)
+        capture_binding = None
+        if (
+            self._source_capture is not None
+            and prepared.scope.project_ids
+            and prepared.reservation_status is not ReservationStatus.FENCED
+        ):
+            from .source_capture import SourceCaptureError
+            from .source_capture_reservations import SourceCaptureBackpressure
+
+            try:
+                capture_binding = self._source_capture.bind(
+                    prepared, coordinator=self.coordinator
+                )
+            except SourceCaptureBackpressure:
+                # No source was accepted or changed. Retain this reservation
+                # while storage/slots recover instead of allocating a new
+                # revision on every controller tick.
+                raise
+            except SourceCaptureError:
+                # Do not reuse existing checkpoints with a fresh source. The
+                # existing recovery path revokes/replaces this exact lease.
+                self.coordinator.invalidate_source_snapshot(prepared.lease)
+                raise
+            self._source_parts_at_start = capture_binding.started_parts
         build_binding_sha256 = _authorized_build_binding_sha256(
             authorization=authorization,
             build_lease_sha256=prepared.lease.build_lease_sha256,
@@ -3049,6 +3965,13 @@ class CheckedInPropertyCatalogDevRuntime:
             checkpoint_writer=self.state_store,
             current_bindings=current,
         )
+        if self._source_capture is None:
+            self._source_parts_at_start = (
+                self.span_reader.parts_snapshot()
+                if prepared.scope.project_ids
+                and prepared.reservation_status is not ReservationStatus.FENCED
+                else None
+            )
         object.__setattr__(
             self,
             "_execution",
@@ -3062,12 +3985,133 @@ class CheckedInPropertyCatalogDevRuntime:
                 publishers_by_role=publishers_by_role,
                 reconciler=reconciler,
                 emitted_at=emitted_at,
+                capture_binding=capture_binding,
             ),
         )
         self._validate_execution_authorization(self._execution, authorization)
         if prepared.reservation_status is ReservationStatus.FENCED:
             self._restore_fenced_execution(self._execution)
         return self._execution
+
+    def _recover_native_writes(self, scope):
+        writer = getattr(self.catalog_client, "_durable_writer", None)
+        if writer is None:
+            return ()
+        self._refresh_project_tenant_authorization()
+        from .native_recovery import recover_workspace
+
+        return recover_workspace(
+            writer=writer,
+            coordinator=self.coordinator,
+            scope=scope,
+            now=self.now(),
+            timeout_ms=self.deadline.remaining_ms(cap_ms=30_000),
+        )
+
+    def _recover_completed_capture_retirement(self, scope: WorkspaceCatalogScope):
+        """Heal ACTIVE-before-capture-retirement crashes before allocating more work."""
+        from .durable_lifecycle import _decode_plan_scope, _manifest_streams
+        from .durable_native_writer import DurableNativeCatalogWriter
+        from .native_publication import NativePublicationBarrier
+
+        writer = getattr(self.catalog_client, "_durable_writer", None)
+        if self._source_capture is None or writer is None:
+            return ()  # Legacy raw-transport runtimes have no managed capture proof.
+        if scope != WorkspaceCatalogScope(
+            organization_id=self.bound_request.organization_id,
+            workspace_id=self.bound_request.workspace_id,
+            catalog_epoch=self.config.catalog_epoch,
+            projection_version=self.config.projection_version,
+            project_ids=self.config.project_ids,
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "completed capture recovery crossed workspace"
+            )
+        if type(writer) is not DurableNativeCatalogWriter or (
+            self.coordinator._database != writer.database
+            or self.state_store._database != writer.database
+            or self.lifecycle_state._database != writer.database
+            or self._source_capture._catalog != writer.database
+            or self.coordinator._recovery_journal is None
+            or self.coordinator._recovery_journal._directory
+            != self._source_capture._root
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "completed capture recovery binding changed"
+            )
+        key = self.coordinator._revision_key(
+            organization_id=scope.organization_id,
+            workspace_id=scope.workspace_id,
+            catalog_epoch=scope.catalog_epoch,
+        )
+
+        def retire_serialized():
+            self._require_workspace_publication_authorization()
+            history = self.state_store.load_activation_history(
+                organization_id=scope.organization_id,
+                workspace_id=scope.workspace_id,
+                catalog_epoch=scope.catalog_epoch,
+            )
+            retired = []
+            for record in history.active_records:
+                self.deadline.remaining_ms(cap_ms=30_000)
+                if any(
+                    getattr(record, name) != getattr(scope, name)
+                    for name in (
+                        "organization_id",
+                        "workspace_id",
+                        "catalog_epoch",
+                        "projection_version",
+                    )
+                ):
+                    raise PropertyCatalogDevRuntimeError(
+                        "completed ACTIVE scope changed"
+                    )
+                # Exact ACTIVE build-keyed binding comes first. No directory
+                # scan, new source metadata, or guessed namespace/spec.
+                if not self._source_capture.needs_completed_retirement(record):
+                    continue
+                reservation = self.lifecycle_state._reservation_for(
+                    scope,
+                    catalog_revision=record.catalog_revision,
+                    build_token=record.build_token,
+                    require_fenced=True,
+                )
+                if reservation is None:
+                    raise PropertyCatalogDevRuntimeError(
+                        "completed capture has no FENCED lease"
+                    )
+                lease = reservation.lease
+                plan = lease.build_plan
+                if (
+                    lease.catalog_revision != record.catalog_revision
+                    or lease.build_token != record.build_token
+                    or CatalogLifecycleMode(
+                        _decode_plan_scope(
+                            plan, allow_physical_snapshot=True
+                        ).mode.value
+                    )
+                    is not record.lifecycle_mode
+                    or _manifest_streams(record.source_manifest_json)
+                    != {
+                        (stream.source_adapter, stream.role): (
+                            stream.producer_stream_id,
+                            stream.source_version_fence,
+                        )
+                        for stream in plan.streams
+                    }
+                ):
+                    raise PropertyCatalogDevRuntimeError(
+                        "completed capture lease differs from ACTIVE"
+                    )
+                with NativePublicationBarrier(
+                    writer, timeout_ms=self.deadline.remaining_ms(cap_ms=30_000)
+                ).completion(record) as proof:
+                    self._source_capture.retire_completed(lease, completion_proof=proof)
+                retired.append(record.build_token)
+            return tuple(retired)
+
+        return self.coordinator._serializer.serialize(key, retire_serialized)
 
     def _load_latest_active_retirement(
         self,
@@ -3101,6 +4145,119 @@ class CheckedInPropertyCatalogDevRuntime:
                 catalog_epoch=scope.catalog_epoch,
                 emitted_at=self.now(),
             )
+        )
+
+    def _require_workspace_publication_authorization(self) -> None:
+        """Current workspace eligibility, never historical project authorization."""
+        self._require_project_tenant_authorization()
+        probe = self.project_tenant_binding_probe
+        if not callable(probe):
+            raise PropertyCatalogDevRuntimeError(
+                "publication requires current workspace proof"
+            )
+        _validate_workspace_project_inventory(
+            probe(self.config.project_ids, self.provenance.observation.postgres),
+            organization_id=self.bound_request.organization_id,
+            workspace_id=self.bound_request.workspace_id,
+        )
+
+    def _recover_fenced_scope_drift(self, scope: WorkspaceCatalogScope) -> bool:
+        """Complete old control publication; never reopen its sources or ACK repairs."""
+        if not self.bound_request.execute or self.bound_request.status:
+            raise PropertyCatalogDevRuntimeError(
+                "publication recovery requires execute mode"
+            )
+        if scope != WorkspaceCatalogScope(
+            organization_id=self.bound_request.organization_id,
+            workspace_id=self.bound_request.workspace_id,
+            catalog_epoch=self.config.catalog_epoch,
+            projection_version=self.config.projection_version,
+            project_ids=self.config.project_ids,
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "publication recovery changed runtime scope"
+            )
+        self._require_workspace_publication_authorization()
+        frozen = self.lifecycle.load_fenced_scope_drift(scope)
+        if frozen is None:
+            return False
+        manifest = _frozen_activation_manifest(
+            lease=frozen.lease,
+            lifecycle_mode=CatalogLifecycleMode(frozen.mode.value),
+            lineage_anchor_revision=frozen.lineage_anchor_revision,
+            checkpoints=frozen.checkpoints,
+        )
+        qualification = qualify_revision(
+            manifest.revision_requirement, frozen.checkpoints
+        )
+        if not qualification.qualified or qualification.activation_sha256 is None:
+            raise PropertyCatalogDevRuntimeError(
+                "historical fenced publication no longer qualifies"
+            )
+        fence = make_revision_fence(
+            manifest=manifest,
+            build_plan=frozen.lease.build_plan,
+            checkpoints=frozen.checkpoints,
+            drain_deadline=frozen.lease.expires_at,
+            fenced_at=frozen.lease.expires_at,
+        )
+        runtime = self
+
+        class HistoricalPublicationGuard:
+            def publication_session(self, *, fence):
+                return runtime.coordinator.publication_session(fence=fence)
+
+            def serialize_activation(self, *, fence, operation):
+                def publish():
+                    # Recheck eligibility at the serialized publication boundary.
+                    # No historical project IDs are passed to the PG probe.
+                    runtime._require_workspace_publication_authorization()
+                    runtime.state_store.audit_build_plan(
+                        build_plan=frozen.lease.build_plan, manifest=manifest
+                    )
+                    runtime._prepare_initial_reader_selection(manifest, qualification)
+                    return operation()
+
+                return runtime.coordinator.serialize_activation(
+                    fence=fence, operation=publish
+                )
+
+        result = self._activator(HistoricalPublicationGuard()).activate(
+            manifest=manifest,
+            fence=fence,
+            inventory=lambda: self._frozen_activation_inventory(frozen, manifest),
+            now=self.now(),
+        )
+        # Do not allocate against an absent/stale control read even after the
+        # transport barrier succeeds. A later tick retries the exact receipt.
+        active = self._load_latest_active_retirement(scope)
+        if (
+            active.build_plan != frozen.lease.build_plan
+            or active.activation_sha256 != result.record.activation_sha256
+            or active.source_manifest_sha256 != result.record.source_manifest_sha256
+            or active.activation_sequence != result.record.activation_sequence
+        ):
+            raise PropertyCatalogDevRuntimeError("recovered publication head changed")
+        # No retirement, source notices, reader selection, or repair ACK here.
+        # Normal preparation must first reauthorize the exact CURRENT inventory.
+        return True
+
+    def _frozen_activation_inventory(
+        self, frozen: FencedScopeDrift, manifest: ActivationManifest
+    ) -> ActivationInventory:
+        # Catalog-only diagnostics for a provably unsent intent. This context is
+        # never a _RevisionExecution or an _AuthorizedRevisionProof.
+        context = PostgresSnapshotContext(
+            organization_id=frozen.lease.organization_id,
+            workspace_id=frozen.lease.workspace_id,
+            project_ids=frozen.lease.build_plan.source_scope.project_ids,
+            catalog_epoch=frozen.lease.catalog_epoch,
+            catalog_revision=frozen.lease.catalog_revision,
+            projection_version=frozen.lease.projection_version,
+            snapshot_cutoff=frozen.cutoffs.snapshot_upper,
+        )
+        return self._catalog_activation_inventory(
+            manifest, context, frozen.prior_active
         )
 
     def _restore_fenced_execution(self, execution: _RevisionExecution) -> None:
@@ -3159,7 +4316,11 @@ class CheckedInPropertyCatalogDevRuntime:
             SourceAdapter.SPAN_ATTRIBUTE, ManifestStreamRole.SOURCE_AUDIT
         )
         reconciler = AuthoritativeSpanReconciler(
-            reader=self.span_reader,
+            reader=(
+                execution.capture_binding.reader
+                if execution.capture_binding is not None
+                else self.span_reader
+            ),
             publishers={
                 AuthoritativeSpanRole.VALUES: execution.publisher(
                     SourceAdapter.SPAN_ATTRIBUTE, ManifestStreamRole.VALUES
@@ -3170,20 +4331,25 @@ class CheckedInPropertyCatalogDevRuntime:
             },
             checkpoint_store=self.state_store,
         )
-        result = reconciler.run(
-            frozen=execution.frozen,
-            build=AuthoritativeSpanBuild(
-                organization_id=execution.context.organization_id,
-                workspace_id=execution.context.workspace_id,
-                catalog_epoch=execution.context.catalog_epoch,
-                catalog_revision=execution.context.catalog_revision,
-                build_token=execution.lease.build_token,
-                projection_version=execution.context.projection_version,
-                emitted_at=execution.emitted_at,
-                values_producer_stream_id=values.producer_stream_id,
-                audit_producer_stream_id=audit.producer_stream_id,
-            ),
+        build = AuthoritativeSpanBuild(
+            organization_id=execution.context.organization_id,
+            workspace_id=execution.context.workspace_id,
+            catalog_epoch=execution.context.catalog_epoch,
+            catalog_revision=execution.context.catalog_revision,
+            build_token=execution.lease.build_token,
+            projection_version=execution.context.projection_version,
+            emitted_at=execution.emitted_at,
+            values_producer_stream_id=values.producer_stream_id,
+            audit_producer_stream_id=audit.producer_stream_id,
         )
+        try:
+            result = reconciler.run(frozen=execution.frozen, build=build)
+        except PropertyCatalogSourceChanged:
+            # Retrying the terminal value checkpoint would compare the same
+            # stale digest forever. Retire this never-fenced attempt using the
+            # normal durable CAS protocol; do not discard the audit or data.
+            self.coordinator.invalidate_source_snapshot(execution.lease)
+            raise
         execution.authoritative = result
         self._remember_checkpoint(execution, result.values)
         self._remember_checkpoint(execution, result.source_audit)
@@ -3479,6 +4645,16 @@ class CheckedInPropertyCatalogDevRuntime:
             raise PropertyCatalogDevRuntimeError(
                 "activation inventory requires the exact prepared manifest lineage"
             )
+        return self._catalog_activation_inventory(
+            manifest, execution.context, execution.prepared.prior_active
+        )
+
+    def _catalog_activation_inventory(
+        self,
+        manifest: ActivationManifest,
+        context: PostgresSnapshotContext,
+        prior: PriorActiveEvidence | None,
+    ) -> ActivationInventory:
         current = ClickHouseCurrentBindingReader(
             self.catalog_client,
             database=self.config.catalog.database,
@@ -3488,18 +4664,17 @@ class CheckedInPropertyCatalogDevRuntime:
             row
             for adapter in SourceAdapter
             for row in current.read_current(
-                context=execution.context,
+                context=context,
                 source_adapter=adapter,
-                at_revision=execution.context.catalog_revision,
-                build_token=execution.lease.build_token,
+                at_revision=context.catalog_revision,
+                build_token=manifest.build_token,
             )
         )
         if len({row.binding_id for row in rows}) != len(rows):
             raise PropertyCatalogDevRuntimeError(
                 "activation inventory contains duplicate definition bindings"
             )
-        prior = execution.prepared.prior_active
-        if execution.prepared.mode is LifecycleRunMode.INCREMENTAL:
+        if manifest.lifecycle_mode is CatalogLifecycleMode.INCREMENTAL:
             if prior is None:
                 raise PropertyCatalogDevRuntimeError(
                     "incremental activation inventory has no prior active lineage"
@@ -3521,12 +4696,12 @@ class CheckedInPropertyCatalogDevRuntime:
         values = self.catalog_client.query(
             _active_value_inventory_sql(self.config.catalog.database),
             {
-                "organization_id": execution.context.organization_id,
-                "workspace_id": execution.context.workspace_id,
-                "catalog_epoch": execution.context.catalog_epoch,
-                "catalog_revision": execution.context.catalog_revision,
-                "build_token": execution.lease.build_token,
-                "projection_version": execution.context.projection_version,
+                "organization_id": context.organization_id,
+                "workspace_id": context.workspace_id,
+                "catalog_epoch": context.catalog_epoch,
+                "catalog_revision": context.catalog_revision,
+                "build_token": manifest.build_token,
+                "projection_version": context.projection_version,
                 "lineage_anchor_revision": manifest.lineage_anchor_revision,
                 "prior_revision": prior_revision,
                 "prior_build_token": prior_build_token,
@@ -3767,6 +4942,7 @@ class CheckedInPropertyCatalogDevRuntime:
             request=self.bound_request,
             config=self.config,
             observation=self.provenance.observation,
+            workspace_is_default=authorization.workspace_is_default,
         )
         if (
             authorization.organization_id != self.bound_request.organization_id
@@ -3790,11 +4966,9 @@ class CheckedInPropertyCatalogDevRuntime:
             request=self.bound_request,
             config=self.config,
             observation=self.provenance.observation,
-            bindings=tuple(
-                probe(
-                    self.config.project_ids,
-                    self.provenance.observation.postgres,
-                )
+            bindings=probe(
+                self.config.project_ids,
+                self.provenance.observation.postgres,
             ),
             authorized_at=self.now(),
         )
@@ -3817,7 +4991,7 @@ HotProofSourceFactory = Callable[[str, SharedCatalogDeadline], HotDrainProofSour
 ProducerRetirementSinkFactory = Callable[[str], AtomicProducerStateRetirementFile]
 ProjectTenantBindingProbe = Callable[
     [tuple[str, ...], PostgresDevIdentity],
-    Sequence[PostgresProjectTenantBinding],
+    PostgresWorkspaceProjectInventory,
 ]
 CancellationProbe = Callable[[], bool]
 
@@ -3830,6 +5004,7 @@ class PropertyCatalogDevRuntimeFactory:
         *,
         settings_object: Any | None = None,
         native_client_factory: NativeClientFactory | None = None,
+        native_write_context_factory: Callable[[Any], Any] | None = None,
         serializer_factory: SerializerFactory = FileCatalogMutationSerializer,
         fence_sink_factory: Callable[[str], Any] = AtomicSingleTenantFenceFile,
         hot_proof_source_factory: HotProofSourceFactory | None = None,
@@ -3848,6 +5023,7 @@ class PropertyCatalogDevRuntimeFactory:
             settings_object = settings
         self._settings = settings_object
         self._native_client_factory = native_client_factory or _default_native_client
+        self._native_write_context_factory = native_write_context_factory
         self._serializer_factory = serializer_factory
         self._fence_sink_factory = fence_sink_factory
         self._hot_proof_source_factory = hot_proof_source_factory or (
@@ -3855,9 +5031,7 @@ class PropertyCatalogDevRuntimeFactory:
         )
         self._producer_retirement_sink_factory = producer_retirement_sink_factory
         self._provenance_probe = provenance_probe or _default_dev_provenance_probe
-        self._project_tenant_binding_probe = (
-            project_tenant_binding_probe or _postgres_project_tenant_bindings
-        )
+        self._project_tenant_binding_probe = project_tenant_binding_probe
         if not callable(cancellation_probe):
             raise TypeError("cancellation_probe must be callable")
         self._cancellation_probe = cancellation_probe
@@ -3895,6 +5069,7 @@ class PropertyCatalogDevRuntimeFactory:
 
         drivers: dict[str, NativeClickHouseDriver] = {}
         owned_drivers: list[NativeClickHouseDriver] = []
+        write_resources = ExitStack()
 
         def write_driver(database: str) -> NativeClickHouseDriver:
             driver = drivers.get(database)
@@ -3919,11 +5094,16 @@ class PropertyCatalogDevRuntimeFactory:
                 ),
                 attested_at=self._now(),
             )
-            bindings = tuple(
-                self._project_tenant_binding_probe(
-                    config.project_ids,
-                    provenance.observation.postgres,
+            binding_probe = self._project_tenant_binding_probe or (
+                lambda projects, identity: _postgres_workspace_project_inventory(
+                    projects,
+                    identity,
+                    organization_id=request.organization_id,
+                    workspace_id=request.workspace_id,
                 )
+            )
+            bindings = binding_probe(
+                config.project_ids, provenance.observation.postgres
             )
             authorization = _authorize_project_tenant_bindings(
                 request=request,
@@ -3946,12 +5126,32 @@ class PropertyCatalogDevRuntimeFactory:
                 client_for_database=write_driver,
                 deployment=config.deployment,
             )
-            catalog_client = NativeCatalogClient(
+            durable_writer = self._managed_native_writer(
                 target_driver,
-                database=config.catalog.database,
+                config=config,
+                request=request,
+                resources=write_resources,
             )
+            catalog_client = NativeCatalogClient(
+                durable_writer.driver if durable_writer is not None else target_driver,
+                database=config.catalog.database,
+                durable_writer=durable_writer,
+            )
+            capture_factory = None
+            if durable_writer is not None:
+                from .source_capture_factory import ManagedSourceCaptureFactory
+
+                capture_factory = ManagedSourceCaptureFactory(
+                    config=config,
+                    writer=durable_writer,
+                    source_driver=source_driver,
+                    native_client_factory=self._native_client_factory,
+                    resources=write_resources,
+                )
             source_client = NativeSourceClient(
-                source_driver,
+                capture_factory.source_driver
+                if capture_factory is not None
+                else source_driver,
                 source_database=config.source.database,
                 catalog_database=config.catalog.database,
                 explicit_initial_backfill=config.explicit_initial_backfill_wall,
@@ -3987,6 +5187,7 @@ class PropertyCatalogDevRuntimeFactory:
                     else REVISION_LEASE_SECONDS
                 ),
                 now=self._now,
+                recovery_journal_directory=config.mutation_lock_directory,
             )
             span_reader = CanonicalSpanSourceReader(
                 source_client,
@@ -4003,13 +5204,16 @@ class PropertyCatalogDevRuntimeFactory:
                 checkpoint_store=state_store,
                 deadline=deadline,
             )
+            source_capture = None
+            cutoff_freezer = FreshSpanLifecycleCutoffFreezer(span_reader, now=self._now)
+            if capture_factory is not None:
+                source_capture, cutoff_freezer = capture_factory.build(
+                    live_reader=span_reader, deadline=deadline, now=self._now
+                )
             lifecycle = DurableWorkspaceCatalogLifecycle(
                 state_reader=lifecycle_state,
                 coordinator=coordinator,
-                cutoff_freezer=FreshSpanLifecycleCutoffFreezer(
-                    span_reader,
-                    now=self._now,
-                ),
+                cutoff_freezer=cutoff_freezer,
                 hot_producer_stream_id=config.hot_producer_stream_id,
                 now=self._now,
                 new_build_token=self._new_build_token,
@@ -4037,15 +5241,237 @@ class PropertyCatalogDevRuntimeFactory:
                 hot_proof_source=hot_proof_source,
                 now=self._now,
                 new_build_token=self._new_build_token,
-                project_tenant_binding_probe=self._project_tenant_binding_probe,
+                project_tenant_binding_probe=binding_probe,
                 _factory_authority=_RUNTIME_FACTORY_AUTHORITY,
                 lifecycle_state=lifecycle_state,
                 producer_retirement_sink=producer_retirement_sink,
                 _native_drivers=tuple(owned_drivers),
+                _write_resources=write_resources,
+                _source_capture=source_capture,
+                _reader_activation_callback=(
+                    self._reconcile_reader_activation
+                    if request.execute
+                    and getattr(
+                        self._settings, "_PROPERTY_CATALOG_MANAGED_INSTALLATION", False
+                    )
+                    is True
+                    else None
+                ),
             )
         except BaseException:
-            _close_native_drivers(owned_drivers, raise_on_error=False)
+            try:
+                _close_native_drivers(owned_drivers, raise_on_error=False)
+            finally:
+                write_resources.close()
             raise
+
+    def _managed_native_writer(self, driver, *, config, request, resources):
+        # Explicit legacy/status paths retain their existing contract. Managed
+        # writes use a proven direct member, never a load-balanced discovery seed.
+        if (
+            not request.execute
+            or getattr(self._settings, "_PROPERTY_CATALOG_MANAGED_INSTALLATION", False)
+            is not True
+        ):
+            return None
+        from .durable_native_writer import DurableNativeCatalogWriter
+        from .native_write_proof import NativeWriteProof
+        from .oss_write_startup import oss_write_admission_context
+        from .replicated_write_startup import replicated_write_admission_context
+
+        context_factory = self._native_write_context_factory
+        if context_factory is None:
+            if config.deployment == "prod":
+                # Production settings are deliberately mapped to the reviewed
+                # DEV connection names by workspace_settings_overlay.
+                context = replicated_write_admission_context(
+                    self._settings, prefix="PROPERTY_CATALOG_DEV_"
+                )
+            else:
+                context = oss_write_admission_context(self._settings)
+        else:
+            context = context_factory(self._settings)
+        identity, admission, connections = resources.enter_context(context)
+        if admission.database != driver.database or admission.environment != (
+            "production" if config.deployment == "prod" else "development"
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "managed native admission differs from the runtime destination"
+            )
+        matching = [
+            connection.name
+            for connection in connections
+            if (connection.driver.host, connection.driver.port)
+            == (driver.host, driver.port)
+        ]
+        if not matching and admission.family == "replicated":
+            # Keep the least-privilege writer credentials, changing only its
+            # route to one of the complete, independently admitted members.
+            # Stable member order also preserves an unresolved attempt's owner
+            # on ordinary process restarts.
+            selected = min(connections, key=lambda connection: connection.name)
+            driver = self._native_client_factory(
+                replace(
+                    config.catalog,
+                    host=selected.driver.host,
+                    port=selected.driver.port,
+                )
+            )
+            resources.callback(driver.close)
+            matching = [selected.name]
+        if len(matching) != 1:
+            raise PropertyCatalogDevRuntimeError(
+                "managed native writer has no unique admitted route"
+            )
+        directory = Path(config.revision_fence_file).parent
+        proof = NativeWriteProof(
+            directory=directory,
+            identity=identity,
+            admission=admission,
+            connections=connections,
+        )
+        return DurableNativeCatalogWriter(
+            driver,
+            directory=directory,
+            proof=proof,
+            member_name=matching[0],
+        )
+
+    def _reconcile_reader_activation(
+        self,
+        runtime: CheckedInPropertyCatalogDevRuntime,
+        *,
+        initial_target: Any = None,
+    ) -> Any:
+        from .activation_control import ActivationControlScope
+        from .reader_activation import AutomaticReaderActivation, ReaderActivationClient
+
+        config = runtime.config
+        connection = config.catalog
+        if config.deployment == "prod":
+            user = getattr(
+                self._settings, "PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_USER", ""
+            )
+            password = getattr(
+                self._settings, "PROPERTY_CATALOG_ACTIVATION_CONTROL_CH_PASSWORD", ""
+            )
+            if (
+                not user
+                or not password
+                or user in {config.catalog.user, config.source.user}
+            ):
+                raise PropertyCatalogDevRuntimeError(
+                    "managed production reader activation requires its dedicated control identity"
+                )
+            connection = replace(connection, user=user, password=password)
+
+        def authorize(scope: ActivationControlScope) -> bool:
+            if (scope.organization_id, scope.workspace_id) != (
+                runtime.bound_request.organization_id,
+                runtime.bound_request.workspace_id,
+            ):
+                return False
+            runtime._refresh_project_tenant_authorization()
+            return True
+
+        native_catalog = getattr(runtime, "catalog_client", None)
+        prior_writer = getattr(native_catalog, "_durable_writer", None)
+        if prior_writer is not None:
+            connection = replace(
+                connection,
+                host=prior_writer.driver.host,
+                port=prior_writer.driver.port,
+            )
+        driver = self._native_client_factory(connection)
+        try:
+            durable_writer = None
+            if prior_writer is not None:
+                from .durable_native_writer import DurableNativeCatalogWriter
+
+                durable_writer = DurableNativeCatalogWriter(
+                    driver,
+                    directory=prior_writer.directory,
+                    proof=prior_writer.proof,
+                    member_name=prior_writer.member.name,
+                )
+            client = ReaderActivationClient(
+                driver,
+                database=config.catalog.database,
+                user=connection.user,
+                expected_hostnames=config.provenance_expectation.writer_clickhouse_hostnames,
+                deployment=config.deployment,
+                source_database=(
+                    config.source.database
+                    if config.deployment == "dev"
+                    and getattr(runtime, "_source_capture", None) is not None
+                    else None
+                ),
+                **(
+                    {"durable_writer": durable_writer}
+                    if durable_writer is not None
+                    else {}
+                ),
+            )
+            service = AutomaticReaderActivation(
+                client,
+                database=config.catalog.database,
+                state_directory=config.mutation_lock_directory,
+                catalog_epoch=config.catalog_epoch,
+                projection_version=config.projection_version,
+                deployment=config.deployment,
+                authorize_scope=authorize,
+                now=self._now,
+            )
+            if initial_target is not None:
+                return service.prepare_initial(initial_target)
+            scope = ActivationControlScope(
+                organization_id=runtime.bound_request.organization_id,
+                workspace_id=runtime.bound_request.workspace_id,
+            )
+            repairs = getattr(runtime, "_native_repairs", ())
+            if not repairs:
+                return service.reconcile(scope)
+            from .native_recovery import _validate_intent
+            from .terminal_repair_execution import NativeTerminalRepairExecutor
+            from .terminal_repair_intent import FrozenTerminalRepairIntent
+
+            coordinator = runtime.coordinator
+            executor = NativeTerminalRepairExecutor(prior_writer, coordinator)
+            key = coordinator._revision_key(
+                organization_id=scope.organization_id,
+                workspace_id=scope.workspace_id,
+                catalog_epoch=config.catalog_epoch,
+            )
+
+            def select_repaired():
+                remaining = prior_writer.proof._budget(
+                    runtime.deadline.remaining_ms(cap_ms=30_000)
+                )
+                confirmed = []
+                for frozen, previous_receipt in repairs:
+                    intent = FrozenTerminalRepairIntent.decode(frozen.encode())
+                    _validate_intent(
+                        prior_writer, intent, intent.binding.quarantine.scope
+                    )
+                    if coordinator._revision_key_for_lease(intent.lease) != key:
+                        raise PropertyCatalogDevRuntimeError(
+                            "reader repair crossed workspace"
+                        )
+                    receipt = executor._serialized(
+                        intent, key, remaining, allow_dispatch=False
+                    )
+                    if receipt != previous_receipt:
+                        raise PropertyCatalogDevRuntimeError(
+                            "reader repair receipt changed"
+                        )
+                    confirmed.append((intent, receipt))
+                return service.reconcile(scope, terminal_repairs=tuple(confirmed))
+
+            # Same order as publication: workspace -> control -> native BUILD.
+            # Native terminal proof releases BUILD before control selection.
+            return coordinator._serializer.serialize(key, select_repaired)
+        finally:
+            driver.close()
 
 
 class PropertyCatalogProductionRuntimeFactory(PropertyCatalogDevRuntimeFactory):
@@ -4067,6 +5493,7 @@ class PropertyCatalogProductionRuntimeFactory(PropertyCatalogDevRuntimeFactory):
         cancellation_probe: CancellationProbe = lambda: False,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         new_build_token: Callable[[], str] = lambda: str(uuid.uuid4()),
+        native_write_context_factory: Callable[[Any], Any] | None = None,
     ) -> None:
         if fence_sink_factory is None:
             from .revision_fence_registry import AtomicMultiTenantFenceFile
@@ -4084,6 +5511,7 @@ class PropertyCatalogProductionRuntimeFactory(PropertyCatalogDevRuntimeFactory):
             cancellation_probe=cancellation_probe,
             now=now,
             new_build_token=new_build_token,
+            native_write_context_factory=native_write_context_factory,
         )
 
     def __call__(
@@ -4220,12 +5648,16 @@ def _evidence_with_provenance(
 
 
 def _status_target_tables(evidence: Mapping[str, Any]) -> list[dict[str, str]]:
+    from .activation_control import ACTIVATION_CONTROL_TABLE
+
     raw_tables = evidence.get("target_tables")
-    if not isinstance(raw_tables, list) or len(raw_tables) != len(
-        PROPERTY_CATALOG_TABLES
-    ):
+    allowed = PROPERTY_CATALOG_TABLES | {ACTIVATION_CONTROL_TABLE}
+    if not isinstance(raw_tables, list) or len(raw_tables) not in {
+        len(PROPERTY_CATALOG_TABLES),
+        len(allowed),
+    }:
         raise PropertyCatalogDevRuntimeError(
-            "schema evidence does not contain the exact six target tables"
+            "schema evidence lacks the exact lifecycle tables and optional control table"
         )
     result: list[dict[str, str]] = []
     for raw_table in raw_tables:
@@ -4235,12 +5667,16 @@ def _status_target_tables(evidence: Mapping[str, Any]) -> list[dict[str, str]]:
             )
         name = raw_table.get("name")
         engine = raw_table.get("engine")
-        if name not in PROPERTY_CATALOG_TABLES or not isinstance(engine, str):
+        if name not in allowed or not isinstance(engine, str):
             raise PropertyCatalogDevRuntimeError(
                 "schema evidence contains an unexpected target table"
             )
         result.append({"engine": engine, "name": name})
-    if {table["name"] for table in result} != PROPERTY_CATALOG_TABLES:
+    names = {table["name"] for table in result}
+    if (
+        len(names) != len(result)
+        or names - {ACTIVATION_CONTROL_TABLE} != PROPERTY_CATALOG_TABLES
+    ):
         raise PropertyCatalogDevRuntimeError(
             "schema evidence contains duplicate target tables"
         )
@@ -4413,10 +5849,39 @@ def _activation_manifest(
     *,
     checkpoints: Sequence[CatalogCheckpoint] | None = None,
 ) -> ActivationManifest:
+    if any(
+        getattr(execution.context, name) != getattr(execution.lease, name)
+        for name in (
+            "organization_id",
+            "workspace_id",
+            "catalog_epoch",
+            "catalog_revision",
+            "projection_version",
+        )
+    ):
+        raise PropertyCatalogDevRuntimeError(
+            "activation context differs from its frozen lease"
+        )
     selected = tuple(
         execution.checkpoints.values() if checkpoints is None else checkpoints
     )
-    plan_by_key = {stream.key: stream for stream in execution.lease.build_plan.streams}
+    return _frozen_activation_manifest(
+        lease=execution.lease,
+        lifecycle_mode=execution.prepared.lifecycle_mode,
+        lineage_anchor_revision=execution.prepared.lineage_anchor_revision,
+        checkpoints=selected,
+    )
+
+
+def _frozen_activation_manifest(
+    *,
+    lease: RevisionLease,
+    lifecycle_mode: CatalogLifecycleMode,
+    lineage_anchor_revision: int,
+    checkpoints: Sequence[CatalogCheckpoint],
+) -> ActivationManifest:
+    selected = tuple(checkpoints)
+    plan_by_key = {stream.key: stream for stream in lease.build_plan.streams}
     if (
         len(selected) != 10
         or len({checkpoint.key for checkpoint in selected}) != 10
@@ -4426,14 +5891,14 @@ def _activation_manifest(
             "activation manifest requires the exact ten planned checkpoints"
         )
     return ActivationManifest(
-        organization_id=execution.context.organization_id,
-        workspace_id=execution.context.workspace_id,
-        catalog_epoch=execution.context.catalog_epoch,
-        catalog_revision=execution.context.catalog_revision,
-        build_token=execution.lease.build_token,
-        projection_version=execution.context.projection_version,
-        lifecycle_mode=execution.prepared.lifecycle_mode,
-        lineage_anchor_revision=execution.prepared.lineage_anchor_revision,
+        organization_id=lease.organization_id,
+        workspace_id=lease.workspace_id,
+        catalog_epoch=lease.catalog_epoch,
+        catalog_revision=lease.catalog_revision,
+        build_token=lease.build_token,
+        projection_version=lease.projection_version,
+        lifecycle_mode=lifecycle_mode,
+        lineage_anchor_revision=lineage_anchor_revision,
         streams=tuple(
             ManifestStream(
                 requirement=stream_requirement(checkpoint),
@@ -4860,9 +6325,13 @@ def _strict_positive_int_setting(
 
 def _project_allowlist_setting(settings_object: Any) -> tuple[str, ...]:
     name = "PROPERTY_CATALOG_DEV_PROJECT_ALLOWLIST"
-    value = getattr(settings_object, name, ())
+    value = getattr(settings_object, name, None)
     if isinstance(value, str):
         values = tuple(item.strip() for item in value.split(",") if item.strip())
+        if not values:
+            raise PropertyCatalogDevRuntimeError(
+                f"{name} requires an explicit empty sequence, not missing configuration"
+            )
     elif isinstance(value, Sequence):
         values = tuple(value)
     else:

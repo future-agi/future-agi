@@ -4,6 +4,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,32 @@ BACKFILL_PS1 = ROOT / "bin" / "property-catalog-backfill.ps1"
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "ignore_file,required_pattern",
+    [
+        (
+            ROOT / ".dockerignore",
+            "futureagi/scripts/property_catalog_oss/tests/replicated_smoke/runs/",
+        ),
+        (
+            ROOT / "futureagi" / ".dockerignore",
+            "scripts/property_catalog_oss/tests/replicated_smoke/runs/",
+        ),
+    ],
+    ids=["root-build-context", "backend-build-context"],
+)
+def test_docker_context_excludes_private_replicated_smoke_runs(
+    ignore_file: Path, required_pattern: str
+) -> None:
+    patterns = {
+        line.strip()
+        for line in _read(ignore_file).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert required_pattern in patterns
+    assert f"!{required_pattern}" not in patterns
 
 
 def _compose_config() -> dict[str, object]:
@@ -122,13 +150,49 @@ def test_compose_builds_the_shared_collector_image_with_bounded_resources() -> N
         }
     ]
     supervisor = services["property-catalog-supervisor"]
+    supervisor_env = supervisor["environment"]
+    spool = sequencer_env["FI_PROPERTY_CATALOG_SPOOL_DIR"]
+    for key in (
+        "PROPERTY_CATALOG_DEV_DRAIN_PROOF_FILE",
+        "PROPERTY_CATALOG_DEV_PRODUCER_RETIREMENT_FILE",
+    ):
+        assert str(Path(supervisor_env[key]).parent) == spool
+    assert ("property-catalog-sequencer-data", spool, False) in {
+        (volume["source"], volume["target"], volume.get("read_only", False))
+        for volume in supervisor["volumes"]
+    }
+    assert (
+        str(Path(supervisor_env["PROPERTY_CATALOG_DEV_REVISION_FENCE_FILE"]).parent)
+        == (supervisor_env["PROPERTY_CATALOG_DEV_MUTATION_LOCK_DIRECTORY"])
+    )
     supervisor_command = " ".join(supervisor["command"])
-    assert "--once" in supervisor_command
-    assert "--initial-backfill" not in supervisor_command
-    assert supervisor["healthcheck"]["test"] == [
-        "CMD-SHELL",
-        "test -f /tmp/property-catalog-supervisor.ready",
+    assert supervisor["entrypoint"] == [
+        "python",
+        "manage.py",
+        "ch25_property_catalog_oss_supervisor",
     ]
+    assert "--once" not in supervisor_command
+    assert "--initial-backfill" not in supervisor_command
+    assert "--health-file" in supervisor_command
+    assert supervisor["healthcheck"]["test"][:3] == ["CMD", "python", "-c"]
+    for env in (collector_env, sequencer_env, supervisor["environment"]):
+        for removed in (
+            "FI_PROPERTY_CATALOG_EPOCH",
+            "FI_PROPERTY_CATALOG_PROJECTION_VERSION",
+            "FI_PROPERTY_CATALOG_PRODUCER_STREAM_ID",
+            "PROPERTY_CATALOG_DEV_CATALOG_EPOCH",
+            "PROPERTY_CATALOG_DEV_PROJECTION_VERSION",
+            "PROPERTY_CATALOG_DEV_HOT_PRODUCER_STREAM_ID",
+        ):
+            assert removed not in env
+    assert (
+        supervisor["environment"]["PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC"]
+        == candidate_topic
+    )
+    assert (
+        supervisor["environment"]["PROPERTY_CATALOG_ORDERED_KAFKA_TOPIC"]
+        == ordered_topic
+    )
     for service_name in (
         "property-catalog-kafka",
         "property-catalog-topic-init",
@@ -167,6 +231,52 @@ def test_compose_builds_the_shared_collector_image_with_bounded_resources() -> N
     assert supervisor_fence.removeprefix("/var/lib/fi-collector") == (
         sequencer_fence.removeprefix("/var/lib/property-catalog-control")
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "healthy",
+        "workspace_failure",
+        "dependency_failure",
+        "stale",
+        "future",
+        "stuck",
+        "old_format",
+    ],
+)
+def test_compose_health_probe_checks_live_readiness_and_freshness(tmp_path, case):
+    probe = _compose_config()["services"]["property-catalog-supervisor"]["healthcheck"][
+        "test"
+    ][-1]
+    path = tmp_path / "health.json"
+    now = datetime.now(UTC)
+    record = {
+        "format": "futureagi.property-catalog-lifecycle-health",
+        "version": 2,
+        "live": True,
+        "ready": True,
+        "healthy": True,
+        "observed_at": now.isoformat(),
+    }
+    if case == "workspace_failure":
+        record.update(healthy=False, detail={"failed_count": 1})
+    elif case == "dependency_failure":
+        record["ready"] = False
+    elif case == "stuck":
+        record["live"] = False
+    elif case in ("stale", "future"):
+        record["observed_at"] = (
+            now + timedelta(seconds=-61 if case == "stale" else 61)
+        ).isoformat()
+    elif case == "old_format":
+        record["version"] = 1
+    path.write_text(json.dumps(record))
+    code = probe.replace("/tmp/property-catalog-supervisor.health.json", str(path))
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, timeout=5
+    )
+    assert (result.returncode == 0) == (case in ("healthy", "workspace_failure"))
 
 
 def test_installers_gate_success_on_the_full_catalog_path() -> None:

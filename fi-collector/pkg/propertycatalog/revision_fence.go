@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 )
@@ -287,8 +288,10 @@ func EncodeRevisionFenceFile(fences []RevisionFence) ([]byte, error) {
 }
 
 func validateRevisionSourceScope(projectIDs []string, spanSinceUS, spanUntilUS uint64) error {
-	if len(projectIDs) == 0 || len(projectIDs) > maxRevisionProjects {
-		return errors.New("project inventory must contain 1..256 projects")
+	// An explicit [] means this workspace has no Observe projects. Missing/null
+	// inventory is not equivalent and must never become an unscoped admission.
+	if projectIDs == nil || len(projectIDs) > maxRevisionProjects {
+		return errors.New("project inventory must be an explicit list of 0..256 projects")
 	}
 	if !sort.StringsAreSorted(projectIDs) {
 		return errors.New("project inventory must be canonical-sorted")
@@ -330,6 +333,6 @@ func validateRevisionSourceObservation(
 }
 
 func cloneRevisionFence(fence RevisionFence) RevisionFence {
-	fence.ProjectIDs = append([]string(nil), fence.ProjectIDs...)
+	fence.ProjectIDs = slices.Clone(fence.ProjectIDs)
 	return fence
 }
