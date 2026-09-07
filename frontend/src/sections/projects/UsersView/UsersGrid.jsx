@@ -55,6 +55,11 @@ import {
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
 import { getListPagerState } from "../LLMTracing/listPagerState";
+import {
+  EMPTY_PAGER_FRONTIER,
+  hasBufferedOverflowPage,
+  pagerFlagsForPage,
+} from "../LLMTracing/useCursorGridPagination";
 import CursorGridPagination from "../LLMTracing/CursorGridPagination";
 
 const getUsersGridThemeParams = (theme) => ({
@@ -102,10 +107,12 @@ const UsersGrid = React.memo(
     const [continuationNotice, setContinuationNotice] = useState(null);
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(25);
-    const [pagerState, setPagerState] = useState({
-      hasMore: false,
-      provenNext: false,
-    });
+    // The deepest page this datasource has published, and the flags it reported
+    // there. AG Grid serves an already-cached block without re-invoking the
+    // datasource, so flags written by whichever read finished last would leave
+    // the terminal page's `false` in place and kill forward navigation the
+    // moment the user pressed Back.
+    const [pagerFrontier, setPagerFrontier] = useState(EMPTY_PAGER_FRONTIER);
     const continueCursorSearch = useCallback(() => {
       if (!continuationNotice) return;
       if (retryServerSideCursorLoad(gridApiRef.current?.api)) {
@@ -357,6 +364,7 @@ const UsersGrid = React.memo(
             });
             if (cursorQueryKeyRef.current !== queryKey) {
               cursorPagination.current.reset();
+              setPagerFrontier(EMPTY_PAGER_FRONTIER);
               // The bounded users cursor has one deterministic candidate order.
               // Explicit AG Grid sorts retain the existing numbered/exact path;
               // mixing a sort with an opaque cursor would change row order.
@@ -481,10 +489,23 @@ const UsersGrid = React.memo(
               startRow: request.startRow,
               rowCount: userData.length,
             });
-            setPagerState(
-              isLastPage
-                ? { hasMore: false, provenNext: false }
-                : { hasMore, provenNext },
+            const bufferedOverflowPage = hasBufferedOverflowPage(
+              isLastPage,
+              hasMore,
+            );
+            const publishedPage = pageNumber + 1;
+            setPagerFrontier((previous) =>
+              publishedPage < previous.page
+                ? previous
+                : {
+                    page: publishedPage,
+                    hasMore: isLastPage
+                      ? false
+                      : hasMore || bufferedOverflowPage,
+                    provenNext: isLastPage
+                      ? false
+                      : provenNext || bufferedOverflowPage,
+                  },
             );
             const exactTotal = countIsLowerBound ? null : total;
             const lowerBoundTotal = countIsLowerBound ? total : null;
@@ -757,6 +778,11 @@ const UsersGrid = React.memo(
       [columns, setColumns],
     );
 
+    // Every page below the frontier is already known to be followed by a page
+    // that has been fetched; only at the frontier itself does the last read
+    // get to decide whether anything follows.
+    const pagerFlags = pagerFlagsForPage(page, pagerFrontier);
+
     const onSortChanged = (params) => {
       if (!isGridApiLive(params.api)) return;
       const requestedSortModel = params.api
@@ -856,8 +882,8 @@ const UsersGrid = React.memo(
           loading={false}
           page={page}
           pageSize={pageSize}
-          hasMore={pagerState.hasMore}
-          provenNext={pagerState.provenNext}
+          hasMore={pagerFlags.hasMore}
+          provenNext={pagerFlags.provenNext}
           onPageChange={(nextPage) =>
             withLiveGridApi(gridApiRef.current?.api, (api) =>
               api.paginationGoToPage?.(nextPage - 1),

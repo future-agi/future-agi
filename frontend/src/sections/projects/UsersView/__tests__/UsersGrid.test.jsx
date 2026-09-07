@@ -707,6 +707,84 @@ describe("UsersGrid deterministic pagination", () => {
     expect(params.api.showNoRowsOverlay).not.toHaveBeenCalled();
   });
 
+  it("keeps forward navigation alive after returning from the terminal page", async () => {
+    // REGRESSION GUARD (C1): the pager flags were written only by the read
+    // that had just completed. AG Grid serves an already-cached block without
+    // re-invoking the datasource, so the terminal page's `false` stuck and one
+    // click of Back left Next dead until a refresh.
+    const firstRows = Array.from({ length: 25 }, (_, index) => row(index));
+    getMock
+      .mockResolvedValueOnce(
+        usersResponse({
+          rows: firstRows,
+          totalCount: 26,
+          countIsLowerBound: true,
+          hasMore: true,
+          nextCursor: "signed-users-page-2",
+        }),
+      )
+      .mockResolvedValueOnce(
+        usersResponse({ rows: [row(25)], totalCount: 26 }),
+      );
+    renderGrid();
+
+    await readPage(makeGridParams());
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeInTheDocument();
+
+    act(() =>
+      gridState.props.onPaginationChanged({
+        api: { paginationGetCurrentPage: () => 1 },
+      }),
+    );
+    await readPage(makeGridParams({ startRow: 25, endRow: 50 }));
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+
+    // Page one is a cached AG Grid block: no third read is issued.
+    act(() =>
+      gridState.props.onPaginationChanged({
+        api: { paginationGetCurrentPage: () => 0 },
+      }),
+    );
+
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
+  });
+
+  it("reaches an overflow page the terminal users response already buffered", async () => {
+    // REGRESSION GUARD (C3): 35 rows arrive on a response that reports no
+    // further search window. 25 become page one and 10 are buffered for page
+    // two — proven to exist by construction, and previously unreachable
+    // because the metadata alone said the list had ended.
+    const overflowingRows = Array.from({ length: 35 }, (_, index) =>
+      row(index),
+    );
+    getMock.mockResolvedValueOnce(
+      usersResponse({ rows: overflowingRows, totalCount: 35 }),
+    );
+    renderGrid();
+
+    const params = makeGridParams();
+    await readPage(params);
+
+    expect(params.success).toHaveBeenCalledWith({
+      rowData: overflowingRows.slice(0, 25),
+      rowCount: 26,
+    });
+    expect(
+      screen.getByRole("button", { name: "Go to page 2" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Next page" }),
+    ).not.toBeDisabled();
+  });
+
   it("does not number the next page when the users total only equals rows seen", () => {
     // Live capture: page 1 returned total_count 25 with has_more true.
     const state = getListPagerState({
