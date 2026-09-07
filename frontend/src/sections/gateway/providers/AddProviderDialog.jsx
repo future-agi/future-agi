@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -9,6 +9,7 @@ import {
   TextField,
   Stack,
   Alert,
+  AlertTitle,
   Chip,
   Autocomplete,
   MenuItem,
@@ -132,6 +133,47 @@ const API_FORMATS = [
   "bedrock",
 ];
 
+// The API types a provider's models as a free-form JSON list, so an entry is
+// not guaranteed to be a string. Anything non-string reaching state would make
+// .trim() throw in the Autocomplete's onChange and render an object as a React
+// child in the chips — either one takes the whole dialog down.
+const toModelId = (value) => {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object") {
+    return String(value.id ?? value.name ?? value.model ?? "").trim();
+  }
+  return value == null ? "" : String(value).trim();
+};
+
+const normalizeModels = (list) =>
+  Array.isArray(list) ? list.map(toModelId).filter(Boolean) : [];
+
+// A credential-based fetch that comes back with an empty list means the
+// provider rejected the key or the endpoint. The warning under Models only says
+// the list is empty, so name the likely cause on the API Key field itself.
+const KEY_FETCH_FAILED =
+  "Couldn't load any models with this key — check that it is valid for this " +
+  "provider, or add model IDs manually below.";
+
+// Edit mode lists models with the credential already on file, so an empty
+// result there means the stored key no longer works. Saving would keep the
+// broken provider; the only fix is a new key, so ask for one.
+const STORED_KEY_UNVERIFIED =
+  "Couldn't list this provider's models with the stored key — enter a new " +
+  "API key to save changes.";
+
+// Human labels for the validation summary, in the order the fields appear in
+// the form so the summary reads top-to-bottom like the dialog itself.
+const FIELD_LABELS = {
+  name: "Provider Name",
+  awsAccessKeyId: "AWS Access Key ID",
+  awsSecretAccessKey: "AWS Secret Access Key",
+  baseUrl: "Base URL",
+  apiKey: "API Key",
+  models: "Models",
+  timeout: "Timeout",
+};
+
 const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const isEditMode = Boolean(provider);
 
@@ -151,32 +193,46 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
   // Validation state
   const [errors, setErrors] = useState({});
+  // The dialog body scrolls, so a failed Save has to bring the summary back
+  // into view — otherwise the button looks inert.
+  const contentRef = useRef(null);
 
   const updateProvider = useUpdateProvider();
   const fetchModels = useFetchProviderModels();
   const [modelOptions, setModelOptions] = useState([]);
   const [fetchError, setFetchError] = useState("");
   const [hasFetched, setHasFetched] = useState(false);
+  // Live feedback on the key, kept out of `errors` so a failed fetch does not
+  // raise the "Fix this before saving" summary before Save was ever pressed.
+  const [keyFetchError, setKeyFetchError] = useState("");
+  // A debounced fetch is armed but has not fired yet.
+  const [fetchScheduled, setFetchScheduled] = useState(false);
 
   const doFetchModels = useCallback(
     ({ providerName, url, key, format }) => {
       setFetchError("");
+      setKeyFetchError("");
       setHasFetched(false);
+      // Edit mode fetches by provider name against the stored credential, so
+      // there is no key in the form to blame for an empty list.
+      const blameKey = !providerName;
       fetchModels.mutate(
         providerName
           ? { providerName }
           : { baseUrl: url, apiKey: key, apiFormat: format },
         {
           onSuccess: (result) => {
-            const fetched = result?.models || [];
-            if (fetched.length === 0 && result?.error) {
-              setFetchError(result.error);
+            const fetched = normalizeModels(result?.models);
+            if (fetched.length === 0) {
+              setFetchError(result?.error || "Provider returned no models");
+              if (blameKey) setKeyFetchError(KEY_FETCH_FAILED);
             }
             setModelOptions(fetched);
             setHasFetched(true);
           },
           onError: (err) => {
             setFetchError(err?.message || "Failed to fetch models");
+            if (blameKey) setKeyFetchError(KEY_FETCH_FAILED);
             setModelOptions([]);
             setHasFetched(true);
           },
@@ -194,8 +250,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setBaseUrl(c.base_url ?? c.baseUrl ?? "");
       setApiKey("");
       setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
-      setModels(Array.isArray(c.models) ? c.models : []);
-      setTimeoutVal(c.default_timeout ?? c.defaultTimeout ?? "");
+      setModels(normalizeModels(c.models));
+      const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
+      setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
       setMaxConcurrent(
         c.max_concurrent != null
           ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
@@ -217,21 +274,38 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
   const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
 
-  // Create mode: auto-fetch when API key is entered (debounced)
+  // Auto-fetch when an API key is entered (debounced). Edit mode included: a
+  // typed key replaces the stored one, so it has to prove it can list models
+  // before Save will accept it — otherwise an unverified key gets written.
   // Skip auto-fetch for AWS providers (Bedrock models must be entered manually)
   useEffect(() => {
-    if (isEditMode || isAwsAuth) return;
+    if (isAwsAuth) {
+      setFetchScheduled(false);
+      return;
+    }
     if (!apiKey.trim()) {
+      setFetchScheduled(false);
+      // A blank key in edit mode means "keep the stored one", so leave the
+      // fetch-by-name result standing instead of wiping it.
+      if (isEditMode) return;
       setModelOptions([]);
       setFetchError("");
+      setKeyFetchError("");
       setHasFetched(false);
       return;
     }
     // Don't fetch if base URL is required but empty (azure, custom)
     const preset = PROVIDER_PRESETS[name];
-    if (preset && !preset.baseUrl && !baseUrl.trim()) return;
+    if (preset && !preset.baseUrl && !baseUrl.trim()) {
+      setFetchScheduled(false);
+      return;
+    }
 
+    // Held from the first keystroke, not from when the request goes out: the
+    // debounce window is long enough to click Save in.
+    setFetchScheduled(true);
     const timer = setTimeout(() => {
+      setFetchScheduled(false);
       doFetchModels({ url: baseUrl, key: apiKey, format: apiFormat });
     }, 600);
     return () => clearTimeout(timer);
@@ -247,6 +321,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setModels([]);
     setModelOptions([]);
     setFetchError("");
+    setKeyFetchError("");
+    setFetchScheduled(false);
     setHasFetched(false);
     setTimeoutVal("");
     setMaxConcurrent("");
@@ -282,6 +358,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setModels([]);
     setModelOptions([]);
     setFetchError("");
+    setKeyFetchError("");
     setHasFetched(false);
     setErrors({});
   };
@@ -299,7 +376,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }
   };
 
-  const validate = () => {
+  const validate = (timeoutSeconds) => {
     const newErrors = {};
 
     if (!name.trim()) {
@@ -319,10 +396,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       const preset = PROVIDER_PRESETS[name];
       const needsBaseUrl = !preset || !preset.baseUrl;
       if (needsBaseUrl && !baseUrl.trim()) {
-        newErrors.baseUrl = "Base URL is required for this provider";
+        newErrors.baseUrl =
+          "This provider has no preset endpoint — enter its base URL, e.g. https://your-endpoint.com";
       }
-      if (baseUrl.trim() && !baseUrl.startsWith("http")) {
-        newErrors.baseUrl = "Base URL must start with http:// or https://";
+      if (baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
+        newErrors.baseUrl = `Base URL must start with http:// or https:// (got "${baseUrl.trim()}")`;
       }
 
       // API key required for new providers
@@ -337,18 +415,27 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
         hasFetched &&
         modelOptions.length === 0
       ) {
-        newErrors.apiKey =
-          "Invalid API key or unreachable provider — please check your credentials";
+        newErrors.apiKey = KEY_FETCH_FAILED;
       }
     }
 
-    // Require at least one model selected
+    // Require at least one model selected. Say why the list is empty when it
+    // is — otherwise "select a model" is impossible advice with nothing to
+    // pick from.
     if (models.length === 0) {
-      newErrors.models = "Select at least one model";
+      if (fetchError) {
+        newErrors.models = `Select at least one model. Loading this provider's models failed (${fetchError}) — type a model ID and press Enter to add it manually.`;
+      } else if (modelOptions.length === 0) {
+        newErrors.models = isEditMode
+          ? "Select at least one model. None were loaded for this provider — type a model ID and press Enter to add it manually."
+          : "Select at least one model. Enter a valid API key to load the list, or type a model ID and press Enter.";
+      } else {
+        newErrors.models = "Select at least one model from the list.";
+      }
     }
 
-    if (timeoutVal.trim() && parseTimeoutSeconds(timeoutVal) === null) {
-      newErrors.timeout = "Use seconds, e.g. 30 or 30s";
+    if (timeoutVal.trim() && timeoutSeconds === null) {
+      newErrors.timeout = `Timeout must be a whole number of seconds, e.g. 30 or 30s (got "${timeoutVal.trim()}")`;
     }
 
     setErrors(newErrors);
@@ -356,7 +443,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   };
 
   const handleSave = () => {
-    if (!validate()) return;
+    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
+    if (!validate(timeoutSeconds)) {
+      // scrollTo is missing in jsdom and older browsers — never let a Save
+      // handler throw on a cosmetic scroll.
+      contentRef.current?.scrollTo?.({ top: 0, behavior: "smooth" });
+      return;
+    }
 
     const config = { base_url: baseUrl, api_format: apiFormat };
     if (isAwsAuth) {
@@ -368,7 +461,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       config.api_key = apiKey;
     }
     if (models.length > 0) config.models = models;
-    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
     if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
@@ -394,16 +486,54 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     );
   };
 
+  const modelsLoading = fetchScheduled || fetchModels.isPending;
+
+  // The stored credential could not list models and no replacement key has
+  // been typed yet. AWS is exempt: Bedrock has no list endpoint, so an empty
+  // result proves nothing, and there is no API Key field to explain it on —
+  // gating there would lock the provider out of editing entirely.
+  const savedKeyUnverified =
+    isEditMode &&
+    !isAwsAuth &&
+    hasFetched &&
+    modelOptions.length === 0 &&
+    !apiKey.trim();
+
   const allSelected =
     modelOptions.length > 0 && models.length === modelOptions.length;
 
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
+  const errorList = Object.keys(FIELD_LABELS)
+    .filter((key) => errors[key])
+    .map((key) => ({ key, label: FIELD_LABELS[key], message: errors[key] }));
+
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
       <DialogTitle>{isEditMode ? "Edit Provider" : "Add Provider"}</DialogTitle>
-      <DialogContent>
+      <DialogContent ref={contentRef}>
         <Stack spacing={2} mt={1}>
+          {/* Validation summary — the body scrolls, so an inline-only error
+              under a field can sit off-screen and make Save look broken. */}
+          {errorList.length > 0 && (
+            <Alert severity="error" onClose={() => setErrors({})}>
+              <AlertTitle>
+                {errorList.length === 1
+                  ? "Fix this before saving"
+                  : `Fix ${errorList.length} issues before saving`}
+              </AlertTitle>
+              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                {errorList.map(({ key, label, message }) => (
+                  <li key={key}>
+                    <Typography variant="body2" component="span">
+                      <strong>{label}:</strong> {message}
+                    </Typography>
+                  </li>
+                ))}
+              </Box>
+            </Alert>
+          )}
+
           {/* Provider Name — dropdown for common providers */}
           {isEditMode ? (
             <TextField
@@ -412,7 +542,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               required
               value={name}
               disabled
-              helperText="Provider name cannot be changed"
+              error={!!errors.name}
+              helperText={errors.name || "Provider name cannot be changed"}
             />
           ) : (
             <TextField
@@ -507,7 +638,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 fullWidth
                 required={!preset.baseUrl}
                 value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value);
+                  setErrors((prev) => ({ ...prev, baseUrl: undefined }));
+                }}
                 placeholder={preset.baseUrl || "https://your-endpoint.com"}
                 error={!!errors.baseUrl}
                 helperText={
@@ -527,14 +661,21 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 onChange={(e) => {
                   setApiKey(e.target.value);
                   setErrors((prev) => ({ ...prev, apiKey: undefined }));
+                  // The refetch is debounced; drop the stale verdict now so a
+                  // corrected key does not keep showing the old rejection.
+                  setKeyFetchError("");
                 }}
                 placeholder={
                   isEditMode
                     ? "Leave blank to keep current key"
                     : preset.keyPlaceholder
                 }
-                error={!!errors.apiKey}
-                helperText={errors.apiKey}
+                error={!!errors.apiKey || !!keyFetchError || savedKeyUnverified}
+                helperText={
+                  errors.apiKey ||
+                  keyFetchError ||
+                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined)
+                }
               />
             </>
           )}
@@ -580,9 +721,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             >
               <Typography variant="subtitle2" color="text.secondary">
                 Models
-                {fetchModels.isPending && (
-                  <CircularProgress size={14} sx={{ ml: 1 }} />
-                )}
+                {modelsLoading && <CircularProgress size={14} sx={{ ml: 1 }} />}
                 {hasFetched && modelOptions.length > 0 && (
                   <Typography
                     component="span"
@@ -609,7 +748,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               options={modelOptions}
               value={models}
               onChange={(_, val) => {
-                setModels(val.map((v) => v.trim()).filter(Boolean));
+                setModels(normalizeModels(val));
                 setErrors((prev) => ({ ...prev, models: undefined }));
               }}
               renderOption={(props, option, { selected }) => (
@@ -632,7 +771,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 <TextField
                   {...params}
                   placeholder={
-                    fetchModels.isPending
+                    modelsLoading
                       ? "Fetching models..."
                       : modelOptions.length > 0
                         ? "Select models..."
@@ -667,10 +806,25 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 {fetchError}
               </Alert>
             )}
-            {errors.models && (
+            {errors.models ? (
               <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
                 {errors.models}
               </Typography>
+            ) : (
+              models.length === 0 && (
+                // Save is disabled until a model is picked, so state the
+                // requirement here rather than leaving a dead button.
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ mt: 0.5, display: "block" }}
+                >
+                  Select at least one model to enable Save
+                  {modelOptions.length === 0
+                    ? " — type a model ID and press Enter to add one manually."
+                    : "."}
+                </Typography>
+              )
             )}
           </Box>
 
@@ -709,18 +863,33 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose}>Cancel</Button>
+        {/* Held for the three states a click could never get past: a fetch in
+            flight (validates against a stale, usually empty model list and
+            rejects a good key), a key the provider already rejected, a stored
+            key that can no longer list models, and no model selected. Each one
+            is explained on the field it belongs to,
+            so the disabled button is never the only signal. */}
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={!name.trim() || updateProvider.isPending}
+          disabled={
+            !name.trim() ||
+            updateProvider.isPending ||
+            modelsLoading ||
+            !!keyFetchError ||
+            savedKeyUnverified ||
+            models.length === 0
+          }
         >
-          {updateProvider.isPending
-            ? isEditMode
-              ? "Saving..."
-              : "Adding..."
-            : isEditMode
-              ? "Save Changes"
-              : "Add Provider"}
+          {modelsLoading
+            ? "Loading models..."
+            : updateProvider.isPending
+              ? isEditMode
+                ? "Saving..."
+                : "Adding..."
+              : isEditMode
+                ? "Save Changes"
+                : "Add Provider"}
         </Button>
       </DialogActions>
     </Dialog>
