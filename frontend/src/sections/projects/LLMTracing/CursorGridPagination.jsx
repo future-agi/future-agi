@@ -1,10 +1,9 @@
 import PropTypes from "prop-types";
 import {
   Box,
-  Button,
   CircularProgress,
-  IconButton,
   MenuItem,
+  PaginationItem,
   Select,
   Stack,
   Typography,
@@ -76,62 +75,100 @@ export default function CursorGridPagination({
         ) : null}
       </Box>
 
-      <Stack direction="row" alignItems="center" gap={0.5}>
-        <IconButton
-          size="small"
+      {/* Rendered from PaginationItem rather than plain buttons so the control
+          keeps the metrics it had when it was a MUI <Pagination>: 32px items,
+          3px gutters, 4px radius, and the Back/Next text labels. Only the item
+          *set* is ours — a window plus ellipses — because a cursor list has no
+          total to enumerate. */}
+      <Stack direction="row" alignItems="center">
+        <PaginationItem
+          type="previous"
           aria-label="Previous page"
+          variant="outlined"
+          shape="rounded"
+          color="primary"
           disabled={disabled || loading || page <= 1}
           onClick={() => onPageChange(page - 1)}
-        >
-          <Iconify icon="octicon:chevron-left-24" width={18} />
-        </IconButton>
+          sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+          slots={{
+            previous: () => (
+              <Box display="flex" alignItems="center" gap={0.5}>
+                <Iconify icon="octicon:chevron-left-24" width={18} />
+                Back
+              </Box>
+            ),
+          }}
+        />
 
-        {windowedPageNumbers({ page, provenNext }).map((pageNumber, index, all) => (
-          <Stack key={pageNumber} direction="row" alignItems="center" gap={0.5}>
-            {index > 0 && pageNumber > all[index - 1] + 1 ? (
-              <Typography
-                aria-hidden="true"
-                typography="s2"
-                color="text.disabled"
-                data-testid="pager-leading-ellipsis"
-              >
-                …
-              </Typography>
-            ) : null}
-            <Button
-              size="small"
-              aria-label={`Go to page ${pageNumber}`}
-              aria-current={pageNumber === page ? "page" : undefined}
-              variant={pageNumber === page ? "contained" : "outlined"}
-              color="primary"
-              disabled={disabled || loading}
-              onClick={() => onPageChange(pageNumber)}
-              sx={{ minWidth: 36, height: 36, borderRadius: "4px" }}
-            >
-              {pageNumber}
-            </Button>
-          </Stack>
-        ))}
+        {windowedPageNumbers({ page, provenNext }).map(
+          (pageNumber, index, all) => (
+            <Box key={pageNumber} display="contents">
+              {index > 0 && pageNumber > all[index - 1] + 1 ? (
+                <Box
+                  component="span"
+                  data-testid="pager-leading-ellipsis"
+                  display="contents"
+                >
+                  <PaginationItem
+                    type="start-ellipsis"
+                    disabled
+                    variant="outlined"
+                    shape="rounded"
+                    sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+                  />
+                </Box>
+              ) : null}
+              <PaginationItem
+                type="page"
+                page={pageNumber}
+                aria-label={`Go to page ${pageNumber}`}
+                aria-current={pageNumber === page ? "page" : undefined}
+                selected={pageNumber === page}
+                variant="outlined"
+                shape="rounded"
+                color="primary"
+                disabled={disabled || loading}
+                onClick={() => onPageChange(pageNumber)}
+                sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+              />
+            </Box>
+          ),
+        )}
 
         {hasMore ? (
-          <Typography
-            aria-hidden="true"
-            typography="s2"
-            color="text.disabled"
+          <Box
+            component="span"
             data-testid="pager-trailing-ellipsis"
+            display="contents"
           >
-            …
-          </Typography>
+            <PaginationItem
+              type="end-ellipsis"
+              disabled
+              variant="outlined"
+              shape="rounded"
+              sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+            />
+          </Box>
         ) : null}
 
-        <IconButton
-          size="small"
+        <PaginationItem
+          type="next"
           aria-label="Next page"
+          variant="outlined"
+          shape="rounded"
+          color="primary"
           disabled={disabled || loading || !hasMore}
           onClick={() => onPageChange(page + 1)}
-        >
-          <Iconify icon="octicon:chevron-right-24" width={18} />
-        </IconButton>
+          sx={{ borderRadius: "4px", bgcolor: "background.paper" }}
+          slots={{
+            next: () => (
+              <Box display="flex" alignItems="center" gap={0.5}>
+                Next
+                <Iconify icon="octicon:chevron-right-24" width={18} />
+              </Box>
+            ),
+          }}
+        />
       </Stack>
     </Stack>
   );
