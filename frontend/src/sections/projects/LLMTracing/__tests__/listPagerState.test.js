@@ -61,6 +61,20 @@ describe("getListPagerState", () => {
     ).toEqual({ hasMore: false, seen: 59, provenNext: false, exactTotal: 59 });
   });
 
+  it("distinguishes an exact zero total from absent metadata", () => {
+    expect(
+      getListPagerState({
+        metadata: {
+          total_rows: 0,
+          total_rows_is_lower_bound: false,
+          has_more: false,
+        },
+        startRow: 0,
+        rowCount: 0,
+      }),
+    ).toEqual({ hasMore: false, seen: 0, provenNext: false, exactTotal: 0 });
+  });
+
   it("tolerates absent metadata", () => {
     expect(getListPagerState({})).toEqual({
       hasMore: false,
