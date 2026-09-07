@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Button, Typography } from "@mui/material";
+import { Box, Button, FormHelperText, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useController, useFieldArray, useFormContext } from "react-hook-form";
 import logger from "src/utils/logger";
@@ -12,6 +12,7 @@ const OptionSelectors = ({
   options,
   multiple = true,
   showClearButton = false,
+  required = false,
 }) => {
   const { control } = useFormContext();
   const { append, remove, fields } = useFieldArray({
@@ -19,7 +20,10 @@ const OptionSelectors = ({
     name: fieldName,
   });
 
-  const { field } = useController({ control, name: fieldName });
+  const {
+    field,
+    fieldState: { error },
+  } = useController({ control, name: fieldName });
 
   const getIsSelected = (value) => {
     logger.debug("getIsSelected", field.value, value);
@@ -54,6 +58,11 @@ const OptionSelectors = ({
         >
           <Typography variant="s1_2" fontWeight="fontWeightMedium">
             {label}
+            {required && (
+              <Box component="span" sx={{ color: "error.main", ml: 0.25 }}>
+                *
+              </Box>
+            )}
           </Typography>
           <ShowComponent condition={showClearButton}>
             <Button
@@ -107,6 +116,11 @@ const OptionSelectors = ({
           );
         })}
       </Box>
+      {error?.message && (
+        <FormHelperText error sx={{ mx: 0 }}>
+          {error.message}
+        </FormHelperText>
+      )}
     </Box>
   );
 };
@@ -118,6 +132,7 @@ OptionSelectors.propTypes = {
   options: PropTypes.array.isRequired,
   multiple: PropTypes.bool,
   showClearButton: PropTypes.bool,
+  required: PropTypes.bool,
 };
 
 export default OptionSelectors;
