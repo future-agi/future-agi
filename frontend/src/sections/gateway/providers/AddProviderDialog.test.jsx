@@ -4,9 +4,11 @@ import { render, screen, userEvent } from "src/utils/test-utils";
 import { parseTimeoutSeconds } from "./utils";
 import AddProviderDialog from "./AddProviderDialog";
 
-const { updateMutate, fetchMutate } = vi.hoisted(() => ({
+const { updateMutate, fetchMutate, fetchState } = vi.hoisted(() => ({
   updateMutate: vi.fn(),
   fetchMutate: vi.fn(),
+  // Mutable so a test can render the dialog mid-fetch.
+  fetchState: { isPending: false },
 }));
 
 vi.mock("./hooks/useGatewayConfig", () => ({
@@ -16,7 +18,10 @@ vi.mock("./hooks/useGatewayConfig", () => ({
     isError: false,
     error: null,
   }),
-  useFetchProviderModels: () => ({ mutate: fetchMutate, isPending: false }),
+  useFetchProviderModels: () => ({
+    mutate: fetchMutate,
+    isPending: fetchState.isPending,
+  }),
 }));
 
 const renderEditDialog = (config) =>
@@ -44,6 +49,7 @@ describe("parseTimeoutSeconds", () => {
 describe("AddProviderDialog validation", () => {
   beforeEach(() => {
     updateMutate.mockReset();
+    fetchState.isPending = false;
     // The dialog fetches the provider's models when it opens in edit mode.
     fetchMutate.mockReset();
     fetchMutate.mockImplementation((_vars, opts) =>
@@ -98,5 +104,16 @@ describe("AddProviderDialog validation", () => {
 
     expect(updateMutate).not.toHaveBeenCalled();
     expect(await screen.findByText("Fix 2 issues before saving")).toBeTruthy();
+  });
+
+  it("holds Save while the provider's models are still loading", () => {
+    // Saving mid-fetch validates against an empty model list and rejects a
+    // valid API key, so the action stays disabled until the request settles.
+    fetchState.isPending = true;
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+
+    const save = screen.getByRole("button", { name: "Loading models..." });
+    expect(save.disabled).toBe(true);
+    expect(updateMutate).not.toHaveBeenCalled();
   });
 });

@@ -786,18 +786,25 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose}>Cancel</Button>
+        {/* Saving mid-fetch would validate against a stale (usually empty)
+            model list and reject a perfectly good API key, so hold the action
+            until the models request settles. */}
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={!name.trim() || updateProvider.isPending}
+          disabled={
+            !name.trim() || updateProvider.isPending || fetchModels.isPending
+          }
         >
-          {updateProvider.isPending
-            ? isEditMode
-              ? "Saving..."
-              : "Adding..."
-            : isEditMode
-              ? "Save Changes"
-              : "Add Provider"}
+          {fetchModels.isPending
+            ? "Loading models..."
+            : updateProvider.isPending
+              ? isEditMode
+                ? "Saving..."
+                : "Adding..."
+              : isEditMode
+                ? "Save Changes"
+                : "Add Provider"}
         </Button>
       </DialogActions>
     </Dialog>
