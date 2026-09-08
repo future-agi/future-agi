@@ -202,8 +202,8 @@ export default function StartEnvironment({ entry = false }) {
 const TAB_SX = {
   minHeight: 38,
   minWidth: 0,
-  px: 1.25,
-  mr: 1,
+  px: 0.75,
+  mr: 0,
   typography: "s1",
   fontWeight: 700,
   textTransform: "none",
