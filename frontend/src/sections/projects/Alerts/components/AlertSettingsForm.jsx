@@ -155,11 +155,13 @@ export default function AlertSettingsForm({
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
 
+  const selectedEval = useMemo(
+    () => expandedEvaluations?.find((evaluation) => evaluation?.id === metric),
+    [expandedEvaluations, metric],
+  );
+
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
-      const selectedEval = expandedEvaluations.find(
-        (evaluation) => evaluation?.id === metric,
-      );
       if (!evalUsesChoiceThreshold(selectedEval)) return [];
       return (
         selectedEval?.choices?.map((choice) => ({
@@ -169,7 +171,7 @@ export default function AlertSettingsForm({
       );
     }
     return [];
-  }, [expandedEvaluations, metric]);
+  }, [expandedEvaluations, metric, selectedEval]);
 
   const queryPayload = useMemo(() => {
     const { observation_type, span_attributes_filters } =
@@ -360,7 +362,7 @@ export default function AlertSettingsForm({
       ...(data?.metric_type === "evaluation_metrics" && {
         metric: data?.metric,
         ...(data?.threshold_metric_value &&
-          selectedMetricOptions?.length > 0 && {
+          !(selectedEval && !evalUsesChoiceThreshold(selectedEval)) && {
             threshold_metric_value: data?.threshold_metric_value,
           }),
       }),

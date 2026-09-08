@@ -184,4 +184,82 @@ describe("Choice field visibility depends on the eval's output type", () => {
     expect(body).not.toHaveProperty("threshold_metric_value");
     expect(body).toHaveProperty("metric", scoreEvalWithLabels.id);
   });
+
+  it("keeps a saved choice when the eval picker has not resolved the eval", async () => {
+    // baseSavedAlert is a Pass/Fail eval hydrated with threshold_metric_value
+    // "Passed". The picker mock resolves to [] here, the same shape it has
+    // while the get_eval_names query is in flight, 503s, or the eval simply
+    // has no ClickHouse rows yet — selectedEval is then undefined, and the
+    // saved choice must not be dropped from the submit payload on that basis
+    // alone.
+    const detail = {
+      ...baseSavedAlert,
+      threshold_type: "percentage_change",
+      critical_threshold_value: 0,
+      filters: {},
+    };
+
+    vi.spyOn(axios, "get").mockImplementation(() =>
+      Promise.resolve({ data: { result: [] } }),
+    );
+
+    useAlertStore.setState({
+      openSheetView: detail.id,
+      selectedProject: detail.project,
+    });
+    useAlertSheetStore.setState({
+      alertRuleDetails: null,
+      gridRef: { current: null },
+    });
+
+    renderWithRouter(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <SnackbarProvider>
+          <AlertSettingsForm
+            onThresholdTypeChange={vi.fn()}
+            setThresholdOperator={vi.fn()}
+            setWarningValue={vi.fn()}
+            setCriticalValue={vi.fn()}
+            setFormIsDirty={vi.fn()}
+            onPayloadChange={vi.fn()}
+          />
+        </SnackbarProvider>
+      </QueryClientProvider>,
+    );
+
+    act(() => {
+      useAlertSheetStore.setState({
+        alertRuleDetails: normalizeAlertDetail(detail),
+      });
+    });
+
+    // The picker resolved to [] so there is no option to resolve the eval's
+    // name from — the metric field falls back to displaying the raw id.
+    // That is the signal that hydration has settled with an unresolved eval.
+    await waitFor(() =>
+      expect(screen.getByDisplayValue(detail.metric)).toBeInTheDocument(),
+    );
+
+    const patch = vi
+      .spyOn(axios, "patch")
+      .mockResolvedValue({ data: { result: "ok" } });
+
+    await act(async () => {
+      fireEvent.click(
+        document.querySelector('[data-alert-form-submit="update"]'),
+      );
+    });
+
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    const body = patch.mock.calls.at(-1)[1];
+    expect(body).toHaveProperty(
+      "threshold_metric_value",
+      detail.threshold_metric_value,
+    );
+    expect(body).toHaveProperty("metric", detail.metric);
+  });
 });
