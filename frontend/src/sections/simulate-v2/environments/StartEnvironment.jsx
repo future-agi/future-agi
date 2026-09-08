@@ -3,13 +3,14 @@ import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, TextField, IconButton, Tooltip,
+  Box, Stack, Typography, Button, TextField, IconButton, Tooltip, Tab, Tabs,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { SectionCard } from "../components/primitives";
 import { useSimStore } from "../store";
 import DescribeFlowStep from "./intake/DescribeFlowStep";
+import MyEnvironmentsTable from "./MyEnvironmentsTable";
 
 /**
  * Variation B entry point.
@@ -26,7 +27,12 @@ import DescribeFlowStep from "./intake/DescribeFlowStep";
  */
 export default function StartEnvironment({ entry = false }) {
   const navigate = useNavigate();
+  const { state } = useSimStore();
   const [choice, setChoice] = useState(null);
+  /* Entry-page tab. "build" shows the picker; "my" shows the table of
+     already-created envs. Non-entry callers (e.g. New environment on a
+     dedicated page) do not surface the tabs. */
+  const [tab, setTab] = useState("build");
   const panelRef = useRef(null);
   const pickerRef = useRef(null);
 
@@ -77,57 +83,109 @@ export default function StartEnvironment({ entry = false }) {
         </Stack>
       </Stack>
 
-      <Stack ref={pickerRef} spacing={2.5}>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 1.5,
-            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-          }}
-        >
-          <TemplateHeroCard
-            option={OPTIONS.find((o) => o.id === "templates")}
-            selected={false}
-            onClick={() => navigate(paths.dashboard.simulate.environmentTemplates)}
-          />
-          <ClonesHeroCard onClick={() => navigate(paths.dashboard.simulate.environmentNewTwin)} />
-        </Box>
-        <Box>
-          <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1.5 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>
-              Or connect your own agent
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              We work with what you already have — no rewrite, no adapter.
-            </Typography>
-          </Stack>
-          <Box
+      {/* Tabs — visible only on the entry page. Sit under the header
+          and above the picker content. Indicator line reads white in
+          dark mode via text.primary so it matches the page chrome. */}
+      {entry && (
+        <Box sx={{ borderBottom: "1px solid", borderColor: "divider", mb: 2.5 }}>
+          <Tabs
+            value={tab}
+            onChange={(_, v) => setTab(v)}
             sx={{
-              display: "grid",
-              gap: 1.25,
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
+              minHeight: 38,
+              "& .MuiTabs-indicator": { backgroundColor: "text.primary", height: 2 },
             }}
           >
-            {bringYourAgent.filter((o) => o.id !== "templates").map((opt) => (
-              <OptionCard
-                key={opt.id}
-                option={opt}
-                selected={choice === opt.id}
-                onClick={() => pick(opt.id)}
-              />
-            ))}
-          </Box>
+            <Tab
+              value="build"
+              disableRipple
+              label="Build environment"
+              sx={TAB_SX}
+            />
+            <Tab
+              value="my"
+              disableRipple
+              label="My Environments"
+              sx={TAB_SX}
+            />
+          </Tabs>
         </Box>
-      </Stack>
+      )}
 
-      {choice && (
-        <Box ref={panelRef} sx={{ mt: 2.5 }}>
-          <FlowPanel choice={choice} />
-        </Box>
+      {(!entry || tab === "build") && (
+        <>
+          <Stack ref={pickerRef} spacing={2.5}>
+            <Box
+              sx={{
+                display: "grid",
+                gap: 1.5,
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+              }}
+            >
+              <TemplateHeroCard
+                option={OPTIONS.find((o) => o.id === "templates")}
+                selected={false}
+                onClick={() => navigate(paths.dashboard.simulate.environmentTemplates)}
+              />
+              <ClonesHeroCard onClick={() => navigate(paths.dashboard.simulate.environmentNewTwin)} />
+            </Box>
+            <Box>
+              <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1.5 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                  Or connect your own agent
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  We work with what you already have — no rewrite, no adapter.
+                </Typography>
+              </Stack>
+              <Box
+                sx={{
+                  display: "grid",
+                  gap: 1.25,
+                  gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
+                }}
+              >
+                {bringYourAgent.filter((o) => o.id !== "templates").map((opt) => (
+                  <OptionCard
+                    key={opt.id}
+                    option={opt}
+                    selected={choice === opt.id}
+                    onClick={() => pick(opt.id)}
+                  />
+                ))}
+              </Box>
+            </Box>
+          </Stack>
+
+          {choice && (
+            <Box ref={panelRef} sx={{ mt: 2.5 }}>
+              <FlowPanel choice={choice} />
+            </Box>
+          )}
+        </>
+      )}
+
+      {entry && tab === "my" && (
+        <MyEnvironmentsTable
+          envs={state?.myEnvironments || []}
+          onOpen={(env) =>
+            navigate(paths.dashboard.simulate.environmentDetail(env.id))
+          }
+        />
       )}
     </Box>
   );
 }
+
+const TAB_SX = {
+  minHeight: 38,
+  px: 1.5,
+  typography: "s2",
+  fontWeight: 700,
+  textTransform: "none",
+  color: "text.secondary",
+  "&.Mui-selected": { color: "text.primary" },
+};
 StartEnvironment.propTypes = { entry: PropTypes.bool };
 
 /* ── hero + card ───────────────────────────────────────────────────────── */
