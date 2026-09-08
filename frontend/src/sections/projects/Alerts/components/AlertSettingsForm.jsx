@@ -17,6 +17,7 @@ import {
   timeOptions,
   alertDefinitionOptions,
   convertFiltersToPayload,
+  evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
@@ -159,6 +160,7 @@ export default function AlertSettingsForm({
       const selectedEval = expandedEvaluations.find(
         (evaluation) => evaluation?.id === metric,
       );
+      if (!evalUsesChoiceThreshold(selectedEval)) return [];
       return (
         selectedEval?.choices?.map((choice) => ({
           label: choice,
