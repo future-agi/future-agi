@@ -36,6 +36,22 @@ export const protoRunId = (envId, stamp) =>
 export const envIdOfProtoRun = (runId) =>
   isProtoRun(runId) ? runId.slice(PROTO_RUN_PREFIX.length).split("--")[0] : null;
 
+/*
+  Every "Use template" click now mints a fresh instance id
+  (`{templateId}-{suffix}`), so `getEnvironment(instanceId)` won't
+  match the template library. Fall back to stripping the suffix and
+  looking up the original template — the instance carries the same
+  world/tools/rules/evalPreset shape as its template, and this
+  adapter only needs those fields to synth run traces.
+*/
+function resolveEnvOrTemplate(envId) {
+  if (!envId) return null;
+  const direct = getEnvironment(envId);
+  if (direct) return direct;
+  const stripped = envId.replace(/-[a-z0-9]{4,}$/, "");
+  return stripped && stripped !== envId ? getEnvironment(stripped) : null;
+}
+
 /* ── the run being reported on ───────────────────────────────────────────── */
 
 /*
@@ -85,7 +101,7 @@ export const getPublishedRun = (runId) => {
 };
 
 function synthesiseRun(runId) {
-  const env = getEnvironment(envIdOfProtoRun(runId));
+  const env = resolveEnvOrTemplate(envIdOfProtoRun(runId));
   if (!env) return null;
   const pool = generatedPool(env).slice(0, 12);
   if (!pool.length) return null;
@@ -135,7 +151,7 @@ const round = (n, dp = 2) => Number(n.toFixed(dp));
 function runFor(runId) {
   const published = getPublishedRun(runId);
   const envId = envIdOfProtoRun(runId);
-  const env = getEnvironment(envId);
+  const env = resolveEnvOrTemplate(envId);
   return { published, env, envId };
 }
 

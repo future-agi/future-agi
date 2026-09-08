@@ -42,7 +42,23 @@ export default function UseTemplate() {
   const navigate = useNavigate();
   const { dispatch, state } = useSimStore();
 
-  const env = useMemo(() => getEnvironment(templateId), [templateId]);
+  /*
+    Every "Use this template" click creates a distinct env instance.
+    The env keeps a `templateId` field so downstream lookups can fall
+    back to the template library when they don't find the instance id
+    (used by executionAdapter to synth run traces). Instance id is
+    minted once per mount and stored in a ref so re-renders / step
+    transitions land on the same env.
+  */
+  const instanceIdRef = useRef(null);
+  const env = useMemo(() => {
+    const t = getEnvironment(templateId);
+    if (!t) return null;
+    if (!instanceIdRef.current) {
+      instanceIdRef.current = `${templateId}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return { ...t, id: instanceIdRef.current, templateId };
+  }, [templateId]);
   /* Build mode — "cloud" runs the world here (connect agent → fit check
      → ready). "local" scaffolds the same template into the user's repo
      via the CLI. Same template, two delivery paths; the toggle lives in
