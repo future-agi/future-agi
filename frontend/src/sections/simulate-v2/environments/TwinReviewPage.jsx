@@ -84,6 +84,26 @@ export default function TwinReviewPage() {
             isTwin
             onBack={() => navigate(paths.dashboard.simulate.environments)}
             /*
+              Seed a single turn so TemplateReviewLayout mounts with
+              `seeded = true` — that skips its "Understanding the agent
+              → Generating environment → Building environment" streaming
+              animation, which is redundant here: TwinProvisioningView
+              just finished playing the equivalent narrative for the
+              clone sandboxes on the previous phase.
+            */
+            initialTurns={[
+              {
+                id: "twin-provisioned",
+                role: "assistant",
+                steps: [
+                  {
+                    kind: "note",
+                    text: `Clone sandbox is up. Review the ${env.name} setup on the right — tweak on the left, then Run simulation when ready.`,
+                  },
+                ],
+              },
+            ]}
+            /*
               Compose flow ends by kicking off a simulation directly —
               the env is fully set up (agent connected, scenarios
               seeded, evals presetted) so there's nothing left to
