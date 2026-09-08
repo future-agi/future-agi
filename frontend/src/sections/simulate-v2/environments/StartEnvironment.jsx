@@ -150,7 +150,7 @@ export default function StartEnvironment({ entry = false }) {
                 sx={{
                   display: "grid",
                   gap: 1.5,
-                  gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                  gridTemplateColumns: { xs: "1fr", md: "minmax(280px, 360px) 1fr" },
                   alignItems: "stretch",
                 }}
               >
