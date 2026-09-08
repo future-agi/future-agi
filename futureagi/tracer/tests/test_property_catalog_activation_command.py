@@ -145,7 +145,7 @@ def test_config_rejects_inconsistent_workspace_scope(
         subject.activation_command_config(settings_object=_settings(**overrides))
 
 
-def test_status_is_read_only_and_execute_is_exactly_replayable() -> None:
+def test_status_is_read_only_and_execute_is_exactly_replayable(tmp_path) -> None:
     store = _Store(_target())
     scope = ActivationControlScope(ORG, WORKSPACE)
 
@@ -170,6 +170,7 @@ def test_status_is_read_only_and_execute_is_exactly_replayable() -> None:
         execute=True,
         request_id=REQUEST,
         now=AT,
+        runtime_directory=str(tmp_path),
     )
     replay = subject.run_initial_activation(
         store=store,
@@ -179,6 +180,7 @@ def test_status_is_read_only_and_execute_is_exactly_replayable() -> None:
         execute=True,
         request_id=REQUEST,
         now=AT,
+        runtime_directory=str(tmp_path),
     )
 
     assert first["control_sequence"] == 1
@@ -187,7 +189,7 @@ def test_status_is_read_only_and_execute_is_exactly_replayable() -> None:
     assert len(store.events) == 1
 
 
-def test_activation_rejects_a_qualified_target_from_another_epoch() -> None:
+def test_activation_rejects_a_qualified_target_from_another_epoch(tmp_path) -> None:
     with pytest.raises(
         subject.ProductionActivationCommandError,
         match="configured epoch/projection",
@@ -200,6 +202,7 @@ def test_activation_rejects_a_qualified_target_from_another_epoch() -> None:
             execute=True,
             request_id=REQUEST,
             now=AT,
+            runtime_directory=str(tmp_path),
         )
 
 

@@ -645,6 +645,16 @@ def run_workspace(
             request=status_request,
             runtime=status_runtime,
         )
+        # Catch up a completed build after a crash between lifecycle activation
+        # and publication, without allocating another revision just to select it.
+        if (
+            not status_only
+            and status_result.evidence[0].evidence.get("schema_ready") is True
+            and status_result.evidence[0].evidence.get("active") is True
+        ):
+            publish_completed_catalog(
+                runtime=status_runtime, settings_object=settings_object, scope=scope
+            )
     evidence = dict(status_result.evidence[0].evidence)
     if evidence.get("schema_ready") is not True:
         raise ProductionLifecycleControllerError(
@@ -670,11 +680,15 @@ def run_workspace(
             scope=scope,
             cancellation_probe=cancellation_probe,
         ) as runtime:
-            return run_workspace_reconcile(
+            result = run_workspace_reconcile(
                 request=request,
                 runtime=runtime,
                 mode=ReconcileMode.INCREMENTAL,
             )
+            publish_completed_catalog(
+                runtime=runtime, settings_object=settings_object, scope=scope
+            )
+            return result
     if not config.bootstrap_enabled:
         raise ProductionLifecycleControllerError(
             "workspace has no active catalog revision and production bootstrap is disabled"
@@ -692,7 +706,28 @@ def run_workspace(
         cancellation_probe=cancellation_probe,
     ) as runtime:
         result = run_configured_production_rollout(request=request, runtime=runtime)
+        publish_completed_catalog(
+            runtime=runtime, settings_object=settings_object, scope=scope
+        )
     return result.as_dict()
+
+
+def publish_completed_catalog(
+    *, runtime: Any, settings_object: Any, scope: WorkspaceScope
+) -> None:
+    """Use the existing production activation opt-in; never invent versions."""
+    if not getattr(settings_object, "PROPERTY_CATALOG_ACTIVATION_CONTROL_ACK", ""):
+        return
+    from tracer.services.clickhouse.v2.property_catalog.production_selection import (
+        publish_completed_catalog as publish,
+    )
+
+    publish(
+        settings_object=settings_object,
+        scope=scope,
+        verify_target=runtime.verified_active_control_target,
+        now=datetime.now(UTC),
+    )
 
 
 @contextmanager

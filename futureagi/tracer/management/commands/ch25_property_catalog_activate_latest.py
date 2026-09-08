@@ -26,12 +26,12 @@ from tracer.services.clickhouse.v2.property_catalog.activation_control import (
     ACTIVATION_CONTROL_MAX_EVENTS,
     ACTIVATION_CONTROL_TABLE,
     ActivationControlError,
-    ActivationControlRequest,
+    ActivationControlRejected,
     ActivationControlScope,
     ActivationControlTarget,
     ClickHouseActivationControlStore,
-    PropertyCatalogActivationControlPlane,
     activation_control_event_sql,
+    canonical_qualified_activations,
     qualified_activation_sql,
     selected_control_target,
 )
@@ -295,6 +295,10 @@ class Command(BaseCommand):
                 execute=execute,
                 request_id=request_id,
                 now=datetime.now(UTC),
+                runtime_directory=getattr(
+                    settings, "PROPERTY_CATALOG_LIFECYCLE_RUNTIME_DIRECTORY", ""
+                ),
+                database=config.database,
             )
             return canonical_json(payload, max_bytes=256 * 1024)
         except (
@@ -451,22 +455,31 @@ def run_initial_activation(
     execute: bool,
     request_id: Any,
     now: datetime,
+    runtime_directory: str | None = None,
+    database: str = "property_catalog",
 ) -> dict[str, Any]:
-    qualified = tuple(store.list_qualified_activations(scope))
-    if not qualified:
-        raise ProductionActivationCommandError(
-            "workspace has no qualified catalog activation"
-        )
-    target = qualified[-1].target
-    if (
-        target.catalog_epoch != catalog_epoch
-        or target.projection_version != projection_version
-    ):
-        raise ProductionActivationCommandError(
-            "newest qualified activation does not match the configured epoch/projection"
-        )
-    events = tuple(store.list_control_events(scope))
+    def verified_initial_target() -> ActivationControlTarget:
+        # Preserve the initial-only command's existing proof contract. Automatic
+        # advancement supplies the runtime's full manifest/authorization proof.
+        raw_qualified = tuple(store.list_qualified_activations(scope))
+        if not raw_qualified:
+            raise ProductionActivationCommandError(
+                "workspace has no qualified catalog activation"
+            )
+        qualified = canonical_qualified_activations(raw_qualified, scope=scope)
+        target = qualified[-1].target
+        if (
+            target.catalog_epoch != catalog_epoch
+            or target.projection_version != projection_version
+        ):
+            raise ProductionActivationCommandError(
+                "newest qualified activation does not match the configured epoch/projection"
+            )
+        return target
+
     if not execute:
+        target = verified_initial_target()
+        events = tuple(store.list_control_events(scope))
         selected = selected_control_target(events)
         return {
             "control_event_count": len(events),
@@ -476,25 +489,34 @@ def run_initial_activation(
                 _target_payload(selected) if selected is not None else None
             ),
         }
-    checked_request_id = canonical_uuid(request_id, field="request_id")
-    result = PropertyCatalogActivationControlPlane(store).activate(
-        request=ActivationControlRequest(
-            request_id=checked_request_id,
-            target=target,
-            expected_head=None,
-        ),
-        now=now,
+    from tracer.services.clickhouse.v2.property_catalog.production_selection import (
+        publish_with_store,
     )
+
+    if not runtime_directory:
+        raise ProductionActivationCommandError(
+            "--execute requires the shared lifecycle runtime_directory"
+        )
+    result = publish_with_store(
+        store=store,
+        scope=scope,
+        catalog_epoch=catalog_epoch,
+        projection_version=projection_version,
+        runtime_directory=runtime_directory,
+        database=database,
+        verify_target=verified_initial_target,
+        now=now,
+        request_id=canonical_uuid(request_id, field="request_id"),
+        initial_only=True,
+    )
+    if result["status"] == "operator_held":
+        raise ActivationControlRejected("control_stale")
     return {
-        "control_sequence": result.event.control_sequence,
-        "idempotent": result.idempotent,
+        "control_sequence": result["control_sequence"],
+        "idempotent": result["idempotent"],
         "mode": "execute",
-        "request_id": result.event.request_id,
-        "selected_target": (
-            _target_payload(result.selected_target)
-            if result.selected_target is not None
-            else None
-        ),
+        "request_id": result["request_id"],
+        "selected_target": result["selected_target"],
     }
 
 

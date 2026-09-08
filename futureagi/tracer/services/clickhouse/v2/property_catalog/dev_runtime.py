@@ -3045,6 +3045,52 @@ class CheckedInPropertyCatalogDevRuntime:
             self._restore_fenced_execution(self._execution)
         return self._execution
 
+    def verified_active_control_target(self):
+        """Read the completed target after validating durable proof and tenancy.
+
+        This does not build, fence, retire, or select a revision. A changed
+        project set needs reconciliation before it can be published to readers.
+        """
+        from .activation_control import ActivationControlTarget
+
+        self._refresh_project_tenant_authorization()
+        scope = WorkspaceCatalogScope(
+            organization_id=self.bound_request.organization_id,
+            workspace_id=self.bound_request.workspace_id,
+            catalog_epoch=self.config.catalog_epoch,
+            projection_version=self.config.projection_version,
+            project_ids=self.config.project_ids,
+        )
+        if self.lifecycle_state is None:
+            raise PropertyCatalogDevRuntimeError(
+                "runtime has no conflict-visible active-state reader"
+            )
+        active = self.lifecycle_state.load_latest_active(scope)
+        if active is None:
+            return None
+        plan = active.build_plan
+        if (
+            plan.organization_id != scope.organization_id
+            or plan.workspace_id != scope.workspace_id
+            or plan.catalog_epoch != scope.catalog_epoch
+            or plan.projection_version != scope.projection_version
+        ):
+            raise PropertyCatalogDevRuntimeError(
+                "completed activation changed its authorized workspace scope"
+            )
+        if plan.source_scope.project_ids != scope.project_ids:
+            return None
+        self._refresh_project_tenant_authorization()
+        return ActivationControlTarget(
+            scope.organization_id,
+            scope.workspace_id,
+            scope.catalog_epoch,
+            scope.projection_version,
+            active.catalog_revision,
+            active.build_token,
+            active.activation_sha256,
+        )
+
     def _load_latest_active_retirement(
         self,
         scope: WorkspaceCatalogScope,
