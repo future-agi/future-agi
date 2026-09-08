@@ -258,16 +258,12 @@ export function useNavData() {
           //     });
           //   },
           // },
-          {
-            title: "Simulated Runs",
-            path: paths.dashboard.simulate.test,
-            icon: ICONS.test,
-            eventTrigger: () => {
-              trackEvent(Events.navigationRunTestsClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          /* Simulated Runs used to have its own sidebar entry; the
+             created-environments list moved to the My Environments tab
+             on /environments, so the standalone nav item is no longer
+             needed. The /simulate/test route stays reachable for
+             direct-URL access — nothing was deleted, only the nav
+             entry. */
         ],
       },
       // {
