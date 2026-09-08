@@ -221,10 +221,30 @@ test(
       );
     });
 
+    const details = await actor.api.get<{
+      result: { window_start: string; window_end: string };
+    }>(monitorDetailsPath(monitorId));
+
+    // Everything below — this step's assertions and the header link, which
+    // `useAlertSheetView` builds from `window_start`/`window_end` — needs the
+    // rule-level window the details endpoint gained with this flow. e2e-ci
+    // only builds the backend from PR code when a PR touches `futureagi/**`
+    // (see "Build backend image from PR code" in e2e-ci.yml), so a
+    // frontend-only PR runs the last released image. Between this flow merging
+    // and the next release, that image has no `window_start` at all, and the
+    // flow died on `new Date(undefined).toISOString()` — a RangeError with
+    // nothing to say about the change under test. Treat a missing key as "this
+    // backend predates the feature" and skip.
+    //
+    // Key *absent* only. The columns are nullable, so `window_start: null` is a
+    // value this backend chose to send, and for the two fires seeded above with
+    // explicit windows it would be a real regression — that still fails below.
+    test.skip(
+      !('window_start' in details.result),
+      'backend predates the fired-window feature: /details/ does not report window_start',
+    );
+
     await test.step('API: the rule-level window spans every fire, whatever the issue list shows', async () => {
-      const details = await actor.api.get<{
-        result: { window_start: string; window_end: string };
-      }>(monitorDetailsPath(monitorId));
       // Aggregated over every fire: the earliest start and the latest end.
       expect(new Date(details.result.window_start).toISOString()).toBe(
         iso(fireEmptyStart),
