@@ -168,7 +168,7 @@ describe("AddProviderDialog validation", () => {
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(true);
     expect(
-      screen.getByText(/enter a new API key to save changes/i),
+      screen.getByText(/Enter a new API key, or add model IDs manually/i),
     ).toBeTruthy();
 
     // A replacement key is the way out, but it has to prove itself.
@@ -270,7 +270,7 @@ describe("AddProviderDialog validation", () => {
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
     expect(
-      screen.queryByText(/enter a new API key to save changes/i),
+      screen.queryByText(/Enter a new API key, or add model IDs manually/i),
     ).toBeNull();
     // The reason still surfaces, just not against the key.
     expect(
@@ -313,7 +313,7 @@ describe("AddProviderDialog validation", () => {
       ).toBe(false),
     );
     expect(
-      screen.queryByText(/enter a new API key to save changes/i),
+      screen.queryByText(/Enter a new API key, or add model IDs manually/i),
     ).toBeNull();
   });
 
@@ -333,6 +333,107 @@ describe("AddProviderDialog validation", () => {
     expect(
       screen.getAllByText(/whole number of seconds.*got "soon"/).length,
     ).toBeGreaterThan(0);
+  });
+
+  it("ignores a fetch that lands after the key field was cleared", async () => {
+    // The typed key's response used to arrive after the restore and overwrite
+    // it, leaving a rejection message under an empty field with no way out.
+    const pending = [];
+    fetchMutate.mockImplementation((vars, opts) => {
+      if (vars?.providerName) {
+        opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] });
+        return;
+      }
+      pending.push(opts);
+    });
+    renderEditDialog({
+      base_url: "https://api.openai.com/v1",
+      default_timeout: 30,
+      models: ["gpt-4o"],
+    });
+
+    const key = screen.getByLabelText(/API Key/i);
+    await userEvent.type(key, "sk-slow");
+    await waitFor(() => expect(pending.length).toBe(1));
+    await userEvent.clear(key);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save Changes" }).disabled,
+      ).toBe(false),
+    );
+
+    // The abandoned request finally answers.
+    pending[0].onSuccess({
+      models: [],
+      error: "Failed to fetch models from provider",
+    });
+
+    expect(screen.getByRole("button", { name: "Save Changes" }).disabled).toBe(
+      false,
+    );
+    expect(
+      screen.queryByText(/check that it is valid for this provider/i),
+    ).toBeNull();
+  });
+
+  it("re-arms the gate when the hand-entered model is removed", async () => {
+    // The override has to follow the chips: a scratch ID typed and then deleted
+    // must not leave the block lifted for a key the provider went on to reject.
+    let reject = false;
+    fetchMutate.mockImplementation((_vars, opts) =>
+      opts?.onSuccess?.(
+        reject
+          ? { models: [], error: "Failed to fetch models from provider" }
+          : { models: ["gpt-4o", "gpt-4o-mini"] },
+      ),
+    );
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/API Key/i), "sk-good");
+    const input = await screen.findByPlaceholderText(/Select models/i);
+
+    await userEvent.type(input, "scratch-id{enter}");
+    await userEvent.type(input, "{backspace}");
+    await userEvent.type(input, "gpt-4o{enter}");
+    expect(screen.queryByText("scratch-id")).toBeNull();
+    expect(screen.getAllByText("gpt-4o").length).toBeGreaterThan(0);
+
+    reject = true;
+    await userEvent.clear(screen.getByLabelText(/API Key/i));
+    await userEvent.type(screen.getByLabelText(/API Key/i), "sk-rejected");
+
+    // Only a listed model is selected now, so the rejected key still blocks.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(true),
+    );
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("takes pasted model IDs as a manual list", async () => {
+    fetchMutate.mockImplementation((_vars, opts) =>
+      opts?.onSuccess?.({ models: [], error: "Provider returned no models" }),
+    );
+    renderCreateDialog();
+
+    await userEvent.type(screen.getByLabelText(/API Key/i), "sk-unlistable");
+    await screen.findByText(/check that it is valid for this provider/i);
+
+    const input = screen.getByPlaceholderText(/type manually/i);
+    await userEvent.click(input);
+    await userEvent.paste("model-a, model-b");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(false),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual([
+      "model-a",
+      "model-b",
+    ]);
   });
 
   it("keeps Bedrock editable although it lists no models", async () => {

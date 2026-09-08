@@ -151,8 +151,8 @@ const KEY_FETCH_FAILED =
   "provider, or add model IDs manually below.";
 
 const STORED_KEY_UNVERIFIED =
-  "Couldn't list this provider's models with the stored key — enter a new " +
-  "API key to save changes.";
+  "Couldn't list this provider's models with the stored key. Enter a new API " +
+  "key, or add model IDs manually below, to save changes.";
 
 // Summary labels, in form order so the summary reads like the dialog.
 const FIELD_LABELS = {
@@ -184,10 +184,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // Validation state
   const [errors, setErrors] = useState({});
   const [summaryDismissed, setSummaryDismissed] = useState(false);
-  // A hand-typed model ID overrides an empty listing: the azure and custom
-  // presets are probed with a plain `{base_url}/models` a working endpoint need
-  // not serve, so an empty list there is no proof the key is bad.
-  const [manualModels, setManualModels] = useState(false);
+  // Every model ID a listing has offered in this dialog, plus the ones already
+  // stored on the provider. Anything selected outside it was typed by hand.
+  const offeredModels = useRef(new Set());
   // The body scrolls, so a failed Save has to bring the summary back into view.
   const contentRef = useRef(null);
 
@@ -229,6 +228,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 : "";
             setFetchError(emptyReason);
             if (emptyReason && blameKey) setKeyFetchError(KEY_FETCH_FAILED);
+            fetched.forEach((m) => offeredModels.current.add(m));
             setModelOptions(fetched);
             setHasFetched(true);
             if (providerName) {
@@ -279,7 +279,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       );
       setErrors({});
       setSummaryDismissed(false);
-      setManualModels(false);
+      offeredModels.current = new Set(normalizeModels(c.models));
       storedKeyResult.current = null;
       doFetchModels({ providerName: provider.name });
     }
@@ -309,6 +309,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       // Blank in edit mode means "keep the stored key", so restore its verdict:
       // a typed key's result left standing blames the stored one for it.
       if (isEditMode) {
+        // Abandon anything still in flight for the key just cleared: its late
+        // response would overwrite the restore and wedge Save behind a
+        // rejection message sitting under an empty field.
+        fetchSeqRef.current += 1;
         const snapshot = storedKeyResult.current;
         if (snapshot) {
           setModelOptions(snapshot.options);
@@ -361,7 +365,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setAwsSessionToken("");
     setErrors({});
     setSummaryDismissed(false);
-    setManualModels(false);
+    offeredModels.current = new Set();
     storedKeyResult.current = null;
   };
 
@@ -394,7 +398,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setHasFetched(false);
     setErrors({});
     setSummaryDismissed(false);
-    setManualModels(false);
+    offeredModels.current = new Set();
     storedKeyResult.current = null;
   };
 
@@ -410,6 +414,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setModels([...modelOptions]);
     }
   };
+
+  // A model the provider never offered was typed in by hand, overriding an
+  // empty listing: the azure and custom presets are probed with a plain
+  // `{base_url}/models` a working endpoint need not serve, so an empty list
+  // there is no proof the key is bad. Derived, so removing the chip re-arms
+  // the gate.
+  const manualModels = models.some((m) => !offeredModels.current.has(m));
 
   const validate = (timeoutSeconds) => {
     const newErrors = {};
@@ -783,12 +794,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               options={modelOptions}
               value={models}
               onChange={(_, val) => {
-                const next = normalizeModels(val);
-                setModels(next);
-                // An ID the listing never offered was entered by hand.
-                if (next.some((m) => !modelOptions.includes(m))) {
-                  setManualModels(true);
-                }
+                setModels(normalizeModels(val));
               }}
               renderOption={(props, option, { selected }) => (
                 <li {...props} key={option}>
@@ -830,9 +836,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                     setModels((prev) =>
                       Array.from(new Set([...prev, ...tokens])),
                     );
-                    if (tokens.some((t) => !modelOptions.includes(t))) {
-                      setManualModels(true);
-                    }
                   }}
                 />
               )}
