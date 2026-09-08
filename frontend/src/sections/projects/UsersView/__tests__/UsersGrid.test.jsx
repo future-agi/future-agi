@@ -979,6 +979,6 @@ describe("UsersGrid deterministic pagination", () => {
       rowCount: 25,
     });
     expect(state).toMatchObject({ hasMore: true, provenNext: false });
-    expect(windowedPageNumbers({ page: 1, provenNext: false })).toEqual([1]);
+    expect(windowedPageNumbers({ page: 1, provenNext: false }).pages).toEqual([1]);
   });
 });
