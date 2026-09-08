@@ -1,0 +1,46 @@
+{{- if .Values.minio.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "futureagi.fullname" . }}-minio-init
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-init
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "5"
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" (dict "root" . "component" "minio-init") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: create-bucket
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.minio.image) }}
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          command: [/bin/sh, -ec]
+          args:
+            - |-
+              until mc alias set futureagi http://{{ include "futureagi.fullname" . }}-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                sleep 2
+              done
+              mc mb --ignore-existing "futureagi/$S3_BUCKET"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: minio-root-user}}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: minio-root-password}}
+            - {name: S3_BUCKET, value: {{ .Values.config.s3Bucket | quote }}}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+{{- end }}

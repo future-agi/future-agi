@@ -1,0 +1,26 @@
+name: Helm chart
+
+on:
+  pull_request:
+    paths:
+      - deploy/helm/**
+      - .github/workflows/helm-chart.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/helm/**
+      - .github/workflows/helm-chart.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Lint, render, and package chart
+        run: ./deploy/helm/test-chart.sh

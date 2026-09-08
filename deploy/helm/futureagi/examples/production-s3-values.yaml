@@ -1,0 +1,19 @@
+# Production object-storage example. Create the referenced Secret first and
+# replace the bucket, region, and public application URLs.
+deploymentMode: production
+
+secrets:
+  existingSecret: futureagi-production-secrets
+
+config:
+  frontendUrl: https://app.example.com
+  backendUrl: https://api.example.com
+  storageBackend: s3
+  s3Bucket: futureagi-production
+  s3Endpoint: https://s3.amazonaws.com
+  s3Region: us-east-2
+  s3Secure: true
+  telemetryDisabled: true
+
+minio:
+  enabled: false

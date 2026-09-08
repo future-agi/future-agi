@@ -1,0 +1,119 @@
+{{- if not (has .Values.deploymentMode (list "development" "production")) }}
+{{- fail "deploymentMode must be development or production" }}
+{{- end }}
+{{- if not (has .Values.config.storageBackend (list "minio" "s3" "gcs")) }}
+{{- fail "config.storageBackend must be minio, s3, or gcs" }}
+{{- end }}
+{{- if and .Values.minio.enabled (ne .Values.config.storageBackend "minio") }}
+{{- fail "config.storageBackend must be minio when bundled MinIO is enabled" }}
+{{- end }}
+{{- if and (not .Values.minio.enabled) (eq .Values.config.storageBackend "minio") }}
+{{- fail "minio.enabled=false requires config.storageBackend=s3 or gcs" }}
+{{- end }}
+{{- if and (eq .Values.deploymentMode "production") .Values.minio.enabled }}
+{{- fail "production mode requires minio.enabled=false and external S3 or GCS object storage" }}
+{{- end }}
+{{- if and (eq .Values.deploymentMode "production") (not .Values.secrets.existingSecret) }}
+{{- fail "production mode requires secrets.existingSecret" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "futureagi.fullname" . }}-env
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+data:
+  ENV_TYPE: prod
+  DJANGO_SETTINGS_MODULE: tfc.settings.settings
+  FUTURE_AGI_VERSION: {{ .Values.backend.image.tag | quote }}
+  FUTURE_AGI_DEPLOYMENT_TYPE: helm
+  FUTURE_AGI_TELEMETRY_DISABLED: {{ .Values.config.telemetryDisabled | quote }}
+  FUTURE_AGI_TELEMETRY_JITTER_SECONDS: {{ .Values.config.telemetryJitterSeconds | quote }}
+  FRONTEND_URL: {{ .Values.config.frontendUrl | quote }}
+  BASE_URL: {{ .Values.config.backendUrl | quote }}
+  ALK_RUNNER_API_URL: {{ printf "http://%s-backend" (include "futureagi.fullname" .) | quote }}
+  PG_HOST: {{ include "futureagi.postgresqlHost" . | quote }}
+  PG_PORT: {{ ternary 5432 .Values.postgresql.external.port .Values.postgresql.enabled | quote }}
+  PGBOUNCER_HOST: {{ include "futureagi.postgresqlHost" . | quote }}
+  PGBOUNCER_PORT: {{ ternary 5432 .Values.postgresql.external.port .Values.postgresql.enabled | quote }}
+  PG_USER: {{ ternary .Values.postgresql.username .Values.postgresql.username .Values.postgresql.enabled | quote }}
+  PG_DB: {{ .Values.postgresql.database | quote }}
+  CH_HOST: {{ include "futureagi.clickhouseHost" . | quote }}
+  CH_PORT: {{ ternary 9000 .Values.clickhouse.external.tcpPort .Values.clickhouse.enabled | quote }}
+  CH_HTTP_PORT: {{ ternary 8123 .Values.clickhouse.external.httpPort .Values.clickhouse.enabled | quote }}
+  CH_USER: {{ .Values.clickhouse.external.username | quote }}
+  CH_USERNAME: {{ .Values.clickhouse.external.username | quote }}
+  CH_ENABLED: "true"
+  CH_DATABASE: {{ .Values.config.clickhouseDatabase | quote }}
+  CH25_DATABASE: {{ .Values.config.clickhouseDatabase | quote }}
+  CH_USE_REPLICATED_ENGINES: "false"
+  CH25_DROP_LEGACY_CDC_CHAIN: "true"
+  REDIS_HOST: {{ include "futureagi.redisHost" . | quote }}
+  REDIS_PORT: {{ ternary 6379 .Values.redis.external.port .Values.redis.enabled | quote }}
+  REDIS_URL: {{ printf "redis://%s:%v/0" (include "futureagi.redisHost" .) (ternary 6379 .Values.redis.external.port .Values.redis.enabled) | quote }}
+  REDIS_CACHE_URL: {{ printf "redis://%s:%v/1" (include "futureagi.redisHost" .) (ternary 6379 .Values.redis.external.port .Values.redis.enabled) | quote }}
+  REDIS_LOCK_URL: {{ printf "redis://%s:%v/2" (include "futureagi.redisHost" .) (ternary 6379 .Values.redis.external.port .Values.redis.enabled) | quote }}
+  REDIS_STATE_URL: {{ printf "redis://%s:%v/2" (include "futureagi.redisHost" .) (ternary 6379 .Values.redis.external.port .Values.redis.enabled) | quote }}
+  STORAGE_BACKEND: {{ .Values.config.storageBackend | quote }}
+  S3_ENDPOINT_URL: {{ include "futureagi.objectStorageEndpoint" . | quote }}
+  S3_SECURE: {{ ternary false .Values.config.s3Secure .Values.minio.enabled | quote }}
+  S3_REGION: {{ .Values.config.s3Region | quote }}
+  AWS_DEFAULT_REGION: {{ .Values.config.s3Region | quote }}
+  MINIO_REGION: {{ .Values.config.s3Region | quote }}
+  MINIO_URL: {{ default (include "futureagi.objectStorageEndpoint" .) .Values.config.minioUrl | quote }}
+  S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  UPLOAD_BUCKET_NAME: {{ .Values.config.s3Bucket | quote }}
+  MINIO_BUCKET_NAME: {{ .Values.config.s3Bucket | quote }}
+  TEMPORAL_HOST: {{ printf "%s:%v" (include "futureagi.temporalHost" .) (ternary 7233 .Values.temporal.external.port .Values.temporal.enabled) | quote }}
+  TEMPORAL_NAMESPACE: {{ .Values.config.temporalNamespace | quote }}
+  AGENTCC_INTERNAL_URL: {{ printf "http://%s-agentcc-gateway:8080" (include "futureagi.fullname" .) | quote }}
+  AGENTCC_GATEWAY_INTERNAL_URL: {{ printf "http://%s-agentcc-gateway:8080" (include "futureagi.fullname" .) | quote }}
+  SERVING_URL: {{ printf "http://%s-serving:8080" (include "futureagi.fullname" .) | quote }}
+  CODE_EXECUTOR_URL: {{ printf "http://%s-code-executor:8060" (include "futureagi.fullname" .) | quote }}
+---
+{{- if .Values.agentccGateway.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "futureagi.fullname" . }}-agentcc-config
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- .Values.agentccGateway.config | nindent 4 }}
+{{- end }}
+---
+{{- if .Values.clickhouse.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "futureagi.fullname" . }}-clickhouse-config
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+data:
+  storage-policy.xml: |-
+    <clickhouse>
+      <storage_configuration>
+        <disks>
+          <cold_local>
+            <path>/var/lib/clickhouse/cold/</path>
+            <keep_free_space_bytes>536870912</keep_free_space_bytes>
+          </cold_local>
+        </disks>
+        <policies>
+          <tiered>
+            <volumes>
+              <hot>
+                <disk>default</disk>
+                <max_data_part_size_bytes>10737418240</max_data_part_size_bytes>
+              </hot>
+              <cold>
+                <disk>cold_local</disk>
+              </cold>
+            </volumes>
+            <move_factor>0.05</move_factor>
+          </tiered>
+        </policies>
+      </storage_configuration>
+    </clickhouse>
+{{- end }}

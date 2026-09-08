@@ -100,7 +100,7 @@ TLS proxy (Caddy/nginx)
 
 Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need CORS for cross-origin since SPA calls same origin.
 
-Official Kubernetes manifests and Helm charts are coming soon. Until then, this production overlay is the supported self-hosting path.
+For Kubernetes, use the [Future AGI Helm chart](helm/futureagi/README.md). The production Compose overlay remains the simplest supported path for a single host.
 
 ## Reverse proxy + TLS
 

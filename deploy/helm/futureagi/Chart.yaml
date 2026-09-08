@@ -1,0 +1,21 @@
+apiVersion: v2
+name: futureagi
+description: A Helm chart for self-hosting the Future AGI evaluation and observability platform
+type: application
+version: 0.1.0
+appVersion: "1.23.1"
+kubeVersion: ">=1.24.0-0"
+home: https://futureagi.com
+icon: https://raw.githubusercontent.com/future-agi/future-agi/main/frontend/public/favicon/logo.svg
+sources:
+  - https://github.com/future-agi/future-agi
+keywords:
+  - ai
+  - evaluation
+  - observability
+  - opentelemetry
+maintainers:
+  - name: Future AGI
+    url: https://github.com/future-agi
+annotations:
+  artifacthub.io/license: Apache-2.0

@@ -14,6 +14,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
   - [Full OSS stack (default)](#mode-1-full-oss-stack)
   - [Development mode (hot reload)](#mode-2-development-mode)
   - [Frontend-only deploy](#mode-3-frontend-only)
+  - [Kubernetes with Helm](#mode-4-kubernetes-with-helm)
 - [Configuration](#configuration)
   - [The `.env` file](#the-env-file)
   - [Secrets that must be changed](#secrets-that-must-be-changed)
@@ -189,6 +190,21 @@ VITE_HOST_API=https://api.your-backend.example.com \
 ```
 
 Or set `VITE_HOST_API` in `.env` and run without the inline variable. Restart the container to pick up changes — no rebuild required (the entrypoint regenerates `/config.js` from `VITE_HOST_API` on each start).
+
+### Mode 4 — Kubernetes with Helm
+
+The chart under `deploy/helm/futureagi` installs the application and bundled datastores, or connects each component to an external managed service. For a local Minikube smoke test:
+
+```bash
+minikube start --cpus=4 --memory=8192 --disk-size=30g
+helm upgrade --install futureagi ./deploy/helm/futureagi \
+  --namespace futureagi --create-namespace \
+  --values deploy/helm/futureagi/examples/minikube-values.yaml \
+  --wait --timeout 20m
+helm test futureagi --namespace futureagi --logs
+```
+
+See the [Helm chart guide](deploy/helm/futureagi/README.md) for secrets, ingress, external datastores, sizing, upgrades, and production guidance.
 
 ---
 

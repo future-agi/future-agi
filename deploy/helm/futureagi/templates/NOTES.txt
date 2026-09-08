@@ -1,0 +1,16 @@
+Future AGI is being deployed into namespace {{ .Release.Namespace }}.
+
+Watch the rollout:
+  kubectl get pods -n {{ .Release.Namespace }} -w
+
+Access the UI locally:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "futureagi.fullname" . }}-frontend 3000:80
+
+Access the API locally:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "futureagi.fullname" . }}-backend 8000:80
+
+Run the chart smoke test after all workloads are ready:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+For production, pin every image tag, use an existing Secret, configure external
+managed datastores or backups, and expose the services through TLS ingress.

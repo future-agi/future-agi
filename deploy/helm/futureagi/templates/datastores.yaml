@@ -1,0 +1,159 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "futureagi.fullname" . }}-postgresql
+  labels: {{ include "futureagi.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "futureagi.fullname" . }}-postgresql
+  replicas: 1
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "postgresql") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "postgresql") | nindent 8 }}
+    spec:
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: postgresql
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.postgresql.image) }}
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          args: ["-c", "wal_level=logical", "-c", "max_wal_senders=25", "-c", "max_replication_slots=25"]
+          ports: [{name: postgresql, containerPort: 5432}]
+          env:
+            - {name: POSTGRES_USER, value: {{ .Values.postgresql.username | quote }}}
+            - {name: POSTGRES_DB, value: {{ .Values.postgresql.database | quote }}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: postgresql-password}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+          readinessProbe: {exec: {command: [sh, -c, "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]}, periodSeconds: 10}
+          livenessProbe: {exec: {command: [sh, -c, "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]}, periodSeconds: 20}
+          resources: {{ toYaml .Values.postgresql.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+  {{- if .Values.postgresql.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end }}
+        resources: {requests: {storage: {{ .Values.postgresql.persistence.size }}}}
+  {{- else }}
+      volumes: [{name: data, emptyDir: {}}]
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-postgresql
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "postgresql") | nindent 4 }}
+  ports: [{name: postgresql, port: 5432}]
+{{- end }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "futureagi.fullname" . }}-redis
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "futureagi.fullname" . }}-redis
+  replicas: 1
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "redis") | nindent 8 }}
+    spec:
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: redis
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.redis.image) }}
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          args: [redis-server, --appendonly, "yes"]
+          ports: [{name: redis, containerPort: 6379}]
+          volumeMounts: [{name: data, mountPath: /data}]
+          readinessProbe: {exec: {command: [redis-cli, ping]}, periodSeconds: 10}
+          livenessProbe: {exec: {command: [redis-cli, ping]}, periodSeconds: 20}
+          resources: {{ toYaml .Values.redis.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+  {{- if .Values.redis.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end }}
+        resources: {requests: {storage: {{ .Values.redis.persistence.size }}}}
+  {{- else }}
+      volumes: [{name: data, emptyDir: {}}]
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-redis
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "redis") | nindent 4 }}
+  ports: [{name: redis, port: 6379}]
+{{- end }}
+{{- if .Values.rabbitmq.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "futureagi.fullname" . }}-rabbitmq
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "futureagi.fullname" . }}-rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "rabbitmq") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "rabbitmq") | nindent 8 }}
+    spec:
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rabbitmq
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.rabbitmq.image) }}
+          imagePullPolicy: {{ .Values.rabbitmq.image.pullPolicy }}
+          ports: [{name: amqp, containerPort: 5672}, {name: management, containerPort: 15672}]
+          env:
+            - {name: RABBITMQ_DEFAULT_USER, value: {{ .Values.rabbitmq.username | quote }}}
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: rabbitmq-password}}
+          volumeMounts: [{name: data, mountPath: /var/lib/rabbitmq}]
+          readinessProbe: {exec: {command: [rabbitmq-diagnostics, -q, check_running]}, periodSeconds: 10}
+          livenessProbe: {exec: {command: [rabbitmq-diagnostics, -q, ping]}, periodSeconds: 20}
+          resources: {{ toYaml .Values.rabbitmq.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+  {{- if .Values.rabbitmq.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end }}
+        resources: {requests: {storage: {{ .Values.rabbitmq.persistence.size }}}}
+  {{- else }}
+      volumes: [{name: data, emptyDir: {}}]
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-rabbitmq
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "rabbitmq") | nindent 4 }}
+  ports: [{name: amqp, port: 5672}, {name: management, port: 15672}]
+{{- end }}

@@ -1,0 +1,114 @@
+{{- if .Values.clickhouse.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "futureagi.fullname" . }}-clickhouse
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "futureagi.fullname" . }}-clickhouse
+  replicas: 1
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "clickhouse") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "clickhouse") | nindent 8 }}
+    spec:
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: clickhouse
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.clickhouse.image) }}
+          imagePullPolicy: {{ .Values.clickhouse.image.pullPolicy }}
+          ports: [{name: http, containerPort: 8123}, {name: native, containerPort: 9000}]
+          env:
+            - {name: CLICKHOUSE_SKIP_USER_SETUP, value: "1"}
+            - {name: CLICKHOUSE_DB, value: {{ .Values.config.clickhouseDatabase | quote }}}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/clickhouse}
+            - {name: config, mountPath: /etc/clickhouse-server/config.d/storage-policy.xml, subPath: storage-policy.xml, readOnly: true}
+          startupProbe: {httpGet: {path: /ping, port: http}, failureThreshold: 60, periodSeconds: 5}
+          readinessProbe: {httpGet: {path: /ping, port: http}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /ping, port: http}, periodSeconds: 20}
+          resources: {{ toYaml .Values.clickhouse.resources | nindent 12 }}
+      volumes:
+        - {name: config, configMap: {name: {{ include "futureagi.fullname" . }}-clickhouse-config}}
+        {{- if not .Values.clickhouse.persistence.enabled }}
+        - {name: data, emptyDir: {}}
+        {{- end }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+  {{- if .Values.clickhouse.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end }}
+        resources: {requests: {storage: {{ .Values.clickhouse.persistence.size }}}}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-clickhouse
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "clickhouse") | nindent 4 }}
+  ports: [{name: http, port: 8123}, {name: native, port: 9000}]
+{{- end }}
+{{- if .Values.minio.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "futureagi.fullname" . }}-minio
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "futureagi.fullname" . }}-minio
+  replicas: 1
+  selector:
+    matchLabels: {{ include "futureagi.componentLabels" (dict "root" . "component" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "futureagi.componentLabels" (dict "root" . "component" "minio") | nindent 8 }}
+    spec:
+      {{- include "futureagi.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: minio
+          image: {{ include "futureagi.image" (dict "root" . "image" .Values.minio.image) }}
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          args: [server, /data, --console-address, ":9001"]
+          ports: [{name: api, containerPort: 9000}, {name: console, containerPort: 9001}]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: minio-root-user}}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ include "futureagi.secretName" . }}, key: minio-root-password}}
+          volumeMounts: [{name: data, mountPath: /data}]
+          readinessProbe: {httpGet: {path: /minio/health/ready, port: api}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /minio/health/live, port: api}, periodSeconds: 20}
+          resources: {{ toYaml .Values.minio.resources | nindent 12 }}
+      {{- include "futureagi.podPlacement" . | nindent 6 }}
+  {{- if .Values.minio.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.global.storageClass }}storageClassName: {{ .Values.global.storageClass | quote }}{{- end }}
+        resources: {requests: {storage: {{ .Values.minio.persistence.size }}}}
+  {{- else }}
+      volumes: [{name: data, emptyDir: {}}]
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.fullname" . }}-minio
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{ include "futureagi.componentLabels" (dict "root" . "component" "minio") | nindent 4 }}
+  ports: [{name: api, port: 9000}, {name: console, port: 9001}]
+{{- end }}
