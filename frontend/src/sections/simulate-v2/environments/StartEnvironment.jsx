@@ -47,9 +47,24 @@ export default function StartEnvironment({ entry = false }) {
 
   const bringYourAgent = OPTIONS.filter((o) => o.group === "bring");
 
+  /* When entry=true, the outer box becomes a full-height flex column so
+     the My Environments tab's table + pagination follow the Datasets
+     pattern — pagination pinned to the viewport's bottom, not floating
+     under the last row. Non-entry callers keep the original block
+     layout so their scratch panels flow naturally. */
+  const rootSx = entry
+    ? { height: "100%", display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }
+    : { p: 2 };
+
   return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "flex-end" }} spacing={2} sx={{ mb: 2.5 }}>
+    <Box sx={rootSx}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        justifyContent="space-between"
+        alignItems={{ sm: "flex-end" }}
+        spacing={2}
+        sx={{ px: entry ? 2 : 0, pt: entry ? 2 : 0, mb: 2.5, flexShrink: 0 }}
+      >
         <Stack direction="row" alignItems="flex-start" spacing={1.5} flex={1} minWidth={0}>
           {!entry && (
             <Tooltip arrow title="Back to environments">
@@ -87,7 +102,7 @@ export default function StartEnvironment({ entry = false }) {
           and above the picker content. Indicator line reads white in
           dark mode via text.primary so it matches the page chrome. */}
       {entry && (
-        <Box sx={{ borderBottom: "1px solid", borderColor: "divider", mb: 2.5 }}>
+        <Box sx={{ px: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
           <Tabs
             value={tab}
             onChange={(_, v) => setTab(v)}
@@ -96,24 +111,14 @@ export default function StartEnvironment({ entry = false }) {
               "& .MuiTabs-indicator": { backgroundColor: "text.primary", height: 2 },
             }}
           >
-            <Tab
-              value="build"
-              disableRipple
-              label="Build environment"
-              sx={TAB_SX}
-            />
-            <Tab
-              value="my"
-              disableRipple
-              label="My Environments"
-              sx={TAB_SX}
-            />
+            <Tab value="build" disableRipple label="Build environment" sx={TAB_SX} />
+            <Tab value="my" disableRipple label="My Environments" sx={TAB_SX} />
           </Tabs>
         </Box>
       )}
 
       {(!entry || tab === "build") && (
-        <>
+        <Box sx={entry ? { flex: 1, minHeight: 0, overflow: "auto", p: 2 } : {}}>
           <Stack ref={pickerRef} spacing={2.5}>
             <Box
               sx={{
@@ -162,16 +167,33 @@ export default function StartEnvironment({ entry = false }) {
               <FlowPanel choice={choice} />
             </Box>
           )}
-        </>
+        </Box>
       )}
 
       {entry && tab === "my" && (
-        <MyEnvironmentsTable
-          envs={state?.myEnvironments || []}
-          onOpen={(env) =>
-            navigate(paths.dashboard.simulate.environmentDetail(env.id))
-          }
-        />
+        /* Datasets-page pattern — flex column that fills the remaining
+           viewport height so DataTablePagination inside
+           MyEnvironmentsTable pins to the bottom of the screen rather
+           than floating right under the last row. */
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 1.5,
+            overflow: "hidden",
+            px: 2,
+            pb: 2,
+          }}
+        >
+          <MyEnvironmentsTable
+            envs={state?.myEnvironments || []}
+            onOpen={(env) =>
+              navigate(paths.dashboard.simulate.environmentDetail(env.id))
+            }
+          />
+        </Box>
       )}
     </Box>
   );
