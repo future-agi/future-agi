@@ -289,8 +289,14 @@ export default function useCursorGridPagination(gridRef, gridElementRef) {
       rowCount: rows.length,
     });
     const bufferedOverflowPage = hasBufferedOverflowPage(isLastPage, metadata);
+    // The frontier is monotone against *non-terminal* publishes: returning to
+    // a cached page never re-invokes the datasource, so an older page's flags
+    // must not clobber the deepest known state. A terminal publish is the one
+    // exception — it is fresh proof the list ends at this page, so any deeper
+    // page is disproven and the frontier must come down with pageCount, or
+    // Next and the boundary button keep pointing at pages goToPage refuses.
     setFrontier((previous) =>
-      publishedPage < previous.page
+      publishedPage < previous.page && !isLastPage
         ? previous
         : {
             page: publishedPage,

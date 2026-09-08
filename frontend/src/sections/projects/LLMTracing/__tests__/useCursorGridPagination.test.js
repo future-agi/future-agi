@@ -303,6 +303,53 @@ describe("useCursorGridPagination", () => {
     expect(result.current.page).toBe(1);
   });
 
+  it("collapses the frontier when a shallower page re-reads as terminal", () => {
+    const { result } = renderHook(() => useCursorGridPagination(null, null));
+
+    publish(result, {
+      startRow: 0,
+      endRow: 25,
+      rows: 25,
+      isLastPage: false,
+      metadata: { total_rows: 26, has_more: true },
+    });
+    publish(result, {
+      startRow: 25,
+      endRow: 50,
+      rows: 25,
+      isLastPage: false,
+      metadata: { total_rows: 51, has_more: true },
+    });
+    publish(result, {
+      startRow: 50,
+      endRow: 75,
+      rows: 25,
+      isLastPage: false,
+      metadata: { total_rows: 76, has_more: true },
+    });
+    expect(result.current.frontierPage).toBe(3);
+    expect(result.current.pageCount).toBe(4);
+
+    // The list shrank under the walk (relative time range, deleted rows). AG
+    // Grid evicted page 2's block (maxBlocksInCache), the user navigated back,
+    // and the re-read came back terminal.
+    publish(result, {
+      startRow: 25,
+      endRow: 50,
+      rows: 10,
+      isLastPage: true,
+      metadata: { total_rows: 35, has_more: false },
+    });
+
+    expect(result.current.page).toBe(2);
+    expect(result.current.pageCount).toBe(2);
+    // Terminal proof beats the monotone guard: the deeper pages are disproven.
+    expect(result.current.frontierPage).toBe(2);
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.provenNext).toBe(false);
+    expect(result.current.endUnknown).toBe(false);
+  });
+
   // The bug this split exists for: walk to the terminal page, go back, and the
   // trailing ellipsis returned — because `hasMore` is true again once you are
   // behind the frontier. Navigability and "is the end known" are different
