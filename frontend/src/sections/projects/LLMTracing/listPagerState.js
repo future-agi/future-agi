@@ -71,8 +71,9 @@ export const getListPagerState = ({
 /**
  * `{1} ∪ {cur-1, cur, cur+1}`, clipped to the furthest proven page — which is
  * exactly the set the cursor protocol can serve. Cursors exist only for page 1
- * (needs none), pages already visited, and `pageNumber + 1`
- * (listCursorPagination.js:618); anything else throws.
+ * (needs none), pages already visited, and `pageNumber + 1`; for anything else
+ * `requestParams` / `recordCursorTransition` in listCursorPagination.js throw
+ * "Continuation cursor is unavailable for this page".
  *
  * `furthestPage` adds a fifth, right-hand boundary number: the deepest page
  * this pagination generation has ever reached (the monotone "frontier"),
@@ -130,7 +131,7 @@ export const pagerFlagsForPage = (page, frontier = EMPTY_PAGER_FRONTIER) => ({
  *
  * That proof itself rests on a precondition: `isLastPage` only degrades to
  * this "no further window but not terminal" shape in cursor mode, where
- * `isLastPage()` (listCursorPagination.js:805-810) reads `metadata.has_more`.
+ * `isLastPage()` in listCursorPagination.js reads `metadata.has_more`.
  * In legacy/numbered mode — no `has_more` field at all — `isLastPage` instead
  * collapses to `rowCount < pageSize`, and a full final page reads back false
  * with nothing buffered behind it. Gate on the field's presence (the same
