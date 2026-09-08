@@ -42,6 +42,21 @@ _EVAL_OUTPUT_TYPE_MAP = {
 }
 
 
+def uses_choice_threshold(eval_template) -> bool:
+    """True when the eval's alert metric is the share of one chosen label.
+
+    A scoring eval may also carry labels, but its metric is the mean score, so
+    a stored choice is neither validated, displayed, nor copied for it.
+    """
+    if eval_template is None:
+        return False
+    output_type = (eval_template.config or {}).get("output")
+    return output_type in (
+        EvalOutputType.PASS_FAIL.value,
+        EvalOutputType.CHOICES.value,
+    ) and bool(eval_template.choices)
+
+
 class MonitorConfigError(Exception):
     """Monitor misconfiguration (e.g. deleted eval config); not retryable."""
 

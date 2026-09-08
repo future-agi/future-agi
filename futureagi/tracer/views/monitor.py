@@ -46,7 +46,7 @@ from tracer.serializers.monitor import (
     UserAlertMonitorSerializer,
 )
 from tracer.utils.helper import get_sort_query
-from tracer.utils.monitor import MonitorConfigError
+from tracer.utils.monitor import MonitorConfigError, uses_choice_threshold
 from tracer.utils.monitor_graphs import (
     MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS,
     MonitorGraphUnavailable,
@@ -628,6 +628,23 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 {"name": f"An alert with the name '{new_name}' already exists."}
             )
 
+        threshold_metric_value = monitor.threshold_metric_value
+        if (
+            monitor.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value
+            and monitor.metric
+        ):
+            eval_config = (
+                CustomEvalConfig.objects.filter(
+                    id=monitor.metric,
+                    project=monitor.project,
+                    deleted=False,
+                )
+                .select_related("eval_template")
+                .first()
+            )
+            if eval_config and not uses_choice_threshold(eval_config.eval_template):
+                threshold_metric_value = None
+
         duplicated_monitor = UserAlertMonitor.objects.create(
             organization=org,
             workspace=monitor.workspace,
@@ -638,7 +655,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             metric=monitor.metric,
             threshold_operator=monitor.threshold_operator,
             threshold_type=monitor.threshold_type,
-            threshold_metric_value=monitor.threshold_metric_value,
+            threshold_metric_value=threshold_metric_value,
             critical_threshold_value=monitor.critical_threshold_value,
             warning_threshold_value=monitor.warning_threshold_value,
             alert_frequency=monitor.alert_frequency,

@@ -1111,6 +1111,52 @@ class TestUserAlertMonitorDuplicateAPI:
             name="Cross Workspace Copy"
         ).exists()
 
+    def test_duplicate_drops_stale_choice_on_score_eval(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """A monitor saved before this branch may still carry a stored
+        threshold_metric_value on a score-typed eval. Duplicating it must not
+        copy that stale value onto the new row."""
+        template = EvalTemplate.objects.create(
+            name=f"Score Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "score"},
+            choices=["Complete", "Partial", "Incomplete"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=f"Score Eval Config {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        monitor = UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Stale Score Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Incomplete",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/duplicate/",
+            {"id": str(monitor.id), "name": "Stale Score Alert Copy"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        copied_monitor = UserAlertMonitor.objects.get(name="Stale Score Alert Copy")
+        assert copied_monitor.threshold_metric_value is None
+
 
 @pytest.mark.integration
 @pytest.mark.api

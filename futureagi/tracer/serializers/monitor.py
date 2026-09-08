@@ -3,7 +3,7 @@ import json
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
-from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
     MonitorMetricTypeChoices,
@@ -18,21 +18,9 @@ from tracer.serializers.filters import (
     filter_list_field,
     filter_list_query_param_field,
 )
+from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
-
-
-def _uses_choice_threshold(eval_template) -> bool:
-    """True when the eval's alert metric is the share of one chosen label.
-
-    A scoring eval may also carry labels, but its metric is the mean score, so
-    the stored choice is neither validated nor displayed for it.
-    """
-    output_type = (eval_template.config or {}).get("output") if eval_template else None
-    return output_type in (
-        EvalOutputType.PASS_FAIL.value,
-        EvalOutputType.CHOICES.value,
-    )
 
 
 class UserAlertMonitorSerializer(serializers.ModelSerializer):
@@ -61,7 +49,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value and _uses_choice_threshold(
+                    if obj.threshold_metric_value and uses_choice_threshold(
                         eval_config.eval_template
                     ):
                         metric_name += f" ({obj.threshold_metric_value})"
@@ -114,9 +102,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
 
             eval_template = custom_eval_config.eval_template
             choices = (
-                eval_template.choices
-                if _uses_choice_threshold(eval_template) and eval_template.choices
-                else None
+                eval_template.choices if uses_choice_threshold(eval_template) else None
             )
             if choices:
                 if threshold_metric_value is None:
@@ -494,7 +480,7 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value and _uses_choice_threshold(
+                    if obj.threshold_metric_value and uses_choice_threshold(
                         eval_config.eval_template
                     ):
                         metric_name += f" ({obj.threshold_metric_value})"
