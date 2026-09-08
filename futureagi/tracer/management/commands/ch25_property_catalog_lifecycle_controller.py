@@ -67,7 +67,6 @@ from tracer.services.clickhouse.v2.property_catalog.revision_fence_registry impo
 
 logger = logging.getLogger(__name__)
 
-_MAX_PROJECTS_PER_WORKSPACE = 256
 _WORKSPACE_SCOPE_MODES = frozenset({"all", "allowlist"})
 _HEALTH_FORMAT = "futureagi.property-catalog-lifecycle-health"
 _HEALTH_VERSION = 2
@@ -124,13 +123,9 @@ class WorkspaceScope:
                 for value in self.legacy_project_ids
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS_PER_WORKSPACE
-            or len(set(projects)) != len(projects)
-        ):
+        if not projects or len(set(projects)) != len(projects):
             raise ProductionLifecycleControllerError(
-                "workspace scope requires 1..256 unique projects"
+                "workspace scope requires non-empty unique projects"
             )
         if len(set(legacy)) != len(legacy) or not set(legacy).issubset(projects):
             raise ProductionLifecycleControllerError(
@@ -538,10 +533,6 @@ def discover_workspace_scopes(
         if workspace_projects is None:
             continue
         workspace_projects.append(str(project_raw))
-        if len(workspace_projects) > _MAX_PROJECTS_PER_WORKSPACE:
-            raise ProductionLifecycleControllerError(
-                f"workspace {bound_workspace_id} exceeds the 256-project bound"
-            )
     scopes: list[WorkspaceScope] = []
     skipped: list[str] = []
     for workspace_raw, organization_raw, is_default_raw in rows:

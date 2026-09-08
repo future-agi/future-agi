@@ -174,7 +174,6 @@ _MAX_DRAIN_PROOF_BYTES = RUNTIME_LIMITS.drain_proof_max_bytes
 _DRAIN_POLL_INTERVAL_SECONDS = RUNTIME_LIMITS.drain_poll_interval_ms / 1_000
 _DRAIN_POLL_CAP_MS = RUNTIME_LIMITS.drain_poll_cap_ms
 _VISIBILITY_RETRY_CAP_MS = RUNTIME_LIMITS.visibility_retry_cap_ms
-_MAX_PROJECTS = RUNTIME_LIMITS.max_projects
 _MIN_INITIAL_BACKFILL_LEASE_HEADROOM_MS = (
     settings.PROPERTY_CATALOG_INITIAL_BACKFILL_LEASE_HEADROOM_MS
 )
@@ -831,14 +830,9 @@ class ProjectTenantAuthorization:
                 for project_id in self.project_ids
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS
-            or len(set(projects)) != len(projects)
-        ):
+        if not projects or len(set(projects)) != len(projects):
             raise PropertyCatalogDevRuntimeError(
-                "project tenant authorization requires 1.."
-                f"{_MAX_PROJECTS} unique project IDs"
+                "project tenant authorization requires nonempty unique project IDs"
             )
         object.__setattr__(self, "project_ids", projects)
         if (
@@ -961,14 +955,9 @@ class DevRuntimeConfig:
                 }
             )
         )
-        if (
-            not projects
-            or len(projects) > _MAX_PROJECTS
-            or len(projects) != len(self.project_ids)
-        ):
+        if not projects or len(projects) != len(self.project_ids):
             raise PropertyCatalogDevRuntimeError(
-                "project allowlist must contain 1.."
-                f"{_MAX_PROJECTS} unique canonical UUIDs"
+                "project allowlist must contain nonempty unique canonical UUIDs"
             )
         object.__setattr__(self, "project_ids", projects)
         object.__setattr__(
@@ -1489,13 +1478,9 @@ def _postgres_project_tenant_bindings(
             canonical_uuid(project_id, field="project_id") for project_id in project_ids
         )
     )
-    if (
-        not projects
-        or len(projects) > _MAX_PROJECTS
-        or len(set(projects)) != len(projects)
-    ):
+    if not projects or len(set(projects)) != len(projects):
         raise PropertyCatalogDevRuntimeError(
-            f"project ownership probe requires 1..{_MAX_PROJECTS} unique project IDs"
+            "project ownership probe requires nonempty unique project IDs"
         )
     if not isinstance(expected_postgres_identity, PostgresDevIdentity):
         raise TypeError("expected_postgres_identity must be PostgresDevIdentity")
@@ -1555,13 +1540,9 @@ def _postgres_project_tenant_bindings_in_current_snapshot(
             canonical_uuid(project_id, field="project_id") for project_id in project_ids
         )
     )
-    if (
-        not projects
-        or len(projects) > _MAX_PROJECTS
-        or len(set(projects)) != len(projects)
-    ):
+    if not projects or len(set(projects)) != len(projects):
         raise PropertyCatalogDevRuntimeError(
-            f"project ownership probe requires 1..{_MAX_PROJECTS} unique project IDs"
+            "project ownership probe requires nonempty unique project IDs"
         )
     if not isinstance(expected_postgres_identity, PostgresDevIdentity):
         raise TypeError("expected_postgres_identity must be PostgresDevIdentity")
@@ -1645,14 +1626,9 @@ def _authorize_project_tenant_bindings(
             for project_id in config.project_ids
         )
     )
-    if (
-        not expected
-        or len(expected) > _MAX_PROJECTS
-        or len(set(expected)) != len(expected)
-    ):
+    if not expected or len(set(expected)) != len(expected):
         raise PropertyCatalogDevRuntimeError(
-            "project tenant authorization requires 1.."
-            f"{_MAX_PROJECTS} unique project IDs"
+            "project tenant authorization requires nonempty unique project IDs"
         )
     if any(
         not isinstance(binding, PostgresProjectTenantBinding) for binding in bindings

@@ -16,7 +16,6 @@ const (
 	revisionFenceFormat   = "futureagi.property-catalog-revision-fence"
 	revisionFenceVersion  = uint16(2)
 	maxRevisionFenceBytes = 64 << 20
-	maxRevisionProjects   = 256
 	// Keep this hard safety bound aligned with
 	// PROPERTY_CATALOG_MAX_REVISION_LEASE_SECONDS. Extended initial backfills
 	// may use up to the setting's supported 60-minute maximum while preserving
@@ -310,8 +309,10 @@ func EncodeRevisionFenceFile(fences []RevisionFence) ([]byte, error) {
 }
 
 func validateRevisionSourceScope(projectIDs []string, spanSinceUS, spanUntilUS uint64) error {
-	if len(projectIDs) == 0 || len(projectIDs) > maxRevisionProjects {
-		return errors.New("project inventory must contain 1..256 projects")
+	// Cardinality is not an authorization boundary. Serialized fence and build
+	// plan byte limits remain enforced by their readers; never truncate scope.
+	if len(projectIDs) == 0 {
+		return errors.New("project inventory must contain at least one project")
 	}
 	if !sort.StringsAreSorted(projectIDs) {
 		return errors.New("project inventory must be canonical-sorted")

@@ -28,7 +28,6 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
-from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 logger = structlog.get_logger(__name__)
@@ -567,17 +566,13 @@ def resolve_property_catalog_project_scope(
     The ClickHouse definition reader owns no authorization logic. Every UUID
     carried into its visibility predicate must first be proven to belong to
     the already-authorized workspace. Unlike the legacy catalog builder,
-    malformed, oversized, and mixed valid/foreign scopes are rejected instead
+    malformed and mixed valid/foreign scopes are rejected instead
     of silently narrowed. This rollout is qualified for Observe projects;
     workspace reads materialize that complete eligible PG set so the
     activation can prove full coverage.
     """
 
     raw_project_ids = list(project_ids)
-    if len(raw_project_ids) > RUNTIME_LIMITS.max_projects:
-        raise ValueError(
-            f"At most {RUNTIME_LIMITS.max_projects} project_ids may be searched at once"
-        )
     try:
         requested = list(
             dict.fromkeys(str(UUID(str(project_id))) for project_id in raw_project_ids)
