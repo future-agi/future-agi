@@ -62,10 +62,10 @@ export const getSessionListColumnDef = (col) => {
         }
         return String(value);
       },
-      valueFormatter: (params) =>
-        params.value === null || params.value === undefined
-          ? "—"
-          : params.value,
+      // SessionCellRenderer shows the full value in a hover tooltip when it
+      // is too long for the cell (same UX as first/last message).
+      cellRenderer: SessionCellRenderer,
+      cellRendererParams: { isCustomColumn: true },
       cellStyle: {
         paddingInline: "0 26px",
         justifyContent: "flex-end",
