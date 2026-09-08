@@ -204,10 +204,14 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // What the fetch-by-name concluded, so clearing a typed key restores it.
   const storedKeyResult = useRef(null);
 
+  // The last fetch made with a key typed into the form.
+  const typedFetchSeqRef = useRef(0);
+
   const doFetchModels = useCallback(
     ({ providerName, url, key, format }) => {
       const seq = fetchSeqRef.current + 1;
       fetchSeqRef.current = seq;
+      if (!providerName) typedFetchSeqRef.current = seq;
       const isStale = () => fetchSeqRef.current !== seq;
       setFetchError("");
       setKeyFetchError("");
@@ -309,10 +313,12 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       // Blank in edit mode means "keep the stored key", so restore its verdict:
       // a typed key's result left standing blames the stored one for it.
       if (isEditMode) {
-        // Abandon anything still in flight for the key just cleared: its late
-        // response would overwrite the restore and wedge Save behind a
-        // rejection message sitting under an empty field.
-        fetchSeqRef.current += 1;
+        // Abandon a typed-key fetch still in flight, whose late response would
+        // overwrite the restore. Only that one: this also runs on mount, where
+        // the request in flight is the by-name fetch just made.
+        if (fetchSeqRef.current === typedFetchSeqRef.current) {
+          fetchSeqRef.current += 1;
+        }
         const snapshot = storedKeyResult.current;
         if (snapshot) {
           setModelOptions(snapshot.options);

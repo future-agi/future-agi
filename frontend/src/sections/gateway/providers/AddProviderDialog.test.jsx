@@ -24,6 +24,13 @@ vi.mock("./hooks/useGatewayConfig", () => ({
   }),
 }));
 
+// Responses land on a later task, as a real request does; a synchronous mock
+// closes the window the dialog's ordering bugs live in.
+const deferred =
+  (impl) =>
+  (...args) =>
+    setTimeout(() => impl(...args), 0);
+
 const renderCreateDialog = () =>
   render(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />);
 
@@ -57,8 +64,10 @@ describe("AddProviderDialog validation", () => {
     fetchState.isPending = false;
     // The dialog fetches the provider's models when it opens in edit mode.
     fetchMutate.mockReset();
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
+      ),
     );
   });
 
@@ -128,11 +137,13 @@ describe("AddProviderDialog validation", () => {
 
   it("blames the API key when the provider returns no models", async () => {
     // An empty 200 used to move nothing but the warning under Models.
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.({
-        models: [],
-        error: "Failed to fetch models from provider",
-      }),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: [],
+          error: "Failed to fetch models from provider",
+        }),
+      ),
     );
     renderCreateDialog();
 
@@ -154,11 +165,13 @@ describe("AddProviderDialog validation", () => {
   it("blocks Save when the stored key can no longer list models", async () => {
     // Models already saved, so that gate passes — but the key on file no
     // longer works, and saving would just keep it.
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.({
-        models: [],
-        error: "Failed to fetch models from provider",
-      }),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({
+          models: [],
+          error: "Failed to fetch models from provider",
+        }),
+      ),
     );
     renderEditDialog({
       default_timeout: 30,
@@ -186,13 +199,15 @@ describe("AddProviderDialog validation", () => {
 
   it("re-verifies a key typed in edit mode before allowing a save", async () => {
     // Edit mode skipped the auto-fetch, so a key typed here went unchecked.
-    fetchMutate.mockImplementation((vars, opts) =>
-      vars?.providerName
-        ? opts?.onSuccess?.({
-            models: [],
-            error: "Failed to fetch models from provider",
-          })
-        : opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
+    fetchMutate.mockImplementation(
+      deferred((vars, opts) =>
+        vars?.providerName
+          ? opts?.onSuccess?.({
+              models: [],
+              error: "Failed to fetch models from provider",
+            })
+          : opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
+      ),
     );
     renderEditDialog({
       base_url: "https://api.openai.com/v1",
@@ -226,8 +241,10 @@ describe("AddProviderDialog validation", () => {
   });
   it("lets a hand-typed model ID unblock a provider the gateway cannot list", async () => {
     // The message says to add model IDs by hand, so that has to open Save.
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.({ models: [], error: "Provider returned no models" }),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: [], error: "Provider returned no models" }),
+      ),
     );
     renderCreateDialog();
 
@@ -262,8 +279,10 @@ describe("AddProviderDialog validation", () => {
 
   it("does not blame the stored key when the fetch itself fails", async () => {
     // No verdict was reached, so it must not block an unrelated edit.
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onError?.(new Error("The request timed out. Please try again.")),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onError?.(new Error("The request timed out. Please try again.")),
+      ),
     );
     renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
 
@@ -283,13 +302,15 @@ describe("AddProviderDialog validation", () => {
 
   it("restores the stored key's verdict when a typed key is cleared", async () => {
     // The typed key's empty listing used to stay behind as the stored key's.
-    fetchMutate.mockImplementation((vars, opts) =>
-      vars?.providerName
-        ? opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] })
-        : opts?.onSuccess?.({
-            models: [],
-            error: "Failed to fetch models from provider",
-          }),
+    fetchMutate.mockImplementation(
+      deferred((vars, opts) =>
+        vars?.providerName
+          ? opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] })
+          : opts?.onSuccess?.({
+              models: [],
+              error: "Failed to fetch models from provider",
+            }),
+      ),
     );
     renderEditDialog({
       base_url: "https://api.openai.com/v1",
@@ -339,13 +360,15 @@ describe("AddProviderDialog validation", () => {
     // The typed key's response used to arrive after the restore and overwrite
     // it, leaving a rejection message under an empty field with no way out.
     const pending = [];
-    fetchMutate.mockImplementation((vars, opts) => {
-      if (vars?.providerName) {
-        opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] });
-        return;
-      }
-      pending.push(opts);
-    });
+    fetchMutate.mockImplementation(
+      deferred((vars, opts) => {
+        if (vars?.providerName) {
+          opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] });
+          return;
+        }
+        pending.push(opts);
+      }),
+    );
     renderEditDialog({
       base_url: "https://api.openai.com/v1",
       default_timeout: 30,
@@ -380,11 +403,13 @@ describe("AddProviderDialog validation", () => {
     // The override has to follow the chips: a scratch ID typed and then deleted
     // must not leave the block lifted for a key the provider went on to reject.
     let reject = false;
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.(
-        reject
-          ? { models: [], error: "Failed to fetch models from provider" }
-          : { models: ["gpt-4o", "gpt-4o-mini"] },
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.(
+          reject
+            ? { models: [], error: "Failed to fetch models from provider" }
+            : { models: ["gpt-4o", "gpt-4o-mini"] },
+        ),
       ),
     );
     renderCreateDialog();
@@ -412,8 +437,10 @@ describe("AddProviderDialog validation", () => {
   });
 
   it("takes pasted model IDs as a manual list", async () => {
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.({ models: [], error: "Provider returned no models" }),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) =>
+        opts?.onSuccess?.({ models: [], error: "Provider returned no models" }),
+      ),
     );
     renderCreateDialog();
 
@@ -436,10 +463,20 @@ describe("AddProviderDialog validation", () => {
     ]);
   });
 
+  it("keeps the stored listing when the dialog opens in edit mode", async () => {
+    // The by-name fetch is in flight while the mount effects settle, and the
+    // blank key field must not cancel it.
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+
+    expect(await screen.findByText("(2 available)")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps Bedrock editable although it lists no models", async () => {
     // No list endpoint and no API Key field to explain a block on.
-    fetchMutate.mockImplementation((_vars, opts) =>
-      opts?.onSuccess?.({ models: [] }),
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: [] })),
     );
     renderEditDialogFor("bedrock", {
       api_format: "anthropic",
