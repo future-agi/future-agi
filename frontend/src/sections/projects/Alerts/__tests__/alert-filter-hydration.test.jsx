@@ -202,7 +202,7 @@ const savedAlert = {
 };
 
 const evaluations = [
-  { id: "eval-1", name: "Groundedness", choices: ["Passed", "Failed"] },
+  { id: "eval-1", name: "Groundedness", choices: ["Passed", "Failed"], output_type: "choices" },
 ];
 
 const labelFor = (options, value) =>

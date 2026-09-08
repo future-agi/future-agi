@@ -121,10 +121,6 @@ export default function AlertSettingsForm({
 
   const selectedNotificationMethod = watch("notification.method");
   const thresholdType = watch("threshold_type");
-  // Eval metrics compare on a 0-1 fraction only under a static threshold —
-  // percentage_change divides this same field by 100 (backend: 0-100 scale).
-  const isEvalFractionScale =
-    metricType === "evaluation_metrics" && thresholdType === "static";
 
   useEffect(() => {
     if (openSheetView) {
@@ -158,6 +154,20 @@ export default function AlertSettingsForm({
     select: (res) => res?.data?.result,
     enabled: Boolean(observeId && metricType === "evaluation_metrics"),
   });
+
+  const selectedEvalOutputType = useMemo(() => {
+    if (!expandedEvaluations?.length || !metric) return null;
+    return (
+      expandedEvaluations.find((evaluation) => evaluation?.id === metric)
+        ?.output_type ?? null
+    );
+  }, [expandedEvaluations, metric]);
+
+  const isEvalFractionScale =
+    metricType === "evaluation_metrics" &&
+    thresholdType === "static" &&
+    ["choices", "Pass/Fail"].includes(selectedEvalOutputType);
+  const isPercentScale = thresholdType === "percentage_change";
 
   const selectedMetricOptions = useMemo(() => {
     if (expandedEvaluations?.length > 0 && metric) {
@@ -748,7 +758,13 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label={isEvalFractionScale ? "Value (0-1)" : "Value"}
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
                         helperText={
                           isEvalFractionScale
                             ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
@@ -859,7 +875,13 @@ export default function AlertSettingsForm({
                             ]);
                           }
                         }}
-                        label={isEvalFractionScale ? "Value (0-1)" : "Value"}
+                        label={
+                          isEvalFractionScale
+                            ? "Value (0-1)"
+                            : isPercentScale
+                              ? "Percentage"
+                              : "Value"
+                        }
                         helperText={
                           isEvalFractionScale
                             ? "Fraction between 0 and 1, e.g. 0.095 for 9.5%"
