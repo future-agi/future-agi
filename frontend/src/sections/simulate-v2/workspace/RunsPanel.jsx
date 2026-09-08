@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Grid, TextField, MenuItem } from "@mui/material";
+import { Box, Stack, Typography, Button, Grid, TextField, MenuItem, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { protoRunId } from "../_mock/executionAdapter";
@@ -160,32 +160,67 @@ export default function RunsPanel({ env, envState, onGo }) {
             />
           ) : (
             <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-              {scoped.map((r) => (
-                <Stack
-                  key={r.id}
-                  direction="row"
-                  alignItems="center"
-                  spacing={2}
-                  onClick={() => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))}
-                  sx={{ px: 2.5, py: 1.75, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
-                >
-                  <Box flex={1} minWidth={0}>
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{r.label}</Typography>
-                    <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                      {new Date(r.finishedAt).toLocaleString()} · {r.total} tasks
-                      {r.agentVersion ? ` · agent ${r.agentVersion}` : ""}
-                      {r.seed != null ? ` · seed ${r.seed}` : ""}
+              {scoped.map((r) => {
+                /* A row can be mid-flight — the run is recorded as soon
+                   as the simulation starts (so the user sees it in
+                   history immediately even if they navigate away), then
+                   updated with final stats when it completes. Rows with
+                   status "running" show a pulsing "Running" chip and
+                   skip the pass-rate arithmetic that would otherwise
+                   render "NaN%" on an empty run. */
+                const isRunning = r.status === "running";
+                const timestamp = isRunning
+                  ? `Started ${new Date(r.startedAt).toLocaleString()}`
+                  : new Date(r.finishedAt || r.startedAt).toLocaleString();
+                const passRate = r.total > 0 ? Math.round((r.passed / r.total) * 100) : 0;
+                return (
+                  <Stack
+                    key={r.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={2}
+                    onClick={() => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))}
+                    sx={{ px: 2.5, py: 1.75, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
+                  >
+                    <Box flex={1} minWidth={0}>
+                      <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{r.label}</Typography>
+                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                        {timestamp} · {r.total} tasks
+                        {r.agentVersion ? ` · agent ${r.agentVersion}` : ""}
+                        {r.seed != null ? ` · seed ${r.seed}` : ""}
+                      </Typography>
+                    </Box>
+                    {isRunning ? (
+                      <Box sx={{ width: 120, display: { xs: "none", sm: "block" } }}>
+                        <LinearProgress
+                          sx={{
+                            height: 4,
+                            borderRadius: 2,
+                            bgcolor: "action.hover",
+                            "& .MuiLinearProgress-bar": { bgcolor: "primary.main" },
+                          }}
+                        />
+                      </Box>
+                    ) : (
+                      <Box sx={{ width: 120, display: { xs: "none", sm: "block" } }}>
+                        <PassBar passed={r.passed} total={r.total} />
+                      </Box>
+                    )}
+                    <Typography sx={{ typography: "s2", fontWeight: 700, width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums", color: isRunning ? "text.subtitle" : "text.primary" }}>
+                      {isRunning ? "—" : `${passRate}%`}
                     </Typography>
-                  </Box>
-                  <Box sx={{ width: 120, display: { xs: "none", sm: "block" } }}>
-                    <PassBar passed={r.passed} total={r.total} />
-                  </Box>
-                  <Typography sx={{ typography: "s2", fontWeight: 700, width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {Math.round((r.passed / r.total) * 100)}%
-                  </Typography>
-                  <StatusChip status={r.passed === r.total ? "passed" : "failed"} />
-                </Stack>
-              ))}
+                    <StatusChip
+                      status={
+                        isRunning
+                          ? "running"
+                          : r.passed === r.total && r.total > 0
+                            ? "passed"
+                            : "failed"
+                      }
+                    />
+                  </Stack>
+                );
+              })}
             </Stack>
           )}
         </SectionCard>

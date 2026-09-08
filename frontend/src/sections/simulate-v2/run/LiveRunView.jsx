@@ -199,44 +199,67 @@ export default function LiveRunView() {
     publishRun(runId, { tasks, startedAt: new Date(Date.now() - elapsed).toISOString() });
   }, [phase, runId, tasks, elapsed]);
 
-  // Record the run once it finishes so it shows up in history.
+  /*
+    Record the run as soon as the simulation actually starts (phase
+    transitions from "booting" to "running") so it appears in the env's
+    Run history and the Simulated Runs list immediately — even if the
+    user navigates away or closes the tab before it completes. The
+    reducer is upsert-by-id, so the finaliser effect below merges the
+    completion stats into this same row.
+  */
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (phase !== "running" || startedRef.current) return;
+    if (envState.runs.some((r) => r.id === runId)) {
+      startedRef.current = true;
+      return;
+    }
+    startedRef.current = true;
+    const totalTasks = tasks.length || scenarios.length * repeats;
+    recordRun({
+      id: runId,
+      label: only
+        ? `${totalTasks} scenario${totalTasks === 1 ? "" : "s"} re-run`
+        : `${env?.name} · ${totalTasks} tasks`,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      total: totalTasks,
+      passed: 0,
+      failed: 0,
+      flaky: 0,
+      unmeasured: 0,
+      agentVersion: currentAgentVersion(envState).label,
+      envVersion: currentEnvVersion(env, envState).label,
+      scenarioIds: scenarios.map((sc) => sc.id),
+      repeats,
+      partial: !!only,
+      ordinal: Math.max(0, ...(envState.runs || []).map((r) => r.ordinal || 0)) + 1,
+      seed: 7,
+      twinWrites: null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, runId]);
+
+  /* Merge the completion stats into the run row when it finishes.
+     Ordinal, agentVersion, envVersion, scenarioIds, repeats and the
+     seed were already stamped by the start effect above — the upsert
+     reducer preserves them. This write only overwrites the fields that
+     genuinely change at completion (status, finishedAt, counts, twin
+     writes, and the label to match the final task count). */
   useEffect(() => {
     if (phase !== "done") return;
-    if (envState.runs.some((r) => r.id === runId)) return;
     recordRun({
       id: runId,
       label: only
         ? `${stats.total} scenario${stats.total === 1 ? "" : "s"} re-run`
         : `${env?.name} · ${stats.total} tasks`,
+      status: stats.failed === 0 && stats.total > 0 ? "passed" : "failed",
       finishedAt: new Date().toISOString(),
       total: stats.total,
       passed: stats.passed,
       failed: stats.failed,
       flaky: stats.flaky,
-      /* Kept on the run so history can show what the run could not measure —
-         a rate with no denominator behind it is not reproducible. */
       unmeasured: stats.unmeasured,
-      /* Which agent version was current when this started — pinned, never
-         inferred later from the run's place in the list. */
-      agentVersion: currentAgentVersion(envState).label,
-      /* And which env version — a run is `env × agent`, so both halves
-         travel on it. Lets the runs table read "agent v2 · env v3" and
-         lets the compare view distinguish "the agent changed" from "the
-         world changed" instead of collapsing both into one axis. */
-      envVersion: currentEnvVersion(env, envState).label,
-      /* What it actually covered, and how many samples each row is made of.
-         A comparison needs both before it can claim two runs are comparable. */
-      scenarioIds: scenarios.map((sc) => sc.id),
-      repeats,
-      partial: !!only,
-      /* One past the highest ordinal ever stamped here, so numbers are stable
-         even after a run is deleted. */
-      ordinal: Math.max(0, ...envState.runs.map((r) => r.ordinal || 0)) + 1,
-      seed: 7,
-      /* Twin write count summed across every task in the run. Stamped
-         at record time so the runs history can show it later without
-         re-deriving from task data (which is cached in the adapter and
-         not always available). null for non-twin envs. */
       twinWrites: envState.twinBacking
         ? tasks.reduce((sum, task) => {
             const t = twinTimelineFor(envState, task);

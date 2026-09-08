@@ -168,13 +168,27 @@ function reducer(state, action) {
       };
     }
 
+    /*
+      Upsert-by-id. A run gets recorded twice: once when it starts (so
+      it shows up in Simulated Runs / the workspace's Run history the
+      moment the user hits Start simulation, even if they navigate away
+      before it finishes) and once again when it completes (merged into
+      the same row with the final stats). Prepending twice would leave
+      a duplicate — so if an entry with this run id already exists,
+      merge into it in place and keep its original position.
+    */
     case "recordRun": {
       const prev = state.byEnv[action.envId] || emptyEnvState();
+      const runs = prev.runs || [];
+      const idx = runs.findIndex((r) => r.id === action.run.id);
+      const nextRuns = idx >= 0
+        ? runs.map((r, i) => (i === idx ? { ...r, ...action.run } : r))
+        : [action.run, ...runs];
       return {
         ...state,
         byEnv: {
           ...state.byEnv,
-          [action.envId]: { ...prev, runs: [action.run, ...prev.runs] },
+          [action.envId]: { ...prev, runs: nextRuns },
         },
       };
     }
