@@ -3613,8 +3613,15 @@ def calculate_spearman_correlation(output, expected, **kwargs):
         return ranks
 
     rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n ** 2 - 1))
+    mx, my = sum(rx) / n, sum(ry) / n
+    ss_x = sum((rxi - mx) ** 2 for rxi in rx)
+    ss_y = sum((ryi - my) ** 2 for ryi in ry)
+    if ss_x == 0 or ss_y == 0:
+        rho = 0.0
+    else:
+        denom = (ss_x * ss_y) ** 0.5
+        rho = sum((rxi - mx) * (ryi - my) for rxi, ryi in zip(rx, ry)) / denom if denom > 0 else 0.0
+        rho = max(-1.0, min(1.0, rho))
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
