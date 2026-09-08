@@ -716,7 +716,7 @@ describe("CallLogsGrid bounded-read state", () => {
       rowCount: 0,
     });
     expect(state.provenNext).toBe(false);
-    expect(windowedPageNumbers({ page: 1, provenNext: state.provenNext })).toEqual([1]);
+    expect(windowedPageNumbers({ page: 1, provenNext: state.provenNext }).pages).toEqual([1]);
   });
 
   it("disables the pager and falls back to page 1 during an unusable, non-loading read", async () => {

@@ -63,16 +63,11 @@ export default function CursorGridPagination({
   provenNext = false,
 }) {
   const showTrailingEllipsis = endUnknown === undefined ? hasMore : endUnknown;
-  const pageNumbers = windowedPageNumbers({ page, provenNext, furthestPage });
-  // Recomputed the same way `windowedPageNumbers` decides whether to draw the
-  // boundary at all, so a gap is only ever labelled "boundary" when the
-  // number right after it actually is that far-right page — never the
-  // ordinary leading gap between page 1 and the current-page neighbourhood.
-  const windowHighest = page + (provenNext ? 1 : 0);
-  const boundaryPageNumber =
-    Number.isSafeInteger(furthestPage) && furthestPage > windowHighest
-      ? furthestPage
-      : null;
+  const { pages: pageNumbers, boundaryPage } = windowedPageNumbers({
+    page,
+    provenNext,
+    furthestPage,
+  });
   return (
     <Stack
       direction="row"
@@ -151,7 +146,7 @@ export default function CursorGridPagination({
               <Box
                 component="span"
                 data-testid={
-                  pageNumber === boundaryPageNumber
+                  pageNumber === boundaryPage
                     ? "pager-boundary-ellipsis"
                     : "pager-leading-ellipsis"
                 }

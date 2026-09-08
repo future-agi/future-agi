@@ -117,7 +117,8 @@ export const pagerMetadataEquals = (left, right) => {
  * inside the window there) and caps it at five only once the walk has gone
  * back. Callers must gate `furthestPage` on reachability themselves
  * (`listCursorPagination.js`'s `canReachPage`) — this function draws whatever
- * number it is given.
+ * number it is given, and returns `boundaryPage` when the caller must label a
+ * separate gap, eliminating the rule duplication that once lived in callers.
  */
 export const windowedPageNumbers = ({
   page,
@@ -133,7 +134,13 @@ export const windowedPageNumbers = ({
   const boundary = Number.isSafeInteger(furthestPage) ? furthestPage : 0;
   const rightEdge = Math.max(highest, boundary);
   if (rightEdge > current) pages.add(rightEdge);
-  return Array.from(pages).sort((left, right) => left - right);
+  return {
+    pages: Array.from(pages).sort((left, right) => left - right),
+    // Non-null only when the furthest-visited page is drawn strictly beyond
+    // the window — the same `highest` that shaped the set above, so the
+    // boundary label can never drift from the numbers.
+    boundaryPage: boundary > highest ? boundary : null,
+  };
 };
 
 export const EMPTY_PAGER_FRONTIER = Object.freeze({
