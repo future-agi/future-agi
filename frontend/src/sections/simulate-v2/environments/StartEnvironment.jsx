@@ -184,6 +184,7 @@ export default function StartEnvironment({ entry = false }) {
             gap: 1.5,
             overflow: "hidden",
             px: 2,
+            pt: 2,
             pb: 2,
           }}
         >
