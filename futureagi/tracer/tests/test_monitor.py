@@ -555,7 +555,7 @@ class TestUserAlertMonitorListAPI:
             mapping={"input": "input", "output": "output"},
             filters={},
         )
-        UserAlertMonitor.objects.create(
+        monitor = UserAlertMonitor.objects.create(
             organization=organization,
             workspace=workspace,
             project=observe_project,
@@ -580,6 +580,10 @@ class TestUserAlertMonitorListAPI:
         assert len(rows) == 1
         rendered = rows[0]["metric_type"]
         assert rendered == eval_config.name
+
+        response = auth_client.get(f"/tracer/user-alerts/{monitor.id}/details/")
+        assert response.status_code == status.HTTP_200_OK
+        assert get_result(response)["metric_name"] == eval_config.name
 
     def test_list_monitors_choices_eval_keeps_choice_suffix(
         self, auth_client, organization, workspace, observe_project
