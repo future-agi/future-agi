@@ -63,8 +63,7 @@ describe("AddProviderDialog validation", () => {
   });
 
   it("saves an edited provider whose stored timeout came back as a number", async () => {
-    // The API returns default_timeout as an integer; seeding the text field
-    // with it used to throw "timeoutVal.trim is not a function" on Save.
+    // A numeric default_timeout used to throw "trim is not a function".
     renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
 
     await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
@@ -76,8 +75,7 @@ describe("AddProviderDialog validation", () => {
   it("blocks Save, and says why, when no model is selected", async () => {
     renderEditDialog({ default_timeout: 30, models: [] });
 
-    // A model is mandatory, so the click can never succeed — the button is
-    // held and the requirement is stated under the Models field instead.
+    // The button is held, and the requirement stated under the field.
     expect(screen.getByRole("button", { name: "Save Changes" }).disabled).toBe(
       true,
     );
@@ -129,8 +127,7 @@ describe("AddProviderDialog validation", () => {
   });
 
   it("blames the API key when the provider returns no models", async () => {
-    // The gateway answers 200 with an empty list and a reason, so nothing but
-    // the Models warning used to move — the key that caused it looked fine.
+    // An empty 200 used to move nothing but the warning under Models.
     fetchMutate.mockImplementation((_vars, opts) =>
       opts?.onSuccess?.({
         models: [],
@@ -141,26 +138,22 @@ describe("AddProviderDialog validation", () => {
 
     await userEvent.type(screen.getByLabelText(/API Key/i), "sk-bad");
 
-    // Shown on the key field itself, once the debounced fetch comes back.
     expect(
       await screen.findByText(/check that it is valid for this provider/i),
     ).toBeTruthy();
-    // The provider's own reason still appears under Models.
     expect(
       screen.getByText("Failed to fetch models from provider"),
     ).toBeTruthy();
-    // Live feedback only — the Save-time summary stays down until Save.
+    // Live feedback only — the summary stays down until Save.
     expect(screen.queryByText("Fix this before saving")).toBeNull();
-    // And the rejected key holds the action, so there is nothing to click.
     expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(
       true,
     );
   });
 
   it("blocks Save when the stored key can no longer list models", async () => {
-    // Exactly the screenshot case: three models already saved, so the models
-    // gate passes, but the refresh failed — the key on file is the problem and
-    // saving would just keep it.
+    // Models already saved, so that gate passes — but the key on file no
+    // longer works, and saving would just keep it.
     fetchMutate.mockImplementation((_vars, opts) =>
       opts?.onSuccess?.({
         models: [],
@@ -178,7 +171,7 @@ describe("AddProviderDialog validation", () => {
       screen.getByText(/enter a new API key to save changes/i),
     ).toBeTruthy();
 
-    // A replacement key is the way out, but it has to prove itself first.
+    // A replacement key is the way out, but it has to prove itself.
     await userEvent.type(screen.getByLabelText(/API Key/i), "sk-still-bad");
     await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(2));
 
@@ -192,8 +185,7 @@ describe("AddProviderDialog validation", () => {
   });
 
   it("re-verifies a key typed in edit mode before allowing a save", async () => {
-    // Edit mode used to skip the auto-fetch entirely, so a key typed here was
-    // never checked — Save just wrote it.
+    // Edit mode skipped the auto-fetch, so a key typed here went unchecked.
     fetchMutate.mockImplementation((vars, opts) =>
       vars?.providerName
         ? opts?.onSuccess?.({
@@ -232,9 +224,119 @@ describe("AddProviderDialog validation", () => {
     expect(updateMutate).toHaveBeenCalledTimes(1);
     expect(updateMutate.mock.calls[0][0].config.api_key).toBe("sk-good");
   });
+  it("lets a hand-typed model ID unblock a provider the gateway cannot list", async () => {
+    // The message says to add model IDs by hand, so that has to open Save.
+    fetchMutate.mockImplementation((_vars, opts) =>
+      opts?.onSuccess?.({ models: [], error: "Provider returned no models" }),
+    );
+    renderCreateDialog();
+
+    // Probed with a plain {base_url}/models, and not AWS-exempt.
+    await userEvent.click(screen.getByRole("combobox", { name: /Provider/ }));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Custom / Self-hosted" }),
+    );
+    await userEvent.type(
+      screen.getByLabelText(/Base URL/),
+      "https://mine.example.com",
+    );
+    await userEvent.type(screen.getByLabelText(/API Key/i), "sk-unlistable");
+    await screen.findByText(/check that it is valid for this provider/i);
+    expect(screen.getByRole("button", { name: "Add Provider" }).disabled).toBe(
+      true,
+    );
+
+    await userEvent.type(
+      screen.getByPlaceholderText(/type manually/i),
+      "my-model{enter}",
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Add Provider" }).disabled,
+      ).toBe(false),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate.mock.calls[0][0].config.models).toEqual(["my-model"]);
+  });
+
+  it("does not blame the stored key when the fetch itself fails", async () => {
+    // No verdict was reached, so it must not block an unrelated edit.
+    fetchMutate.mockImplementation((_vars, opts) =>
+      opts?.onError?.(new Error("The request timed out. Please try again.")),
+    );
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+
+    const save = await screen.findByRole("button", { name: "Save Changes" });
+    expect(save.disabled).toBe(false);
+    expect(
+      screen.queryByText(/enter a new API key to save changes/i),
+    ).toBeNull();
+    // The reason still surfaces, just not against the key.
+    expect(
+      screen.getByText("The request timed out. Please try again."),
+    ).toBeTruthy();
+
+    await userEvent.click(save);
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores the stored key's verdict when a typed key is cleared", async () => {
+    // The typed key's empty listing used to stay behind as the stored key's.
+    fetchMutate.mockImplementation((vars, opts) =>
+      vars?.providerName
+        ? opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] })
+        : opts?.onSuccess?.({
+            models: [],
+            error: "Failed to fetch models from provider",
+          }),
+    );
+    renderEditDialog({
+      base_url: "https://api.openai.com/v1",
+      default_timeout: 30,
+      models: ["gpt-4o"],
+    });
+
+    const key = screen.getByLabelText(/API Key/i);
+    await userEvent.type(key, "sk-bad");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save Changes" }).disabled,
+      ).toBe(true),
+    );
+
+    await userEvent.clear(key);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save Changes" }).disabled,
+      ).toBe(false),
+    );
+    expect(
+      screen.queryByText(/enter a new API key to save changes/i),
+    ).toBeNull();
+  });
+
+  it("keeps the field errors when the summary is dismissed", async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+
+    const timeout = screen.getByLabelText("Timeout");
+    await userEvent.clear(timeout);
+    await userEvent.type(timeout, "soon");
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(await screen.findByText("Fix this before saving")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /close/i }));
+
+    // The banner goes; the marker on the field that caused it stays.
+    expect(screen.queryByText("Fix this before saving")).toBeNull();
+    expect(
+      screen.getAllByText(/whole number of seconds.*got "soon"/).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("keeps Bedrock editable although it lists no models", async () => {
-    // Bedrock has no list endpoint and no API Key field, so gating on an empty
-    // result would lock the provider out of editing with nowhere to say why.
+    // No list endpoint and no API Key field to explain a block on.
     fetchMutate.mockImplementation((_vars, opts) =>
       opts?.onSuccess?.({ models: [] }),
     );

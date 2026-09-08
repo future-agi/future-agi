@@ -196,12 +196,15 @@ const SessionExplorerSection = () => {
                     onClick={() => setSelectedSessionId(session.id)}
                   >
                     <TableCell>
-                      <Tooltip title={`Click to copy: ${session.session_id}`}>
+                      <Tooltip title="Click to copy">
                         <Typography
                           variant="body2"
                           sx={{
                             fontFamily: "monospace",
                             cursor: "pointer",
+                            // Break the full ID inside the cell rather than
+                            // widening an already crowded table.
+                            wordBreak: "break-all",
                             "&:hover": { color: "primary.main" },
                           }}
                           fontWeight={500}
