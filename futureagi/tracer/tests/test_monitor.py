@@ -345,7 +345,6 @@ class TestUserAlertMonitorCreateAPI:
                 "name": "Score Eval Alert No Choice",
                 "metric_type": "evaluation_metrics",
                 "metric": str(eval_config.id),
-                "threshold_metric_value": None,
                 "threshold_operator": "greater_than",
                 "threshold_type": "static",
                 "critical_threshold_value": 0.15,
@@ -355,9 +354,8 @@ class TestUserAlertMonitorCreateAPI:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        assert UserAlertMonitor.objects.filter(
-            name="Score Eval Alert No Choice"
-        ).exists()
+        monitor = UserAlertMonitor.objects.get(name="Score Eval Alert No Choice")
+        assert monitor.threshold_metric_value is None
 
     def test_create_pass_fail_eval_choice(
         self, auth_client, organization, workspace, observe_project
@@ -537,8 +535,9 @@ class TestUserAlertMonitorListAPI:
         self, auth_client, organization, workspace, observe_project
     ):
         """A monitor saved before this branch may still carry a stored
-        threshold_metric_value on a score-typed eval. The Alert Type column
-        must not render that stale value as a suffix."""
+        threshold_metric_value on a score-typed eval. Neither the alerts
+        list's Alert Type column nor the detail sheet's metric_name must
+        render that stale value as a suffix."""
         template = EvalTemplate.objects.create(
             name=f"Score Eval {uuid.uuid4().hex[:8]}",
             description="A test evaluation template",
