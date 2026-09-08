@@ -116,7 +116,15 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
            / games & worlds / tools & protocols. Sortable and filterable
            because it's flattened onto the row instead of derived in cell. */
         agentType: modalityForEnv(env, envState).id,
-        tools: env.tools?.length || 0,
+        /* Tools count. Templates + user-connected agents ship a
+           `tools` array. Twin/clone envs don't populate `tools`; their
+           tool surface is the services they wrap (each service is a
+           tool boundary), so fall back to that service count when the
+           direct tools list is empty. */
+        tools: env.tools?.length
+          || envState?.twinBacking?.services?.length
+          || env.builtFrom?.services?.length
+          || 0,
         subgoals: scenarios.reduce(
           (n, s) => n + (s.subTasks?.length ?? subTasksFor(s, env).length),
           0,
@@ -213,9 +221,9 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
         ),
       },
       {
-        id: "subgoals",
-        accessorKey: "subgoals",
-        header: "Sub-goals",
+        id: "scenarios",
+        accessorKey: "scenarios",
+        header: "Scenarios",
         size: 110,
         cell: ({ getValue }) => (
           <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
@@ -224,9 +232,9 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
         ),
       },
       {
-        id: "scenarios",
-        accessorKey: "scenarios",
-        header: "Scenarios",
+        id: "subgoals",
+        accessorKey: "subgoals",
+        header: "Sub-goals",
         size: 110,
         cell: ({ getValue }) => (
           <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
