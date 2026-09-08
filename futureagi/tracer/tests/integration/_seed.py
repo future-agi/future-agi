@@ -207,6 +207,10 @@ class SeededRow:
     # "trace" (voice corpus — mirrors prod, where voice-call annotations are
     # created trace-scoped via the trace-backed voice grid).
     annotation_scope: str = "span"
+    # Span ``input`` text. first_message/last_message are argMin/argMax(input,
+    # start_time) over a session's ROOT spans, so only root-span messages
+    # surface in those aggregates.
+    message: str = ""
 
 
 @dataclass
@@ -371,6 +375,8 @@ class DualWriter:
             annotation_value=None,
             has_choice_eval=False,
             choice_value=None,
+            # Latest root in session 2 → its message is session 2's last_message.
+            message="extra message session 2",
         )
 
     def _insert_evals(self, row, trace, cfg) -> None:
@@ -449,6 +455,13 @@ class DualWriter:
             if is_root
             else f"span_{uuid.uuid4().hex[:16]}"
         )
+        # Root spans drive first/last message aggregates. Within a session the
+        # t_idx==0 root is earliest (first_message) and t_idx==1 root is later
+        # (last_message for sessions 0/1; session 2's extra root is later still).
+        if is_root:
+            message = f"{'first' if t_idx == 0 else 'last'} message session {s_idx}"
+        else:
+            message = f"span message s{s_idx} t{t_idx} sp{sp_idx}"
         return SeededRow(
             span_id=span_id,
             trace_id=str(trace.id),
@@ -480,6 +493,7 @@ class DualWriter:
             ann_thumb=ann_thumb,
             ann_selected=ann_selected,
             ann_annotator_is_user=ann_annotator_is_user,
+            message=message,
         )
 
     # ------- PG insert helpers ---------------------------------------------
@@ -686,6 +700,7 @@ class DualWriter:
             completion_tokens=row.completion_tokens,
             total_tokens=row.total_tokens,
             cost=row.cost,
+            input=row.message,
             span_attributes=attrs,
         )
         # BaseModel.created_at is auto_now_add — override post-create.
