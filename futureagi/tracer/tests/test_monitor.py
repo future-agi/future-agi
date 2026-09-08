@@ -533,6 +533,101 @@ class TestUserAlertMonitorListAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_list_monitors_score_eval_hides_stale_choice_suffix(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """A monitor saved before this branch may still carry a stored
+        threshold_metric_value on a score-typed eval. The Alert Type column
+        must not render that stale value as a suffix."""
+        template = EvalTemplate.objects.create(
+            name=f"Score Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "score"},
+            choices=["Complete", "Partial", "Incomplete"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=f"Score Eval Config {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Stale Score Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Incomplete",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+
+        response = auth_client.get(
+            "/tracer/user-alerts/list_monitors/",
+            {"project_id": str(observe_project.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        data = get_result(response)
+        rows = [row for row in data["table"] if row["name"] == "Stale Score Alert"]
+        assert len(rows) == 1
+        rendered = rows[0]["metric_type"]
+        assert rendered == eval_config.name
+
+    def test_list_monitors_choices_eval_keeps_choice_suffix(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """A monitor on a choices-typed eval keeps its stored choice in the
+        Alert Type column."""
+        template = EvalTemplate.objects.create(
+            name=f"Choices Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "choices"},
+            choices=["Complete", "Partial", "Incomplete"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=f"Choices Eval Config {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Choices Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Incomplete",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+
+        response = auth_client.get(
+            "/tracer/user-alerts/list_monitors/",
+            {"project_id": str(observe_project.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        data = get_result(response)
+        rows = [row for row in data["table"] if row["name"] == "Choices Alert"]
+        assert len(rows) == 1
+        rendered = rows[0]["metric_type"]
+        assert rendered == f"{eval_config.name} (Incomplete)"
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -591,6 +686,48 @@ class TestUserAlertMonitorDetailsAPI:
         response = auth_client.get(f"/tracer/user-alerts/{other_monitor.id}/details/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_details_pass_fail_eval_keeps_choice_suffix(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """A monitor on a Pass/Fail-typed eval keeps its stored choice in the
+        detail sheet's rendered metric name."""
+        template = EvalTemplate.objects.create(
+            name=f"Pass Fail Eval {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "Pass/Fail"},
+            choices=["Passed", "Failed"],
+        )
+        eval_config = CustomEvalConfig.objects.create(
+            name=f"Pass Fail Eval Config {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+        monitor = UserAlertMonitor.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            name="Pass Fail Alert",
+            metric_type="evaluation_metrics",
+            metric=str(eval_config.id),
+            threshold_metric_value="Passed",
+            threshold_operator="greater_than",
+            threshold_type="static",
+            critical_threshold_value=0.15,
+            alert_frequency=60,
+        )
+
+        response = auth_client.get(f"/tracer/user-alerts/{monitor.id}/details/")
+        assert response.status_code == status.HTTP_200_OK
+
+        data = get_result(response)
+        rendered = data["metric_name"]
+        assert rendered == f"{eval_config.name} (Passed)"
 
 
 @pytest.mark.integration

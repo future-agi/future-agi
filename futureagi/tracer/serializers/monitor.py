@@ -61,7 +61,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and _uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
@@ -492,7 +494,9 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
                 )
                 if eval_config:
                     metric_name = eval_config.name
-                    if obj.threshold_metric_value:
+                    if obj.threshold_metric_value and _uses_choice_threshold(
+                        eval_config.eval_template
+                    ):
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
                 return "Invalid Eval"
