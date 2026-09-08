@@ -162,7 +162,11 @@ export default function AlertSettingsForm({
         ?.output_type ?? null
     );
   }, [expandedEvaluations, metric]);
-
+  // Choice and Pass/Fail evals aggregate to a rate between 0 and 1; score
+  // evals are avg(output_float) with no upper bound, so only the bounded
+  // kinds get the fraction label. percentage_change divides this same field
+  // by 100 for every metric type (backend: 0-100 scale), so that mode is
+  // labelled as a percent instead.
   const isEvalFractionScale =
     metricType === "evaluation_metrics" &&
     thresholdType === "static" &&
