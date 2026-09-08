@@ -61,6 +61,7 @@ def _drain_sync(heartbeat) -> dict:
     from accounts.gcp_marketplace_events import process_event
 
     close_old_connections()
+    subscriber = None
     try:
         subscriber = pubsub_v1.SubscriberClient()
         path = _subscription_path(subscriber)
@@ -122,6 +123,12 @@ def _drain_sync(heartbeat) -> dict:
             "had_events": bool(response.received_messages),
         }
     finally:
+        if subscriber is not None:
+            # One SubscriberClient per activity run, and the consumer workflow
+            # runs this every 10-30s forever. Each client holds a gRPC channel
+            # with its own transport threads, so leaving them unclosed leaks
+            # channels and sockets in the worker until it is restarted.
+            subscriber.close()
         close_old_connections()
 
 
