@@ -143,60 +143,26 @@ export default function StartEnvironment({ entry = false }) {
                   We work with what you already have — no rewrite, no adapter.
                 </Typography>
               </Stack>
-              {/* Split layout — left column lists the six connection
-                  methods, right column shows the config panel for the
-                  picked one. Below md the columns stack. */}
               <Box
                 sx={{
                   display: "grid",
-                  gap: 1.5,
-                  gridTemplateColumns: { xs: "1fr", md: "minmax(280px, 360px) 1fr" },
-                  alignItems: "stretch",
+                  gap: 1.25,
+                  gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
                 }}
               >
-                <Stack spacing={1}>
-                  {bringYourAgent.filter((o) => o.id !== "templates").map((opt) => (
-                    <OptionCard
-                      key={opt.id}
-                      option={opt}
-                      selected={choice === opt.id}
-                      onClick={() => pick(opt.id)}
-                    />
-                  ))}
-                </Stack>
-                {choice && choice !== "scratch" ? (
-                  <Box ref={panelRef}>
-                    <FlowPanel choice={choice} />
-                  </Box>
-                ) : (
-                  <Stack
-                    alignItems="center"
-                    justifyContent="center"
-                    spacing={0.75}
-                    sx={{
-                      p: 3,
-                      border: "1px dashed",
-                      borderColor: "divider",
-                      borderRadius: 1.5,
-                      color: "text.subtitle",
-                      textAlign: "center",
-                      minHeight: 240,
-                    }}
-                  >
-                    <Iconify icon="solar:arrow-left-linear" width={18} />
-                    <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                      Pick a connection method on the left
-                    </Typography>
-                    <Typography sx={{ typography: "s3", maxWidth: 320 }}>
-                      The setup for that path opens here — endpoint, credentials, agent type — no page swap.
-                    </Typography>
-                  </Stack>
-                )}
+                {bringYourAgent.filter((o) => o.id !== "templates").map((opt) => (
+                  <OptionCard
+                    key={opt.id}
+                    option={opt}
+                    selected={choice === opt.id}
+                    onClick={() => pick(opt.id)}
+                  />
+                ))}
               </Box>
             </Box>
           </Stack>
 
-          {choice === "scratch" && (
+          {choice && (
             <Box ref={panelRef} sx={{ mt: 2.5 }}>
               <FlowPanel choice={choice} />
             </Box>
