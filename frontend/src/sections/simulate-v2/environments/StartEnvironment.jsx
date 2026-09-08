@@ -564,6 +564,11 @@ function PanelHostedPlatform() {
   const [platform, setPlatform] = useState(platforms[0]?.id || "");
   const [id, setId] = useState("");
   const [key, setKey] = useState("");
+  /* Optional link to the repo backing the hosted agent — lets the
+     builder read tool definitions and prompts to seed matching
+     scenarios. Not required to build the env, but improves the
+     derivation when supplied. */
+  const [repoUrl, setRepoUrl] = useState("");
   /* Voice-only: matches the `callDirection` field on voice_platform in
      _mock/agentTypes.js. Inbound = we call the agent, outbound = the
      agent dials our simulated customer. */
@@ -578,6 +583,7 @@ function PanelHostedPlatform() {
     setPlatform(first?.id || "");
     setId("");
     setKey("");
+    setRepoUrl("");
   };
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
@@ -637,6 +643,13 @@ function PanelHostedPlatform() {
             mono
             helper="Stored encrypted; used only to invoke the agent on your behalf."
           />
+          <Field
+            label="GitHub repo"
+            placeholder="https://github.com/your-org/your-agent"
+            value={repoUrl} onChange={setRepoUrl}
+            mono
+            helper="Optional. Lets us read the agent's tools + prompts to seed matching scenarios."
+          />
           {agentType === "voice" && (
             <Box>
               <Label>Call direction</Label>
@@ -657,6 +670,7 @@ function PanelHostedPlatform() {
           provider: chosen?.id,
           agentId: id.trim(),
           apiKey: key.trim(),
+          ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
           ...(agentType === "voice" ? { callDirection } : {}),
         })}
       />
