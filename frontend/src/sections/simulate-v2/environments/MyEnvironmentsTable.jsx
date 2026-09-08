@@ -464,13 +464,28 @@ const pulse = keyframes`
     - failed     → latest run failed
     - completed  → latest run finished without a gate verdict
 */
+/*
+  Colour choices, semantically distinct:
+    - building  → env still assembling: purple (in-progress work)
+    - running   → simulation in flight: blue (live, active work — kept
+                  visually different from building so "we're still
+                  constructing" and "we're running your agent" don't
+                  read as the same state)
+    - not_run   → env exists, no run started: cool grey (neutral, no info)
+    - passed    → gate cleared: green (positive result)
+    - failed    → gate broke: red (negative result)
+    - completed → run finished without a gate verdict — needs review:
+                  amber (informational, deserves attention but not a
+                  failure). Previously grey, which read identically to
+                  "Not run yet" and made a finished run look inert.
+*/
 const STATUS_META = {
   building:  { label: "Building",     color: "#7857FC" },
-  not_run:   { label: "Not run yet",  color: "#71717A" },
-  running:   { label: "Running…",     color: "#7857FC" },
+  not_run:   { label: "Not run yet",  color: "#9CA3AF" },
+  running:   { label: "Running…",     color: "#2563EB" },
   passed:    { label: "Passed",       color: "#16A34A" },
   failed:    { label: "Failed",       color: "#DC2626" },
-  completed: { label: "Completed",    color: "#71717A" },
+  completed: { label: "Completed",    color: "#CA8A04" },
 };
 
 function StatusPill({ status, progress }) {
