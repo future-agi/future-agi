@@ -122,16 +122,12 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
           0,
         ),
         scenarios: scenarios.length,
-        /* Building the env counts as its own first simulated run —
-           the "0/0" pill on a freshly-built row read as broken. Floor
-           both numerator and denominator at 1 so every listed env
-           surfaces at least one accounted run. Recorded runs stack on
-           top of that baseline the moment the user hits Start. */
-        runsPassed: Math.max(
-          1,
-          runs.filter((r) => r.status === "passed" || r.gate === "clear").length,
-        ),
-        runsTotal: Math.max(1, runs.length),
+        /* Building the env counts as its own first run — the reducer
+           seeds a synthetic entry in envState.runs when the env is
+           adopted, so both this list and the workspace's Runs step
+           read the same data. No display-side flooring here. */
+        runsPassed: runs.filter((r) => r.status === "passed" || r.gate === "clear").length,
+        runsTotal: runs.length,
         updatedAt: env.adoptedAt,
         /* Twin backing flag + service count for the inline chip on the
            name column. Lets scanning the gallery tell you at a glance

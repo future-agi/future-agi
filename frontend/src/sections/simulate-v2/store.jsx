@@ -119,19 +119,101 @@ const topUpSeed = (stored) => {
 
 function reducer(state, action) {
   switch (action.type) {
-    case "hydrate":
-      return { ...state, ...action.payload };
+    case "hydrate": {
+      /*
+        Backfill the synthetic "build & fit-check" run #1 for any env
+        already in localStorage that predates the seed-on-adopt change.
+        Without this, existing envs still show 0 runs while newly-built
+        ones show 1 — the two surfaces would keep disagreeing until the
+        user resets state. Only backfills when the env's runs list is
+        empty; envs with any real runs are left untouched.
+      */
+      const payload = action.payload || {};
+      const envs = payload.myEnvironments || [];
+      const nextByEnv = { ...(payload.byEnv || {}) };
+      envs.forEach((env) => {
+        const es = nextByEnv[env.id];
+        if (!es) return;
+        if ((es.runs || []).length > 0) return;
+        nextByEnv[env.id] = {
+          ...es,
+          runs: [
+            {
+              id: `run-build-${env.id}`,
+              label: `${env.name || env.id} · build & fit-check`,
+              status: "passed",
+              startedAt: env.adoptedAt || new Date().toISOString(),
+              finishedAt: env.adoptedAt || new Date().toISOString(),
+              total: 1,
+              passed: 1,
+              failed: 0,
+              flaky: 0,
+              unmeasured: 0,
+              agentVersion: "v1",
+              envVersion: "v1",
+              scenarioIds: [],
+              repeats: 1,
+              partial: false,
+              ordinal: 1,
+              seed: 0,
+              twinWrites: null,
+              synthetic: true,
+            },
+          ],
+        };
+      });
+      return { ...state, ...payload, byEnv: nextByEnv };
+    }
 
     case "adoptEnvironment": {
       const { env } = action;
       if (state.myEnvironments.some((e) => e.id === env.id)) return state;
+      /*
+        Build & fit-check IS run #1 — every env stands up by exercising
+        its own scenarios end-to-end during construction. Seed that as
+        an entry in envState.runs so the workspace's Runs step and the
+        Simulated Runs list read the same data (both show 1 run on a
+        freshly-built env, instead of the table saying 1/1 and the
+        inside saying 0). Only seeded when envState for this id is
+        fresh — a rebuild of an existing env doesn't fake an extra
+        historical run.
+      */
+      const existing = state.byEnv[env.id];
+      const seededEnvState = existing
+        ? existing
+        : {
+            ...emptyEnvState(),
+            runs: [
+              {
+                id: `run-build-${env.id}`,
+                label: `${env.name || env.id} · build & fit-check`,
+                status: "passed",
+                startedAt: action.now,
+                finishedAt: action.now,
+                total: 1,
+                passed: 1,
+                failed: 0,
+                flaky: 0,
+                unmeasured: 0,
+                agentVersion: "v1",
+                envVersion: "v1",
+                scenarioIds: [],
+                repeats: 1,
+                partial: false,
+                ordinal: 1,
+                seed: 0,
+                twinWrites: null,
+                synthetic: true,
+              },
+            ],
+          };
       return {
         ...state,
         myEnvironments: [
           { ...env, adoptedAt: action.now, custom: !!env.custom },
           ...state.myEnvironments,
         ],
-        byEnv: { ...state.byEnv, [env.id]: state.byEnv[env.id] || emptyEnvState() },
+        byEnv: { ...state.byEnv, [env.id]: seededEnvState },
       };
     }
 
