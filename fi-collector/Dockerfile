@@ -1,7 +1,7 @@
-# Multi-stage build — distroless for a < 20 MB final image, no shell,
-# no package manager. The build stage uses the official golang image so
+# Multi-stage build — distroless runtime with no shell or package manager.
+# The build stage uses the official golang image so
 # we get the toolchain + git for module fetch; the runtime stage strips
-# everything except the static binary.
+# everything except the three static commands and collector config.
 
 FROM golang:1.24-alpine AS build
 WORKDIR /src
@@ -21,21 +21,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /out/fi-collector ./cmd/fi-collector && \
     CGO_ENABLED=0 GOOS=linux go build \
     -trimpath -ldflags="-s -w" \
-    -o /out/fi-catalog-consumer ./cmd/fi-catalog-consumer && \
-    CGO_ENABLED=0 GOOS=linux go build \
-    -trimpath -ldflags="-s -w" \
     -o /out/fi-property-catalog-consumer ./cmd/fi-property-catalog-consumer && \
     CGO_ENABLED=0 GOOS=linux go build \
     -trimpath -ldflags="-s -w" \
-    -o /out/fi-property-catalog-sequencer ./cmd/fi-property-catalog-sequencer && \
+    -o /out/fi-observed-catalog-backfill ./cmd/fi-observed-catalog-backfill && \
     mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
 COPY --from=build /out/fi-collector /usr/local/bin/fi-collector
-COPY --from=build /out/fi-catalog-consumer /usr/local/bin/fi-catalog-consumer
 COPY --from=build /out/fi-property-catalog-consumer /usr/local/bin/fi-property-catalog-consumer
-COPY --from=build /out/fi-property-catalog-sequencer /usr/local/bin/fi-property-catalog-sequencer
+COPY --from=build /out/fi-observed-catalog-backfill /usr/local/bin/fi-observed-catalog-backfill
 COPY config/collector.yaml /etc/fi-collector/config.yaml
 COPY --from=build --chown=65532:65532 /out/data /var/lib/fi-collector
 

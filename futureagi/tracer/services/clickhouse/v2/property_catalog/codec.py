@@ -1,9 +1,4 @@
-"""Deterministic codecs for unified property definitions.
-
-The functions in this module are pure and deliberately independent of Django,
-PostgreSQL, ClickHouse, and Kafka.  They form the byte contract shared by
-definition producers, qualification, and the eventual catalog reader.
-"""
+"""Pure identity, search, and JSON codecs for current property definitions."""
 
 from __future__ import annotations
 
@@ -19,6 +14,11 @@ from uuid import UUID
 
 MAX_DEFINITION_JSON_BYTES = 32 * 1024
 MAX_IDENTITY_COMPONENT_BYTES = 4 * 1024
+MAX_FOLDED_ATTRIBUTE_KEY_BYTES = 3 * MAX_IDENTITY_COMPONENT_BYTES
+CUSTOM_ATTRIBUTE_PREFIX = "custom_attribute:"
+MAX_CUSTOM_PROPERTY_ID_BYTES = MAX_IDENTITY_COMPONENT_BYTES + len(
+    CUSTOM_ATTRIBUTE_PREFIX
+)
 MAX_SEARCH_COMPONENT_BYTES = 8 * 1024
 MAX_CANONICAL_NUMBER_LENGTH = 4 * 1024
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
@@ -76,6 +76,7 @@ def validate_text(
     field: str,
     max_bytes: int,
     allow_empty: bool = False,
+    allow_controls: bool = False,
 ) -> str:
     """Validate one identity/search field without rewriting it."""
 
@@ -91,7 +92,7 @@ def validate_text(
         raise CatalogCodecError(f"{field} must not be empty")
     if len(encoded) > max_bytes:
         raise CatalogCodecError(f"{field} exceeds {max_bytes} UTF-8 bytes")
-    if any(unicodedata.category(char) == "Cc" for char in value):
+    if not allow_controls and any(unicodedata.category(char) == "Cc" for char in value):
         raise CatalogCodecError(f"{field} contains a control character")
     return value
 
@@ -113,6 +114,7 @@ def stable_property_id(
         raw_key,
         field="source_key",
         max_bytes=MAX_IDENTITY_COMPONENT_BYTES,
+        allow_controls=kind == "custom_attribute",
     )
 
     if kind == "system_attribute":

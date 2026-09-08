@@ -15,9 +15,7 @@ from django.core.management.base import BaseCommand
 # Queues in this set have their own workload-level concurrency boundary. A
 # generic local ``--all-queues`` worker must not also poll them, otherwise its
 # much higher concurrency silently defeats that admission control.
-_DEDICATED_TASK_QUEUES = frozenset(
-    {"exact_aggregation", "property_catalog_dev_sidecar"}
-)
+_DEDICATED_TASK_QUEUES = frozenset({"exact_aggregation"})
 
 
 def _generic_all_queues(registered_queues: list[str]) -> list[str]:

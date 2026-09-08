@@ -11,7 +11,7 @@ COMPOSE=(docker compose --env-file "$ENV_FILE"
 # must be named (nothing depends_on them); peerdb-init is one-shot and handled
 # separately in `up` (compose --wait treats an exiting service as a failure).
 SERVICES=(frontend backend worker postgres clickhouse redis rabbitmq minio
-  temporal agentcc-gateway fi-collector mock-llm
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
   # nothing depends_on peerdb-minio, but the CH peer validates by writing to
   # it and every mirror sync stages through it — without it ch_dest is never
@@ -106,6 +106,11 @@ wait_ready() {
   echo "Checking ClickHouse schema ..."
   curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
     || { echo "CH spans table missing — boot-hook schema apply failed (check backend logs)"; exit 1; }
+  echo "Checking observed attribute indexes ..."
+  curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode \
+    "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
+    --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
+    || { echo "Observed attribute indexes missing"; exit 1; }
   echo "Waiting for frontend ..."
   until curl -fsS "http://localhost:$(frontend_port)/" >/dev/null 2>&1; do
     ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }

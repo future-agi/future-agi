@@ -1,0 +1,172 @@
+name: Collector and compose CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "fi-collector/**"
+      - "docker-compose*.yml"
+      - "bin/install*"
+      - "bin/e2e"
+      - "deploy/**"
+      - "e2e/stack/**"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".github/workflows/fi-collector-ci.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "fi-collector/**"
+      - "docker-compose*.yml"
+      - "bin/install*"
+      - "bin/e2e"
+      - "deploy/**"
+      - "e2e/stack/**"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".github/workflows/fi-collector-ci.yml"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: fi-collector/go.mod
+          cache-dependency-path: fi-collector/go.sum
+      - name: Collector unit and race tests
+        working-directory: fi-collector
+        run: go test -race ./...
+      - name: Compile shipped commands
+        working-directory: fi-collector
+        run: go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OBS_TEST_PROJECT: observed-catalog-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      OBS_TEST_CH_PORT: "18143"
+      OBS_TEST_KAFKA_PORT: "19094"
+      OBS_TEST_PG_PORT: "15543"
+      OBS_TEST_CH_URL: http://127.0.0.1:18143
+      OBS_TEST_KAFKA_BROKER: 127.0.0.1:19094
+      OBS_TEST_PG_DSN: postgres://test:test@127.0.0.1:15543/observed_catalog_test
+      OBS_TEST_REPLICA_URLS: ""
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: fi-collector/go.mod
+          cache-dependency-path: fi-collector/go.sum
+      - name: Start only the isolated integration dependencies
+        timeout-minutes: 5
+        run: |
+          docker compose --env-file /dev/null \
+            -f fi-collector/test/observed-catalog/compose.yml \
+            -p "$OBS_TEST_PROJECT" up -d --wait --wait-timeout 180
+      - name: Repeat the actual local OSS bootstrap
+        timeout-minutes: 2
+        run: |
+          for attempt in 1 2; do
+            docker compose --env-file /dev/null \
+              -f fi-collector/test/observed-catalog/compose.yml \
+              -p "$OBS_TEST_PROJECT" run --rm --no-deps \
+              --entrypoint /bin/sh -e CLICKHOUSE_HOST=clickhouse \
+              -v "$PWD/futureagi/scripts/property_catalog_oss:/bootstrap:ro" \
+              -v "$PWD/futureagi/tracer/services/clickhouse/v2/observed_catalog:/observed-catalog:ro" \
+              clickhouse /bootstrap/bootstrap_clickhouse.sh
+          done
+      - name: Real ClickHouse, Kafka, PostgreSQL and OTLP HTTP tests
+        working-directory: fi-collector
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          go test -race -count=1 -p 1 -timeout 8m -json \
+            -run '^(TestClickHouse|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack)' \
+            ./cmd/fi-observed-catalog-backfill ./pkg/server \
+            | tee "$RUNNER_TEMP/observed-integration.jsonl"
+      - name: Require executed integration proofs, not skipped tests
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          required = {
+              "TestClickHouseStringParametersRoundTrip",
+              "TestClickHouseMigratedStringOverflowBackfill",
+              "TestClickHouseSourceKeysetAndPhysicalVersions",
+              "TestClickHouseObservedIndexReplayBeforeMerges",
+              "TestKafkaMultipleConsumersAndWorkspaceScale",
+              "TestKafkaSpoolRestartAndPartialConsumerWrite",
+              "TestKafkaRejectsLegacyWireWithoutCommittingPastIt",
+              "TestPostgresOwnershipIsCurrentAndReadOnly",
+              "TestBackfillCLIThroughKafkaWithResume",
+              "TestObservedCatalogHTTPToLocalStack",
+          }
+          evidence = Path(os.environ["RUNNER_TEMP"]) / "observed-integration.jsonl"
+          events = [json.loads(line) for line in evidence.read_text().splitlines()]
+          passed = {event.get("Test") for event in events if event["Action"] == "pass"}
+          missing = required - passed
+          if missing:
+              raise SystemExit(f"Integration proofs missing or skipped: {sorted(missing)}")
+          print(f"Confirmed {len(required)} real integration proofs")
+          PY
+      - name: Collect isolated fixture logs
+        if: always()
+        timeout-minutes: 1
+        run: |
+          docker compose --env-file /dev/null \
+            -f fi-collector/test/observed-catalog/compose.yml \
+            -p "$OBS_TEST_PROJECT" logs --no-color --tail 150 \
+            > "$RUNNER_TEMP/observed-services.log" 2>&1 || true
+      - name: Remove only this job's integration project
+        if: always()
+        timeout-minutes: 2
+        run: |
+          : "${OBS_TEST_PROJECT:?exact integration project is required}"
+          docker compose --env-file /dev/null \
+            -f fi-collector/test/observed-catalog/compose.yml \
+            -p "$OBS_TEST_PROJECT" down --volumes --remove-orphans --timeout 10
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: observed-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/observed-integration.jsonl
+            ${{ runner.temp }}/observed-services.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compose and bootstrap contracts without running services
+        run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_compose.py' -v
+      - name: Shell syntax
+        run: |
+          bash -n bin/install bin/e2e
+          sh -n futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh
+      - name: PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/bin/install.ps1", [ref]$tokens, [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }

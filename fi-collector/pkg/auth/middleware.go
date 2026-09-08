@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -34,8 +33,7 @@ func (a *Authenticator) HTTPMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), contextKey{}, result)
-		ctx = context.WithValue(ctx, cacheKeyCtxKey{}, CacheKey(apiKey, secretKey))
+		ctx := WithResolvedContext(r.Context(), result, CacheKey(apiKey, secretKey))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -15,6 +15,8 @@ from accounts.authentication import (
 from tfc.constants.levels import Level
 
 READ_POST_PATHS = (
+    "/tracer/dashboard/metrics/",
+    "/tracer/dashboard/filter_values/",
     "/tracer/trace/list_traces_of_session/",
     "/tracer/observation-span/list_spans_observe/",
     "/tracer/trace-session/list_sessions/",
@@ -265,7 +267,6 @@ def test_mutating_eval_views_are_not_write_exempt():
         EvalTemplateBulkDeleteView,
     ):
         assert getattr(view, "workspace_write_exempt", False) is False, view.__name__
-
 
 
 EVAL_READ_ENDPOINTS = (

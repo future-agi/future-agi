@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import math
-from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -56,7 +54,8 @@ def test_stable_property_ids_are_namespaced_and_uuid_canonical() -> None:
         ("custom_attribute", "x", "traces"),
         ("annotation", "not-a-uuid", ""),
         ("annotation", "00000000-0000-0000-0000-000000000000", ""),
-        ("custom_attribute", "bad\nkey", ""),
+        ("system_attribute", "bad\nkey", "traces"),
+        ("custom_attribute", "x" * 4097, ""),
     ],
 )
 def test_stable_property_id_rejects_ambiguous_or_invalid_components(
@@ -132,19 +131,3 @@ def test_finite_floats_use_fixed_minimal_number_contract() -> None:
     assert canonical_json_sha256(payload) == (
         "73e89e1cb1b04782a7b6a3f0ac53dca9a4d58327b5393f9b145fd86d238acc6b"
     )
-
-
-def test_python_consumes_shared_go_codec_fixture() -> None:
-    fixture_path = (
-        Path(__file__).resolve().parents[3]
-        / "fi-collector/pkg/propertycatalog/testdata/codec_v1_fixtures.json"
-    )
-    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
-    assert fixture["format"] == "futureagi.property-catalog-codec-fixtures"
-    assert fixture["version"] == 1
-    for example in fixture["canonical_json"]:
-        canonical = example["canonical"]
-        assert canonical_json(json.loads(canonical)) == canonical, example["name"]
-        assert canonical_json_sha256(canonical) == example["sha256"]
-    for example in fixture["casefold"]:
-        assert casefold_text(example["source"]) == example["folded"]

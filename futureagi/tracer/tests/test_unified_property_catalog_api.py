@@ -10,12 +10,6 @@ from tracer.serializers.dashboard import (
     DashboardFilterValuesQuerySerializer,
     DashboardMetricsCatalogQuerySerializer,
 )
-from tracer.services.clickhouse.v2.property_catalog.cursor import (
-    PropertyCatalogCursorError,
-)
-from tracer.services.clickhouse.v2.property_catalog.reader import (
-    PropertyCatalogUnavailable,
-)
 from tracer.views.dashboard import DashboardViewSet
 
 WORKSPACE_ID = "22222222-2222-2222-2222-222222222222"
@@ -23,12 +17,7 @@ PROJECT_ID = "33333333-3333-3333-3333-333333333333"
 
 
 def _enable_catalog_reads(settings):
-    settings.PROPERTY_CATALOG_READ_MODE = "read"
-    settings.PROPERTY_CATALOG_READ_DEPLOYMENT = "dev"
     settings.PROPERTY_CATALOG_DATABASE = "property_catalog_dev_clean"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = (WORKSPACE_ID,)
-    settings.PROPERTY_CATALOG_PROD_WORKSPACE_ALLOWLIST = ()
-    settings.PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE = "allowlist"
 
 
 def _request(**validated_overrides):
@@ -326,7 +315,6 @@ def test_filter_values_maps_reader_value_error_to_400(settings):
             "tracer.views.dashboard.resolve_property_catalog_project_scope",
             return_value=[PROJECT_ID],
         ),
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
         patch(
             "tracer.views.dashboard.PropertyCatalogValueReader",
             return_value=reader,
@@ -340,314 +328,97 @@ def test_filter_values_maps_reader_value_error_to_400(settings):
     reader.read_page.assert_called_once()
 
 
-def test_metrics_cursor_mode_uses_one_activated_definition_reader(settings):
-    _enable_catalog_reads(settings)
-    page = SimpleNamespace(
-        metrics=(
-            {
-                "name": "customer.plan",
-                "property_id": "custom_attribute:customer.plan",
-                "property_kind": "custom_attribute",
-                "category": "custom_attribute",
-            },
-        ),
-        has_more=True,
-        next_cursor="signed-next",
-        catalog_epoch=3,
-        catalog_revision=17,
-        activation_fingerprint="a" * 64,
-        category_counts={
-            "all": 1,
-            "system_metric": 0,
-            "eval_metric": 0,
-            "annotation_metric": 0,
-            "custom_attribute": 1,
-            "custom_column": 0,
-        },
-        category_counts_exact=True,
-    )
+def test_current_metrics_envelope_has_no_activation_requirement(settings):
+    settings.PROPERTY_CATALOG_DATABASE = "test_index"
     reader = Mock()
-    reader.read_page.return_value = page
-    activation_selector = Mock(name="activation_selector")
-
+    reader.read_page.return_value = SimpleNamespace(
+        metrics=(), has_more=False, next_cursor=None
+    )
     with (
         patch(
             "tracer.views.dashboard.resolve_property_catalog_project_scope",
             return_value=[PROJECT_ID],
-        ) as authorize,
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor") as executor,
+        ),
         patch(
-            "tracer.views.dashboard.activation_control_selector_for_deployment",
-            return_value=activation_selector,
-        ) as activation_gate,
-        patch(
-            "tracer.views.dashboard.PropertyCatalogReader", return_value=reader
-        ) as reader_factory,
-        patch("tracer.views.dashboard.build_metrics_catalog_page") as legacy,
+            "tracer.views.dashboard.resolve_property_catalog_agent_scope",
+            return_value="",
+        ),
+        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
     ):
         response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request(role="metric")
+            DashboardViewSet(), _request()
         )
-
     assert response.status_code == 200
     result = response.data["result"]
-    assert result["metrics"][0]["property_id"] == ("custom_attribute:customer.plan")
-    assert result["total"] is None
-    assert result["total_is_exact"] is False
-    assert result["category_counts"] == {
-        "all": 1,
-        "system_metric": 0,
-        "eval_metric": 0,
-        "annotation_metric": 0,
-        "custom_attribute": 1,
-        "custom_column": 0,
-    }
-    assert result["category_counts_exact"] is True
-    assert result["has_more"] is True
-    assert result["next_cursor"] == "signed-next"
-    assert result["catalog_revision"] == 17
-    assert result["query_complete"] is True
-    assert result["query_exact"] is True
-    assert result["query_provenance"] == "activated_property_catalog"
-    authorize.assert_called_once()
-    reader.read_page.assert_called_once()
-    assert reader.read_page.call_args.kwargs["scope"]["project_ids"] == [PROJECT_ID]
-    assert reader.read_page.call_args.kwargs["query"]["role"] == "metric"
-    assert executor.call_args.kwargs["max_wall_ms"] > 0
-    activation_gate.assert_called_once_with(
-        executor.return_value,
-        database="property_catalog_dev_clean",
-        deployment="dev",
-    )
-    assert reader_factory.call_args.kwargs["activation_selector"] is activation_selector
-    legacy.assert_not_called()
-
-
-def test_metrics_workspace_scope_binds_full_authorized_project_set(settings):
-    _enable_catalog_reads(settings)
-    reader = Mock()
-    reader.read_page.return_value = SimpleNamespace(
-        metrics=(),
-        has_more=False,
-        next_cursor=None,
-        catalog_epoch=3,
-        catalog_revision=17,
-        activation_fingerprint="a" * 64,
-        category_counts={
-            "all": 0,
-            "system_metric": 0,
-            "eval_metric": 0,
-            "annotation_metric": 0,
-            "custom_attribute": 0,
-            "custom_column": 0,
-        },
-        category_counts_exact=True,
+    assert result["query_provenance"] == "current_property_catalog"
+    assert result["query_exact"] is False and result["total"] is None
+    assert not (
+        {
+            "catalog_epoch",
+            "catalog_revision",
+            "activation_fingerprint",
+            "category_counts",
+        }
+        & result.keys()
     )
 
+
+@pytest.mark.parametrize("action", ["metrics", "filter_values"])
+def test_catalog_read_post_validates_large_body_and_rejects_mixed_parameters(action):
+    from django.http import QueryDict
+    from rest_framework.response import Response
+
+    method = getattr(DashboardViewSet, action)
+    assert method.mapping == {"get": action, "post": action}
+    assert method._read_query_post is True
+    data = (
+        {"cursor_mode": True, "cursor": "x" * 24000, "page_size": 1}
+        if action == "metrics"
+        else {
+            "property_id": "custom_attribute:key",
+            "source": "traces",
+            "cursor": "x" * 24000,
+            "page_size": 1,
+        }
+    )
+    request = _request()
+    request.method, request.data, request.query_params = "POST", data, QueryDict()
+    # Execute the real decorator and stop at scope resolution; a long body must
+    # reach the same authorization path, not fall back to a different reader.
+    with patch(
+        "tracer.views.dashboard.resolve_property_catalog_project_scope",
+        side_effect=ValueError("fixture scope rejection"),
+    ) as scope:
+        response = method(DashboardViewSet(), request)
+    assert isinstance(response, Response) and response.status_code == 400
+    scope.assert_called_once()
+    assert request.validated_query_data["cursor"] == data["cursor"]
+    request.query_params = QueryDict("page_size=2")
+    with patch(
+        "tracer.views.dashboard.resolve_property_catalog_project_scope"
+    ) as scope:
+        assert method(DashboardViewSet(), request).status_code == 400
+    scope.assert_not_called()
+
+
+@pytest.mark.parametrize("permission", ["project", "agent"])
+def test_current_metrics_rechecks_scope_before_reader(permission):
     with (
         patch(
             "tracer.views.dashboard.resolve_property_catalog_project_scope",
             return_value=[PROJECT_ID],
-        ) as authorize,
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
-        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
-    ):
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request(project_ids=[])
-        )
-
-    assert response.status_code == 200
-    assert authorize.call_args.kwargs["include_workspace_projects"] is True
-    scope = reader.read_page.call_args.kwargs["scope"]
-    assert scope["project_ids"] == [PROJECT_ID]
-    assert scope["workspace_scope"] is True
-
-
-def test_metrics_cursor_mode_fails_closed_before_reader_when_not_allowlisted(settings):
-    _enable_catalog_reads(settings)
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = ()
-
-    with patch("tracer.views.dashboard.PropertyCatalogReader") as reader:
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request()
-        )
-
-    assert response.status_code == 503
-    assert response.data["code"] == "property_catalog_not_ready"
-    reader.assert_not_called()
-
-
-def test_metrics_cursor_mode_admits_authenticated_workspace_in_global_prod_scope(
-    settings,
-):
-    _enable_catalog_reads(settings)
-    settings.PROPERTY_CATALOG_READ_DEPLOYMENT = "prod"
-    settings.PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST = ()
-    settings.PROPERTY_CATALOG_PROD_WORKSPACE_SCOPE_MODE = "all"
-    reader = Mock()
-    reader.read_page.return_value = SimpleNamespace(
-        metrics=(),
-        has_more=False,
-        next_cursor=None,
-        catalog_epoch=1,
-        catalog_revision=3,
-        activation_fingerprint="a" * 64,
-        category_counts={
-            "all": 0,
-            "system_metric": 0,
-            "eval_metric": 0,
-            "annotation_metric": 0,
-            "custom_attribute": 0,
-            "custom_column": 0,
-        },
-        category_counts_exact=True,
-    )
-
-    with (
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            return_value=[PROJECT_ID],
-        ),
+        ) as project,
         patch(
             "tracer.views.dashboard.resolve_property_catalog_agent_scope",
-            return_value=None,
-        ),
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
-        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
-        patch("tracer.views.dashboard.activation_control_selector_for_deployment"),
-    ):
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request()
-        )
-
-    assert response.status_code == 200
-    reader.read_page.assert_called_once()
-
-
-def test_metrics_cursor_error_is_sanitized_400(settings):
-    _enable_catalog_reads(settings)
-    reader = Mock()
-    reader.read_page.side_effect = PropertyCatalogCursorError(
-        "cursor_mismatch", "The property continuation cursor does not match."
-    )
-
-    with (
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            return_value=[PROJECT_ID],
-        ),
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
-        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
-    ):
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request(cursor="signed-old")
-        )
-
-    assert response.status_code == 400
-    assert response.data["code"] == "cursor_mismatch"
-
-
-@pytest.mark.parametrize(
-    "reason",
-    [
-        "activation_missing",
-        "activation_not_active",
-        "projection_incompatible",
-        "activation_scope_incomplete",
-    ],
-)
-def test_metrics_cursor_maps_only_genuine_activation_readiness_to_typed_503(
-    settings, reason
-):
-    _enable_catalog_reads(settings)
-    reader = Mock()
-    reader.read_page.side_effect = PropertyCatalogUnavailable(reason)
-
-    with (
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            return_value=[PROJECT_ID],
-        ),
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
-        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
-    ):
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request()
-        )
-
-    assert response.status_code == 503
-    assert response.data["code"] == "property_catalog_not_ready"
-
-
-@pytest.mark.parametrize(
-    "reason",
-    [
-        "activation_mismatch",
-        "activation_conflict",
-        "activation_scope_conflict",
-        "activation_scope_invalid",
-        "definition_conflict",
-        "deadline_exceeded",
-        "query_failed",
-    ],
-)
-def test_metrics_cursor_keeps_conflicts_and_query_defects_generic(settings, reason):
-    _enable_catalog_reads(settings)
-    reader = Mock()
-    reader.read_page.side_effect = PropertyCatalogUnavailable(reason)
-
-    with (
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            return_value=[PROJECT_ID],
-        ),
-        patch("tracer.views.dashboard.PropertyCatalogReadExecutor"),
-        patch("tracer.views.dashboard.PropertyCatalogReader", return_value=reader),
-    ):
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request()
-        )
-
-    assert response.status_code == 503
-    assert response.data["code"] == "service_unavailable"
-
-
-def test_metrics_cursor_rejects_foreign_project_before_clickhouse(settings):
-    _enable_catalog_reads(settings)
-
-    with (
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            side_effect=ValueError("Some project_ids are invalid"),
-        ),
+            return_value="",
+        ) as agent,
         patch("tracer.views.dashboard.PropertyCatalogReader") as reader,
     ):
+        (project if permission == "project" else agent).side_effect = ValueError(
+            "Scope is invalid"
+        )
         response = inspect.unwrap(DashboardViewSet.metrics)(
             DashboardViewSet(), _request()
         )
-
-    assert response.status_code == 400
-    reader.assert_not_called()
-
-
-def test_metrics_cursor_rejects_foreign_agent_before_clickhouse(settings):
-    _enable_catalog_reads(settings)
-    agent_id = "44444444-4444-4444-4444-444444444444"
-
-    with (
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_project_scope",
-            return_value=[PROJECT_ID],
-        ),
-        patch(
-            "tracer.views.dashboard.resolve_property_catalog_agent_scope",
-            side_effect=ValueError("agent_definition_id is invalid"),
-        ),
-        patch("tracer.views.dashboard.PropertyCatalogReader") as reader,
-    ):
-        response = inspect.unwrap(DashboardViewSet.metrics)(
-            DashboardViewSet(), _request(agent_definition_id=agent_id)
-        )
-
     assert response.status_code == 400
     reader.assert_not_called()

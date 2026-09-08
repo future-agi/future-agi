@@ -14,7 +14,6 @@ def test_generic_all_queue_worker_excludes_dedicated_queues():
         "default",
         "tasks_xl",
         "exact_aggregation",
-        "property_catalog_dev_sidecar",
         "trace_ingestion",
     ]
 

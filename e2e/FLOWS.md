@@ -138,6 +138,25 @@
 - the metrics catalog scoped to each project returns that project's eval template and not its sibling's
 - the frontend requests the catalog with project_ids set to the project being viewed
 
+### OBS-E2E-004 — live observed attributes retain types and work in the filter UI
+
+**Goal:** Discover and filter live attributes without activating a catalog revision  
+**Spec:** `flows/observe/observed-catalog.spec.ts:12`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest typed attributes using a newly provisioned API key
+2. wait for catalog values through the authenticated API
+3. search the property and value pickers
+4. filter the span table
+
+**Backend state verified:**
+
+- real collector, Kafka consumer and catalog reader share the same scope
+- numeric-looking strings remain distinct from numbers; booleans remain booleans
+- the selected suggestion filters authoritative spans to the expected root
+
 ### OBS-E2E-020 — duplicate saved-view names are rejected
 
 **Goal:** A user cannot silently overwrite an existing observability view by reusing its name  

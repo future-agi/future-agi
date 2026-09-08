@@ -48,15 +48,6 @@ services:
       CH25_TRACE_DUAL_WRITE: "false"
       CH_DUAL_WRITE: "false"
 
-  # The supervisor runs Django management commands from this checkout. Keep it
-  # on the same locally-built image and bind mount as backend; inheriting the
-  # root compose's release image can leave new commands unavailable on dev.
-  property-catalog-supervisor:
-    image: futureagi/future-agi:dev
-    pull_policy: never
-    volumes:
-      - ./futureagi:/app/backend
-
   dev-api-proxy:
     image: nginx:1.27-alpine
     ports:

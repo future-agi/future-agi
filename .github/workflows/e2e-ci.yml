@@ -51,6 +51,9 @@ jobs:
               - 'e2e/**'
               - 'bin/e2e'
               - 'docker-compose.yml'
+              - 'docker-compose.dev.yml'
+              - 'deploy/**'
+              - 'bin/install*'
               - '.github/workflows/e2e-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'

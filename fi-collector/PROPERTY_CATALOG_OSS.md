@@ -1,196 +1,177 @@
-# Unified property catalog: OSS/local compatibility
+# Observed attributes in OSS and local development
 
-This page defines the non-EE requirements for the unified property catalog. No
-`ee.*` package is required. The authoritative Core transport and durability
-contract is [PROPERTY_CATALOG_SEQUENCER.md](PROPERTY_CATALOG_SEQUENCER.md).
+The root Compose stack runs one Kafka observation topic and one consumer:
 
-> [!IMPORTANT]
-> A previous one-topic arrangement in which autoscaled collectors produced
-> ordered envelopes directly is no longer production-safe. An OSS deployment
-> is complete only if it provides a candidate topic, the singleton
-> `fi-property-catalog-sequencer` with persistent state, a distinct ordered
-> topic, and `fi-property-catalog-consumer`. The root `docker-compose.yml`
-> supplies this complete local path; older one-topic Compose configurations do
-> not satisfy the contract.
+`fi-collector → futureagi.observed-attributes.v1 → fi-property-catalog-consumer`
 
-## Keep the two catalog paths separate
+The consumer writes `observed_attribute_keys` and `observed_attribute_values`
+in the isolated `property_catalog` ClickHouse database. Definitions and values
+from relational metadata keep their native readers. There is no sequencer,
+activation, epoch, revision, projection, Python supervisor or catalog schedule.
 
-| Path | Producer switch | Consumer | Purpose |
-| --- | --- | --- | --- |
-| Unified property catalog | `FI_PROPERTY_CATALOG_MODE` | `fi-property-catalog-sequencer` then `fi-property-catalog-consumer` | System, eval, annotation, dataset, simulation, and span-attribute properties |
-| Legacy span attributes | `FI_CATALOG_MODE` | `fi-catalog-consumer` | Pre-release span-attribute-only catalog |
+## Suggestion semantics
 
-Never enable both switches in one collector. Root OSS keeps
-`FI_CATALOG_MODE` must remain `disabled`. `FI_PROPERTY_CATALOG_MODE=kafka` now
-means candidate emission on collectors. The topic initializer in
-`docker-compose.catalog-kafka.dev.yml` remains a separate, profile-gated legacy
-harness and is not sufficient for the unified two-topic pipeline.
+Ordinary historical values may remain after a span changes. A suggestion is not
+proof that a current trace matches it; filtering still uses the source records.
+Strings, numbers and booleans retain their types. Current eval/annotation choices
+and dataset/prompt/simulation definitions remain native, permission-checked reads.
 
-## Authoritative local arrangement
+Keys preserve their exact spelling (up to 4 KiB UTF-8). Selectable string values
+allow 16 KiB raw UTF-8, or 4 KiB for array members; objects keep discoverable keys
+without fabricated scalar values. Extraction defaults to 128 keys and 256 array
+members per span. `FI_OBSERVED_CATALOG_MAX_KEYS_PER_SPAN` and
+`FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN` tune those per-span resource
+budgets (ceilings 4096/16384). Reaching a budget is logged as an extraction gap,
+not a complete index. There is no workspace/project allowlist or tenant cap.
 
-There are two deliberate arrangements:
+The UI uses the existing read-only POST contract for dashboard `metrics` and
+`filter_values`, keeping long names/cursors out of URLs. GET remains supported
+for existing clients. Both methods enforce the same workspace permissions.
 
-1. The root `docker-compose.yml` is intended to be the one-command OSS path.
-   It creates both unified topics, runs the singleton sequencer with an
-   exclusive persistent volume and fixed owner identities, runs the ordered
-   consumer, provisions isolated tables/identities, and starts the read-only
-   workspace supervisor. The supervisor discovers local workspaces and
-   projects from PostgreSQL, opens bounded revisions, and runs initial or
-   incremental reconciliation. The sequencer, not collector replicas, admits
-   a tenant only while its exact current fence is present.
-2. The checked-in
-   [`deploy/dev/property-catalog-docker` bundle](../deploy/dev/property-catalog-docker/README.md).
-   is the stricter operator-driven qualification path. Despite its directory
-   name, its catalog implementation is OSS-owned: it
-   runs the Go producer and consumer from `fi-collector/` and the Python
-   catalog code under
-   `futureagi/tracer/services/clickhouse/v2/property_catalog/`. It does not
-   import `ee.*`.
+Explicit privacy erasure requires coordinated quiescing/draining of affected
+writers, source erasure, derived-index/cache purge, and retention checks for
+Kafka/spool history before resuming. Otherwise a replay can restore suggestions.
+This feature does not perform automatic destructive source or catalog cleanup.
 
-The qualification renderer has an explicit OSS format,
-`futureagi.property-catalog-oss-dev-docker`. It requires a reviewed operator
-image built from `Dockerfile.oss`, keeps `CLOUD_DEPLOYMENT` unset through
-bootstrap and steady state, and otherwise retains the same isolated database,
-Kafka, credential, and activation gates. Use
-`deploy/dev/property-catalog-docker/config.oss.example.yaml` as the fail-closed
-starting point. This path expects a qualification stack originally initialized
-with `CH25_DATABASE=futureagi`; it must not be used to rename or repoint an
-existing self-host database.
+## Run the local stack
 
-The root stack preserves the same boundaries with local defaults. All secrets,
-Kafka retention/partitions, polling intervals, lifecycle walls, epoch,
-projection, producer stream, source database, and isolated target database are
-environment-overridable. The target database must be a safe lowercase
-ClickHouse identifier and must differ from the source database. The bootstrap
-scripts reject unsafe or source-identical names, malformed credentials, and
-any target that does not contain exactly the six pinned tables.
+From the repository root:
 
-The supervisor and sequencer share one canonical version-2 multi-tenant fence
-registry. Before each cycle the supervisor reconciles the exact active
-workspace inventory under the registry lock, and every workspace publication
-preserves the other tenants. The registry is deliberately bounded to 256
-workspaces; an over-bound inventory or corrupt registry fails the whole cycle
-closed before any workspace lifecycle work starts. Its cross-language drain
-lease codec accepts the reviewed 60-minute protocol ceiling; deployments may
-configure a shorter lifecycle lease.
+```sh
+docker compose up -d --build
+```
 
-User-facing catalog reads remain `off` by default. That is intentional: a new
-install has no workspace until onboarding, and forcing `read` before its first
-activation would turn an otherwise healthy OSS page into a 503. The Kafka
-producer, consumer, schema, and reconciliation catalog are on; read cutover is
-performed only after activation and an explicit workspace allowlist.
+The installer (`bin/install` or `bin/install.ps1`) uses the same topology.
+For development, layer `docker-compose.dev.yml` over the root file after the
+normal application bootstrap. The dev overlay skips application migrations;
+use the standard E2E harness for a fresh installation test.
 
-## Data flow and ownership
+Kafka, topic creation and the two-index bootstrap have explicit startup
+dependencies. The consumer image is built from this checkout and also contains
+`fi-observed-catalog-backfill`. Collector and consumer must use the same image.
 
-| Component | Role |
+## Configuration
+
+See the repository-root `.env.example` for local defaults.
+
+| Setting | Default / purpose |
 | --- | --- |
-| PostgreSQL | Authoritative relational sources for eval templates/configs, simulation eval configs, annotation labels, and dataset columns |
-| Source ClickHouse | Authoritative spans and historical span attributes |
-| Python reconciler/operator | Opens a bounded `building` revision, projects relational and historical span definitions/values, writes control evidence, and publishes the revision fence |
-| `fi-collector` | Produces deterministic, unsequenced live span-attribute candidates globally after canonical writes; it owns no revision or ordered state |
-| Candidate Kafka topic | Workspace-keyed bounded candidates from every collector replica |
-| `fi-property-catalog-sequencer` | Sole owner of revision admission, sequence, stream, drain, receipts, dedupe, and ordered-envelope spool state |
-| Ordered Kafka topic | Transactional ordered envelopes; distinct from the candidate topic |
-| `fi-property-catalog-consumer` | Validates sequence and lease evidence, then writes catalog data and the delivery ledger |
-| Isolated ClickHouse catalog | Six additive tables: definitions, attribute values, checkpoints, activations, deliveries, and source streams |
-| Backend definition/value APIs | Remain off until an explicit admitted `shadow` or `read` configuration targets the isolated catalog |
+| `PROPERTY_CATALOG_DATABASE` | `property_catalog`; must differ from the source-span database |
+| `PROPERTY_CATALOG_CONSUMER_PASSWORD` | Local writer password |
+| `PROPERTY_CATALOG_API_PASSWORD` | Local reader password |
+| `PROPERTY_CATALOG_KAFKA_PORT` | `29092`, bound to host loopback |
+| `OBSERVED_CATALOG_KAFKA_TOPIC` | `futureagi.observed-attributes.v1` |
+| `OBSERVED_CATALOG_KAFKA_GROUP` | `futureagi.observed-attributes.consumer.v1` |
+| `OBSERVED_CATALOG_MAX_SPOOL_FILES` | `10000` |
+| `OBSERVED_CATALOG_MAX_SPOOL_BYTES` | `536870912` |
 
-Relational changes are reflected by the next successful reconcile, not by the
-Go hot path. New span attributes are admitted by the sequencer only while the
-workspace has a matching `building` fence. Candidates outside that rollout
-are durably counted/skipped so one dark workspace cannot livelock the
-singleton; reconciliation recovers them. Activation makes the completed
-revision visible to definition and value readers.
+Collector/consumer process variables use the `FI_OBSERVED_CATALOG_` prefix.
+The producer uses `MODE=kafka`, `KAFKA_BROKERS`, `KAFKA_TOPIC`, and
+`SPOOL_DIR`. The consumer uses `KAFKA_BROKERS`, `KAFKA_TOPIC`, `KAFKA_GROUP`
+and `CH_URL`, `CH_DATABASE`, `CH_USERNAME`, `CH_PASSWORD`.
 
-## Repository-local verification
+Old `FI_PROPERTY_CATALOG_*`, candidate/ordered-topic and lifecycle settings do
+not configure this transport. Keep the fresh observation topic/group defaults;
+never point the new consumer at historical catalog events or offsets.
 
-Run these commands from the repository root. They do not contact production.
+The backend uses `PROPERTY_CATALOG_CH_HOST`, `PROPERTY_CATALOG_CH_PORT`
+(native TCP, default 9000), `PROPERTY_CATALOG_CH_USER`, and
+`PROPERTY_CATALOG_CH_PASSWORD`. Compose supplies the dedicated reader identity
+with `readonly=2`, which permits per-request query settings without permitting
+writes. Bootstrap binds password
+parameters with ClickHouse escaped-text encoding; `+/=`, quotes, backslashes and
+Unicode secrets are supported.
 
-Confirm the root Compose service contract, including the two distinct topics,
-fixed sequencer identities, and exclusive persistent state:
+## Storage and recovery
 
-```bash
-docker compose -f docker-compose.yml config --services
-docker compose -f docker-compose.yml config --format json > /tmp/futureagi-oss-compose.json
-python3 - <<'PY'
-import json
+After the source insert returns, the collector synchronously enqueues and
+fsyncs observations to its local spool. Replay publishes them to Kafka; the
+consumer commits offsets only after both index writes succeed. Duplicate
+delivery is supported by the min/max observation identities. The existing
+source writer's asynchronous acknowledgement behavior is unchanged.
 
-d = json.load(open("/tmp/futureagi-oss-compose.json"))
-s = d["services"]
-collector = s["fi-collector"]["environment"]
-sequencer = s["fi-property-catalog-sequencer"]
-sequencer_env = sequencer["environment"]
-consumer = s["fi-property-catalog-consumer"]["environment"]
-candidate = collector["FI_PROPERTY_CATALOG_KAFKA_TOPIC"]
-ordered = sequencer_env["FI_PROPERTY_CATALOG_KAFKA_TOPIC"]
-volumes = {
-    (volume["source"], volume["target"], volume.get("read_only", False))
-    for volume in sequencer["volumes"]
-}
-assert candidate != ordered
-assert sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_TOPIC"] == candidate
-assert consumer["FI_PROPERTY_CATALOG_KAFKA_TOPIC"] == ordered
-assert ("property-catalog-sequencer-data", "/var/lib/property-catalog-sequencer", False) in volumes
-assert ("fi-collector-data", "/var/lib/property-catalog-control", True) in volumes
-assert sequencer_env["FI_PROPERTY_CATALOG_SEQUENCER_TRANSACTIONAL_ID"]
-assert sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_CONSUMER_GROUP"]
-assert sequencer_env["FI_PROPERTY_CATALOG_CANDIDATE_KAFKA_INSTANCE_ID"]
-assert s["backend"]["environment"]["PROPERTY_CATALOG_READ_MODE"] == "off"
-print({"candidate_topic": candidate, "ordered_topic": ordered, "sequencer": True, "read_mode": "off"})
-PY
+There is no pending-ready journal. A failure between the source insert and
+local enqueue, a full/lost spool, or expired Kafka history can leave missing
+observations. Repair a bounded source range with `fi-observed-catalog-backfill`;
+ordinary restarts do not launch historical scans.
+
+For a span backfill, set `PROJECT_ID` to one current project UUID and `SINCE` /
+`UNTIL` to an inclusive/exclusive RFC3339 range. Supply read-only source
+credentials in `FI_PG_DSN` and `FI_OBSERVED_BACKFILL_CH_URL`,
+`FI_OBSERVED_BACKFILL_CH_DATABASE`, `FI_OBSERVED_BACKFILL_CH_USERNAME`,
+`FI_OBSERVED_BACKFILL_CH_PASSWORD`. The PG connection verifies current project
+ownership; it is not the catalog writer.
+
+Preview first; without `--apply` the command does not publish observations:
+
+```sh
+docker compose run --rm --no-deps \
+  --entrypoint /usr/local/bin/fi-observed-catalog-backfill \
+  -e FI_PG_DSN -e FI_OBSERVED_BACKFILL_CH_URL \
+  -e FI_OBSERVED_BACKFILL_CH_DATABASE -e FI_OBSERVED_BACKFILL_CH_USERNAME \
+  -e FI_OBSERVED_BACKFILL_CH_PASSWORD \
+  fi-property-catalog-consumer \
+  --source spans --project "$PROJECT_ID" --since "$SINCE" --until "$UNTIL" \
+  --page-size 64 --max-pages 100 --page-delay 100ms
 ```
 
-The check must pass with distinct candidate and ordered topics, fixed sequencer
-ownership, its exclusive volume, and `read_mode=off` until explicit cutover.
+To apply the reviewed scope, repeat with `--apply --checkpoint /backfill/progress.json`
+and mount an operator-owned writable directory at `/backfill`. The container
+runs as UID/GID 65532, so grant that identity access to the checkpoint directory.
+Keep the checkpoint across bounded invocations and resume the same scope.
 
-Start only the catalog dependencies in a disposable Compose project when doing
-a first-boot qualification. Never run `down -v` against an existing OSS
-project:
+For historical catalog rows, select `--source legacy` with an explicit
+`--legacy-epoch`, `--legacy-revision`, and `--legacy-build`; omit time-range
+flags. Apply additionally requires `--verified-legacy`. This reads the selected
+old data and publishes new observations; it does not mutate or delete the old
+catalog. Confirm these flags against the shipped binary's `--help`.
 
-```bash
-docker compose -p futureagi-catalog-proof -f docker-compose.yml up -d \
-  postgres clickhouse redis \
-  property-catalog-kafka-volume-init property-catalog-runtime-volume-init \
-  property-catalog-postgres-bootstrap \
-  property-catalog-clickhouse-bootstrap \
-  property-catalog-kafka property-catalog-topic-init \
-  fi-collector fi-property-catalog-sequencer \
-  fi-property-catalog-consumer property-catalog-supervisor
-docker compose -p futureagi-catalog-proof -f docker-compose.yml ps
+The collector keeps both its observation spool and the existing span dead-letter
+file on `fi-collector-data`. Kafka keeps `property-catalog-kafka-data`.
+Removing obsolete service/volume declarations does not remove existing physical
+volumes. Preserve old sequencer state, Kafka topics, ClickHouse tables and rows
+during upgrades. Retire only the inventoried old lifecycle processes and
+schedules as a coordinated deployment step; do not use broad orphan/volume
+cleanup to migrate.
+
+## Schema
+
+Local bootstrap applies
+`futureagi/tracer/services/clickhouse/v2/observed_catalog/schema.sql` directly
+to the isolated database. It grants the writer SELECT/INSERT and the reader
+SELECT on the two new tables only. Before credentials or grants are changed,
+a read-only metadata gate checks the actual column names/types, min/max timestamp
+aggregates, full sorting/primary identity (including `value_json`), partitioning,
+constraints and absence of TTL. An incompatible pre-existing table fails startup;
+`IF NOT EXISTS` does not silently accept it or rewrite existing data.
+No PostgreSQL bootstrap or source-table grant is required.
+
+The local bootstrap creates plain AggregatingMergeTree tables. For replicated
+deployments, render the separate schema through the existing
+`apply_schema_rewriter.py` with the deployment's cluster/Keeper topology.
+Do not route it through the source schema runner or modify historical numbered
+SQL files. Existing catalog tables may coexist with the new indexes.
+
+## Validate
+
+Service-free deployment checks:
+
+```sh
+python3 -m unittest discover -s deploy/tests -p test_observed_catalog_compose.py -v
 ```
 
-The volume initialization and bootstrap jobs must exit `0`; Kafka, collector,
-sequencer, consumer, and supervisor must remain running. Before any workspace
-exists the sequencer may have no fence. Do not create an empty fence file: the
-supervisor publishes the first canonical fence after onboarding creates a
-workspace and project.
+For bounded ClickHouse/Kafka/PostgreSQL and OTLP HTTP integration without the
+root application stack, use the three-service fixture and explicit loopback
+commands in [TESTING.md](../TESTING.md#observed-catalog-integration-isolated-dependencies).
+The CI job uses this fixture, repeats bootstrap, and rejects missing or skipped
+integration proofs. Three-replica qualification is optional and separate.
 
-Build and test all three Go processes:
+Use the existing `fi-collector` Go suite, backend `futureagi/bin/test`, and
+`bin/e2e` Observe flows for runtime validation. E2E builds backend and collector
+from source with `bin/e2e build backend` and `bin/e2e build collector`; set
+`FUTURE_AGI_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local` for startup.
+The E2E stack explicitly includes the consumer and maps Kafka to port 29093.
 
-```bash
-cd fi-collector
-go build ./cmd/fi-collector ./cmd/fi-property-catalog-sequencer ./cmd/fi-property-catalog-consumer
-go test ./...
-docker build -t futureagi/fi-collector:property-catalog-oss-audit .
-cd ..
-```
-
-Run the backend catalog contract, lifecycle, and definition/value API suite:
-
-```bash
-cd futureagi
-uv sync --frozen --group dev
-uv run pytest -q \
-  tracer/services/clickhouse/v2/test_catalog_dev_schema.py \
-  tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py \
-  tracer/tests/test_property_catalog_*.py \
-  tracer/tests/test_unified_property_catalog_*.py \
-  tracer/tests/test_attribute_catalog_dev_snapshot.py \
-  tfc/temporal/schedules/tests/test_property_catalog.py
-cd ..
-```
-
-The stricter live qualification still follows every preflight, credential,
-isolated-schema, topic, bootstrap, status, and activation gate in the canonical
-DEV Docker guide. A running broker by itself is not an end-to-end property
-catalog.
+Check project ownership and ports before starting a harness alongside another
+checkout. `futureagi/bin/test down` deletes its test volumes; do not use it to
+make room for another task.

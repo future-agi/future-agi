@@ -9,9 +9,14 @@ export interface SeededTrace { traceId: string; spanIds: string[]; projectName: 
 export interface SendTraceConfig {
   collectorUrl: string; apiKey: string; secretKey: string; projectName: string;
   rootName?: string;
+  rootAttributes?: Record<string, string | number | boolean>;
 }
 
-const attr = (key: string, value: string) => ({ key, value: { stringValue: value } });
+const attr = (key: string, value: string | number | boolean) => ({
+  key,
+  value: typeof value === 'boolean' ? { boolValue: value }
+    : typeof value === 'number' ? { doubleValue: value } : { stringValue: value },
+});
 const nsNow = () => (BigInt(Date.now()) * 1_000_000n);
 
 export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): Promise<SeededTrace> {
@@ -35,7 +40,8 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
       scopeSpans: [{
         scope: { name: 'e2e-harness' },
         spans: [
-          span(rootId, undefined, rootName),
+          span(rootId, undefined, rootName,
+            Object.entries(cfg.rootAttributes ?? {}).map(([key, value]) => attr(key, value))),
           span(childId, rootId, 'e2e.llm-call', [attr('fi.span.kind', 'llm')]),
         ],
       }],

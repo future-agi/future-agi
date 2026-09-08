@@ -22,7 +22,7 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │                                                                                 │
 │  docker compose -p futureagi-e2e                                                │
 │    postgres · clickhouse · redis · rabbitmq · minio · temporal                   │
-│    backend · worker (ALL_QUEUES) · frontend · fi-collector                       │
+│    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
 │    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
@@ -58,7 +58,7 @@ list — kept in `SERVICES` in `bin/e2e` so the trimmed set is visible in one pl
 `COMPOSE_PROFILES=peerdb` in the env file making the profile-gated PeerDB services startable by
 name. The overlay itself is thin: it adds the `mock-llm` service, caps ClickHouse at 3 GB (it is the
 first thing an out-of-memory runner kills), sets `restart: "no"` on backend and worker so a crash
-loop fails the run loudly instead of hiding, and gives fi-collector its own image tag. `up` returns
+loop fails the run loudly instead of hiding, and gives collector and observation consumer the same image tag. `up` returns
 only after this readiness sequence passes:
 
 1. `docker compose up -d --wait --wait-timeout 300` — every datastore healthcheck, including
@@ -66,8 +66,9 @@ only after this readiness sequence passes:
 2. `GET http://localhost:8100/health/` — the backend is up **and** migrated (600 s budget).
 3. `SELECT count() FROM spans LIMIT 0` over ClickHouse HTTP — the Django ClickHouse boot hook
    logs-and-continues on failure, so `/health/` alone can pass with a missing CH schema.
-4. `GET http://localhost:3100/` — nginx is serving the frontend.
-5. `peerdb-init` is force-recreated, must exit 0, **and** its log must contain no unexpected
+4. Both observed-attribute indexes must exist in the isolated catalog database.
+5. `GET http://localhost:3100/` — nginx is serving the frontend.
+6. `peerdb-init` is force-recreated, must exit 0, **and** its log must contain no unexpected
    `ERROR:` lines (180 s budget). Ordering matters: mirrors can only be created once the backend's
    migrations have created the tables they replicate.
 
@@ -93,6 +94,7 @@ Ports come from `e2e/stack/e2e.env` and are chosen to collide with neither a nor
 | backend                       | 8100          | ClickHouse HTTP / native | 28123 / 29000 |
 | agentcc-gateway               | 28090         | Redis                    | 26379         |
 | fi-collector OTLP HTTP / gRPC | 24318 / 24317 | MinIO API / console      | 29005 / 29006 |
+| observation Kafka             | 29093         |                          |                 |
 | fi-collector admin            | 29464         | Temporal                 | 27233         |
 | peerdb-server                 | 29900         | peerdb-ui (not started)  | 23001         |
 
@@ -167,7 +169,7 @@ Each build prints the line to run next; the stack picks the images up through th
 | ------------ | ------------------------------------ | ---------------------- |
 | `backend`    | `FUTURE_AGI_VERSION=e2e-local`       | the `worker` container |
 | `frontend`   | `FRONTEND_VERSION=e2e-local`         | —                      |
-| `collector`  | `E2E_FI_COLLECTOR_VERSION=e2e-local` | —                      |
+| `collector`  | `E2E_FI_COLLECTOR_VERSION=e2e-local` | observation consumer   |
 
 ```bash
 bin/e2e build all
@@ -175,9 +177,8 @@ FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION
 bin/e2e test
 ```
 
-The root compose reuses `FUTURE_AGI_VERSION` for fi-collector's image too; the E2E overlay decouples
-it behind `E2E_FI_COLLECTOR_VERSION` so a backend-only build never forces a collector build (and so
-CI can retag the backend alone).
+The E2E overlay sets the collector and observation consumer image together through
+`E2E_FI_COLLECTOR_VERSION`, so both run the same observation protocol.
 
 **Which one to use when.**
 
@@ -189,8 +190,8 @@ CI can retag the backend alone).
   `COPY . .` layer — and the production image keeps the readiness contract honest by running
   migrations. (The collector is a cached Go build, the cheapest of the three; the frontend re-runs
   the full Vite production build every time and is the slowest by far.)
-- _Before pushing_: `bin/e2e build all` on fresh volumes (`bin/e2e down -v` first) — exactly the
-  artifacts a user receives.
+- _Before pushing_: `bin/e2e build all`, then validate fresh installation and retained-data
+  upgrade behavior. Only reset volumes belonging to your explicitly disposable test project.
 
 **Why not the dev overlay.** `docker-compose.dev.yml` looks like the obvious vehicle for local code
 and is not one. It hardcodes `FAST_STARTUP: "true"` in `environment:`, which cannot be overridden

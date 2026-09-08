@@ -1,0 +1,63 @@
+# Isolated integration dependencies; no production endpoints or external volumes.
+# Use a unique compose project name. Host ports are configurable for parallel CI.
+services:
+  clickhouse:
+    init: true
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      CLICKHOUSE_USER: test
+      CLICKHOUSE_PASSWORD: test
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "127.0.0.1:${OBS_TEST_CH_PORT:-18143}:8123"
+    mem_limit: 2g
+    cpus: 2
+    healthcheck:
+      test: [CMD, clickhouse-client, --user, test, --password, test, --query, "SELECT 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  kafka:
+    init: true
+    image: apache/kafka:4.1.0
+    ports:
+      - "127.0.0.1:${OBS_TEST_KAFKA_PORT:-19094}:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,HOST://:9094
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,HOST://127.0.0.1:${OBS_TEST_KAFKA_PORT:-19094}"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms256m
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    mem_limit: 1g
+    cpus: 1
+    healthcheck:
+      test: [CMD, /opt/kafka/bin/kafka-topics.sh, --bootstrap-server, kafka:9092, --list]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  postgres:
+    init: true
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: observed_catalog_test
+    ports:
+      - "127.0.0.1:${OBS_TEST_PG_PORT:-15543}:5432"
+    mem_limit: 512m
+    cpus: 1
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U test -d observed_catalog_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

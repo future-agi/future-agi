@@ -29,7 +29,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
-	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -55,9 +55,8 @@ type Config struct {
 type Server struct {
 	cfg             Config
 	writer          *chwriter.Writer
-	curated         *curatedwriter.Writer  // CH-derived dimensions dual-write (P3b step2 HALF 2)
-	catalog         AttributeCatalogWriter // obsolete pre-release path; default nil
-	propertyCatalog PropertyCatalogWriter  // unified value producer; default nil
+	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
 	auth            *auth.Authenticator
 	usage           UsageEmitter
 	metering        Metering
@@ -80,7 +79,7 @@ type Server struct {
 	pendMu       sync.Mutex
 	pend         []map[string]any
 	pendCurated  *curatedwriter.Batch
-	pendProperty []propertycatalog.ScopedSpan
+	pendProperty []observedcatalog.ScopedSpan
 	pendCh       chan struct{}
 
 	stopCh chan struct{}
@@ -91,7 +90,6 @@ type Server struct {
 type Option struct {
 	log             *slog.Logger
 	pricer          chexp.Pricer
-	catalog         AttributeCatalogWriter
 	propertyCatalog PropertyCatalogWriter
 }
 
@@ -102,15 +100,7 @@ func WithLogger(l *slog.Logger) Option { return Option{log: l} }
 // disables token-based cost (see chexp.Pricer).
 func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 
-// WithAttributeCatalogWriter installs the disabled-by-default catalog staging
-// seam. main does not supply this option yet; activation, bounded async
-// admission, fsync-latency qualification, and worker lifecycle belong to a
-// later, separately qualified change.
-func WithAttributeCatalogWriter(w AttributeCatalogWriter) Option {
-	return Option{catalog: w}
-}
-
-// WithPropertyCatalogWriter installs the default-off unified value producer.
+// WithPropertyCatalogWriter installs the default-off observed catalog spool.
 func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
 	return Option{propertyCatalog: w}
 }
@@ -150,7 +140,6 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 
 	log := slog.Default()
 	var pricer chexp.Pricer
-	var catalog AttributeCatalogWriter
 	var propertyCatalogWriter PropertyCatalogWriter
 	for _, o := range opts {
 		if o.log != nil {
@@ -158,9 +147,6 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		}
 		if o.pricer != nil {
 			pricer = o.pricer
-		}
-		if o.catalog != nil {
-			catalog = o.catalog
 		}
 		if o.propertyCatalog != nil {
 			propertyCatalogWriter = o.propertyCatalog
@@ -175,7 +161,6 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		metering:        metering,
 		log:             log,
 		pricer:          pricer,
-		catalog:         catalog,
 		propertyCatalog: propertyCatalogWriter,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
@@ -537,7 +522,7 @@ func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
 }
 
 // enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
-// The sidecar is only allocated when the default-off unified writer is
+// The sidecar is only allocated when the default-off observed writer is
 // installed, and no field is added to the canonical span row.
 func (s *Server) enqueueScoped(
 	rows []map[string]any,
@@ -560,7 +545,7 @@ func (s *Server) enqueueScoped(
 			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
 				scopeError = "project_workspace_mismatch"
 			}
-			s.pendProperty = append(s.pendProperty, propertycatalog.ScopedSpan{
+			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
 				OrganizationID: organizationID,
 				WorkspaceID:    workspaceID,
 				ScopeError:     scopeError,
@@ -622,39 +607,12 @@ func (s *Server) drainNow(ctx context.Context) {
 	// is to make progress, not propagate per-batch failures. /healthz
 	// surfaces the writer's failure counter.
 
-	// Stage the independent attribute catalog only after the canonical spans
-	// received an unambiguous ClickHouse HTTP 200. A dead-lettered span batch
-	// returns a non-nil error and is intentionally skipped here; its later
-	// canonical replay/backfill owns reconciliation. Catalog staging and its
-	// catalog-only spool are isolated from span health: any gap is logged, never
-	// returned, and never changes span writer stats. Project-scoped jobs preserve
-	// the version-3 stream invariant; invalid/unscoped input remains an explicit
-	// gap job instead of being attached to another tenant.
-	if spanErr == nil && s.catalog != nil {
-		for _, staged := range s.catalog.StageCanonicalSpansByProject(batch) {
-			report := staged.Report
-			if report.RejectedSpans > 0 || report.IncompleteSpans > 0 || report.GlobalTruncated {
-				s.log.Warn(
-					"attribute catalog staging incomplete",
-					"rejected_spans", report.RejectedSpans,
-					"incomplete_spans", report.IncompleteSpans,
-					"rows_omitted", report.RowsOmitted,
-					"gap_reasons", report.BuildGapReasons,
-				)
-			}
-			if err := s.catalog.Enqueue(staged.Job); err != nil {
-				s.log.Warn("attribute catalog enqueue failed", "err", err)
-			}
-		}
-	}
-
-	// The unified hot path is value-only and best-effort relative to canonical
-	// ingestion. It receives authenticated workspace scope through the sidecar
-	// above only after ClickHouse acknowledged the span batch. Admission or
-	// Kafka/spool failures are observable gaps, never span-write failures.
+	// Transfer observation ownership to the fsync-backed catalog spool only
+	// after confirmed canonical success. Backfill repairs the preceding crash
+	// gap. Catalog errors never change canonical writer health or dead-letter.
 	if spanErr == nil && s.propertyCatalog != nil && len(property) > 0 {
 		if err := s.propertyCatalog.EnqueueCanonicalSpans(property); err != nil {
-			s.log.Warn("property catalog enqueue failed", "err", err)
+			s.log.Warn("observed catalog enqueue failed; backfill repair required", "err", err)
 		}
 	}
 

@@ -8,9 +8,9 @@ services:
   worker:
     restart: "no"
   fi-collector:
-    # Root compose reuses FUTURE_AGI_VERSION for this image; the e2e stack
-    # decouples it so CI can retag the backend without inventing a
-    # futureagi/fi-collector:e2e-ci that was never built.
+    # Collector and consumer must run the same checked-out transport protocol.
+    image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
+  fi-property-catalog-consumer:
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
   peerdb-init:
     environment:
