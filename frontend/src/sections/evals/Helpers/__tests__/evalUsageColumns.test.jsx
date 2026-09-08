@@ -1,11 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_COLUMN_CONFIG,
+  DATE_OPTION_TO_PERIOD,
   decodeColumnConfig,
   encodeColumnConfig,
   normalizeRow,
   periodForRange,
 } from "../evalUsageColumns";
+
+describe("DATE_OPTION_TO_PERIOD", () => {
+  it("maps the optional one-hour picker label to the bounded one-hour API period", () => {
+    expect(DATE_OPTION_TO_PERIOD["1 hr"]).toBe("1h");
+  });
+});
 
 describe("periodForRange", () => {
   // The backend derives the chart bucket size from `period`, not from the
@@ -25,8 +32,12 @@ describe("periodForRange", () => {
   });
 
   it("falls back to 30d for a zero-length or inverted range", () => {
-    expect(periodForRange("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")).toBe("30d");
-    expect(periodForRange("2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")).toBe("30d");
+    expect(periodForRange("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z")).toBe(
+      "30d",
+    );
+    expect(periodForRange("2026-02-01T00:00:00Z", "2026-01-01T00:00:00Z")).toBe(
+      "30d",
+    );
   });
 });
 
@@ -80,7 +91,10 @@ describe("encodeColumnConfig / decodeColumnConfig", () => {
   });
 
   it("preserves an unknown input_var_* token discovered on another page", () => {
-    const decoded = decodeColumnConfig("score,input_var_topic", DEFAULT_COLUMN_CONFIG);
+    const decoded = decodeColumnConfig(
+      "score,input_var_topic",
+      DEFAULT_COLUMN_CONFIG,
+    );
     const topic = decoded.find((c) => c.value === "input_var_topic");
     expect(topic).toMatchObject({
       value: "input_var_topic",
@@ -91,7 +105,10 @@ describe("encodeColumnConfig / decodeColumnConfig", () => {
   });
 
   it("keeps a hidden unknown input_var_* token hidden", () => {
-    const decoded = decodeColumnConfig("~input_var_topic", DEFAULT_COLUMN_CONFIG);
+    const decoded = decodeColumnConfig(
+      "~input_var_topic",
+      DEFAULT_COLUMN_CONFIG,
+    );
     const topic = decoded.find((c) => c.value === "input_var_topic");
     expect(topic).toMatchObject({ enabled: false, is_visible: false });
   });

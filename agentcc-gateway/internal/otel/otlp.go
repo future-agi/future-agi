@@ -398,7 +398,11 @@ func encodeSpan(s *Span) *tracepb.Span {
 	// The gateway's own trace ID is what appears in response headers and in the
 	// request-log table. Carry it verbatim so a span can be tied back to a log
 	// row even though the OTLP trace ID is a hash of it.
-	if s.TraceID != "" {
+	// Skip when the span already carries one: with trace propagation the
+	// gateway id is set explicitly as an attribute while s.TraceID holds the
+	// caller's. Appending here too would emit the key twice, which OTLP
+	// disallows and backends resolve inconsistently.
+	if _, ok := s.Attributes["agentcc.trace_id"]; !ok && s.TraceID != "" {
 		attrs = append(attrs, keyValue("agentcc.trace_id", s.TraceID))
 	}
 

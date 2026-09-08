@@ -22,7 +22,7 @@ import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
-import { buildGraphDiff } from "./buildGraphDiff";
+import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
 import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
 
@@ -858,7 +858,6 @@ TraceGraphView.propTypes = {
 };
 
 // ── Split-with-working graph compare ─────────────────────────────────────────
-// Diff cues only land on graph mode — AgentPath nodes are too compressed for colored rings.
 function CompareLegend({ summary }) {
   const items = [
     summary.failed > 0 && {
@@ -1061,6 +1060,16 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
 
   const failLoading = !!failingTraceId && failQ.isLoading && !failQ.data;
   const passLoading = !!workingTraceId && passQ.isLoading && !passQ.data;
+  const failRenderGraph = comparisonGraphForMode(
+    mode,
+    failGraph,
+    failAnnotated,
+  );
+  const passRenderGraph = comparisonGraphForMode(
+    mode,
+    passGraph,
+    passAnnotated,
+  );
 
   const NoWorkingNotice = !workingTraceId && (
     <Box
@@ -1143,14 +1152,14 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
           accentColor="#DB2F2D"
           traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
         >
-          {renderSide(failAnnotated, failLoading, "failing trace")}
+          {renderSide(failRenderGraph, failLoading, "failing trace")}
         </CompareColumn>
         <CompareColumn
           title="Working trace"
           accentColor="#5ACE6D"
           traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
         >
-          {renderSide(passAnnotated, passLoading, "working trace")}
+          {renderSide(passRenderGraph, passLoading, "working trace")}
         </CompareColumn>
       </Box>
     </Stack>
@@ -1919,7 +1928,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
 
       {/* ── Body ── */}
       <Box sx={{ p: 1.75 }}>
-        {/* Agent Graph / Agent Path — single trace, OR split with working. */}
+        {/* Agent Graph / Agent Path — single trace, or split with a working trace. */}
         {isGraphMode &&
           (traceId ? (
             splitView ? (

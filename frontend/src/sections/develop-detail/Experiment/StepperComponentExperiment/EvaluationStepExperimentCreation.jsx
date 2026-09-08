@@ -22,6 +22,7 @@ import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { ShowComponent } from "src/components/show";
 import { isUUID } from "src/utils/utils";
+import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
 
 const EvaluationStepExperimentCreation = ({
   control,
@@ -405,7 +406,7 @@ const EvaluationStepExperimentCreation = ({
                           return (
                             <Chip
                               key={key}
-                              label={`${key}: ${label}`}
+                              label={mappingChipLabel(key, label, ": ")}
                               size="small"
                               variant="outlined"
                             />

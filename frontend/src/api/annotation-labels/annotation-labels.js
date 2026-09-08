@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { apiPath } from "src/api/contracts/api-surface";
 import {
@@ -40,6 +45,56 @@ export const useAnnotationLabelsList = (filters = {}, options = {}) => {
     select: (d) => d?.data || d,
     staleTime: 1000 * 60 * 2,
     ...options,
+  });
+};
+
+export const useInfiniteAnnotationLabelsList = (filters = {}, options = {}) => {
+  const { page: _page, limit = 50, ...queryFilters } = filters;
+  const { meta: optionMeta, ...queryOptions } = options;
+
+  return useInfiniteQuery({
+    queryKey: [...annotationLabelKeys.list(queryFilters), "infinite", limit],
+    initialPageParam: 1,
+    queryFn: ({ pageParam, signal }) =>
+      modelHubAnnotationsLabelsList(
+        {
+          ...queryFilters,
+          page: pageParam,
+          limit,
+        },
+        { signal },
+      ),
+    getNextPageParam: (lastPage, allPages) => {
+      const lastPageData = lastPage?.data || lastPage || {};
+      const pageResults = Array.isArray(lastPageData.results)
+        ? lastPageData.results
+        : [];
+
+      // The server's `next` cursor is authoritative. Counts can lag while labels
+      // are created or archived, and must never make the client request empty
+      // terminal pages indefinitely.
+      if (pageResults.length === 0 || !lastPageData.next) return undefined;
+      return allPages.length + 1;
+    },
+    select: (data) => {
+      const pages = data.pages.map((page) => page?.data || page || {});
+      const labelsById = new Map();
+      pages.forEach((page) => {
+        (page.results || []).forEach((label) =>
+          labelsById.set(label.id, label),
+        );
+      });
+      const results = Array.from(labelsById.values());
+      const lastPage = pages[pages.length - 1] || {};
+      return {
+        results,
+        count: Number(lastPage.count) || results.length,
+      };
+    },
+    retry: false,
+    meta: { ...optionMeta, errorHandled: true },
+    staleTime: 1000 * 60 * 2,
+    ...queryOptions,
   });
 };
 

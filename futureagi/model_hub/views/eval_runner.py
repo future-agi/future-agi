@@ -748,13 +748,9 @@ def process_mapping(
                     }
                     mapping.append(prompt_dict)
                     required_field.append(key)
-                except (Column.DoesNotExist, RunPrompter.DoesNotExist) as e:
-                    logger.error(
-                        "failed_to_resolve_prompt_instruction_adherence_prompt",
-                        column_id=str(data),
-                        error=str(e),
-                    )
-                continue  # Skip normal cell resolution for this key
+                    continue  # Skip normal cell resolution for this key
+                except (Column.DoesNotExist, RunPrompter.DoesNotExist):
+                    pass  # Fall through to normal cell resolution below
 
             try:
                 if data:
@@ -788,24 +784,27 @@ def process_mapping(
                 if key == "output" and not mappings.get("input"):
                     # Skip if value is a KnowledgeBaseFile UUID
                     if not _is_knowledge_base_uuid(value):
-                        output_column = Column.objects.get(id=value)
-                        prompt_column = RunPrompter.objects.get(
-                            id=output_column.source_id
-                        )
-                        # Get the user prompt from messages
-                        prompt = "\n".join(
-                            [
-                                runner._replace_dynamic_ids(
-                                    content["text"], row
-                                )  # Updated to handle new content structure
-                                for message in prompt_column.messages
-                                if message["role"] == "user"
-                                for content in message["content"]
-                                if content["type"] == "text"
-                            ]
-                        )
-                        mapping.insert(0, prompt)
-                        required_field.insert(0, "input")
+                        try:
+                            output_column = Column.objects.get(id=value)
+                            prompt_column = RunPrompter.objects.get(
+                                id=output_column.source_id
+                            )
+                            # Get the user prompt from messages
+                            prompt = "\n".join(
+                                [
+                                    runner._replace_dynamic_ids(
+                                        content["text"], row
+                                    )
+                                    for message in prompt_column.messages
+                                    if message["role"] == "user"
+                                    for content in message["content"]
+                                    if content["type"] == "text"
+                                ]
+                            )
+                            mapping.insert(0, prompt)
+                            required_field.insert(0, "input")
+                        except (Column.DoesNotExist, RunPrompter.DoesNotExist):
+                            pass
     return required_field, mapping
 
 
@@ -1631,11 +1630,20 @@ class EvaluationRunner:
         final_mapping = []
         final_required_field = []
 
+        can_infer_prompt = False
+        if run_prompt_column and col_ids:
+            try:
+                output_col = Column.objects.get(id=col_ids[0])
+                RunPrompter.objects.get(id=output_col.source_id)
+                can_infer_prompt = True
+            except (Column.DoesNotExist, RunPrompter.DoesNotExist):
+                pass
+
         for key, data in enumerate(mapping):
             if data:
                 final_mapping.append(data)
                 final_required_field.append(col_ids[key])
-            if run_prompt_column:
+            if can_infer_prompt:
                 break
         if effective_config.get("eval_type_id") == "DeterministicEvaluator":
             return final_required_field, final_mapping

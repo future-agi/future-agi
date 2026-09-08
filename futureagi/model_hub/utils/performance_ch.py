@@ -196,7 +196,7 @@ def calculate_performance(
     # if metric == "":
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(final_query)
+    results = clickhouse_client.execute_read(final_query)
     return results
 
 
@@ -323,7 +323,7 @@ def calculate_performance_details(
         """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(final_query)
+    results = clickhouse_client.execute_read(final_query)
     return results
 
 
@@ -379,7 +379,7 @@ def calculate_performance_processing(org_id, model_id, dataset, metric):
         """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(final_query)
+    results = clickhouse_client.execute_read(final_query)
     return results
 
 
@@ -526,7 +526,7 @@ def get_performance_details_query(
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(final_query)
+    results = clickhouse_client.execute_read(final_query)
     return results
 
 
@@ -650,7 +650,7 @@ def get_all_tags_distribution(
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(final_query)
+    results = clickhouse_client.execute_read(final_query)
     return results
 
 
@@ -732,5 +732,5 @@ def get_top_tags_distribution(
     """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
-    results = clickhouse_client.execute(final_query)
+    results = clickhouse_client.execute_read(final_query)
     return results

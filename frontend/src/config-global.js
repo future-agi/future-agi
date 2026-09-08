@@ -35,6 +35,8 @@ export const HELP_LINK = resolveHelpLink();
 export const GENERATE_LINK = import.meta.env.VITE_GENERATE_LINK;
 export const ASSETS_API = import.meta.env.VITE_ASSETS_API;
 export const CURRENT_ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT;
+export const REACT_QUERY_DEVTOOLS_ENABLED =
+  import.meta.env.VITE_REACT_QUERY_DEVTOOLS_ENABLED !== "false";
 export const GOOGLE_SITE_KEY = import.meta.env.VITE_GOOGLE_SITE_KEY;
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
 export const MIXPANEL_HOST = import.meta.env.VITE_MIXPANEL_HOST;

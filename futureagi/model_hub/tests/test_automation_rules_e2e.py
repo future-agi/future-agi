@@ -16,10 +16,9 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
-from conftest import create_categorical_label
-
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from conftest import create_categorical_label
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -62,8 +61,6 @@ QUEUE_URL = "/model-hub/annotation-queues/"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
 
 
 def _create_queue(auth_client, name, **extra):
@@ -262,10 +259,13 @@ class TestAutomationRulesE2E:
                 }
             return response
 
-        with patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            side_effect=_inline_run,
-        ), patch.object(APIClient, "post", _post):
+        with (
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                side_effect=_inline_run,
+            ),
+            patch.object(APIClient, "post", _post),
+        ):
             yield
 
     # -----------------------------------------------------------------------
@@ -277,9 +277,9 @@ class TestAutomationRulesE2E:
         """Create 3 traces, evaluate a rule with no conditions, assert all 3
         are added as queue items."""
         project = _create_project(organization, workspace)
-        t1 = _create_trace(project, name="trace-1")
-        t2 = _create_trace(project, name="trace-2")
-        t3 = _create_trace(project, name="trace-3")
+        _create_trace(project, name="trace-1")
+        _create_trace(project, name="trace-2")
+        _create_trace(project, name="trace-3")
 
         queue_id = _create_queue(auth_client, name="Trace Q1")
         # Scope queue to this project so we only pick up our traces
@@ -532,7 +532,7 @@ class TestAutomationRulesE2E:
     ):
         """Soft-deleted traces must NOT be matched by evaluate_rule."""
         project = _create_project(organization, workspace, name="Del Project")
-        t1 = _create_trace(project, name="alive-trace")
+        _create_trace(project, name="alive-trace")
         t2 = _create_trace(project, name="dead-trace")
 
         # Soft-delete t2
@@ -655,6 +655,50 @@ class TestAutomationRulesE2E:
         assert result.get("truncated") is True, (
             f"dry_run must propagate truncated from the resolver; got {result!r}"
         )
+
+    def test_filter_mode_overflow_is_all_or_nothing(
+        self, auth_client, organization, workspace
+    ):
+        """A cap+1 match proof must fail before creating any queue item."""
+        from model_hub.services.bulk_selection import ResolveResult
+        from model_hub.utils.annotation_queue_helpers import (
+            AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        )
+
+        project = _create_project(organization, workspace, name="Overflow Project")
+        trace = _create_trace(project, name="overflow-trace")
+        queue_id = _create_queue(auth_client, name="Overflow Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        response = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Overflow rule",
+                "source_type": "trace",
+                "conditions": {"filter": [], "scope": {"project_id": str(project.id)}},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule = AutomationRule.objects.get(pk=response.data["id"])
+
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            return_value=ResolveResult(
+                ids=[trace.id],
+                total_matching=10_001,
+                truncated=True,
+            ),
+        ):
+            result = evaluate_rule(rule, cap=10_000)
+
+        assert result == {
+            "matched": 10_001,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
+        assert not QueueItem.objects.filter(queue_id=queue_id).exists()
 
     def test_preview_rule_requires_queue_manager(
         self, auth_client, organization, workspace
@@ -1253,8 +1297,8 @@ class TestAutomationRulesE2E:
         from tracer.models.trace_session import TraceSession
 
         project = _create_project(organization, workspace, name="Session Project")
-        s1 = TraceSession.objects.create(project=project, name="session-1")
-        s2 = TraceSession.objects.create(project=project, name="session-2")
+        TraceSession.objects.create(project=project, name="session-1")
+        TraceSession.objects.create(project=project, name="session-2")
 
         queue_id = _create_queue(auth_client, name="Session Q1")
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
@@ -1613,9 +1657,7 @@ class TestAutomationRulesE2E:
         )
 
         queue_id = _create_queue(auth_client, name="Simulation eval filter Q")
-        AnnotationQueue.objects.filter(pk=queue_id).update(
-            agent_definition=agent_def
-        )
+        AnnotationQueue.objects.filter(pk=queue_id).update(agent_definition=agent_def)
 
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -1970,9 +2012,7 @@ class TestAutomationRulesE2E:
         # builders' now-30d default: the voice resolver is dispatched with a
         # 1971-lower-bound start_time filter.
         injected = [
-            f
-            for f in captured.get("filters", [])
-            if f.get("column_id") == "start_time"
+            f for f in captured.get("filters", []) if f.get("column_id") == "start_time"
         ]
         assert len(injected) == 1, captured
         assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
@@ -2174,11 +2214,14 @@ class TestAutomationRulesE2E:
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 2
         assert result["added"] == 2
-        assert QueueItem.objects.filter(
-            queue_id=queue_id,
-            dataset_row__dataset=ds2,
-            deleted=False,
-        ).count() == 0
+        assert (
+            QueueItem.objects.filter(
+                queue_id=queue_id,
+                dataset_row__dataset=ds2,
+                deleted=False,
+            ).count()
+            == 0
+        )
 
     # -----------------------------------------------------------------------
     # 24. Scheduled frequency evaluator
@@ -2348,6 +2391,7 @@ class TestAutomationRulesE2E:
         assert summary["evaluated"] == 1
         assert mocked_evaluate_rule.call_count == 1
         assert mocked_evaluate_rule.call_args.args[0].name == "Hourly rule"
+        assert mocked_evaluate_rule.call_args.kwargs["cap"] == 10_000
 
     # -----------------------------------------------------------------------
     # 28. Temporal schedule wiring
@@ -2520,12 +2564,12 @@ class TestAutomationRulesE2E:
         )
 
         for source_type in SOURCE_MODEL_MAP:
-            assert (
-                source_type in FIELD_MAPPING
-            ), f"FIELD_MAPPING missing for source_type={source_type}"
-            assert (
-                len(FIELD_MAPPING[source_type]) > 0
-            ), f"FIELD_MAPPING for {source_type} is empty"
+            assert source_type in FIELD_MAPPING, (
+                f"FIELD_MAPPING missing for source_type={source_type}"
+            )
+            assert len(FIELD_MAPPING[source_type]) > 0, (
+                f"FIELD_MAPPING for {source_type} is empty"
+            )
 
     # -----------------------------------------------------------------------
     # 31. Queue scope is authoritative — rule scope can't redirect inserts
@@ -2840,6 +2884,7 @@ class TestAutomationRulesE2E:
         Two simultaneous evaluations of the same rule are expected to add
         each matching row exactly once and not raise IntegrityError."""
         from threading import Thread
+
         from django.db import close_old_connections
 
         from model_hub.models.annotation_queues import AutomationRule, QueueItem
@@ -2901,9 +2946,7 @@ class TestAutomationRulesE2E:
         # added (because the locked-out runs hit "all matching items already
         # in queue"). The DB must end up with exactly 5 distinct queue
         # items either way.
-        item_count = QueueItem.objects.filter(
-            queue_id=queue_id, deleted=False
-        ).count()
+        item_count = QueueItem.objects.filter(queue_id=queue_id, deleted=False).count()
         assert item_count == 5, (
             f"expected 5 queue items, got {item_count}; results={results}"
         )
@@ -2975,22 +3018,26 @@ class TestAutomationRulesE2E:
             agent_definition=agent_def,
         )
         CallExecution.objects.create(
-            test_execution=test_exec, scenario=scenario,
-            status="completed", simulation_call_type="voice",
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="voice",
         )
         CallExecution.objects.create(
-            test_execution=test_exec, scenario=scenario,
-            status="failed", simulation_call_type="voice",
+            test_execution=test_exec,
+            scenario=scenario,
+            status="failed",
+            simulation_call_type="voice",
         )
         CallExecution.objects.create(
-            test_execution=test_exec, scenario=scenario,
-            status="completed", simulation_call_type="text",
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="text",
         )
 
         queue_id = _create_queue(auth_client, name="Filter Q")
-        AnnotationQueue.objects.filter(pk=queue_id).update(
-            agent_definition=agent_def
-        )
+        AnnotationQueue.objects.filter(pk=queue_id).update(agent_definition=agent_def)
 
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -3042,9 +3089,7 @@ class TestAutomationRulesE2E:
             languages=["en"],
         )
         queue_id = _create_queue(auth_client, name="Unsup Q")
-        AnnotationQueue.objects.filter(pk=queue_id).update(
-            agent_definition=agent_def
-        )
+        AnnotationQueue.objects.filter(pk=queue_id).update(agent_definition=agent_def)
 
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -3120,13 +3165,16 @@ class TestAutomationRuleEvaluateAsyncContract:
         )
         rule_id = resp.data["id"]
 
-        with patch(
-            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
-            0,
-        ), patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            return_value="wf-test-12345",
-        ) as mock_start:
+        with (
+            patch(
+                "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+                0,
+            ),
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                return_value="wf-test-12345",
+            ) as mock_start,
+        ):
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
                 format="json",
@@ -3136,6 +3184,8 @@ class TestAutomationRuleEvaluateAsyncContract:
         assert resp.data["status"] == "scheduled"
         assert resp.data["workflow_id"] == "wf-test-12345"
         assert "email" in resp.data["message"].lower()
+        assert "10,000" in resp.data["message"]
+        assert "nothing will be added" in resp.data["message"].lower()
 
         mock_start.assert_called_once()
         call_kwargs = mock_start.call_args.kwargs
@@ -3145,6 +3195,56 @@ class TestAutomationRuleEvaluateAsyncContract:
         # Stable per-rule id (no per-click suffix) is what lets Temporal dedup
         # a second click while this run is still open.
         assert call_kwargs["task_id"] == f"automation-rule-eval-{rule_id}"
+
+    def test_async_overflow_email_reports_zero_write_ceiling(
+        self, auth_client, organization, workspace
+    ):
+        from model_hub.services.bulk_selection import ResolveResult
+        from model_hub.tasks.annotation_automation import evaluate_rule_manual_async
+        from model_hub.utils.annotation_queue_helpers import (
+            AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        )
+
+        project = _create_project(organization, workspace, name="Async Overflow")
+        trace = _create_trace(project, name="async-overflow-trace")
+        queue_id = _create_queue(auth_client, name="Async Overflow Queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        response = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Async overflow rule",
+                "source_type": "trace",
+                "conditions": {"filter": [], "scope": {"project_id": str(project.id)}},
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = response.data["id"]
+        activity = getattr(
+            evaluate_rule_manual_async,
+            "_original_func",
+            evaluate_rule_manual_async,
+        )
+
+        with (
+            patch(
+                "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+                return_value=ResolveResult(
+                    ids=[trace.id], total_matching=10_001, truncated=True
+                ),
+            ),
+            patch(
+                "model_hub.utils.annotation_queue_helpers.send_rule_completion_email"
+            ) as send_email,
+        ):
+            result = activity(str(rule_id))
+
+        assert result["added"] == 0
+        assert result["error"] == AUTOMATION_RULE_MATCH_LIMIT_ERROR
+        assert not QueueItem.objects.filter(queue_id=queue_id).exists()
+        assert send_email.call_args.kwargs["error_message"] == (
+            AUTOMATION_RULE_MATCH_LIMIT_ERROR
+        )
 
     def test_evaluate_small_run_returns_200_inline(
         self, auth_client, organization, workspace
@@ -3171,9 +3271,7 @@ class TestAutomationRuleEvaluateAsyncContract:
         )
         rule_id = resp.data["id"]
 
-        with patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync"
-        ) as mock_start:
+        with patch("tfc.temporal.drop_in.runner.start_activity_sync") as mock_start:
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
                 format="json",
@@ -3261,18 +3359,21 @@ class TestAutomationRuleEvaluateAsyncContract:
         # Force the async path (threshold 0). First schedule succeeds; the
         # second raises WorkflowAlreadyStartedError exactly as Temporal does when
         # a workflow with the same (stable) id is still running.
-        with patch(
-            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
-            0,
-        ), patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            side_effect=[
-                "wf-inflight",
-                WorkflowAlreadyStartedError(
-                    f"automation-rule-eval-{rule_id}", "TaskRunnerWorkflow"
-                ),
-            ],
-        ) as mock_start:
+        with (
+            patch(
+                "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+                0,
+            ),
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                side_effect=[
+                    "wf-inflight",
+                    WorkflowAlreadyStartedError(
+                        f"automation-rule-eval-{rule_id}", "TaskRunnerWorkflow"
+                    ),
+                ],
+            ) as mock_start,
+        ):
             first = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
             )
@@ -3319,12 +3420,15 @@ class TestAutomationRuleEvaluateAsyncContract:
         )
         rule_id = resp.data["id"]
 
-        with patch(
-            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
-            0,
-        ), patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            side_effect=RuntimeError("temporal unreachable"),
+        with (
+            patch(
+                "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+                0,
+            ),
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                side_effect=RuntimeError("temporal unreachable"),
+            ),
         ):
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",

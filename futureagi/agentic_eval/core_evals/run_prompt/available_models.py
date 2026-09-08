@@ -4078,6 +4078,23 @@ OSS_AVAILABLE_MODELS = [
         "notes": "Gemini 3.5 Flash-Lite; 1M context, 32K max output.",
     },
     {
+        "model_name": "gemini/gemini-3.7-flash",
+        "providers": "gemini",
+        "api_key_name": "GEMINI_API_KEY",
+        "mode": "chat",
+        "best_for": ["agentic workflows", "coding", "multi-step reasoning"],
+        "use_case": ["tool-using agents", "code generation", "document analysis"],
+        "cutoff": "06-2026",
+        "rate_limits": {
+            "requests_per_minute": 15,
+            "requests_per_day": 1000,
+            "tokens_per_minute": 250000,
+        },
+        "latency": 35,
+        "pricing": {"input_per_1M_tokens": 0.75, "output_per_1M_tokens": 3.75},
+        "notes": "Gemini 3.7 Flash; 1M context, 64K max output.",
+    },
+    {
         "model_name": "gemini/gemini-3.1-pro-preview",
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",

@@ -284,6 +284,60 @@ describe("Annotation queue ContentPanel", () => {
     expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
   });
 
+  it("uses the voice drawer for conversation traces outside simulator projects", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        result: {
+          status: "ended",
+          scenario_name: "Vapi inbound call",
+          transcript: [],
+          eval_outputs: {},
+        },
+      },
+    });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace",
+          source_content: {
+            trace_id: "trace-voice-1",
+            observation_type: "conversation",
+            project_source: "prototype",
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+        "data-scenario",
+        "Vapi inbound call",
+      );
+    });
+    expect(screen.queryByTestId("trace-display-panel")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the inline trace view when voice call detail is empty", async () => {
+    axios.get.mockResolvedValue({ data: {} });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace",
+          source_content: {
+            trace_id: "trace-voice-2",
+            observation_type: "conversation",
+            project_source: "prototype",
+          },
+        }}
+      />,
+    );
+
+    await screen.findByTestId("trace-display-panel");
+    expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
+  });
+
   it("copies every dataset field including JSON objects and booleans", async () => {
     const user = userEvent.setup();
 

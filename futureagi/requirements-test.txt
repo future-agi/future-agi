@@ -116,6 +116,8 @@ click-plugins==1.1.1.2
     # via celery
 click-repl==0.3.0
     # via celery
+clickhouse-cityhash==1.0.2.5
+    # via core-backend (pyproject.toml)
 clickhouse-driver==0.2.9
     # via core-backend (pyproject.toml)
 colorama==0.4.6
@@ -443,6 +445,8 @@ lxml==4.9.4
     # via
     #   python-docx
     #   xmlsec
+lz4==4.4.5
+    # via core-backend (pyproject.toml)
 markdown-it-py==3.0.0
     # via rich
 markupsafe==3.0.2

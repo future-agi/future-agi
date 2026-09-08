@@ -4,6 +4,8 @@ Thanks for your interest in contributing! This project exists because of people 
 
 Future AGI is an open-source AI evaluation and observability platform, and we welcome contributions of all kinds: bug fixes, new evaluators, framework integrations, docs improvements, examples, and issue triage.
 
+**Read [CONTRIBUTION_POLICY.md](CONTRIBUTION_POLICY.md) first.** It is one page: the four rules we hold every outside PR to, what gets a PR closed without full review, and what gets one merged fast. This file is the practical how-to; the policy is the contract.
+
 ---
 
 ## Quick links
@@ -25,7 +27,7 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 
 Before we can merge your first pull request, you'll need to sign our Contributor License Agreement. This is a one-click process that runs automatically on your first PR — you'll see a link to sign, we merge after.
 
-The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder). 
+The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder).
 
 ---
 
@@ -92,9 +94,10 @@ Before filing, search [existing issues](https://github.com/future-agi/future-agi
 
 ### ✨ Proposing features
 
-For anything larger than a few hours of work, **open an issue first** so we can discuss design before you write code. This saves everyone time.
+For anything larger than a few hours of work, **open an issue first** and wait for a maintainer to label it `accepted` before you write code. PRs for un-accepted work are closed with a pointer back to the issue (see the [policy](CONTRIBUTION_POLICY.md)). This saves everyone time, yours most of all.
 
 Good feature requests:
+
 - Describe the problem you're trying to solve
 - Show (don't tell) — a mockup, a code snippet of the desired API
 - List alternatives you considered
@@ -102,14 +105,18 @@ Good feature requests:
 
 ### 🔧 Your first PR
 
-1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) (or open one)
+1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or an issue labelled `accepted` (or open one and wait for the label)
 2. Comment that you're working on it so we don't double-up
 3. Branch from `dev`: `git checkout -b fix/short-description`
 4. Make your change — keep the diff small and focused
-5. Add tests (every bug fix needs a regression test)
-6. Make sure `make check-all` passes
-7. Push and open a PR using the template
+5. Add tests (every bug fix needs a regression test that fails without the fix)
+6. Run it for real: `make check-all`, and the affected app's tests via `bin/test app <name>`
+7. Push and open a PR using the template. Paste the actual test output; fill the `E2E:` and `AI use:` lines
 8. Sign the CLA when the bot asks
+
+If you are an automated agent opening this PR on someone's behalf, add `[agent]` to the end of the title so we can route it to the streamlined agent-review lane.
+
+Outside contributors can have **three PRs open at a time**. After two merges you're added to the bypass list and the limit no longer applies.
 
 ### 🧪 Adding a new evaluator
 
@@ -119,7 +126,7 @@ Most evaluators live under `futureagi/agentic_eval/core_evals/fi_evals/`. Each e
 2. A rubric prompt (if LLM-as-judge) — in the evaluator's own `prompt.py`
 3. A registration entry in `eval_type.py`
 4. Tests in the nearest `tests/` directory
-5. Docs in `docs/evaluators/` *(separate docs repo)*
+5. Docs in `docs/evaluators/` _(separate docs repo)_
 
 See [adding an evaluator](https://docs.futureagi.com/docs/evaluation/features/custom) for the full walkthrough.
 
@@ -154,6 +161,8 @@ Before requesting review:
 - [ ] Docstrings on new public APIs
 - [ ] [CHANGELOG](https://futureagi.com/changelog) updated if user-facing
 - [ ] No hardcoded secrets, URLs, or PII
+- [ ] `AI use:` line filled in (tool and extent, or `none`)
+- [ ] Linked issue is labelled `accepted` (or the change is a small fix)
 - [ ] CLA signed (bot will prompt on first PR)
 
 Your PR will be reviewed by a maintainer within **3 business days**. If it's been longer, feel free to `@mention` one of us.

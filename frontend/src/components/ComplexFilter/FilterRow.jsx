@@ -13,7 +13,14 @@ import { ShowComponent } from "../show";
 import SvgColor from "../svg-color";
 import FilterRowMenu from "./FilterRowMenu";
 import { FormSearchSelectFieldState } from "../FromSearchSelectField";
-import { getFilterType } from "./common";
+import {
+  filterDefinitionMatchesSelection,
+  filtersSharePropertyIdentity,
+  getFilterDefinitionIdentity,
+  getFilterDefinitionSelectionValue,
+  getFilterType,
+  isFilterDefinitionAtMaxUsage,
+} from "./common";
 
 const FilterRow = ({
   index,
@@ -24,6 +31,8 @@ const FilterRow = ({
   filterDefinition,
   defaultFilter,
   propertyIdCount,
+  projectId,
+  onAttributeSearchChange,
 }) => {
   const parentProperty = filter?._meta?.parentProperty || "";
   const filterRef = useRef(null);
@@ -35,18 +44,16 @@ const FilterRow = ({
     const parentPath = path.slice(0, -1);
 
     for (const parentProperty of parentPath) {
-      const foundObject = findArray.find(
-        (item) =>
-          item.propertyName === parentProperty ||
-          item.propertyId === parentProperty,
+      const foundObject = findArray.find((item) =>
+        filterDefinitionMatchesSelection(item, parentProperty),
       );
       if (foundObject) {
         findArray = foundObject.dependents;
       }
     }
 
-    const ogDefinition = findArray.find(
-      (item) => item.propertyName === property || item.propertyId === property,
+    const ogDefinition = findArray.find((item) =>
+      filterDefinitionMatchesSelection(item, property),
     );
     if (!ogDefinition) return <></>;
     if (!ogDefinition?.dependents?.length) {
@@ -57,22 +64,16 @@ const FilterRow = ({
           definition={ogDefinition}
           filter={filter}
           updateFilter={updateFilter}
+          projectId={projectId}
         />
       );
     } else {
       const dependents = ogDefinition?.dependents?.filter((def) => {
-        if (
-          def.maxUsage &&
-          propertyIdCount[def.propertyId] >= def.maxUsage &&
-          filter.column_id !== def.propertyId
-        ) {
-          return false;
-        }
-        return true;
+        return !isFilterDefinitionAtMaxUsage(def, propertyIdCount, filter);
       });
 
-      const currentDependent = dependents.find(
-        (d) => d?.propertyId === filter?._meta?.[property],
+      const currentDependent = dependents.find((definition) =>
+        filterDefinitionMatchesSelection(definition, filter?._meta?.[property]),
       );
 
       return (
@@ -89,20 +90,21 @@ const FilterRow = ({
             size="small"
             options={dependents.map((item) => ({
               label: item.propertyName,
-              value: item?.propertyId || item?.propertyName,
+              value: getFilterDefinitionSelectionValue(item),
             }))}
             value={filter?._meta?.[property] || ""}
+            onSearchChange={
+              property === "Attribute" ? onAttributeSearchChange : undefined
+            }
             sx={{ maxWidth: "280px", width: "280px" }}
             onChange={(e) => {
-              const dependentOgDefinition = dependents.find(
-                (item) =>
-                  item.propertyId === e.target.value ||
-                  item.propertyName === e.target.value,
+              const dependentOgDefinition = dependents.find((item) =>
+                filterDefinitionMatchesSelection(item, e.target.value),
               );
 
               if (dependentOgDefinition?.propertyId) {
                 updateFilter(filter.id, (existingFilter) => ({
-                  column_id: dependentOgDefinition.propertyId,
+                  ...getFilterDefinitionIdentity(dependentOgDefinition),
                   filter_config: {
                     filter_type: getFilterType(dependentOgDefinition),
                     filter_op:
@@ -140,18 +142,18 @@ const FilterRow = ({
                 {...props}
                 data={dependents.map((item) => ({
                   label: item.propertyName,
-                  value: item?.propertyId || item?.propertyName,
+                  value: getFilterDefinitionSelectionValue(item),
                 }))}
                 onSelect={(e) => {
                   const dependentOgDefinition = dependents.find(
                     (item) =>
-                      item.propertyId === e.value ||
-                      item.propertyName === e.label,
+                      filterDefinitionMatchesSelection(item, e.value) ||
+                      filterDefinitionMatchesSelection(item, e.label),
                   );
 
                   if (dependentOgDefinition?.propertyId) {
                     updateFilter(filter.id, (existingFilter) => ({
-                      column_id: dependentOgDefinition.propertyId,
+                      ...getFilterDefinitionIdentity(dependentOgDefinition),
                       filter_config: {
                         filter_type: getFilterType(dependentOgDefinition),
                         filter_op:
@@ -227,9 +229,11 @@ const FilterRow = ({
                   currentDependent["filterType"] = filterType;
 
                   const findDependentIndex =
-                    currentfilterDef?.dependents?.findIndex(
-                      (ogdef) =>
-                        ogdef?.propertyId === currentDependent?.propertyId,
+                    currentfilterDef?.dependents?.findIndex((definition) =>
+                      filtersSharePropertyIdentity(
+                        definition,
+                        currentDependent,
+                      ),
                     );
 
                   if (findDependentIndex === -1) return;
@@ -237,7 +241,11 @@ const FilterRow = ({
                     currentDependent;
 
                   const findFilterDefIndex = filterDefCopy?.findIndex(
-                    (fd) => fd?.propertyName === currentfilterDef?.propertyName,
+                    (definition) =>
+                      filterDefinitionMatchesSelection(
+                        definition,
+                        getFilterDefinitionSelectionValue(currentfilterDef),
+                      ),
                   );
                   if (findFilterDefIndex === -1) return;
                   filterDefCopy[findFilterDefIndex] = currentfilterDef;
@@ -291,19 +299,17 @@ const FilterRow = ({
           size="small"
           options={filterDefinition.map((item) => ({
             label: item.propertyName,
-            value: item?.propertyId || item?.propertyName,
+            value: getFilterDefinitionSelectionValue(item),
           }))}
           value={parentProperty}
           sx={{ maxWidth: "250px", width: "250px" }}
           onChange={(e) => {
-            const ogDefinition = filterDefinition.find(
-              (item) =>
-                item.propertyName === e.target.value ||
-                item.propertyId === e.target.value,
+            const ogDefinition = filterDefinition.find((item) =>
+              filterDefinitionMatchesSelection(item, e.target.value),
             );
             if (ogDefinition?.propertyId) {
               updateFilter(filter.id, {
-                column_id: ogDefinition.propertyId,
+                ...getFilterDefinitionIdentity(ogDefinition),
                 filter_config: {
                   filter_type: getFilterType(ogDefinition),
                   filter_op:
@@ -336,18 +342,18 @@ const FilterRow = ({
               {...props}
               data={filterDefinition.map((item) => ({
                 label: item.propertyName,
-                value: item?.propertyId || item?.propertyName,
+                value: getFilterDefinitionSelectionValue(item),
               }))}
               onSelect={(e) => {
                 const ogDefinition = filterDefinition.find(
                   (item) =>
-                    item.propertyName === e.value ||
-                    item.propertyId === e.value,
+                    filterDefinitionMatchesSelection(item, e.value) ||
+                    filterDefinitionMatchesSelection(item, e.label),
                 );
 
                 if (ogDefinition?.propertyId) {
                   updateFilter(filter.id, {
-                    column_id: ogDefinition.propertyId,
+                    ...getFilterDefinitionIdentity(ogDefinition),
                     filter_config: {
                       filter_type: getFilterType(ogDefinition),
                       filter_op:
@@ -432,14 +438,18 @@ FilterRow.propTypes = {
   filter: PropTypes.shape({
     id: PropTypes.string.isRequired,
     column_id: PropTypes.string,
+    registryId: PropTypes.string,
+    property_id: PropTypes.string,
     filter_config: PropTypes.shape({
       filter_type: PropTypes.string,
       filter_op: PropTypes.string,
       filter_value: PropTypes.oneOfType([
         PropTypes.string,
+        PropTypes.number,
         PropTypes.array,
         PropTypes.bool,
       ]),
+      attribute_value_types: PropTypes.arrayOf(PropTypes.string),
     }),
     _meta: PropTypes.shape({
       parentProperty: PropTypes.string,
@@ -450,6 +460,8 @@ FilterRow.propTypes = {
     PropTypes.shape({
       propertyName: PropTypes.string.isRequired,
       propertyId: PropTypes.string,
+      registryId: PropTypes.string,
+      property_id: PropTypes.string,
       filterType: PropTypes.shape({
         type: PropTypes.string.isRequired,
         options: PropTypes.array,
@@ -462,6 +474,8 @@ FilterRow.propTypes = {
   ).isRequired,
   defaultFilter: PropTypes.object.isRequired,
   propertyIdCount: PropTypes.object.isRequired,
+  projectId: PropTypes.string,
+  onAttributeSearchChange: PropTypes.func,
 };
 
 export default FilterRow;

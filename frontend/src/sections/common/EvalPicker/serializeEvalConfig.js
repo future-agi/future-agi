@@ -6,6 +6,8 @@
 // backend contract consumed by normalize_eval_runtime_config and the simulation
 // runner. Edit-reopen flows should read from that canonical location instead
 // of depending on duplicate top-level payload keys.
+import { isClearedMappingValue } from "src/sections/evals/utils/evalMappingPath";
+
 const RUN_CONFIG_KEYS = [
   "model",
   "agent_mode",
@@ -22,11 +24,12 @@ const RUN_CONFIG_KEYS = [
 // A cleared auto-mapped field reaches us as "" — the eval runner treats a
 // present-but-empty path as a required attribute it can never resolve and
 // fails every row, while an absent key falls through to context injection.
+// `isClearedMappingValue` is imported rather than restated so this stays one
+// definition of what a mapping value may be.
 export function sanitizeEvalMapping(mapping) {
   return Object.fromEntries(
     Object.entries(mapping || {}).filter(
-      ([, path]) =>
-        path != null && !(typeof path === "string" && path.trim() === ""),
+      ([, path]) => !isClearedMappingValue(path),
     ),
   );
 }

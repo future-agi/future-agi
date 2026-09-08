@@ -1,0 +1,66 @@
+eval_id: 204
+name: lead_qualification_completeness
+description: Evaluates whether an agent qualifies a lead completely across a multi-turn voice or chat conversation - discovers
+  needs, carries earlier answers forward without redundant re-asking, confirms critical details, and secures a consented next
+  step.
+criteria: "You are evaluating whether an agent qualifies a lead completely and correctly over the course of a conversation.\n\
+  \n## Criteria\n1. Needs discovery and suitability: The agent elicits the qualifying details its prompt defines and aligns\
+  \ any recommendation or routing to what the customer actually needs.\n2. Progressive qualification: The agent builds on\
+  \ what the customer has already said rather than treating each turn independently, and does not re-ask for details already\
+  \ given.\n3. Confirmed details and a next step: Critical values are read back or confirmed, and the agent secures a valid\
+  \ next step - callback consent, contact confirmation, appointment, or handoff - as authorized.\n\n## Anti-bias Rules\n-\
+  \ Qualification may be gathered across several turns in any order; judge the conversation as a whole, do not require a fixed\
+  \ script, and treat a detail the customer volunteers as captured.\n- A customer's refusal to share a detail, a field irrelevant\
+  \ to the flow, and a clarifying follow-up about an ambiguous answer are not failures.\n- Do not penalize transcription noise\
+  \ in a voice transcript; what matters is whether the agent sought and confirmed the information.\n\n## Scoring\n- Return\
+  \ PASS if, over the whole conversation, the agent captures the qualification details relevant to its flow, carries them\
+  \ forward without redundant re-asking, aligns to the customer's needs, and secures or attempts a consented next step.\n\
+  - Return FAIL if it skips required qualification, repeatedly re-asks for known details, mis-aligns its recommendation, fails\
+  \ to confirm critical details, or secures no next step.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+eval_tags:
+- Agents
+- Conversation
+- Voice
+- Insurance
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: The agent's system prompt (qualification flow and required details)
+    conversation: The conversation to be evaluated
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+  rule_prompt: "You are evaluating whether an agent qualifies a lead completely and correctly over the course of a conversation.\n\
+    \n## Criteria\n1. Needs discovery and suitability: The agent elicits the qualifying details its prompt defines and aligns\
+    \ any recommendation or routing to what the customer actually needs.\n2. Progressive qualification: The agent builds on\
+    \ what the customer has already said rather than treating each turn independently, and does not re-ask for details already\
+    \ given.\n3. Confirmed details and a next step: Critical values are read back or confirmed, and the agent secures a valid\
+    \ next step - callback consent, contact confirmation, appointment, or handoff - as authorized.\n\n## Anti-bias Rules\n\
+    - Qualification may be gathered across several turns in any order; judge the conversation as a whole, do not require a\
+    \ fixed script, and treat a detail the customer volunteers as captured.\n- A customer's refusal to share a detail, a field\
+    \ irrelevant to the flow, and a clarifying follow-up about an ambiguous answer are not failures.\n- Do not penalize transcription\
+    \ noise in a voice transcript; what matters is whether the agent sought and confirmed the information.\n\n## Scoring\n\
+    - Return PASS if, over the whole conversation, the agent captures the qualification details relevant to its flow, carries\
+    \ them forward without redundant re-asking, aligns to the customer's needs, and secures or attempts a consented next step.\n\
+    - Return FAIL if it skips required qualification, repeatedly re-asks for known details, mis-aligns its recommendation,\
+    \ fails to confirm critical details, or secures no next step.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+    <conversation>{{conversation}}</conversation>"

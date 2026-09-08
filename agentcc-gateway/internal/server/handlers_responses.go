@@ -59,10 +59,9 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
 
-	// Extract Agentcc metadata (with security key blocklist).
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		parseMetadataHeader(meta, rc)
-	}
+	// Caller dimensions, from the x-agentcc-metadata header and the body's metadata field.
+	applyCallerMetadata(rc, r, req.Metadata)
+	applyCallerExtras(rc, req.Extra)
 
 	// Resolve timeout.
 	timeout := h.resolveTimeout(rc, r)

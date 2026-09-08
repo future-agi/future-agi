@@ -138,6 +138,7 @@ describe("axios response shape", () => {
     };
 
     const error = {
+      code: "ECONNABORTED",
       config: { url: "/accounts/2fa/recovery-codes/", method: "get" },
       response: {
         status: 400,
@@ -149,6 +150,7 @@ describe("axios response shape", () => {
     await expect(rejected(error)).rejects.toMatchObject({
       ...errorEnvelope,
       statusCode: 400,
+      transportCode: "ECONNABORTED",
     });
   });
 });

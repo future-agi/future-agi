@@ -14,7 +14,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
-	_ "github.com/futureagi/agentcc-gateway/internal/translation/gemini" // register translator
+	geminitrans "github.com/futureagi/agentcc-gateway/internal/translation/gemini"
 )
 
 // GenAIHandler handles POST /v1beta/models/{model_action} — native Google GenAI API pass-through.
@@ -85,6 +85,10 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Request body exceeds maximum size of %d bytes", h.maxBodySize))
 		return
 	}
+
+	// Caller dimensions from the body's own non-spec fields. Read from the raw
+	// bytes: the native pass-through below never unmarshals this body.
+	applyCallerExtrasFromBody(rc, body, geminitrans.KnownRequestFields())
 
 	// Resolve timeout and context.
 	timeout := h.resolveTimeout(rc, r)

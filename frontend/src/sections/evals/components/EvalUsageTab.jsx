@@ -1,6 +1,6 @@
-/* eslint-disable react/prop-types */
 import {
   Box,
+  Button,
   ButtonBase,
   Chip,
   IconButton,
@@ -15,6 +15,7 @@ import React, { useCallback, useMemo, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import Editor from "@monaco-editor/react";
 import { useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
@@ -46,6 +47,10 @@ import {
 } from "../Helpers/evalUsageColumns";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+} from "src/utils/queryReadState";
 
 // ── Main ──
 const EvalUsageTab = ({
@@ -77,25 +82,99 @@ const EvalUsageTab = ({
   }, [dateOption, dateFilter]);
 
   // Split queries
-  const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
-    templateId,
-    period,
-    dateOption,
-    dateFilter,
-  );
+  const {
+    data: chartData,
+    isLoading: chartLoading,
+    isFetching: chartFetching,
+    isError: chartError,
+    isPollingPaused: chartPollingPaused,
+    refresh: refreshChart,
+  } = useEvalUsageChart(templateId, period, dateOption, dateFilter);
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period, dateOption, dateFilter });
+    isError: logsError,
+    isPollingPaused: logsPollingPaused,
+    refresh: refreshLogs,
+  } = useEvalUsageLogs(templateId, {
+    page,
+    pageSize,
+    period,
+    dateOption,
+    dateFilter,
+  });
 
-  const stats = chartData?.stats || {};
-  const chart = chartData?.chart || [];
-  const totalLogs = logsData?.pagination?.total || 0;
+  const chartSnapshotKey = useMemo(
+    () => JSON.stringify([templateId, period, dateOption, dateFilter]),
+    [dateFilter, dateOption, period, templateId],
+  );
+  const logsSnapshotKey = useMemo(
+    () =>
+      JSON.stringify([
+        templateId,
+        period,
+        dateOption,
+        dateFilter,
+        page,
+        pageSize,
+      ]),
+    [dateFilter, dateOption, page, pageSize, period, templateId],
+  );
+  const [lastExactChart, setLastExactChart] = useState(null);
+  const [lastExactLogs, setLastExactLogs] = useState(null);
+  const currentExactChart =
+    chartData && !chartData.queryPending ? chartData : undefined;
+  const currentExactLogs =
+    logsData && !logsData.queryPending ? logsData : undefined;
+
+  React.useEffect(() => {
+    if (!currentExactChart) return;
+    setLastExactChart({ key: chartSnapshotKey, data: currentExactChart });
+  }, [chartSnapshotKey, currentExactChart]);
+
+  React.useEffect(() => {
+    if (!currentExactLogs) return;
+    setLastExactLogs({ key: logsSnapshotKey, data: currentExactLogs });
+  }, [currentExactLogs, logsSnapshotKey]);
+
+  const displayChartData =
+    currentExactChart ||
+    (lastExactChart?.key === chartSnapshotKey
+      ? lastExactChart.data
+      : undefined);
+  const displayLogsData =
+    currentExactLogs ||
+    (lastExactLogs?.key === logsSnapshotKey ? lastExactLogs.data : undefined);
+  const stats = displayChartData?.stats || {};
+  const chart = displayChartData?.chart || [];
+  const totalLogs = displayLogsData?.pagination?.total || 0;
+  // Empty/zero states are valid only after a complete exact response. Missing,
+  // pending, and failed responses remain neutral preparation states; a prior
+  // exact snapshot for the same query stays visible during refresh/polling.
+  const chartUnavailable = !displayChartData;
+  const logsUnavailable = !displayLogsData;
+  // Retained exact/pending data can still carry query_refreshing=true after
+  // this client has exhausted its bounded transport retries. A terminal hook
+  // error wins over that stale server metadata so Refresh/Retry is available.
+  const chartRefreshing =
+    !chartError && (chartFetching || chartData?.queryRefreshing);
+  const logsRefreshing =
+    !logsError && (logsFetching || logsData?.queryRefreshing);
+  const isRefreshing = chartRefreshing || logsRefreshing;
+  const completedAt = displayChartData?.queryCompletedAt
+    ? new Date(displayChartData.queryCompletedAt)
+    : null;
+  const validCompletedAt =
+    completedAt && !Number.isNaN(completedAt.getTime()) ? completedAt : null;
+  const handleRefresh = useCallback(() => {
+    refreshChart();
+    refreshLogs();
+  }, [refreshChart, refreshLogs]);
 
   const logItems = useMemo(
-    () => (logsData?.table || []).map(normalizeRow),
-    [logsData?.table],
+    () => (displayLogsData?.table || []).map(normalizeRow),
+    [displayLogsData?.table],
   );
 
   const baseColumnConfig = useMemo(() => {
@@ -103,7 +182,7 @@ const EvalUsageTab = ({
     // Discover input_var_* columns from the row data
     const seen = new Set(base.map((c) => c.value));
     const extra = [];
-    (logsData?.table || []).forEach((row) => {
+    (displayLogsData?.table || []).forEach((row) => {
       Object.keys(row).forEach((k) => {
         if (k.startsWith("input_var_") && !seen.has(k)) {
           seen.add(k);
@@ -118,7 +197,7 @@ const EvalUsageTab = ({
       });
     });
     return extra.length ? [...base, ...extra] : base;
-  }, [logsData?.table]);
+  }, [displayLogsData?.table]);
 
   const storageKey = columnConfigStorageKey(templateId);
 
@@ -126,7 +205,10 @@ const EvalUsageTab = ({
     const fromUrl = searchParams.get(COLUMN_CONFIG_URL_PARAM);
     const decodedUrl = decodeColumnConfig(fromUrl, baseColumnConfig);
     if (decodedUrl) return decodedUrl;
-    const decodedStorage = decodeColumnConfig(getStorage(storageKey), baseColumnConfig);
+    const decodedStorage = decodeColumnConfig(
+      getStorage(storageKey),
+      baseColumnConfig,
+    );
     if (decodedStorage) return decodedStorage;
     return baseColumnConfig;
   }, [searchParams, baseColumnConfig, storageKey]);
@@ -267,7 +349,14 @@ const EvalUsageTab = ({
             gap: 2,
           }}
         >
-          <Box sx={{ flexShrink: 0 }}>
+          <Box
+            sx={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+            }}
+          >
             <DateTimeRangePicker
               dateOption={dateOption}
               setDateOption={(opt) => {
@@ -275,11 +364,44 @@ const EvalUsageTab = ({
                 setPage(0);
                 if (opt !== "Custom") setDateFilter(null);
               }}
-              setParentDateFilter={setDateFilter}
+              setParentDateFilter={(nextDateFilter) => {
+                setDateFilter(nextDateFilter);
+                setPage(0);
+              }}
               dateFilter={dateFilter}
             />
+            {validCompletedAt && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Last updated {format(validCompletedAt, "MMM d, yyyy, h:mm a")}
+              </Typography>
+            )}
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Iconify icon="mdi:refresh" width={16} />}
+              disabled={isRefreshing}
+              onClick={handleRefresh}
+              sx={{ textTransform: "none" }}
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+            {(chartError ||
+              logsError ||
+              chartPollingPaused ||
+              logsPollingPaused) &&
+              (displayChartData || displayLogsData) && (
+                <Typography
+                  role="status"
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  {chartError || logsError
+                    ? QUERY_FAILED_RETRY_MESSAGE
+                    : AGGREGATION_POLLING_PAUSED_MESSAGE}
+                </Typography>
+              )}
           </Box>
-          {!chartLoading && (
+          {!chartLoading && displayChartData && (
             <Box
               sx={{
                 display: "flex",
@@ -340,6 +462,31 @@ const EvalUsageTab = ({
         >
           {chartLoading ? (
             <Skeleton variant="rounded" width="100%" height="100%" />
+          ) : chartUnavailable ? (
+            <Box
+              role="status"
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 1,
+                height: "100%",
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                {chartError
+                  ? QUERY_FAILED_RETRY_MESSAGE
+                  : chartPollingPaused
+                    ? AGGREGATION_POLLING_PAUSED_MESSAGE
+                    : "Loading results…"}
+              </Typography>
+              {!chartRefreshing && (
+                <Button size="small" onClick={handleRefresh}>
+                  Retry
+                </Button>
+              )}
+            </Box>
           ) : chart.length > 0 ? (
             <UsageChart data={chart} outputType={outputType} />
           ) : (
@@ -352,7 +499,8 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-              No data to show for selected period, update filters to view graph/data when no data is available.
+                No data to show for selected period, update filters to view
+                graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -389,9 +537,10 @@ const EvalUsageTab = ({
                 </Typography>
               )}
             </Typography>
-            <Box sx={{ width: 200, display: "flex", alignItems: "center", gap: 1, }}>
+            <Box
+              sx={{ width: 200, display: "flex", alignItems: "center", gap: 1 }}
+            >
               <CustomTooltip
-
                 show={true}
                 title={"View Column"}
                 placement="bottom"
@@ -419,32 +568,61 @@ const EvalUsageTab = ({
                   minWidth: "120px",
                   "& .MuiOutlinedInput-root": { height: "30px" },
                 }}
-
               />
             </Box>
           </Box>
           <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
-            <DataTable
-              columns={columns}
-              data={filteredLogs}
-              isLoading={logsLoading && !logsData}
-              rowCount={totalLogs}
-              onRowClick={handleRowClick}
-              emptyMessage="No evaluation logs for this period"
-            />
+            {logsUnavailable ? (
+              <Box
+                role="status"
+                sx={{
+                  minHeight: 160,
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 1,
+                }}
+              >
+                <Typography variant="caption" color="text.secondary">
+                  {logsError
+                    ? QUERY_FAILED_RETRY_MESSAGE
+                    : logsPollingPaused
+                      ? AGGREGATION_POLLING_PAUSED_MESSAGE
+                      : "Loading results…"}
+                </Typography>
+                {!logsRefreshing && (
+                  <Button size="small" onClick={() => refreshLogs()}>
+                    Retry
+                  </Button>
+                )}
+              </Box>
+            ) : (
+              <DataTable
+                columns={columns}
+                data={filteredLogs}
+                isLoading={logsLoading && !displayLogsData}
+                rowCount={totalLogs}
+                onRowClick={handleRowClick}
+                emptyMessage="No evaluation logs for this period"
+              />
+            )}
           </Box>
-          <Box sx={{ flexShrink: 0 }}>
-            <DataTablePagination
-              page={page}
-              pageSize={pageSize}
-              total={totalLogs}
-              onPageChange={setPage}
-              onPageSizeChange={(s) => {
-                setPageSize(s);
-                setPage(0);
-              }}
-            />
-          </Box>
+          {!logsUnavailable && (
+            <Box sx={{ flexShrink: 0 }}>
+              <DataTablePagination
+                page={page}
+                pageSize={pageSize}
+                total={totalLogs}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPage(0);
+                }}
+              />
+            </Box>
+          )}
         </Box>
       </Box>
 
@@ -604,7 +782,7 @@ const DetailPanelContent = ({
 }) => {
   const { role } = useAuthContext();
   const canEditEvals = Boolean(
-    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
   );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -645,9 +823,9 @@ const DetailPanelContent = ({
               backgroundColor:
                 viewMode === m
                   ? (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.08)"
-                      : "action.hover"
+                      t.palette.mode === "dark"
+                        ? "rgba(255,255,255,0.08)"
+                        : "action.hover"
                   : "transparent",
               "&:hover": {
                 backgroundColor: (t) =>
@@ -781,7 +959,7 @@ const DetailPanelContent = ({
                   label="Version"
                   value={
                     typeof row.version === "number" ||
-                      !String(row.version).startsWith("v")
+                    !String(row.version).startsWith("v")
                       ? `v${row.version}`
                       : String(row.version)
                   }
@@ -1052,6 +1230,14 @@ const DetailPanelContent = ({
   );
 };
 
+DetailPanelContent.propTypes = {
+  row: PropTypes.object.isRequired,
+  isDark: PropTypes.bool,
+  templateId: PropTypes.string.isRequired,
+  evalType: PropTypes.string,
+  onFeedbackSubmitted: PropTypes.func,
+};
+
 // ── Composite children section in detail panel ──
 const CompositeChildrenSection = ({ row }) => {
   const children = row.detail?.children || [];
@@ -1195,6 +1381,9 @@ const CompositeChildrenSection = ({ row }) => {
   );
 };
 
+CompositeChildrenSection.propTypes = {
+  row: PropTypes.object.isRequired,
+};
 
 const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   <Box
@@ -1255,8 +1444,19 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   </Box>
 );
 
+DetailRow.propTypes = {
+  label: PropTypes.string.isRequired,
+  value: PropTypes.node,
+  color: PropTypes.string,
+  chip: PropTypes.bool,
+  chipColor: PropTypes.string,
+  mono: PropTypes.bool,
+};
+
 EvalUsageTab.propTypes = {
   templateId: PropTypes.string.isRequired,
+  outputType: PropTypes.string,
+  evalType: PropTypes.string,
 };
 
 export default EvalUsageTab;

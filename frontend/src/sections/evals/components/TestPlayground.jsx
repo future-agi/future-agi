@@ -31,6 +31,7 @@ import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import logger from "src/utils/logger";
 import { canonicalEntries } from "src/utils/utils";
 import { camelCaseToTitleCase } from "src/utils/utils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import CodeEditor from "./CodeEditor";
 import DatasetTestMode from "./DatasetTestMode";
 import TracingTestMode from "./TracingTestMode";
@@ -1045,7 +1046,7 @@ const TestPlayground = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
@@ -1059,12 +1060,10 @@ const TestPlayground = React.forwardRef(
         if (handleCreditError(err)) {
           onTestResult?.(false, err?.result || "Usage limit exceeded");
         } else {
-          const errMsg =
-            err?.result ||
-            err?.detail ||
-            err?.response?.data?.result ||
-            err?.message ||
-            "Failed to run evaluation";
+          const errMsg = getSafeActionErrorMessage(
+            err,
+            "Failed to run evaluation. Please retry.",
+          );
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }

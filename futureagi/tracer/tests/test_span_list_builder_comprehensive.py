@@ -140,9 +140,9 @@ class TestBuild:
         # `AND ...` predicate (model is an always-selected column, so its bare
         # presence proves nothing — the compiled predicate + param value do).
         # `model` is a case-insensitive column, so equals compiles to
-        # `lower(model) = %(...)s` and the value is lower-cased.
+        # `lowerUTF8(toString(model)) = %(...)s` and the value is lower-cased.
         assert "gpt-4o-mini" in params.values()
-        assert "lower(model) = %(" in sql
+        assert "lowerUTF8(toString(model)) = %(" in sql
 
     def test_project_version_fragment(self):
         sql, params = _make_builder(project_version_id="pv-1").build()
@@ -387,7 +387,10 @@ class TestBuildEvalQuery:
         assert "tracer_eval_logger FINAL" not in sql  # no table-level FINAL
         assert "ORDER BY _peerdb_version DESC" in sql
         assert "LIMIT 1 BY id" in sql
-        assert "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)" in sql
+        assert "_peerdb_is_deleted AS latest_state_0" in sql
+        assert "deleted AS latest_state_1" in sql
+        assert "latest_state_0 = 0" in sql
+        assert "(latest_state_1 = 0 OR latest_state_1 IS NULL)" in sql
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_v2_table_uses_is_deleted(self):
@@ -399,7 +402,8 @@ class TestBuildEvalQuery:
         assert "FROM tracer_eval_logger_v2" in sql
         assert "tracer_eval_logger_v2 FINAL" not in sql  # no table-level FINAL
         assert "LIMIT 1 BY id" in sql
-        assert "is_deleted = 0" in sql
+        assert "is_deleted AS latest_state_0" in sql
+        assert "latest_state_0 = 0" in sql
 
 
 # --------------------------------------------------------------------------- #
@@ -438,8 +442,10 @@ class TestBuildAnnotationQuery:
         sql, _ = _make_builder(annotation_label_ids=[LABEL_ID]).build_annotation_query(
             span_ids=["s1"]
         )
-        assert "_peerdb_is_deleted = 0" in sql
-        assert "deleted = false" in sql
+        assert "_peerdb_is_deleted AS latest_cdc_deleted" in sql
+        assert "deleted AS latest_soft_deleted" in sql
+        assert "latest_cdc_deleted = 0" in sql
+        assert "latest_soft_deleted = false" in sql
 
 
 # --------------------------------------------------------------------------- #

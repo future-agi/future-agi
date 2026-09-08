@@ -104,7 +104,6 @@ export function useGroundTruthStatus(gtId, { enabled = true } = {}) {
   });
 }
 
-
 // ── Atomic save of the whole GT tab (variable mapping + role mapping +
 // injection config). Backs the single Save button on the FE GT tab.
 // One PUT, one notification. The BE service refuses without a real
@@ -184,4 +183,3 @@ export function useTriggerEmbedding() {
     },
   });
 }
-

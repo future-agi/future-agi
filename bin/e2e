@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# E2E stack + suite runner. See e2e/README.md.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$ROOT/e2e/stack/e2e.env"
+COMPOSE=(docker compose --env-file "$ENV_FILE"
+  -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
+  -p futureagi-e2e)
+# Trimmed profile: no serving/code-executor, single ALL_QUEUES worker. PeerDB
+# is included — eval/annotation/dashboard reads are CDC-only. The flow workers
+# must be named (nothing depends_on them); peerdb-init is one-shot and handled
+# separately in `up` (compose --wait treats an exiting service as a failure).
+SERVICES=(frontend backend worker postgres clickhouse redis rabbitmq minio
+  temporal agentcc-gateway fi-collector mock-llm
+  peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
+  # nothing depends_on peerdb-minio, but the CH peer validates by writing to
+  # it and every mirror sync stages through it — without it ch_dest is never
+  # created and peerdb-init "succeeds" with zero mirrors.
+  peerdb-minio)
+# Mirrors whose CH destination table is behind the PG model (PeerDB
+# validates PG columns ⊆ CH columns). Known product schema drift, ticketed;
+# their CREATE MIRROR failures are reported as warnings until the DDL is fixed.
+KNOWN_DRIFTED_MIRRORS='model_hub_score|simulate_agent_definition'
+
+backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
+ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
+frontend_port() { grep '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
+
+# Runs a one-shot service to completion and returns its exit code. Recreated
+# every call so `logs` shows this run's output, not an accumulation.
+run_one_shot() {
+  local service="$1" budget="$2" state deadline
+  "${COMPOSE[@]}" up -d --force-recreate "$service"
+  # Budget starts only after up -d returns: that call itself cold-boots the
+  # peerdb substack (catalog/temporal/flow-api + temporal-init) via depends_on.
+  deadline=$((SECONDS + budget))
+  while true; do
+    state="$("${COMPOSE[@]}" ps -a "$service" --format '{{.State}} {{.ExitCode}}')"
+    case "$state" in
+      exited*) return "${state##* }" ;;
+    esac
+    ((SECONDS < deadline)) || { echo "$service not done in ${budget}s"; exit 1; }
+    sleep 3
+  done
+}
+
+# Splits peerdb-init's ERROR: lines into the ticketed schema-drift allowlist and
+# everything else. Sets PEERDB_DRIFTED/PEERDB_FATAL: bash 3.2 has no namerefs.
+classify_peerdb_errors() {
+  local errors
+  # 2>&1 is load-bearing: compose forwards the container's stderr to ours,
+  # and psql prints its ERROR: lines there.
+  errors="$("${COMPOSE[@]}" logs peerdb-init 2>&1 | grep "ERROR:" || true)"
+  PEERDB_DRIFTED="$(grep -E "$KNOWN_DRIFTED_MIRRORS" <<<"$errors" || true)"
+  PEERDB_FATAL="$(grep -vE "$KNOWN_DRIFTED_MIRRORS" <<<"$errors" || true)"
+}
+
+wait_peerdb_init() {
+  echo "Waiting for peerdb-init (CDC mirror setup) ..."
+  local attempt
+  for attempt in 1 2; do
+    if ((attempt == 2)); then
+      echo "Retrying PeerDB init ..."
+    fi
+    # Runs before EVERY attempt, not just the retry, and must stay that way.
+    # On fresh volumes the first registration of the MirrorName search
+    # attribute does not take effect (peerdb-temporal's healthcheck is a bare
+    # pgrep, so init beats the namespace being usable), and mirrors submitted
+    # without the mapping fail permanently: peerdb-setup-mirrors.sh reports a
+    # retry as MIRROR ALREADY EXISTS and skips it, so the mirror is never
+    # created. Preventing that failure is the only cure — it has no recovery.
+    # Non-zero is expected here on a re-run: the attribute already exists.
+    run_one_shot peerdb-temporal-init 180 || true
+    if ! run_one_shot peerdb-init 180; then
+      echo "peerdb-init failed:"; "${COMPOSE[@]}" logs peerdb-init || true; exit 1
+    fi
+    # The setup script is fail-open: mirror/peer failures print ERROR lines
+    # and still exit 0. Fail closed here.
+    classify_peerdb_errors
+    if [[ -z "$PEERDB_FATAL" ]]; then
+      break
+    fi
+  done
+  if [[ -n "$PEERDB_DRIFTED" ]]; then
+    echo "WARN: known schema-drift mirrors failed (ticketed):"
+    cut -c1-160 <<<"$PEERDB_DRIFTED"
+  fi
+  if [[ -n "$PEERDB_FATAL" ]]; then
+    echo "peerdb-init exited 0 but reported errors (CDC mirrors missing):"
+    head -5 <<<"$PEERDB_FATAL"
+    exit 1
+  fi
+}
+
+wait_ready() {
+  # Measured cold boot 2026-08-25: first-run migrations take ~6.5 min before
+  # /health/ answers; 300s was not enough.
+  local deadline=$((SECONDS + 600))
+  echo "Waiting for backend /health/ ..."
+  until curl -fsS "http://localhost:$(backend_port)/health/" >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || { echo "backend not healthy in 600s"; "${COMPOSE[@]}" ps; exit 1; }
+    sleep 3
+  done
+  # The Django CH boot hook logs-and-continues on failure, so /health/ alone
+  # can pass with a broken CH schema. Prove the spans table exists.
+  echo "Checking ClickHouse schema ..."
+  curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
+    || { echo "CH spans table missing — boot-hook schema apply failed (check backend logs)"; exit 1; }
+  echo "Waiting for frontend ..."
+  until curl -fsS "http://localhost:$(frontend_port)/" >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }
+    sleep 2
+  done
+  echo "E2E stack ready: app http://localhost:$(frontend_port)  api http://localhost:$(backend_port)"
+}
+
+build_target() {
+  case "$1" in
+    backend)   docker build -t futureagi/future-agi:e2e-local -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+               echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
+    frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"
+               echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;
+    collector) docker build -t futureagi/fi-collector:e2e-local "$ROOT/fi-collector"
+               echo "built. run with: E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
+    all)       build_target backend; build_target frontend; build_target collector
+               echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
+    *) echo "usage: bin/e2e build backend|frontend|collector|all"; exit 2 ;;
+  esac
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  # wait_ready before wait_peerdb_init: mirrors can only be created once the
+  # backend has migrated the tables they replicate (fresh volumes = CI path).
+  up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 300 "${SERVICES[@]}"; wait_ready; wait_peerdb_init ;;
+  down)    "${COMPOSE[@]}" down "$@" ;;
+  build)   build_target "${1:?usage: bin/e2e build backend|frontend|collector|all}" ;;
+  test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;
+  ui)      (cd "$ROOT/e2e" && yarn playwright test --ui "$@") ;;
+  report)  (cd "$ROOT/e2e" && yarn playwright show-report) ;;
+  logs)    "${COMPOSE[@]}" logs "$@" ;;
+  ps)      "${COMPOSE[@]}" ps "$@" ;;
+  compose) "${COMPOSE[@]}" "$@" ;;
+  *) echo "usage: bin/e2e up|down [-v]|build <target>|test [pw args]|ui|report|logs|ps|compose <args>"; exit 2 ;;
+esac

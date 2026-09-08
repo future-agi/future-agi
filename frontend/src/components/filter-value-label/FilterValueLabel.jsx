@@ -79,7 +79,7 @@ export default function FilterValueLabel({
             textOverflow: "ellipsis",
           }}
         >
-          {hasValue ? labels[0] : "Select value..."}
+          {hasValue ? String(labels[0]) : "Select value..."}
         </Typography>
       )}
       <ShowComponent condition={showBadge}>
@@ -120,7 +120,7 @@ export default function FilterValueLabel({
               key={`${l}-${idx}`}
               sx={{ typography: "s2", lineHeight: 1.6 }}
             >
-              {l}
+              {String(l)}
             </Box>
           ))}
         </Box>
@@ -140,15 +140,25 @@ FilterValueLabel.propTypes = {
     value: PropTypes.oneOfType([
       PropTypes.string,
       PropTypes.number,
+      PropTypes.bool,
       PropTypes.arrayOf(
-        PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+        PropTypes.oneOfType([
+          PropTypes.string,
+          PropTypes.number,
+          PropTypes.bool,
+        ]),
       ),
     ]),
     choices: PropTypes.arrayOf(
       PropTypes.oneOfType([
         PropTypes.string,
+        PropTypes.bool,
         PropTypes.shape({
-          value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+          value: PropTypes.oneOfType([
+            PropTypes.string,
+            PropTypes.number,
+            PropTypes.bool,
+          ]),
           label: PropTypes.string,
         }),
       ]),

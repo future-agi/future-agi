@@ -29,6 +29,7 @@ import { useNavigate, useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
@@ -66,6 +67,7 @@ import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -136,6 +138,7 @@ const EvalDetailPage = () => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed the default model raw and
   // only strip it on confirmed denial, so entitled users don't lose the
   // "turing_large" default while capabilities are still loading.
@@ -184,7 +187,8 @@ const EvalDetailPage = () => {
       "mustache",
   );
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !agentEvalLocked;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
 
   // Dataset columns for autocomplete
   const [datasetColumns, setDatasetColumns] = useState([]);
@@ -886,10 +890,8 @@ const EvalDetailPage = () => {
         setViewingVersion(null);
       }
     } catch (err) {
-      const message =
-        err?.response?.data?.result || err?.message || "Failed to save version";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save version"),
         { variant: "error" },
       );
     }
@@ -952,12 +954,8 @@ const EvalDetailPage = () => {
       );
       setIsDirty(false);
     } catch (err) {
-      const message =
-        err?.response?.data?.result ||
-        err?.message ||
-        "Failed to save composite";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save composite"),
         { variant: "error" },
       );
     }
@@ -1037,9 +1035,10 @@ const EvalDetailPage = () => {
       }
       testPlaygroundRef.current?.runTest?.(evalId);
     } catch (error) {
-      const message =
-        error?.response?.data?.result || error?.message || "Failed to run test";
-      handleTestResult(false, message);
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to run test"),
+      );
       setIsTesting(false);
     }
   }, [
@@ -1104,9 +1103,7 @@ const EvalDetailPage = () => {
   }, [evalId, enqueueSnackbar, navigate]);
 
   if (isLoading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   if (fetchError || !evalData) {
@@ -1705,47 +1702,48 @@ const EvalDetailPage = () => {
                     />
                   ))}
 
-                {/* Error Localization */}
-                {!isComposite && evalType !== "code" && (
-                  <Box>
-                    <CustomTooltip
-                      show={agentEvalLocked}
-                      type=""
-                      arrow
-                      title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
-                    >
-                      <Box sx={{ display: "inline-flex" }}>
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={errorLocalizerActive}
-                              disabled={agentEvalLocked}
-                              onChange={(e) => {
-                                setErrorLocalizerEnabled(e.target.checked);
-                                markDirty();
-                              }}
-                              size="small"
-                            />
-                          }
-                          label={
-                            <Typography variant="body2" fontWeight={500}>
-                              Error Localization
-                            </Typography>
-                          }
-                          sx={{ ml: 0 }}
-                        />
-                      </Box>
-                    </CustomTooltip>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", ml: 3.5, mt: -0.5 }}
-                    >
-                      Pinpoints which parts of the input caused evaluation
-                      failures
-                    </Typography>
-                  </Box>
-                )}
+                {errorLocalizerAvailable &&
+                  !isComposite &&
+                  evalType !== "code" && (
+                    <Box>
+                      <CustomTooltip
+                        show={agentEvalLocked}
+                        type=""
+                        arrow
+                        title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                      >
+                        <Box sx={{ display: "inline-flex" }}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={errorLocalizerActive}
+                                disabled={agentEvalLocked}
+                                onChange={(e) => {
+                                  setErrorLocalizerEnabled(e.target.checked);
+                                  markDirty();
+                                }}
+                                size="small"
+                              />
+                            }
+                            label={
+                              <Typography variant="body2" fontWeight={500}>
+                                Error Localization
+                              </Typography>
+                            }
+                            sx={{ ml: 0 }}
+                          />
+                        </Box>
+                      </CustomTooltip>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block", ml: 3.5, mt: -0.5 }}
+                      >
+                        Pinpoints which parts of the input caused evaluation
+                        failures
+                      </Typography>
+                    </Box>
+                  )}
 
                 {/* Description */}
                 {!isComposite && (

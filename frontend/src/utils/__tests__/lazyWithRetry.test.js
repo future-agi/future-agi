@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { retryImport, isChunkError } from "../lazyWithRetry.js";
+import { CHUNK_IMPORT_TIMEOUT_MS } from "src/config/runtime_limits";
 
 const RELOAD_KEY = "chunk_reload_attempted";
 
@@ -27,15 +28,16 @@ describe("retryImport — resolved-to-undefined / missing-default recovery", () 
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("returns the module and clears the reload flag on a valid import", async () => {
+  it("returns the module without clearing a guard owned by a nested import", async () => {
     store[RELOAD_KEY] = "1";
     const mod = { default: () => null };
     await expect(retryImport(() => Promise.resolve(mod), 3)).resolves.toBe(mod);
     expect(reloadMock).not.toHaveBeenCalled();
-    expect(store[RELOAD_KEY]).toBeUndefined(); // flag cleared on success
+    expect(store[RELOAD_KEY]).toBe("1");
   });
 
   it("does a one-time reload when the import resolves without a default export", async () => {
@@ -46,13 +48,40 @@ describe("retryImport — resolved-to-undefined / missing-default recovery", () 
     await new Promise((r) => setTimeout(r, 0));
     expect(importFn).toHaveBeenCalledTimes(1);
     expect(reloadMock).toHaveBeenCalledTimes(1);
-    expect(store[RELOAD_KEY]).toBe("1");
+    expect(JSON.parse(store[RELOAD_KEY])).toEqual(
+      expect.objectContaining({ attemptedAt: expect.any(Number) }),
+    );
   });
 
   it("does a one-time reload when the import resolves to undefined", async () => {
     retryImport(() => Promise.resolve(undefined), 3);
     await new Promise((r) => setTimeout(r, 0));
     expect(reloadMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds an import that remains pending and performs one recovery reload", async () => {
+    vi.useFakeTimers();
+    retryImport(() => new Promise(() => {}), 3);
+
+    await vi.advanceTimersByTimeAsync(CHUNK_IMPORT_TIMEOUT_MS);
+
+    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(store[RELOAD_KEY])).toEqual(
+      expect.objectContaining({ attemptedAt: expect.any(Number) }),
+    );
+  });
+
+  it("surfaces a second pending import instead of reloading again", async () => {
+    store[RELOAD_KEY] = "1";
+    vi.useFakeTimers();
+    const rejection = expect(
+      retryImport(() => new Promise(() => {}), 3),
+    ).rejects.toThrow(`timed out after ${CHUNK_IMPORT_TIMEOUT_MS}ms`);
+
+    await vi.advanceTimersByTimeAsync(CHUNK_IMPORT_TIMEOUT_MS);
+    await rejection;
+
+    expect(reloadMock).not.toHaveBeenCalled();
   });
 
   it("throws a recognized chunk error (no second reload) if reload already attempted", async () => {
@@ -80,7 +109,6 @@ describe("retryImport — resolved-to-undefined / missing-default recovery", () 
     await vi.runAllTimersAsync();
     await expect(p).resolves.toBe(mod);
     expect(importFn).toHaveBeenCalledTimes(2);
-    vi.useRealTimers();
   });
 });
 

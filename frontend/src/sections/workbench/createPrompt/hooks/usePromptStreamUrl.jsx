@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { HOST_API } from "src/config-global";
 import { useAuthContext } from "src/auth/hooks";
+import { SS_KEY_WORKSPACE_ID } from "src/utils/sessionKeys";
 
 /**
  * @returns {string} - Full WebSocket URL
@@ -11,7 +12,7 @@ export const usePromptStreamUrl = () => {
   const token = user?.accessToken || "";
   const workspaceId =
     typeof window !== "undefined"
-      ? window.sessionStorage.getItem("workspaceId")
+      ? window.sessionStorage.getItem(SS_KEY_WORKSPACE_ID)
       : "";
 
   return useMemo(() => {

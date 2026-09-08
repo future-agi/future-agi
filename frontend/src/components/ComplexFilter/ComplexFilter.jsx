@@ -4,6 +4,7 @@ import React, { useCallback, useMemo } from "react";
 import { getRandomId } from "src/utils/utils";
 import FilterRow from "./FilterRow";
 import logger from "../../utils/logger";
+import { getFilterUsageCounts, isFilterDefinitionAtMaxUsage } from "./common";
 
 /**
  * Complex filter component for handling multiple filter rows
@@ -56,18 +57,15 @@ const ComplexFilter = ({
   filterDefinition,
   onClose,
   className,
+  projectId,
+  onAttributeSearchChange,
 }) => {
   const addFilter = useCallback(() => {
     setFilters(() => [...filters, { ...defaultFilter, id: getRandomId() }]);
   }, [defaultFilter, filters, setFilters]);
   const propertyIdCount = useMemo(() => {
     logger.debug({ filters });
-    return filters.reduce((acc, curr) => {
-      if (curr.column_id) {
-        acc[curr.column_id] = (acc[curr.column_id] || 0) + 1;
-      }
-      return acc;
-    }, {});
+    return getFilterUsageCounts(filters);
   }, [filters]);
 
   const removeFilter = useCallback(
@@ -106,14 +104,7 @@ const ComplexFilter = ({
   const filterRows = useMemo(() => {
     return filters.map((filter, index) => {
       const adjustedFilterDefinition = filterDefinition.filter((def) => {
-        if (
-          def.maxUsage &&
-          propertyIdCount[def.propertyId] >= def.maxUsage &&
-          filter.column_id !== def.propertyId
-        ) {
-          return false;
-        }
-        return true;
+        return !isFilterDefinitionAtMaxUsage(def, propertyIdCount, filter);
       });
 
       return (
@@ -127,6 +118,8 @@ const ComplexFilter = ({
           filterDefinition={adjustedFilterDefinition}
           defaultFilter={defaultFilter}
           propertyIdCount={propertyIdCount}
+          projectId={projectId}
+          onAttributeSearchChange={onAttributeSearchChange}
         />
       );
     });
@@ -138,6 +131,8 @@ const ComplexFilter = ({
     addFilter,
     updateFilter,
     removeFilter,
+    projectId,
+    onAttributeSearchChange,
   ]);
 
   return (
@@ -185,6 +180,8 @@ ComplexFilter.propTypes = {
   filterDefinition: PropTypes.array,
   onClose: PropTypes.func,
   className: PropTypes.string,
+  projectId: PropTypes.string,
+  onAttributeSearchChange: PropTypes.func,
 };
 
 export default ComplexFilter;

@@ -404,6 +404,7 @@ class TestManagedClientsCloudEndToEnd:
             "http://agentcc-gateway:8080/v1/chat/completions"
         )
         assert dispatch_calls[0]["api_key"] == "internal-key"
+        assert dispatch_calls[0]["json_body"]["stream"] is True
         mock_get_token.assert_not_called()
 
     def test_turing_client_on_cloud_uses_internal_gateway(self):
