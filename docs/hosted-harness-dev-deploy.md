@@ -43,10 +43,14 @@ set -a; . /home/ubuntu/.env.daytona; set +a
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps --force-recreate \
   backend worker-simulation-runner
 
-# 5. Re-install the Daytona SDK (the dev image predates it; a recreate drops pip installs)
+# 5. Re-install what the stale dev image lacks (a recreate drops in-container installs):
+#    the Daytona SDK, and the NLTK corpora that ee/agenthub/trace_scanner/compress.py loads
+#    at import. Without the corpora the worker crash-loops on LookupError before registering.
 for c in futureagi-backend-1 futureagi-worker-simulation-runner-1; do
   docker exec $c pip install -q --no-input daytona==0.207.0 httpx-ws==0.7.2 'urllib3>=2.1,<3'
+  docker exec $c python -m nltk.downloader -q stopwords punkt punkt_tab wordnet
 done
+docker restart futureagi-worker-simulation-runner-1
 
 # 6. Migrate if the pull brought migrations
 docker exec futureagi-backend-1 sh -c 'cd /app/backend && python manage.py migrate --no-input'
