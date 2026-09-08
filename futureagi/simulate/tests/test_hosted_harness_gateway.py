@@ -984,8 +984,23 @@ def _launch_and_read_job_json(organization, settings, *, requested_parallelism):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
-
-    gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    # The platform simulator credential is deployment material; these tests are
+    # about the admitted parallelism the guest receives, not credential loading.
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-2.5-flash",
+        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
+        "GOOGLE_CLOUD_LOCATION": "global",
+    }
+    with patch(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        return_value=(
+            simulator_values,
+            b'{"project_id":"platform-simulator-project"}',
+        ),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
     job.refresh_from_db()
     dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])

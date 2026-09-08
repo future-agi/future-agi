@@ -595,9 +595,11 @@ def _secret_ref(key="provider/token"):
 def test_serializer_rejects_alias_in_both_env_values_and_secret_refs():
     # An alias present in BOTH the inline plaintext environment_values (Channel 1)
     # and agent.secret_refs is rejected at the top-level create serializer.
+    # VAPI_API_KEY is the alias the vapi connector requires, so the upstream
+    # missing-credentials rule passes and the collision guard is what governs.
     data = _create_data_with_secret_refs(
-        environment_values={"PROVIDER_KEY": "plaintext-value"},
-        secret_refs={"PROVIDER_KEY": _secret_ref()},
+        environment_values={"VAPI_API_KEY": "plaintext-value"},
+        secret_refs={"VAPI_API_KEY": _secret_ref()},
     )
     serializer = HarnessJobCreateSerializer(data=data)
     assert not serializer.is_valid()
@@ -607,7 +609,7 @@ def test_serializer_rejects_alias_in_both_env_values_and_secret_refs():
 def test_serializer_allows_distinct_env_and_secret_aliases():
     data = _create_data_with_secret_refs(
         environment_values={"PLAINTEXT_KEY": "plaintext-value"},
-        secret_refs={"PROVIDER_KEY": _secret_ref()},
+        secret_refs={"VAPI_API_KEY": _secret_ref()},
     )
     serializer = HarnessJobCreateSerializer(data=data)
     assert serializer.is_valid(), serializer.errors
@@ -618,11 +620,24 @@ def test_serializer_allows_distinct_env_and_secret_aliases():
 
 def _preflight(payload):
     from types import SimpleNamespace
+    from unittest.mock import patch
 
     from simulate.services.harness_provider import DaytonaHarnessProvider
 
-    request = SimpleNamespace(validated_data=payload)
-    return DaytonaHarnessProvider().preflight(request)
+    request = SimpleNamespace(
+        validated_data=payload,
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+    # The advisory under test is the parallelism echo; source scanning and the
+    # credential probe are upstream concerns with their own tests.
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        return_value=(["vapi"], 1),
+    ), patch(
+        "simulate.services.harness_provider._preflight_credential_probe",
+        return_value=[],
+    ):
+        return DaytonaHarnessProvider().preflight(request)
 
 
 def test_preflight_advisory_reflects_flag_and_no_stale_echo():
