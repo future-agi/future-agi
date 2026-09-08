@@ -438,7 +438,7 @@ def handle_entitlement_deleted(payload: dict) -> None:
         organization_id=row.organization_id
     ).first()
     continues = subscription is not None and (
-        subscription.is_marketplace_billed()
+        subscription.is_marketplace_billed
         or subscription.plan != PlanChoices.FREE
         or bool(subscription.stripe_subscription_id)
     )
