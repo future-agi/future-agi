@@ -12,6 +12,8 @@ from rest_framework import status
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
+from model_hub.models.evals_metric import EvalTemplate
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
 from tracer.models.project import Project
 
@@ -262,6 +264,220 @@ class TestUserAlertMonitorCreateAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def _create_eval_config(
+        self, organization, workspace, observe_project, output_type, choices
+    ):
+        """Build an EvalTemplate + CustomEvalConfig pinned to observe_project.
+
+        Alert creation only accepts an `observe`-typed project, so the eval
+        config must live on `observe_project`, not the `experiment`-typed
+        `project` fixture used elsewhere in conftest.py.
+        """
+        template = EvalTemplate.objects.create(
+            name=f"Test Eval Template {uuid.uuid4().hex[:8]}",
+            description="A test evaluation template",
+            organization=organization,
+            workspace=workspace,
+            config={"output": output_type},
+            choices=choices,
+        )
+        return CustomEvalConfig.objects.create(
+            name=f"Test Custom Eval {uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            eval_template=template,
+            config={"threshold": 0.8},
+            mapping={"input": "input", "output": "output"},
+            filters={},
+        )
+
+    def test_create_score_eval_with_choice_rejected(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """A score-typed eval carries labels but its metric is the mean score,
+        so a stored choice must be rejected."""
+        eval_config = self._create_eval_config(
+            organization,
+            workspace,
+            observe_project,
+            "score",
+            ["Complete", "Partial", "Incomplete"],
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Score Eval Alert",
+                "metric_type": "evaluation_metrics",
+                "metric": str(eval_config.id),
+                "threshold_metric_value": "Incomplete",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.15,
+                "alert_frequency": 60,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "must be empty for evals without predefined choices" in str(
+            response.json()
+        )
+
+    def test_create_score_eval_without_choice_succeeds(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        """The frontend no longer sends threshold_metric_value for score evals;
+        that must be accepted even when the template carries labels."""
+        eval_config = self._create_eval_config(
+            organization,
+            workspace,
+            observe_project,
+            "score",
+            ["Complete", "Partial", "Incomplete"],
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Score Eval Alert No Choice",
+                "metric_type": "evaluation_metrics",
+                "metric": str(eval_config.id),
+                "threshold_metric_value": None,
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.15,
+                "alert_frequency": 60,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert UserAlertMonitor.objects.filter(
+            name="Score Eval Alert No Choice"
+        ).exists()
+
+    def test_create_pass_fail_eval_choice(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        eval_config = self._create_eval_config(
+            organization,
+            workspace,
+            observe_project,
+            "Pass/Fail",
+            ["Passed", "Failed"],
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Pass Fail Eval Alert",
+                "metric_type": "evaluation_metrics",
+                "metric": str(eval_config.id),
+                "threshold_metric_value": "Passed",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.15,
+                "alert_frequency": 60,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert UserAlertMonitor.objects.filter(name="Pass Fail Eval Alert").exists()
+
+    def test_create_pass_fail_eval_invalid_choice_rejected(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        eval_config = self._create_eval_config(
+            organization,
+            workspace,
+            observe_project,
+            "Pass/Fail",
+            ["Passed", "Failed"],
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Pass Fail Eval Alert Invalid",
+                "metric_type": "evaluation_metrics",
+                "metric": str(eval_config.id),
+                "threshold_metric_value": "Maybe",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.15,
+                "alert_frequency": 60,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "is not valid" in str(response.json())
+
+    def test_create_choices_eval_valid_choice(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        eval_config = self._create_eval_config(
+            organization,
+            workspace,
+            observe_project,
+            "choices",
+            ["never", "occasionally", "frequently", "always"],
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Choices Eval Alert",
+                "metric_type": "evaluation_metrics",
+                "metric": str(eval_config.id),
+                "threshold_metric_value": "frequently",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.15,
+                "alert_frequency": 60,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert UserAlertMonitor.objects.filter(name="Choices Eval Alert").exists()
+
+    def test_create_choices_eval_without_choice_rejected(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        eval_config = self._create_eval_config(
+            organization,
+            workspace,
+            observe_project,
+            "choices",
+            ["never", "occasionally", "frequently", "always"],
+        )
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Choices Eval Alert No Choice",
+                "metric_type": "evaluation_metrics",
+                "metric": str(eval_config.id),
+                "threshold_metric_value": None,
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 0.15,
+                "alert_frequency": 60,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "required for evals with predefined choices" in str(response.json())
 
 
 @pytest.mark.integration
