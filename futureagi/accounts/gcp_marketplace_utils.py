@@ -409,7 +409,10 @@ def approve_pending_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     """
     _link_orphan_entitlements(gcp_account)
 
-    from accounts.gcp_marketplace_events import reject_duplicate_entitlement
+    from accounts.gcp_marketplace_events import (
+        SECOND_ENTITLEMENT_REASON,
+        reject_duplicate_entitlement,
+    )
 
     pending = GCPMarketplaceEntitlement.objects.filter(
         account=gcp_account,
@@ -417,14 +420,32 @@ def approve_pending_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     ).order_by("effective_at", "created_at")
 
     approved = 0
+    kept_entitlement_id = None
     for entitlement in pending:
         try:
-            # Oldest first. Once one is approved the rest are duplicates of a
-            # subscription this organization already holds.
-            if approved and reject_duplicate_entitlement(entitlement):
+            if kept_entitlement_id is None:
+                # Oldest first. Approve it, unless the organization already
+                # holds a separate in-service subscription.
+                if reject_duplicate_entitlement(entitlement):
+                    continue
+                gcp_procurement.approve_entitlement(entitlement.entitlement_id)
+                kept_entitlement_id = entitlement.entitlement_id
+                approved += 1
                 continue
-            gcp_procurement.approve_entitlement(entitlement.entitlement_id)
-            approved += 1
+
+            # A further pending entitlement for the same account. The one just
+            # approved is still ACTIVATION_REQUESTED locally until its
+            # ENTITLEMENT_ACTIVE event lands, so reject_duplicate_entitlement
+            # cannot see it yet -- reject this one directly.
+            logger.warning(
+                "gcp_marketplace_duplicate_entitlement_rejected",
+                entitlement_id=entitlement.entitlement_id,
+                existing_entitlement_id=kept_entitlement_id,
+                organization_id=str(entitlement.organization_id),
+            )
+            gcp_procurement.reject_entitlement(
+                entitlement.entitlement_id, SECOND_ENTITLEMENT_REASON
+            )
         except Exception:
             logger.exception(
                 "gcp_marketplace_pending_entitlement_approve_failed",
