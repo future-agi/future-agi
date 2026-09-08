@@ -4,12 +4,11 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, IconButton, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
-import TemplatePicker from "./TemplatePicker";
 import DatasetImport from "./DatasetImport";
 import ScriptUpload from "./ScriptUpload";
 import ProductionImport from "./ProductionImport";
 import TwinScenarioPicker from "./TwinScenarioPicker";
-import { PackThumb, DatasetThumb, ScriptThumb, ProductionThumb } from "./RouteThumbs";
+import { DatasetThumb, ScriptThumb, ProductionThumb } from "./RouteThumbs";
 
 /**
  * Add scenarios.
@@ -46,12 +45,6 @@ function TwinThumb() {
 
 const ROUTES = [
   {
-    id: "templates",
-    label: "Scenario pack",
-    blurb: "Curated packs built for this environment — happy paths, edge cases and adversarial probes.",
-    Thumb: PackThumb,
-  },
-  {
     id: "twin",
     label: "From twin services",
     blurb: "Cross-service scenarios generated from your env's twin backing — Slack → Notion, Gmail → Salesforce, and more.",
@@ -80,15 +73,11 @@ const ROUTES = [
 export default function AddScenariosDrawer({ open, onClose, env, envState, selected, onAdd }) {
   const [route, setRoute] = useState(null);
   /*
-    Route visibility depends on the env's shape:
-      · templates route hides for user-agent-built envs (their scenarios
-        are derived from the source; a pack would overlap).
-      · twin route only shows when the env has a twin backing — the
-        picker's suggestions are generated from the twin services and
-        make no sense otherwise.
+    Route visibility depends on the env's shape. The twin route only
+    shows when the env has a twin backing — the picker's suggestions
+    are generated from the twin services and make no sense otherwise.
   */
   const routes = ROUTES.filter((r) => {
-    if (r.id === "templates" && env?.builtFrom) return false;
     if (r.id === "twin" && !envState?.twinBacking) return false;
     return true;
   });
@@ -160,7 +149,6 @@ export default function AddScenariosDrawer({ open, onClose, env, envState, selec
               frame reaches the bottom of the drawer instead of clipping
               right after the last row */}
           <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-            {route === "templates" && <TemplatePicker env={env} onAdd={add} selected={selected} />}
             {route === "twin" && <TwinScenarioPicker env={env} envState={envState} onAdd={add} selected={selected} />}
             {route === "production" && <ProductionImport env={env} onAdd={add} selected={selected} />}
             {route === "dataset" && <DatasetImport env={env} onAdd={add} selected={selected} />}
