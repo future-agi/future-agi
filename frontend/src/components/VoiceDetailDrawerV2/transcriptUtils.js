@@ -112,6 +112,7 @@ export const enrichTurns = (transcript) => {
       role,
       rawRole: item.speaker_role || item.role,
       content: getContent(item),
+      rawMessages: Array.isArray(item.rawMessages) ? item.rawMessages : null,
       start,
       end,
       duration: directDuration,

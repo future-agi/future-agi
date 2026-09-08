@@ -14,7 +14,10 @@ const TranscriptPreview = ({
   simulationCallType,
 }) => {
   const first = transcript?.[0] ?? null;
-  const previewRole = first?.speaker_role;
+  // Voice rows (CallTranscriptSerializer) carry `speaker_role`; chat rows
+  // (ChatMessageSerializer) carry `role`. Without the fallback the chat
+  // preview renders a blank speaker label before the colon.
+  const previewRole = first?.speaker_role ?? first?.role;
   const previewContent = getContentMessage(first, simulationCallType);
 
   return (

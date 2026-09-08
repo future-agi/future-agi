@@ -1,4 +1,5 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
+import { getChatTurnContent } from "src/components/ChatDetailDrawerV2/chatTranscriptUtils";
 
 export const CallType = {
   INBOUND: "Inbound",
@@ -28,7 +29,7 @@ export const getContentMessage = (
   if (!transcript) return "";
 
   return simulationCallType === AGENT_TYPES.CHAT
-    ? transcript?.messages?.[0] ?? ""
+    ? getChatTurnContent(transcript)
     : transcript?.content ??
         transcript?.raw_content ??
         transcript?.rawContent ??
