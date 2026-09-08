@@ -240,7 +240,7 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
         header: "Runs",
         size: 100,
         cell: ({ row }) => (
-          <RunsPill passed={row.original.runsPassed} total={row.original.runsTotal} />
+          <RunsPill total={row.original.runsTotal} />
         ),
       },
       {
@@ -510,30 +510,23 @@ StatusPill.propTypes = { status: PropTypes.string, progress: PropTypes.object };
 
 /* ── runs pill ───────────────────────────────────────────────────────────── */
 
-function RunsPill({ passed, total }) {
-  const empty = !total;
-  const bad = total > 0 && passed === 0;
-  const good = total > 0 && passed === total;
-  const tone = bad ? "#DC2626" : good ? "#16A34A" : "text.subtitle";
-
+function RunsPill({ total }) {
   return (
     <Box
       sx={{
         display: "inline-flex", alignItems: "center",
         px: 0.75, py: 0.25, borderRadius: 0.75,
-        border: "1px solid",
-        borderColor: empty ? "divider" : alpha(bad ? "#DC2626" : good ? "#16A34A" : "#94A3B8", 0.5),
-        color: tone,
+        border: "1px solid", borderColor: "divider",
       }}
     >
-      <Typography sx={{ typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: tone }}>
-        {passed}/{total}
+      <Typography sx={{ typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "text.secondary" }}>
+        {total}
       </Typography>
     </Box>
   );
 }
 
-RunsPill.propTypes = { passed: PropTypes.number, total: PropTypes.number };
+RunsPill.propTypes = { total: PropTypes.number };
 
 /* ── relative time ───────────────────────────────────────────────────────── */
 
