@@ -309,7 +309,7 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
     pagination bar sits flush with the last row. ResizeObserver
     keeps it accurate through resizes and sidebar toggles.
   */
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1));
   const pageRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
