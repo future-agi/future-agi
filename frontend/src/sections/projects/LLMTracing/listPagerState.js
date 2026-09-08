@@ -69,6 +69,38 @@ export const getListPagerState = ({
 };
 
 /**
+ * Exactly the fields `getListPagerState` reads (`reportedTotal`,
+ * `isLowerBound`, `hasCursorContract`), plucked into a fresh object so
+ * callers never hand-copy the list. `has_more`'s *presence* is the
+ * cursor-contract marker, so the key is carried through only when the
+ * response has it. Returns a new object per call — callers needing a
+ * render-stable identity compare successive picks with
+ * `pagerMetadataEquals`.
+ */
+export const pickPagerMetadata = (data) => {
+  const metadata = {
+    count: data?.count,
+    count_is_lower_bound: data?.count_is_lower_bound,
+    total_count: data?.total_count,
+    total_count_is_lower_bound: data?.total_count_is_lower_bound,
+    total_rows: data?.total_rows,
+    total_rows_is_lower_bound: data?.total_rows_is_lower_bound,
+  };
+  if (hasCursorContract(data)) {
+    metadata.has_more = data.has_more;
+  }
+  return metadata;
+};
+
+export const pagerMetadataEquals = (left, right) => {
+  const leftKeys = Object.keys(left);
+  return (
+    leftKeys.length === Object.keys(right).length &&
+    leftKeys.every((key) => Object.is(left[key], right[key]))
+  );
+};
+
+/**
  * `{1} ∪ {cur-1, cur, cur+1}`, clipped to the furthest proven page — which is
  * exactly the set the cursor protocol can serve. Cursors exist only for page 1
  * (needs none), pages already visited, and `pageNumber + 1`; for anything else

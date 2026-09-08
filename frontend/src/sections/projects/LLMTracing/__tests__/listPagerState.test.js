@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getListPagerState, windowedPageNumbers } from "../listPagerState";
+import { getListPagerState, pickPagerMetadata, pagerMetadataEquals, windowedPageNumbers } from "../listPagerState";
 
 describe("getListPagerState", () => {
   // Captured from the local API on 2026-09-07, project 501e948b.
@@ -208,5 +208,65 @@ describe("windowedPageNumbers", () => {
         1, 7, 8, 9,
       ]);
     });
+  });
+});
+
+describe("pickPagerMetadata", () => {
+  it("plucks exactly the fields getListPagerState reads", () => {
+    const picked = pickPagerMetadata({
+      count: 5,
+      count_is_lower_bound: true,
+      total_count: 7,
+      total_count_is_lower_bound: false,
+      total_rows: 9,
+      total_rows_is_lower_bound: true,
+      has_more: true,
+      rows: [{}],
+      next_cursor: "abc",
+    });
+    expect(picked).toEqual({
+      count: 5,
+      count_is_lower_bound: true,
+      total_count: 7,
+      total_count_is_lower_bound: false,
+      total_rows: 9,
+      total_rows_is_lower_bound: true,
+      has_more: true,
+    });
+  });
+
+  it("keeps has_more's absence — the cursor-contract marker — observable", () => {
+    const picked = pickPagerMetadata({ count: 3 });
+    expect(Object.prototype.hasOwnProperty.call(picked, "has_more")).toBe(
+      false,
+    );
+  });
+
+  it("gives getListPagerState the same verdict as the raw response", () => {
+    const response = { count: 10, count_is_lower_bound: true, has_more: true };
+    const args = { startRow: 0, rowCount: 5 };
+    expect(
+      getListPagerState({ metadata: pickPagerMetadata(response), ...args }),
+    ).toEqual(getListPagerState({ metadata: response, ...args }));
+  });
+});
+
+describe("pagerMetadataEquals", () => {
+  it("treats picks of pager-identical responses as equal", () => {
+    expect(
+      pagerMetadataEquals(
+        pickPagerMetadata({ count: 1, has_more: true, rows: [{}] }),
+        pickPagerMetadata({ count: 1, has_more: true, rows: [{}, {}] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("distinguishes a missing has_more from a present one", () => {
+    expect(
+      pagerMetadataEquals(
+        pickPagerMetadata({ count: 1 }),
+        pickPagerMetadata({ count: 1, has_more: false }),
+      ),
+    ).toBe(false);
   });
 });

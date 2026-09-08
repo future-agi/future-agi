@@ -50,6 +50,8 @@ import { dispatchObservePageChanged } from "src/sections/projects/observeEvents"
 import {
   getListPagerState,
   hasBufferedOverflowPage,
+  pickPagerMetadata,
+  pagerMetadataEquals,
 } from "src/sections/projects/LLMTracing/listPagerState";
 import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
 
@@ -440,43 +442,21 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     advanceCursorTransport((revision) => revision + 1);
   }, [cursorContinuationPaused]);
 
-  // Project call logs speak the cursor contract; agent-definition call logs
-  // are a plain DRF PageNumberPagination list with an exact `count` and no
-  // `has_more` at all. Carry the presence of `has_more` through faithfully —
-  // getListPagerState uses it to tell the two contracts apart.
-  const reportsHasMore =
-    data != null &&
-    typeof data === "object" &&
-    Object.prototype.hasOwnProperty.call(data, "has_more");
-  // Hoist exactly the fields getListPagerState reads. Depending on `data`
-  // itself would refire the effect below on every render for any caller that
-  // rebuilds `data` (this file's own test mocks do), and each firing produces
-  // a brand-new pagerState object, so it would never settle.
-  //
-  // This field list must match reportedTotal()/isLowerBound() in
-  // src/sections/projects/LLMTracing/listPagerState.js — if that helper starts
-  // reading another field, add it here too, or this effect misses real updates.
-  const pagerMetadata = useMemo(
-    () => ({
-      count: data?.count,
-      count_is_lower_bound: data?.count_is_lower_bound,
-      total_count: data?.total_count,
-      total_count_is_lower_bound: data?.total_count_is_lower_bound,
-      total_rows: data?.total_rows,
-      total_rows_is_lower_bound: data?.total_rows_is_lower_bound,
-      ...(reportsHasMore ? { has_more: data.has_more } : null),
-    }),
-    [
-      data?.count,
-      data?.count_is_lower_bound,
-      data?.has_more,
-      data?.total_count,
-      data?.total_count_is_lower_bound,
-      data?.total_rows,
-      data?.total_rows_is_lower_bound,
-      reportsHasMore,
-    ],
-  );
+  // The field list lives with its reader: pickPagerMetadata plucks exactly
+  // what getListPagerState consumes, so a field added there is picked up here
+  // with no hand-synced copy. Keep the object identity stable across renders
+  // that rebuild `data` (this file's own test mocks do) — the pager effect
+  // below depends on it, and a fresh object per render would refire it
+  // forever.
+  const pagerMetadataRef = useRef(null);
+  const nextPagerMetadata = pickPagerMetadata(data);
+  if (
+    pagerMetadataRef.current === null ||
+    !pagerMetadataEquals(pagerMetadataRef.current, nextPagerMetadata)
+  ) {
+    pagerMetadataRef.current = nextPagerMetadata;
+  }
+  const pagerMetadata = pagerMetadataRef.current;
   const exactPageIsLastPage = exactPage ? exactPage.isLastPage : null;
 
   useEffect(() => {
