@@ -100,7 +100,7 @@ def test_numeric_settings_reject_invalid_values(raw_value):
     with pytest.raises(ValueError):
         load_numeric_settings(
             PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
-            source={"PROPERTY_CATALOG_MAX_PROJECTS": raw_value},
+            source={"PROPERTY_CATALOG_MAX_PAGE_SIZE": raw_value},
         )
 
 

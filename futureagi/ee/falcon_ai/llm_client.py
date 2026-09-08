@@ -71,7 +71,7 @@ class FalconLLMClient:
             "anthropic": "claude-sonnet-4-6",
             "bedrock": "us.anthropic.claude-sonnet-4-6",
             "openai": "gpt-4o-mini",
-            "vertex_ai": "vertex_ai/gemini-2.5-pro",
+            "vertex_ai": "vertex_ai/gemini-3.7-flash",
         }
         if self.use_managed_gateway:
             self.model = model or "falcon_ai"

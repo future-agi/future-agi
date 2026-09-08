@@ -1275,13 +1275,13 @@ class LLM:
         payload.pop("thinking", None)
         original_max_tokens = payload.get("max_tokens")
 
-        vertex_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+        vertex_cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
         openai_cfg = ModelConfigs.OPENAI_GPT_5_1
 
         base_messages = payload.get("messages", messages)
 
         try:
-            logger.info("Final fallback: attempting Vertex Gemini 2.5 Pro")
+            logger.info(f"Final fallback: attempting {vertex_cfg.model_name}")
             vertex_payload = dict(payload)
             vertex_payload["model"] = vertex_cfg.model_name
             vertex_payload["temperature"] = vertex_cfg.temperature
@@ -1292,6 +1292,8 @@ class LLM:
             vertex_payload["messages"] = preprocess_messages_for_provider(
                 base_messages, vertex_cfg.provider
             )
+            if vertex_cfg.vertex_location:
+                vertex_payload["vertex_location"] = vertex_cfg.vertex_location
             response = await litellm.acompletion(
                 **vertex_payload,
                 num_retries=LITELLM_NUM_RETRIES,
@@ -1479,6 +1481,14 @@ class LLM:
                     "content": self._build_protect_flash_prompt(prompt=inp),
                 }
             ]
+
+        # Some Vertex models are served only from a specific endpoint; without this litellm
+        # defaults to us-central1. A customer key that carries its own location still wins,
+        # since that branch overwrites this later.
+        if "vertex_location" not in payload:
+            location = ModelConfigs.get_vertex_location(_model)
+            if location:
+                payload["vertex_location"] = location
 
         return payload
 
@@ -1715,13 +1725,13 @@ class LLM:
         payload.pop("thinking", None)
         original_max_tokens = payload.get("max_tokens")
 
-        vertex_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
+        vertex_cfg = ModelConfigs.VERTEX_GEMINI_3_7_FLASH
         openai_cfg = ModelConfigs.OPENAI_GPT_5_1
 
         base_messages = payload.get("messages", messages)
 
         try:
-            logger.info("Final fallback: attempting Vertex Gemini 2.5 Pro")
+            logger.info(f"Final fallback: attempting {vertex_cfg.model_name}")
             vertex_payload = dict(payload)
             vertex_payload["model"] = vertex_cfg.model_name
             vertex_payload["temperature"] = vertex_cfg.temperature
@@ -1732,6 +1742,8 @@ class LLM:
             vertex_payload["messages"] = preprocess_messages_for_provider(
                 base_messages, vertex_cfg.provider
             )
+            if vertex_cfg.vertex_location:
+                vertex_payload["vertex_location"] = vertex_cfg.vertex_location
             response = litellm.completion(
                 **vertex_payload,
                 num_retries=LITELLM_NUM_RETRIES,

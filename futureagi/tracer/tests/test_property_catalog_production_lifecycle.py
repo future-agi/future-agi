@@ -929,3 +929,103 @@ def test_workspace_scope_maps_only_default_legacy_projects() -> None:
     scope = _scope()
     with pytest.raises(subject.ProductionLifecycleControllerError, match="default"):
         replace(scope, legacy_project_ids=(PROJECT,))
+
+
+@pytest.mark.parametrize("status_only", [True, False])
+def test_completed_catalog_publication_catches_up_and_follows_reconcile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status_only: bool
+) -> None:
+    settings_object = _settings(tmp_path)
+    config = subject.controller_config(settings_object=settings_object)
+    calls = []
+
+    @contextmanager
+    def managed(**kwargs):
+        stage = "status" if kwargs["request"].status else "execute"
+        calls.append(("open", stage))
+        yield stage
+        calls.append(("close", stage))
+
+    evidence = {"schema_ready": True, "active": True}
+    monkeypatch.setattr(subject, "managed_runtime", managed)
+    monkeypatch.setattr(
+        subject,
+        "run_configured_production_rollout",
+        lambda **_: SimpleNamespace(evidence=(SimpleNamespace(evidence=evidence),)),
+    )
+    monkeypatch.setattr(
+        subject,
+        "publish_completed_catalog",
+        lambda **kw: calls.append(("publish", kw["runtime"])),
+    )
+
+    def reconcile(**kwargs):
+        calls.append(("reconcile", kwargs["runtime"]))
+        return {"reconcile": {"activated": True}}
+
+    monkeypatch.setattr(subject, "run_workspace_reconcile", reconcile)
+    subject.run_workspace(
+        scope=_scope(),
+        settings_object=settings_object,
+        config=config,
+        now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+        status_only=status_only,
+    )
+    if status_only:
+        assert calls == [("open", "status"), ("close", "status")]
+    else:
+        assert calls == [
+            ("open", "status"),
+            ("publish", "status"),
+            ("close", "status"),
+            ("open", "execute"),
+            ("reconcile", "execute"),
+            ("publish", "execute"),
+            ("close", "execute"),
+        ]
+
+
+def test_failed_reconcile_does_not_publish_new_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings_object = _settings(tmp_path)
+    config = subject.controller_config(settings_object=settings_object)
+    publications = []
+
+    @contextmanager
+    def managed(**kwargs):
+        yield "status" if kwargs["request"].status else "execute"
+
+    monkeypatch.setattr(subject, "managed_runtime", managed)
+    monkeypatch.setattr(
+        subject,
+        "run_configured_production_rollout",
+        lambda **_: SimpleNamespace(
+            evidence=(SimpleNamespace(evidence={"schema_ready": True, "active": True}),)
+        ),
+    )
+    monkeypatch.setattr(
+        subject,
+        "publish_completed_catalog",
+        lambda **kw: publications.append(kw["runtime"]),
+    )
+
+    def reconcile(**_):
+        raise RuntimeError("delivery incomplete")
+
+    monkeypatch.setattr(subject, "run_workspace_reconcile", reconcile)
+    with pytest.raises(RuntimeError, match="delivery incomplete"):
+        subject.run_workspace(
+            scope=_scope(),
+            settings_object=settings_object,
+            config=config,
+            now=datetime(2026, 8, 26, 12, tzinfo=UTC),
+            status_only=False,
+        )
+    assert publications == ["status"]
+
+
+def test_publication_without_existing_activation_opt_in_is_noop() -> None:
+    subject.publish_completed_catalog(
+        runtime=object(), settings_object=SimpleNamespace(), scope=_scope()
+    )

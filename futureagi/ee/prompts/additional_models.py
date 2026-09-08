@@ -344,6 +344,18 @@ EE_ONLY_AVAILABLE_MODELS = [
         "notes": "Global tier pricing; Non-global regions are ~10% higher.",
     },
     {
+        "model_name": "vertex_ai/gemini-3.7-flash",
+        "providers": "vertex_ai",
+        "api_key_name": "VERTEX_AI_API_KEY",
+        "mode": "chat",
+        "best_for": ["agentic and coding tasks on Vertex", "multimodal understanding"],
+        "use_case": ["enterprise agents", "code generation", "document analysis"],
+        "cutoff": "06-2026",
+        "latency": 350,
+        "pricing": {"input_per_1M_tokens": 0.75, "output_per_1M_tokens": 3.75},
+        "notes": "Served from the global endpoint.",
+    },
+    {
         "model_name": "vertex_ai/gemini-3.1-pro-preview",
         "providers": "vertex_ai",
         "api_key_name": "VERTEX_AI_API_KEY",
