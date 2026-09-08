@@ -359,9 +359,10 @@ export default function AlertSettingsForm({
       }),
       ...(data?.metric_type === "evaluation_metrics" && {
         metric: data?.metric,
-        ...(data?.threshold_metric_value && {
-          threshold_metric_value: data?.threshold_metric_value,
-        }),
+        ...(data?.threshold_metric_value &&
+          selectedMetricOptions?.length > 0 && {
+            threshold_metric_value: data?.threshold_metric_value,
+          }),
       }),
       ...notificationPayload,
       ...(data?.threshold_type === "percentage_change" && {

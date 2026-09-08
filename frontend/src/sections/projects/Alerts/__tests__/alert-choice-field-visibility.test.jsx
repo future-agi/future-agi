@@ -1,7 +1,13 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, renderWithRouter, screen, waitFor } from "src/utils/test-utils";
+import {
+  act,
+  fireEvent,
+  renderWithRouter,
+  screen,
+  waitFor,
+} from "src/utils/test-utils";
 
 import { SnackbarProvider } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
@@ -152,4 +158,30 @@ describe("Choice field visibility depends on the eval's output type", () => {
       }
     },
   );
+
+  it("does not resend a hydrated stale choice for a score eval on submit", async () => {
+    const scoreEvalWithLabels = {
+      id: "eval-4",
+      name: "Helpfulness",
+      output_type: "score",
+      choices: ["Complete", "Partial", "Incomplete"],
+    };
+
+    await openAlertForEditing(scoreEvalWithLabels, "Incomplete");
+
+    const patch = vi
+      .spyOn(axios, "patch")
+      .mockResolvedValue({ data: { result: "ok" } });
+
+    await act(async () => {
+      fireEvent.click(
+        document.querySelector('[data-alert-form-submit="update"]'),
+      );
+    });
+
+    await waitFor(() => expect(patch).toHaveBeenCalled());
+    const body = patch.mock.calls.at(-1)[1];
+    expect(body).not.toHaveProperty("threshold_metric_value");
+    expect(body).toHaveProperty("metric", scoreEvalWithLabels.id);
+  });
 });
