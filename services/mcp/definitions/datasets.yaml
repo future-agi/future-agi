@@ -1,0 +1,9 @@
+version: 1
+group: datasets
+tools:
+  - name: list_datasets
+    operationId: model-hub_develops_get-datasets_list
+    enabled: true
+    title: List datasets
+    description: List and search datasets in the authenticated FutureAGI workspace.
+    risk: read

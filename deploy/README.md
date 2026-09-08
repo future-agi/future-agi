@@ -44,11 +44,12 @@ Paste each into `deploy/.env.production`.
 
 ## 2. Pin a release
 
-Each image is independently versioned. Pin all five in `.env.production`:
+Each image is independently versioned. Pin every image you enable in `.env.production`:
 
 | Variable | Image |
 |---|---|
 | `FUTURE_AGI_VERSION` | `futureagi/future-agi` (backend + worker) |
+| `MCP_VERSION` | `futureagi/mcp` (optional direct-tools MCP) |
 | `FRONTEND_VERSION` | `futureagi/frontend` |
 | `AGENTCC_GATEWAY_VERSION` | `futureagi/agentcc-gateway` |
 | `SERVING_VERSION` | `futureagi/serving` |
@@ -73,6 +74,16 @@ Verify:
 docker compose ps
 curl -fsS http://localhost:3000/ > /dev/null && echo "frontend ok"
 curl -fsS http://localhost:8000/healthz > /dev/null && echo "backend ok"
+```
+
+The generated direct-tools MCP is opt-in while tools migrate feature by
+feature. Set `MCP_ALLOWED_HOSTS`, then start the standalone service:
+
+```bash
+docker compose --profile mcp --env-file deploy/.env.production \
+  -f docker-compose.yml -f deploy/docker-compose.production.yml \
+  up -d mcp
+curl -fsS http://localhost:8001/health
 ```
 
 ## Deployment topologies
@@ -196,7 +207,7 @@ Roll back by setting the bumped variable(s) to the previous tag and re-running t
 
 - [ ] `SECRET_KEY`, `AGENTCC_INTERNAL_API_KEY`, `AGENTCC_ADMIN_TOKEN` are 32+ random bytes
 - [ ] `PG_PASSWORD`, `MINIO_ROOT_PASSWORD`, `RABBITMQ_PASSWORD` set to non-default values
-- [ ] `FUTURE_AGI_VERSION`, `FRONTEND_VERSION`, `AGENTCC_GATEWAY_VERSION`, `SERVING_VERSION`, `CODE_EXECUTOR_VERSION` all pinned to immutable `vX.Y.Z` tags (not `latest` / `vX.Y`)
+- [ ] `FUTURE_AGI_VERSION`, `MCP_VERSION` (if enabled), `FRONTEND_VERSION`, `AGENTCC_GATEWAY_VERSION`, `SERVING_VERSION`, `CODE_EXECUTOR_VERSION` all pinned to immutable `vX.Y.Z` tags (not `latest` / `vX.Y`)
 - [ ] `FRONTEND_URL` matches the public URL behind your reverse proxy
 - [ ] `VITE_HOST_API` matches the public backend URL (or `/api` if route-split at the proxy)
 - [ ] Backend CORS allows the frontend origin (split-domain only)

@@ -14978,43 +14978,6 @@
                 }
             ]
         },
-        "/ai-tools/tools/": {
-            "get": {
-                "operationId": "ai-tools_tools_list",
-                "description": "Lists all registered AI tools for discovery and debugging.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ToolDiscoveryResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiDetailErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiTextErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "ai-tools"
-                ]
-            },
-            "parameters": []
-        },
         "/api/capabilities/": {
             "get": {
                 "operationId": "api_capabilities_list",
@@ -17338,13 +17301,13 @@
                             "$ref": "#/definitions/IntegrationErrorResponse"
                         }
                     },
-                    "500": {
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/IntegrationErrorResponse"
                         }
                     },
-                    "409": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -17506,680 +17469,6 @@
                 }
             ]
         },
-        "/mcp/analytics/summary/": {
-            "get": {
-                "operationId": "mcp_analytics_summary_list",
-                "description": "Usage summary (total calls, sessions, latency).",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPAnalyticsSummaryResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/analytics/timeline/": {
-            "get": {
-                "operationId": "mcp_analytics_timeline_list",
-                "description": "Tool calls over time (hourly buckets).",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPAnalyticsTimelineResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/analytics/tools/": {
-            "get": {
-                "operationId": "mcp_analytics_tools_list",
-                "description": "Per-tool usage breakdown.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPAnalyticsToolsResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/config/": {
-            "get": {
-                "operationId": "mcp_config_list",
-                "description": "Get or update MCP connection configuration.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPConnectionResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "put": {
-                "operationId": "mcp_config_update",
-                "description": "Get or update MCP connection configuration.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/MCPConnectionUpdate"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPConnectionResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
-        "/mcp/config/tool-groups/": {
-            "get": {
-                "operationId": "mcp_config_tool-groups_list",
-                "description": "Get or update tool group configuration.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPToolGroupsResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "put": {
-                "operationId": "mcp_config_tool-groups_update",
-                "description": "Get or update tool group configuration.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/MCPToolGroupConfigUpdate"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPToolGroupsResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
-        "/mcp/health/": {
-            "get": {
-                "operationId": "mcp_health_list",
-                "description": "Unauthenticated health check for MCP server.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPHealthResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/internal/tool-call/": {
-            "post": {
-                "operationId": "mcp_internal_tool-call_create",
-                "description": "Execute a tool call via internal API (used by stdio proxy).",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/MCPToolCallRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPToolCallResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "429": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
-        "/mcp/internal/tools/": {
-            "get": {
-                "operationId": "mcp_internal_tools_list",
-                "description": "List available tools for the authenticated user.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPToolListResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/oauth/approve-info/": {
-            "get": {
-                "operationId": "mcp_oauth_approve-info_list",
-                "summary": "GET /mcp/oauth/approve-info/ - Get approval request details.",
-                "description": "Called by the frontend consent page to display what the client is requesting.\nPublic endpoint - no auth required (just shows what's being requested).",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthApproveInfoResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/oauth/approve/": {
-            "post": {
-                "operationId": "mcp_oauth_approve_create",
-                "summary": "POST /mcp/oauth/approve/ - Process user approval decision.",
-                "description": "Called by the frontend consent page when the user approves or denies.\nRequires JWT auth (authenticated user).",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthApproveRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthRedirectResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
-        "/mcp/oauth/authorize/": {
-            "get": {
-                "operationId": "mcp_oauth_authorize_list",
-                "description": "GET /mcp/oauth/authorize/ — Return consent screen data.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthAuthorizeResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/oauth/consent/": {
-            "post": {
-                "operationId": "mcp_oauth_consent_create",
-                "description": "POST /mcp/oauth/consent/ — Process user consent decision.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthConsentRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthRedirectResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
-        "/mcp/oauth/token/": {
-            "post": {
-                "operationId": "mcp_oauth_token_create",
-                "description": "POST /mcp/oauth/token/ — Exchange code or refresh token for access token.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthTokenRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthTokenResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
-        "/mcp/sessions/": {
-            "get": {
-                "operationId": "mcp_sessions_list",
-                "description": "List active and recent MCP sessions.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPSessionListResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": []
-        },
-        "/mcp/sessions/{session_id}/": {
-            "delete": {
-                "operationId": "mcp_sessions_delete",
-                "description": "Revoke a specific MCP session.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPSessionRevokeResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/MCPErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "mcp"
-                ]
-            },
-            "parameters": [
-                {
-                    "name": "session_id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
         "/model-hub/ai-eval-writer/": {
             "post": {
                 "operationId": "model-hub_ai-eval-writer_create",
@@ -18280,13 +17569,13 @@
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
@@ -19087,12 +18376,6 @@
                             "$ref": "#/definitions/QueueExportAnnotationsResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiTextErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -19112,6 +18395,12 @@
                         }
                     },
                     "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "413": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
@@ -29968,13 +29257,13 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "500": {
+                    "413": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "413": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -30029,18 +29318,6 @@
                             "$ref": "#/definitions/DatasetRowDataResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -30065,7 +29342,19 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -30932,24 +30221,6 @@
                             "$ref": "#/definitions/DatasetTableResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -30974,7 +30245,25 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -35242,24 +34531,6 @@
                             "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -35284,7 +34555,25 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -35364,24 +34653,6 @@
                             "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -35406,7 +34677,25 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -35628,24 +34917,6 @@
                             "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -35670,7 +34941,25 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -36224,24 +35513,6 @@
                             "$ref": "#/definitions/ExperimentTableRowsResponse"
                         }
                     },
-                    "413": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
-                    "503": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ModelHubErrorResponse"
-                        }
-                    },
                     "400": {
                         "description": "",
                         "schema": {
@@ -36266,7 +35537,25 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -37082,13 +36371,13 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "500": {
+                    "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "422": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -37168,13 +36457,13 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "500": {
+                    "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "422": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -37243,13 +36532,13 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "500": {
+                    "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "422": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -44519,13 +43808,13 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "500": {
+                    "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "422": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -44683,13 +43972,13 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "500": {
+                    "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
-                    "422": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -50964,13 +50253,13 @@
                             "$ref": "#/definitions/RunTestErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/RunTestErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/RunTestErrorResponse"
@@ -51655,13 +50944,13 @@
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
@@ -51759,13 +51048,13 @@
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
@@ -52011,13 +51300,13 @@
                             "$ref": "#/definitions/RunTestListPaginatedResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/RunTestErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/RunTestErrorResponse"
@@ -52191,13 +51480,13 @@
                             "$ref": "#/definitions/RunTestErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/RunTestErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/RunTestErrorResponse"
@@ -56086,13 +55375,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -56315,13 +55604,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -56590,13 +55879,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -57226,13 +56515,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -57320,13 +56609,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -57465,13 +56754,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -57563,13 +56852,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -57661,13 +56950,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "503": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -58928,13 +58217,13 @@
                             "$ref": "#/definitions/GetAnnotationLabelsResponse"
                         }
                     },
-                    "404": {
+                    "400": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "400": {
+                    "404": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -64990,16 +64279,16 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
-                        }
-                    },
                     "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/PageDepthExceededError"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "503": {
@@ -66441,13 +65730,13 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "500": {
+                    "422": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
-                    "422": {
+                    "500": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -84668,22 +83957,6 @@
                 }
             }
         },
-        "ToolDiscoveryResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/ToolDiscoveryResult"
-                }
-            }
-        },
         "ApiDetailErrorResponse": {
             "required": [
                 "detail"
@@ -88227,97 +87500,6 @@
                 }
             }
         },
-        "MCPAnalyticsSummaryResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPUsageSummary"
-                }
-            }
-        },
-        "MCPErrorResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "type": {
-                    "title": "Type",
-                    "type": "string",
-                    "enum": [
-                        "validation_error",
-                        "authentication_error",
-                        "payment_required",
-                        "entitlement_error",
-                        "permission_error",
-                        "not_found",
-                        "conflict",
-                        "client_error",
-                        "rate_limit",
-                        "server_error",
-                        "service_unavailable",
-                        "timeout",
-                        "api_error"
-                    ],
-                    "x-nullable": true
-                },
-                "code": {
-                    "title": "Code",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "attr": {
-                    "title": "Attr",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "details": {
-                    "title": "Details",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "minLength": 1
-                        }
-                    }
-                },
-                "retry_after": {
-                    "title": "Retry after",
-                    "type": "integer"
-                }
-            }
-        },
         "MCPUsageTimeline": {
             "required": [
                 "timestamp",
@@ -88333,25 +87515,6 @@
                 "call_count": {
                     "title": "Call count",
                     "type": "integer"
-                }
-            }
-        },
-        "MCPAnalyticsTimelineResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/MCPUsageTimeline"
-                    }
                 }
             }
         },
@@ -88380,25 +87543,6 @@
                 "error_rate": {
                     "title": "Error rate",
                     "type": "number"
-                }
-            }
-        },
-        "MCPAnalyticsToolsResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/MCPUsageToolBreakdown"
-                    }
                 }
             }
         },
@@ -88475,74 +87619,6 @@
                 }
             }
         },
-        "MCPConnectionResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPConnectionResult"
-                }
-            }
-        },
-        "MCPConnectionUpdate": {
-            "type": "object",
-            "properties": {
-                "connection_mode": {
-                    "title": "Connection mode",
-                    "type": "string",
-                    "enum": [
-                        "remote",
-                        "stdio"
-                    ]
-                },
-                "is_active": {
-                    "title": "Is active",
-                    "type": "boolean"
-                }
-            }
-        },
-        "MCPToolGroupsResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPToolGroupConfig"
-                }
-            }
-        },
-        "MCPToolGroupConfigUpdate": {
-            "type": "object",
-            "properties": {
-                "enabled_groups": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                },
-                "disabled_tools": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                }
-            }
-        },
         "MCPHealthResult": {
             "required": [
                 "healthy",
@@ -88563,50 +87639,6 @@
                     "title": "Version",
                     "type": "string",
                     "minLength": 1
-                }
-            }
-        },
-        "MCPHealthResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPHealthResult"
-                }
-            }
-        },
-        "MCPToolCallRequest": {
-            "required": [
-                "tool_name"
-            ],
-            "type": "object",
-            "properties": {
-                "tool_name": {
-                    "title": "Tool name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "params": {
-                    "title": "Params",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "default": {}
-                },
-                "session_id": {
-                    "title": "Session id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
                 }
             }
         },
@@ -88640,28 +87672,6 @@
                 }
             }
         },
-        "MCPToolCallResponse": {
-            "required": [
-                "status",
-                "result",
-                "session_id"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean"
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPToolCallResult"
-                },
-                "session_id": {
-                    "title": "Session id",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            }
-        },
         "MCPToolListResult": {
             "required": [
                 "tools",
@@ -88685,22 +87695,6 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
-                }
-            }
-        },
-        "MCPToolListResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPToolListResult"
                 }
             }
         },
@@ -88777,48 +87771,6 @@
                 }
             }
         },
-        "MCPOAuthApproveInfoResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPOAuthApproveInfoResult"
-                }
-            }
-        },
-        "MCPOAuthApproveRequest": {
-            "required": [
-                "request_id"
-            ],
-            "type": "object",
-            "properties": {
-                "request_id": {
-                    "title": "Request id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "approved": {
-                    "title": "Approved",
-                    "type": "boolean",
-                    "default": false
-                },
-                "selected_groups": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "default": []
-                }
-            }
-        },
         "MCPOAuthRedirectResult": {
             "required": [
                 "redirect_url"
@@ -88829,22 +87781,6 @@
                     "title": "Redirect url",
                     "type": "string",
                     "minLength": 1
-                }
-            }
-        },
-        "MCPOAuthRedirectResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPOAuthRedirectResult"
                 }
             }
         },
@@ -88882,155 +87818,6 @@
                     "items": {
                         "$ref": "#/definitions/MCPToolGroupChoice"
                     }
-                }
-            }
-        },
-        "MCPOAuthAuthorizeResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPOAuthAuthorizeResponseResult"
-                }
-            }
-        },
-        "MCPOAuthConsentRequest": {
-            "required": [
-                "client_id",
-                "redirect_uri"
-            ],
-            "type": "object",
-            "properties": {
-                "client_id": {
-                    "title": "Client id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "redirect_uri": {
-                    "title": "Redirect uri",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string"
-                },
-                "approved": {
-                    "title": "Approved",
-                    "type": "boolean",
-                    "default": false
-                },
-                "selected_groups": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "default": []
-                }
-            }
-        },
-        "MCPOAuthTokenRequest": {
-            "required": [
-                "grant_type",
-                "client_id",
-                "client_secret"
-            ],
-            "type": "object",
-            "properties": {
-                "grant_type": {
-                    "title": "Grant type",
-                    "type": "string",
-                    "enum": [
-                        "authorization_code",
-                        "refresh_token"
-                    ]
-                },
-                "code": {
-                    "title": "Code",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "refresh_token": {
-                    "title": "Refresh token",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "client_id": {
-                    "title": "Client id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "client_secret": {
-                    "title": "Client secret",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "redirect_uri": {
-                    "title": "Redirect uri",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "MCPOAuthTokenResponse": {
-            "required": [
-                "access_token",
-                "token_type",
-                "expires_in",
-                "scope"
-            ],
-            "type": "object",
-            "properties": {
-                "access_token": {
-                    "title": "Access token",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "token_type": {
-                    "title": "Token type",
-                    "type": "string",
-                    "enum": [
-                        "Bearer"
-                    ]
-                },
-                "expires_in": {
-                    "title": "Expires in",
-                    "type": "integer"
-                },
-                "refresh_token": {
-                    "title": "Refresh token",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "scope": {
-                    "title": "Scope",
-                    "type": "string"
-                }
-            }
-        },
-        "MCPOAuthTokenErrorResponse": {
-            "required": [
-                "error"
-            ],
-            "type": "object",
-            "properties": {
-                "error": {
-                    "title": "Error",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "error_description": {
-                    "title": "Error description",
-                    "type": "string",
-                    "minLength": 1
                 }
             }
         },
@@ -89109,25 +87896,6 @@
                 }
             }
         },
-        "MCPSessionListResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/MCPSession"
-                    }
-                }
-            }
-        },
         "MCPSessionRevokeResult": {
             "required": [
                 "message"
@@ -89138,22 +87906,6 @@
                     "title": "Message",
                     "type": "string",
                     "minLength": 1
-                }
-            }
-        },
-        "MCPSessionRevokeResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/MCPSessionRevokeResult"
                 }
             }
         },
@@ -97386,24 +96138,24 @@
                     "title": "Temperature",
                     "description": "Controls the randomness. Value between 0 and 2.",
                     "type": "number",
-                    "maximum": 2.0,
-                    "minimum": 0.0,
+                    "maximum": 2,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "frequency_penalty": {
                     "title": "Frequency penalty",
                     "description": "Penalty for word repetition. Value between -2 and 2.",
                     "type": "number",
-                    "maximum": 2.0,
-                    "minimum": -2.0,
+                    "maximum": 2,
+                    "minimum": -2,
                     "x-nullable": true
                 },
                 "presence_penalty": {
                     "title": "Presence penalty",
                     "description": "Penalty for new word usage. Value between -2 and 2.",
                     "type": "number",
-                    "maximum": 2.0,
-                    "minimum": -2.0,
+                    "maximum": 2,
+                    "minimum": -2,
                     "x-nullable": true
                 },
                 "max_tokens": {
@@ -97418,8 +96170,8 @@
                     "title": "Top p",
                     "description": "Controls diversity via nucleus sampling. Value between 0 and 1.",
                     "type": "number",
-                    "maximum": 1.0,
-                    "minimum": 0.0,
+                    "maximum": 1,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "response_format": {
@@ -107173,8 +105925,8 @@
                 "similarity_threshold": {
                     "title": "Similarity threshold",
                     "type": "number",
-                    "maximum": 1.0,
-                    "minimum": 0.0
+                    "maximum": 1,
+                    "minimum": 0
                 }
             }
         },
@@ -110757,24 +109509,24 @@
                     "title": "Temperature",
                     "description": "Controls the randomness. Value between 0 and 1.",
                     "type": "number",
-                    "maximum": 1.0,
-                    "minimum": 0.0,
+                    "maximum": 1,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "frequency_penalty": {
                     "title": "Frequency penalty",
                     "description": "Penalty for word repetition. Value between -2 and 2.",
                     "type": "number",
-                    "maximum": 2.0,
-                    "minimum": -2.0,
+                    "maximum": 2,
+                    "minimum": -2,
                     "x-nullable": true
                 },
                 "presence_penalty": {
                     "title": "Presence penalty",
                     "description": "Penalty for new word usage. Value between -2 and 2.",
                     "type": "number",
-                    "maximum": 2.0,
-                    "minimum": -2.0,
+                    "maximum": 2,
+                    "minimum": -2,
                     "x-nullable": true
                 },
                 "max_tokens": {
@@ -110789,8 +109541,8 @@
                     "title": "Top p",
                     "description": "Controls diversity via nucleus sampling. Value between 0 and 1.",
                     "type": "number",
-                    "maximum": 1.0,
-                    "minimum": 0.0,
+                    "maximum": 1,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "response_format": {
@@ -116171,8 +114923,8 @@
                 "confidence_score": {
                     "title": "Confidence score",
                     "type": "number",
-                    "maximum": 1.0,
-                    "minimum": 0.0,
+                    "maximum": 1,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "latency_ms": {
@@ -119632,8 +118384,8 @@
                     "title": "Start time ms",
                     "description": "Start time of this transcript segment in milliseconds",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
-                    "minimum": -9223372036854775808
+                    "maximum": 9223372036854776000,
+                    "minimum": -9223372036854776000
                 },
                 "start_time_seconds": {
                     "title": "Start time seconds",
@@ -119644,8 +118396,8 @@
                     "title": "End time ms",
                     "description": "End time of this transcript segment in milliseconds",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
-                    "minimum": -9223372036854775808
+                    "maximum": 9223372036854776000,
+                    "minimum": -9223372036854776000
                 },
                 "end_time_seconds": {
                     "title": "End time seconds",
@@ -122300,7 +121052,7 @@
                 "conversation_speed": {
                     "title": "Conversation speed",
                     "type": "number",
-                    "default": 1.0
+                    "default": 1
                 },
                 "finished_speaking_sensitivity": {
                     "title": "Finished speaking sensitivity",
@@ -122736,22 +121488,22 @@
                     "title": "Interrupt sensitivity",
                     "description": "Sensitivity for interruption detection (0-1)",
                     "type": "number",
-                    "maximum": 11.0,
-                    "minimum": 0.0
+                    "maximum": 11,
+                    "minimum": 0
                 },
                 "conversation_speed": {
                     "title": "Conversation speed",
                     "description": "Speed of conversation (0.1-3.0)",
                     "type": "number",
-                    "maximum": 2.0,
+                    "maximum": 2,
                     "minimum": 0.1
                 },
                 "finished_speaking_sensitivity": {
                     "title": "Finished speaking sensitivity",
                     "description": "Sensitivity for detecting when speaker has finished (0-1)",
                     "type": "number",
-                    "maximum": 11.0,
-                    "minimum": 0.0
+                    "maximum": 11,
+                    "minimum": 0
                 },
                 "model": {
                     "title": "Model",
@@ -122764,8 +121516,8 @@
                     "title": "Llm temperature",
                     "description": "Temperature setting for LLM (0-2)",
                     "type": "number",
-                    "maximum": 2.0,
-                    "minimum": 0.0
+                    "maximum": 2,
+                    "minimum": 0
                 },
                 "max_call_duration_in_minutes": {
                     "title": "Max call duration in minutes",
@@ -123758,91 +122510,91 @@
                 "active_users_count": {
                     "title": "Active users count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "traces_count": {
                     "title": "Traces count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "spans_count": {
                     "title": "Spans count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "projects_count": {
                     "title": "Projects count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "eval_logger_count": {
                     "title": "Eval logger count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "model_hub_evaluations_count": {
                     "title": "Model hub evaluations count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "dataset_eval_runs_count": {
                     "title": "Dataset eval runs count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "total_evaluations_count": {
                     "title": "Total evaluations count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "simulation_runs_count": {
                     "title": "Simulation runs count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "simulation_calls_count": {
                     "title": "Simulation calls count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "experiments_count": {
                     "title": "Experiments count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "gateway_requests_count": {
                     "title": "Gateway requests count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 },
                 "datasets_count": {
                     "title": "Datasets count",
                     "type": "integer",
-                    "maximum": 9223372036854775807,
+                    "maximum": 9223372036854776000,
                     "minimum": 0,
                     "x-nullable": true
                 }
@@ -126377,8 +125129,8 @@
                 "sampling_rate": {
                     "title": "Sampling rate",
                     "type": "number",
-                    "maximum": 100.0,
-                    "minimum": 1.0
+                    "maximum": 100,
+                    "minimum": 1
                 },
                 "last_run": {
                     "title": "Last run",
@@ -127452,8 +126204,8 @@
                 "sampling_rate": {
                     "title": "Sampling rate",
                     "type": "number",
-                    "maximum": 100.0,
-                    "minimum": 1.0,
+                    "maximum": 100,
+                    "minimum": 1,
                     "x-nullable": true
                 },
                 "spans_limit": {
@@ -135422,13 +134174,13 @@
                 "critical_threshold_value": {
                     "title": "Critical threshold value",
                     "type": "number",
-                    "minimum": 0.0,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "warning_threshold_value": {
                     "title": "Warning threshold value",
                     "type": "number",
-                    "minimum": 0.0,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "alert_frequency": {
@@ -135747,13 +134499,13 @@
                 "critical_threshold_value": {
                     "title": "Critical threshold value",
                     "type": "number",
-                    "minimum": 0.0,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "warning_threshold_value": {
                     "title": "Warning threshold value",
                     "type": "number",
-                    "minimum": 0.0,
+                    "minimum": 0,
                     "x-nullable": true
                 },
                 "alert_frequency": {

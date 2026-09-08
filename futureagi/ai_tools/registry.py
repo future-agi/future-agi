@@ -12,7 +12,8 @@ class ToolRegistry:
     """Singleton registry for all AI tools.
 
     Tools register themselves via the @register_tool decorator.
-    Both MCP Server and AI Assistant query this registry.
+    Falcon AI and internal evaluation workflows query this registry. The
+    standalone MCP has its own generated OpenAPI registry.
     """
 
     def __init__(self):

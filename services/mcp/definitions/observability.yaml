@@ -1,0 +1,15 @@
+version: 1
+group: observability
+tools:
+  - name: list_tracing_projects
+    operationId: tracer_project_list
+    enabled: true
+    title: List tracing projects
+    description: List observability and experiment tracing projects in FutureAGI.
+    risk: read
+  - name: list_traces
+    operationId: tracer_trace_list
+    enabled: true
+    title: List traces
+    description: List recorded traces in the authenticated FutureAGI workspace.
+    risk: read

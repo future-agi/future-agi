@@ -1,4 +1,4 @@
-"""Shared validation logic for dataset operations — used by views and ai_tools."""
+"""Shared validation logic for dataset API and internal AI workflows."""
 
 import json
 from datetime import datetime

@@ -48,6 +48,20 @@ services:
       CH25_TRACE_DUAL_WRITE: "false"
       CH_DUAL_WRITE: "false"
 
+  mcp:
+    build:
+      context: .
+      dockerfile: services/mcp/Dockerfile
+      target: dependencies
+    image: futureagi/mcp:dev
+    profiles: !reset []
+    pull_policy: never
+    working_dir: /app/services/mcp
+    volumes:
+      - ./services/mcp:/app/services/mcp
+      - /app/services/mcp/node_modules
+    command: yarn dev
+
   # The supervisor runs Django management commands from this checkout. Keep it
   # on the same locally-built image and bind mount as backend; inheriting the
   # root compose's release image can leave new commands unavailable on dev.

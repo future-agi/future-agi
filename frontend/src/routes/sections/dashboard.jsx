@@ -61,9 +61,6 @@ const AIProviders = lazyWithRetry(
 const IntegrationsPage = lazyWithRetry(
   () => import("src/pages/dashboard/settings/Integrations"),
 );
-const MCPServerPage = lazyWithRetry(
-  () => import("src/pages/dashboard/settings/MCPServer"),
-);
 const FalconAIConnectorsPage = lazyWithRetry(
   () => import("src/pages/dashboard/settings/FalconAIConnectors"),
 );
@@ -660,14 +657,6 @@ export const dashboardRoutes = (
           ]}
         >
           <IntegrationDetailPage />
-        </RoleProtection>
-      ),
-    },
-    {
-      path: "mcp-server",
-      element: (
-        <RoleProtection allowedRoles={["Owner", "Admin"]}>
-          <MCPServerPage />
         </RoleProtection>
       ),
     },

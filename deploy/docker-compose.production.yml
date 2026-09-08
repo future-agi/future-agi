@@ -3,6 +3,11 @@
 # if any are still unset. Pair with deploy/.env.production.
 
 services:
+  mcp:
+    environment:
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-__mcp_host_not_configured__}
+    restart: always
+
   backend:
     environment:
       ENV_TYPE: production

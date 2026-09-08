@@ -2078,18 +2078,6 @@ export const endpoints = {
         { id: graphId, version_id: versionId, node_id: nodeId },
       ),
   },
-  mcp: {
-    config: apiPath("/mcp/config/"),
-    toolGroups: apiPath("/mcp/config/tool-groups/"),
-    sessions: apiPath("/mcp/sessions/"),
-    tools: apiPath("/mcp/internal/tools/"),
-    oauth: {
-      authorize: apiPath("/mcp/oauth/authorize/"),
-      consent: apiPath("/mcp/oauth/consent/"),
-      approveInfo: apiPath("/mcp/oauth/approve-info/"),
-      approve: apiPath("/mcp/oauth/approve/"),
-    },
-  },
   twoFactor: {
     status: apiPath("/accounts/2fa/status/"),
     totp: {

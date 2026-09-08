@@ -341,7 +341,6 @@ const SettingsIcons = {
   Keys: settingsIcon("APIKeys"),
   Providers: settingsIcon("AIProviders_new"),
   Integrations: settingsIcon("Integrations_new"),
-  MCPServer: settingsIcon("MCPServer"),
   Pricing: settingsIcon("plansPricing_new"),
   Billing: settingsIcon("Billing_new"),
   Profile: settingsIcon("Profile_new"),
@@ -466,14 +465,6 @@ export function useNavSettingsData() {
         title: "Members",
         path: "/dashboard/settings/user-management",
         icon: SettingsIcons.Management,
-      });
-    }
-    // MCP Server - only for Owner/Admin
-    if (isOrgAdminPlus) {
-      orgItems.push({
-        title: "MCP Server",
-        path: "/dashboard/settings/mcp-server",
-        icon: SettingsIcons.MCPServer,
       });
     }
     // Org Settings - only for Owner/Admin

@@ -140,7 +140,6 @@ export const BE_APP_AREA = {
   agentcc: "gateway",
   agent_playground: "agents",
   integrations: "settings",
-  mcp_server: "settings",
   evaluations: "evals",
   agentic_eval: "evals",
   sdk: "sdk-ingestion",

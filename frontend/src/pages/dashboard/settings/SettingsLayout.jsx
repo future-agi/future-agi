@@ -20,7 +20,6 @@ const ICONS = {
   Keys: icon("APIKeys"),
   Providers: icon("AIProviders"),
   Integrations: icon("Integrations"),
-  MCPServer: icon("MCPServer"),
   Pricing: icon("plansPricing"),
   Billing: icon("Billing"),
   Profile: icon("Profile"),
@@ -118,11 +117,6 @@ const SettingsLayout = React.memo(() => {
               path: "/dashboard/settings/integrations",
               title: "Integrations",
               icon: ICONS.Integrations,
-            },
-            {
-              path: "/dashboard/settings/mcp-server",
-              title: "MCP Server",
-              icon: ICONS.MCPServer,
             },
           ]
         : []),

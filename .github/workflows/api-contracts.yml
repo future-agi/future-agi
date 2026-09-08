@@ -5,6 +5,7 @@ on:
     branches: [main, develop, dev]
     paths:
       - "api_contracts/**"
+      - "services/mcp/**"
       - "frontend/src/api/contracts/**"
       - "frontend/src/generated/api-contracts/**"
       - "frontend/src/api/annotation-queues/**"
@@ -42,6 +43,7 @@ on:
     branches: [main, develop, dev]
     paths:
       - "api_contracts/**"
+      - "services/mcp/**"
       - "frontend/src/api/contracts/**"
       - "frontend/src/generated/api-contracts/**"
       - "frontend/src/api/annotation-queues/**"
@@ -78,6 +80,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  mcp-contracts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: "yarn"
+          cache-dependency-path: services/mcp/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Check direct tools and generated Zod contracts
+        run: yarn run check
+
   frontend-contracts:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -330,7 +354,6 @@ jobs:
           tfc/tests/test_model_hub_api_contract_debt.py
           agent_playground/tests/test_api_contract_debt.py
           agentcc/tests/test_api_contract_debt.py
-          mcp_server/tests/test_api_contract_debt.py
           saml2_auth/tests/test_api_contract_debt.py
           sdk/tests/test_api_contract_debt.py
           simulate/tests/test_agent_version_api_contract.py

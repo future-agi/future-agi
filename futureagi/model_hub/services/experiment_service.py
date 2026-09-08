@@ -1,4 +1,4 @@
-"""Service layer for experiment operations — shared by views and ai_tools."""
+"""Service layer for experiment operations shared by API and internal AI workflows."""
 
 from dataclasses import dataclass
 

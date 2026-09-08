@@ -231,10 +231,9 @@ INSTALLED_APPS = [
     "simulate",
     "agent_playground.apps.AgentPlaygroundConfig",
     "integrations",
-    # AI tools shared layer (MCP + AI Assistant)
+    # Internal Falcon AI/evaluator tool engine. The standalone MCP does not
+    # import or expose this registry.
     "ai_tools",
-    # MCP Server (protocol layer for external AI clients)
-    "mcp_server",
     "agentcc",
     "tfc.deployment_telemetry",
     "tfc.licensing",

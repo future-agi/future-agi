@@ -1,4 +1,4 @@
-"""Service layer for dataset operations — shared by views and ai_tools."""
+"""Service layer for dataset operations shared by API and internal AI workflows."""
 
 import uuid
 from dataclasses import dataclass

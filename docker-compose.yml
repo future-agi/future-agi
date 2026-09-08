@@ -213,6 +213,27 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Standalone direct-tools MCP. It is opt-in outside the dev overlay so an
+  # existing self-hosted stack does not expose a new public port unexpectedly.
+  mcp:
+    image: futureagi/mcp:${MCP_VERSION:-latest}
+    profiles: ["mcp"]
+    ports:
+      - "${MCP_PUBLIC_PORT:-8001}:3001"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MCP_PORT: "3001"
+      MCP_API_BASE_URL: http://backend
+      MCP_API_TIMEOUT_MS: ${MCP_API_TIMEOUT_MS:-30000}
+      MCP_MAX_RESPONSE_BYTES: ${MCP_MAX_RESPONSE_BYTES:-250000}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
   worker:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
     env_file:

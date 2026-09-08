@@ -1,0 +1,9 @@
+version: 1
+group: evaluations
+tools:
+  - name: list_evaluation_groups
+    operationId: model-hub_eval-groups_list
+    enabled: true
+    title: List evaluation groups
+    description: List evaluation groups and their templates in FutureAGI.
+    risk: read

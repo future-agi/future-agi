@@ -7,11 +7,7 @@ SOURCE_ROOT = REPO_ROOT / "futureagi"
 RAW_ERROR_KEYS = {"error", "detail"}
 MESSAGE_KEY = "message"
 
-PROTOCOL_COMPATIBILITY_ALLOWLIST = {
-    Path("futureagi/mcp_server/views/oauth.py"): (
-        "OAuth 2.0 token endpoints must return RFC-compatible error bodies."
-    ),
-}
+PROTOCOL_COMPATIBILITY_ALLOWLIST = {}
 
 RAW_ERROR_DEBT_BY_FILE = {
     Path("futureagi/accounts/admin.py"): 2,

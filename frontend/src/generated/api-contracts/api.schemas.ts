@@ -3648,111 +3648,6 @@ export interface AgentccWebhookApi {
   readonly updated_at?: string;
 }
 
-export interface ToolParameterApi {
-  /** @minLength 1 */
-  readonly name?: string;
-  /** @minLength 1 */
-  readonly type?: string;
-  readonly description?: string;
-  readonly required?: boolean;
-}
-
-export type ToolDiscoveryItemApiReturns = { [key: string]: unknown };
-
-export type ToolDiscoveryItemApiMetadata = { [key: string]: unknown };
-
-export interface ToolDiscoveryItemApi {
-  /** @minLength 1 */
-  readonly name?: string;
-  /** @minLength 1 */
-  readonly category?: string;
-  readonly description?: string;
-  readonly parameters?: readonly ToolParameterApi[];
-  readonly returns?: ToolDiscoveryItemApiReturns;
-  readonly metadata?: ToolDiscoveryItemApiMetadata;
-}
-
-export interface ToolDiscoveryResultApi {
-  readonly tools?: readonly ToolDiscoveryItemApi[];
-  readonly categories?: readonly string[];
-  readonly total?: number;
-}
-
-export interface ToolDiscoveryResponseApi {
-  status?: boolean;
-  result: ToolDiscoveryResultApi;
-}
-
-export type ApiDetailErrorResponseApiType =
-  (typeof ApiDetailErrorResponseApiType)[keyof typeof ApiDetailErrorResponseApiType];
-
-export const ApiDetailErrorResponseApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type ApiDetailErrorResponseApiDetails = { [key: string]: string[] };
-
-export interface ApiDetailErrorResponseApi {
-  status?: boolean;
-  type?: ApiDetailErrorResponseApiType;
-  code?: string;
-  detail: string;
-  /** @minLength 1 */
-  result?: string;
-  /** @minLength 1 */
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: ApiDetailErrorResponseApiDetails;
-}
-
-export type ApiTextErrorResponseApiType =
-  (typeof ApiTextErrorResponseApiType)[keyof typeof ApiTextErrorResponseApiType];
-
-export const ApiTextErrorResponseApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type ApiTextErrorResponseApiDetails = { [key: string]: string[] };
-
-export interface ApiTextErrorResponseApi {
-  status?: boolean;
-  type?: ApiTextErrorResponseApiType;
-  code?: string;
-  detail?: string;
-  /** @minLength 1 */
-  result?: string;
-  /** @minLength 1 */
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: ApiTextErrorResponseApiDetails;
-}
-
 export type CapabilitiesResponseApiDeploymentFlavor =
   (typeof CapabilitiesResponseApiDeploymentFlavor)[keyof typeof CapabilitiesResponseApiDeploymentFlavor];
 
@@ -3880,6 +3775,41 @@ export interface DeploymentInfoResponseApi {
   result: DeploymentInfoResultApi;
 }
 
+export type ApiTextErrorResponseApiType =
+  (typeof ApiTextErrorResponseApiType)[keyof typeof ApiTextErrorResponseApiType];
+
+export const ApiTextErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ApiTextErrorResponseApiDetails = { [key: string]: string[] };
+
+export interface ApiTextErrorResponseApi {
+  status?: boolean;
+  type?: ApiTextErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiTextErrorResponseApiDetails;
+}
+
 export type ClickHouseHealthResponseApiStatus =
   (typeof ClickHouseHealthResponseApiStatus)[keyof typeof ClickHouseHealthResponseApiStatus];
 
@@ -3973,6 +3903,41 @@ export interface LangfuseHealthResponseApi {
   status: LangfuseHealthResponseApiStatus;
   /** @minLength 1 */
   version: string;
+}
+
+export type ApiDetailErrorResponseApiType =
+  (typeof ApiDetailErrorResponseApiType)[keyof typeof ApiDetailErrorResponseApiType];
+
+export const ApiDetailErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ApiDetailErrorResponseApiDetails = { [key: string]: string[] };
+
+export interface ApiDetailErrorResponseApi {
+  status?: boolean;
+  type?: ApiDetailErrorResponseApiType;
+  code?: string;
+  detail: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiDetailErrorResponseApiDetails;
 }
 
 export type LangfuseIngestionEventApiBody = { [key: string]: unknown };
@@ -5394,359 +5359,6 @@ export interface SyncLogListResultApi {
 export interface SyncLogListResponseApi {
   status?: boolean;
   result: SyncLogListResultApi;
-}
-
-export interface MCPUsageSummaryApi {
-  total_calls: number;
-  total_sessions: number;
-  avg_latency_ms: number;
-  error_rate: number;
-  active_sessions: number;
-}
-
-export interface MCPAnalyticsSummaryResponseApi {
-  status?: boolean;
-  result: MCPUsageSummaryApi;
-}
-
-export type MCPErrorResponseApiType =
-  (typeof MCPErrorResponseApiType)[keyof typeof MCPErrorResponseApiType];
-
-export const MCPErrorResponseApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type MCPErrorResponseApiDetails = { [key: string]: string[] };
-
-export interface MCPErrorResponseApi {
-  status?: boolean;
-  type?: MCPErrorResponseApiType;
-  code?: string;
-  detail?: string;
-  result?: string;
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: MCPErrorResponseApiDetails;
-  retry_after?: number;
-}
-
-export interface MCPUsageTimelineApi {
-  timestamp: string;
-  call_count: number;
-}
-
-export interface MCPAnalyticsTimelineResponseApi {
-  status?: boolean;
-  result: MCPUsageTimelineApi[];
-}
-
-export interface MCPUsageToolBreakdownApi {
-  /** @minLength 1 */
-  tool_name: string;
-  call_count: number;
-  avg_latency_ms: number;
-  error_rate: number;
-}
-
-export interface MCPAnalyticsToolsResponseApi {
-  status?: boolean;
-  result: MCPUsageToolBreakdownApi[];
-}
-
-export type MCPConnectionResultApiConnectionMode =
-  (typeof MCPConnectionResultApiConnectionMode)[keyof typeof MCPConnectionResultApiConnectionMode];
-
-export const MCPConnectionResultApiConnectionMode = {
-  remote: "remote",
-  stdio: "stdio",
-} as const;
-
-export type MCPToolGroupConfigApiEnabledGroups = { [key: string]: unknown };
-
-export type MCPToolGroupConfigApiDisabledTools = { [key: string]: unknown };
-
-export interface MCPToolGroupConfigApi {
-  enabled_groups?: MCPToolGroupConfigApiEnabledGroups;
-  disabled_tools?: MCPToolGroupConfigApiDisabledTools;
-  readonly available_groups?: string;
-}
-
-export interface MCPConnectionResultApi {
-  readonly id?: string;
-  connection_mode?: MCPConnectionResultApiConnectionMode;
-  is_active?: boolean;
-  /** @maxLength 100 */
-  client_name?: string;
-  /** @maxLength 50 */
-  client_version?: string;
-  readonly created_at?: string;
-  readonly updated_at?: string;
-  tool_config?: MCPToolGroupConfigApi;
-  /** @minLength 1 */
-  readonly mcp_url?: string;
-}
-
-export interface MCPConnectionResponseApi {
-  status?: boolean;
-  result: MCPConnectionResultApi;
-}
-
-export type MCPConnectionUpdateApiConnectionMode =
-  (typeof MCPConnectionUpdateApiConnectionMode)[keyof typeof MCPConnectionUpdateApiConnectionMode];
-
-export const MCPConnectionUpdateApiConnectionMode = {
-  remote: "remote",
-  stdio: "stdio",
-} as const;
-
-export interface MCPConnectionUpdateApi {
-  connection_mode?: MCPConnectionUpdateApiConnectionMode;
-  is_active?: boolean;
-}
-
-export interface MCPToolGroupsResponseApi {
-  status?: boolean;
-  result: MCPToolGroupConfigApi;
-}
-
-export interface MCPToolGroupConfigUpdateApi {
-  enabled_groups?: string[];
-  disabled_tools?: string[];
-}
-
-export interface MCPHealthResultApi {
-  healthy: boolean;
-  tool_count: number;
-  /** @minLength 1 */
-  version: string;
-}
-
-export interface MCPHealthResponseApi {
-  status?: boolean;
-  result: MCPHealthResultApi;
-}
-
-export type MCPToolCallRequestApiParams = { [key: string]: string };
-
-export interface MCPToolCallRequestApi {
-  /** @minLength 1 */
-  tool_name: string;
-  params?: MCPToolCallRequestApiParams;
-  session_id?: string;
-}
-
-export type MCPToolCallResultApiData = { [key: string]: unknown };
-
-export interface MCPToolCallResultApi {
-  content: string;
-  data: MCPToolCallResultApiData;
-  is_error: boolean;
-  error_code: string;
-}
-
-export interface MCPToolCallResponseApi {
-  status: boolean;
-  result: MCPToolCallResultApi;
-  session_id: string;
-}
-
-export interface MCPToolListResultApi {
-  tools: ToolDiscoveryItemApi[];
-  total: number;
-  session_id: string;
-}
-
-export interface MCPToolListResponseApi {
-  status?: boolean;
-  result: MCPToolListResultApi;
-}
-
-export interface MCPToolGroupChoiceApi {
-  /** @minLength 1 */
-  slug: string;
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  description: string;
-  checked?: boolean;
-  enabled?: boolean;
-}
-
-export interface MCPOAuthApproveInfoResultApi {
-  /** @minLength 1 */
-  client_name: string;
-  /** @minLength 1 */
-  client_id: string;
-  scopes: string[];
-  /** @minLength 1 */
-  redirect_uri: string;
-  available_groups: MCPToolGroupChoiceApi[];
-}
-
-export interface MCPOAuthApproveInfoResponseApi {
-  status?: boolean;
-  result: MCPOAuthApproveInfoResultApi;
-}
-
-export interface MCPOAuthApproveRequestApi {
-  /** @minLength 1 */
-  request_id: string;
-  approved?: boolean;
-  selected_groups?: string[];
-}
-
-export interface MCPOAuthRedirectResultApi {
-  /** @minLength 1 */
-  redirect_url: string;
-}
-
-export interface MCPOAuthRedirectResponseApi {
-  status?: boolean;
-  result: MCPOAuthRedirectResultApi;
-}
-
-export interface MCPOAuthAuthorizeResponseResultApi {
-  /** @minLength 1 */
-  client_name: string;
-  /** @minLength 1 */
-  client_id: string;
-  /** @minLength 1 */
-  redirect_uri: string;
-  state: string;
-  available_groups: MCPToolGroupChoiceApi[];
-}
-
-export interface MCPOAuthAuthorizeResponseApi {
-  status?: boolean;
-  result: MCPOAuthAuthorizeResponseResultApi;
-}
-
-export interface MCPOAuthConsentRequestApi {
-  /** @minLength 1 */
-  client_id: string;
-  /** @minLength 1 */
-  redirect_uri: string;
-  state?: string;
-  approved?: boolean;
-  selected_groups?: string[];
-}
-
-export type MCPOAuthTokenRequestApiGrantType =
-  (typeof MCPOAuthTokenRequestApiGrantType)[keyof typeof MCPOAuthTokenRequestApiGrantType];
-
-export const MCPOAuthTokenRequestApiGrantType = {
-  authorization_code: "authorization_code",
-  refresh_token: "refresh_token",
-} as const;
-
-export interface MCPOAuthTokenRequestApi {
-  grant_type: MCPOAuthTokenRequestApiGrantType;
-  /** @minLength 1 */
-  code?: string;
-  /** @minLength 1 */
-  refresh_token?: string;
-  /** @minLength 1 */
-  client_id: string;
-  /** @minLength 1 */
-  client_secret: string;
-  /** @minLength 1 */
-  redirect_uri?: string;
-}
-
-export type MCPOAuthTokenResponseApiTokenType =
-  (typeof MCPOAuthTokenResponseApiTokenType)[keyof typeof MCPOAuthTokenResponseApiTokenType];
-
-export const MCPOAuthTokenResponseApiTokenType = {
-  Bearer: "Bearer",
-} as const;
-
-export interface MCPOAuthTokenResponseApi {
-  /** @minLength 1 */
-  access_token: string;
-  token_type: MCPOAuthTokenResponseApiTokenType;
-  expires_in: number;
-  /** @minLength 1 */
-  refresh_token?: string;
-  scope: string;
-}
-
-export interface MCPOAuthTokenErrorResponseApi {
-  /** @minLength 1 */
-  error: string;
-  /** @minLength 1 */
-  error_description?: string;
-}
-
-export type MCPSessionApiStatus =
-  (typeof MCPSessionApiStatus)[keyof typeof MCPSessionApiStatus];
-
-export const MCPSessionApiStatus = {
-  active: "active",
-  idle: "idle",
-  disconnected: "disconnected",
-  revoked: "revoked",
-} as const;
-
-export type MCPSessionApiTransport =
-  (typeof MCPSessionApiTransport)[keyof typeof MCPSessionApiTransport];
-
-export const MCPSessionApiTransport = {
-  streamable_http: "streamable_http",
-  sse: "sse",
-  stdio: "stdio",
-} as const;
-
-export interface MCPSessionApi {
-  readonly id?: string;
-  status?: MCPSessionApiStatus;
-  transport?: MCPSessionApiTransport;
-  /** @maxLength 100 */
-  client_name?: string;
-  /** @maxLength 50 */
-  client_version?: string;
-  /** @maxLength 50 */
-  client_os?: string;
-  readonly started_at?: string;
-  readonly last_activity_at?: string;
-  ended_at?: string;
-  /**
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  tool_call_count?: number;
-  /**
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  error_count?: number;
-}
-
-export interface MCPSessionListResponseApi {
-  status?: boolean;
-  result: MCPSessionApi[];
-}
-
-export interface MCPSessionRevokeResultApi {
-  /** @minLength 1 */
-  message: string;
-}
-
-export interface MCPSessionRevokeResponseApi {
-  status?: boolean;
-  result: MCPSessionRevokeResultApi;
 }
 
 export type AIEvalWriterRequestApiOutputFormat =

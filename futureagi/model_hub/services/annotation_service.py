@@ -1,4 +1,4 @@
-"""Service layer for annotation operations — shared by views and ai_tools."""
+"""Service layer for annotation operations shared by API and internal AI workflows."""
 
 import uuid
 
@@ -29,7 +29,7 @@ def process_annotation_columns(
     """Create columns for annotation labels on the annotation's dataset.
 
     This is the shared logic extracted from AnnotationsViewSet.process_new_annotaion.
-    Both the view and ai_tools call this.
+    Both the API view and internal AI workflows call this.
 
     Args:
         annotation: Annotations instance

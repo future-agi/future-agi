@@ -21,7 +21,7 @@ class ToolContext:
     """Context injected into every tool call.
 
     Carries the authenticated user, organization, and workspace.
-    Created from the request in the transport layer (MCP or AI Assistant).
+    Created by internal AI Assistant and evaluation workflows.
     """
 
     user: Any  # accounts.models.User
@@ -125,7 +125,7 @@ class BaseTool(ABC):
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:
-        """Execute the tool with validated params and context."""
+        """Execute the internal assistant tool with validated params and context."""
         ...
 
     @property

@@ -1,4 +1,4 @@
-# Tag-triggered release: builds all six platform images at the pushed vX.Y.Z
+# Tag-triggered release: builds all seven platform images at the pushed vX.Y.Z
 # tag, then fans out (ee overlay dispatch, deployment values-bump PR, docs
 # changelog dispatch). Pre-release tags (-suffix) never reach this workflow
 # (release-please only cuts bare vX.Y.Z; the guard job double-checks).
@@ -52,6 +52,7 @@ jobs:
           - { name: serving,         image: futureagi/serving,         context: ./futureagi/model_serving, dockerfile: ./futureagi/model_serving/Dockerfile.oss, free-disk: false, platforms: 'linux/amd64,linux/arm64' }
           - { name: code-executor,   image: futureagi/code-executor,   context: ./futureagi/code-executor, dockerfile: ./futureagi/code-executor/Dockerfile,     free-disk: false, platforms: 'linux/amd64,linux/arm64' }
           - { name: fi-collector,    image: futureagi/fi-collector,    context: ./fi-collector,            dockerfile: ./fi-collector/Dockerfile,                free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - { name: mcp,             image: futureagi/mcp,             context: .,                         dockerfile: ./services/mcp/Dockerfile,                free-disk: false, platforms: 'linux/amd64,linux/arm64' }
     uses: ./.github/workflows/build-image.yml
     with:
       image: ${{ matrix.image }}

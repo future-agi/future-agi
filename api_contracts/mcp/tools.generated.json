@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "generatedFrom": "api_contracts/openapi/swagger.json",
+  "tools": [
+    {
+      "name": "list_datasets",
+      "operationId": "model-hub_develops_get-datasets_list",
+      "enabled": true,
+      "title": "List datasets",
+      "description": "List and search datasets in the authenticated FutureAGI workspace.",
+      "risk": "read",
+      "group": "datasets",
+      "method": "GET",
+      "path": "/model-hub/develops/get-datasets/",
+      "parameterLocations": {
+        "search_text": "query",
+        "page": "query",
+        "page_size": "query",
+        "sort": "query"
+      },
+      "inputJsonSchema": {
+        "type": "object",
+        "properties": {
+          "search_text": {
+            "type": "string",
+            "default": "",
+            "x-nullable": true
+          },
+          "page": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          },
+          "page_size": {
+            "type": "integer",
+            "default": 10,
+            "maximum": 100,
+            "minimum": 1
+          },
+          "sort": {
+            "type": "string",
+            "x-nullable": true
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_evaluation_groups",
+      "operationId": "model-hub_eval-groups_list",
+      "enabled": true,
+      "title": "List evaluation groups",
+      "description": "List evaluation groups and their templates in FutureAGI.",
+      "risk": "read",
+      "group": "evaluations",
+      "method": "GET",
+      "path": "/model-hub/eval-groups/",
+      "parameterLocations": {
+        "page": "query",
+        "limit": "query"
+      },
+      "inputJsonSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "description": "A page number within the paginated result set.",
+            "type": "integer"
+          },
+          "limit": {
+            "description": "Number of results to return per page.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_tracing_projects",
+      "operationId": "tracer_project_list",
+      "enabled": true,
+      "title": "List tracing projects",
+      "description": "List observability and experiment tracing projects in FutureAGI.",
+      "risk": "read",
+      "group": "observability",
+      "method": "GET",
+      "path": "/tracer/project/",
+      "parameterLocations": {
+        "page": "query",
+        "limit": "query"
+      },
+      "inputJsonSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "description": "A page number within the paginated result set.",
+            "type": "integer"
+          },
+          "limit": {
+            "description": "Number of results to return per page.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_traces",
+      "operationId": "tracer_trace_list",
+      "enabled": true,
+      "title": "List traces",
+      "description": "List recorded traces in the authenticated FutureAGI workspace.",
+      "risk": "read",
+      "group": "observability",
+      "method": "GET",
+      "path": "/tracer/trace/",
+      "parameterLocations": {
+        "page": "query",
+        "limit": "query"
+      },
+      "inputJsonSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "description": "A page number within the paginated result set.",
+            "type": "integer"
+          },
+          "limit": {
+            "description": "Number of results to return per page.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -100,8 +100,6 @@ urlpatterns = [
     ),
     path("integrations/", include("integrations.urls")),
     path("agentcc/", include("agentcc.urls")),
-    path("ai-tools/", include("ai_tools.urls")),
-    path("mcp/", include("mcp_server.urls")),
     path(
         "falcon-ai/",
         include(

@@ -1,4 +1,4 @@
-"""Service layer for prompt operations — shared by views and ai_tools."""
+"""Service layer for prompt operations shared by API and internal AI workflows."""
 
 import re
 import uuid

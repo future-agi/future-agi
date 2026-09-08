@@ -141,7 +141,6 @@ futureagi/
 ├── tracer/tests/
 ├── agentic_eval/tests/
 ├── simulate/tests/
-├── mcp_server/tests/
 └── accounts/tests/
 ```
 

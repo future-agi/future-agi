@@ -1,0 +1,32 @@
+{
+  "name": "@futureagi/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "generate": "tsx scripts/generate.ts",
+    "check:generated": "tsx scripts/generate.ts --check",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "check": "yarn check:generated && yarn typecheck && yarn test"
+  },
+  "dependencies": {
+    "@hono/node-server": "2.1.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "hono": "4.13.7",
+    "yaml": "2.9.0",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.0"
+  }
+}

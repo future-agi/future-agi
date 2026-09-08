@@ -17,7 +17,6 @@ import SOSLoginPage from "src/pages/SOSLoginPage";
 import { paths } from "src/routes/paths";
 import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 
-const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
 const SharedView = lazyWithRetry(() => import("src/pages/shared/SharedView"));
 const OssSetupView = lazyWithRetry(
   () => import("src/sections/oss-first-run/OssSetupView"),
@@ -63,18 +62,6 @@ export default function Router() {
     {
       path: "/sos",
       element: <SOSLoginPage />,
-    },
-
-    // MCP OAuth consent (standalone, no dashboard layout, requires auth)
-    {
-      path: "/mcp/authorize",
-      element: (
-        <AuthGuard>
-          <Suspense fallback={<SplashScreen />}>
-            <OAuthConsent />
-          </Suspense>
-        </AuthGuard>
-      ),
     },
 
     // Auth routes
